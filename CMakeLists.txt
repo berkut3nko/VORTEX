@@ -5,7 +5,6 @@ cmake_minimum_required(VERSION 3.28)
 project(VORTEX VERSION 0.1.0 LANGUAGES CXX C)
 
 # --- C++20 Modules Support (Clang) ---
-# Scanner logic is placed here as the engine provides the modules.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set(CMAKE_EXPERIMENTAL_CXX_MODULE_CMAKE_API "2182bf5c-ef0d-489a-91da-49dbc3090d2a")
     set(CMAKE_EXPERIMENTAL_CXX_MODULE_DYNDEP ON)
@@ -22,13 +21,8 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     endif()
 endif()
 
-# --- Compiler Options ---
-if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU")
-    add_compile_options(-Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
-endif()
-
 # --- Dependency Management ---
-# Include external dependencies (GLFW, ImGui, etc.)
+# Include dependencies BEFORE defining the target so FetchContent logic runs first
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Dependencies)
 
@@ -38,35 +32,55 @@ add_library(VortexCore STATIC)
 # Enforce C++20 features
 target_compile_features(VortexCore PUBLIC cxx_std_20)
 
+# --- Compiler Options ---
+# FIX: Use target_compile_options instead of add_compile_options.
+# This ensures strict warnings apply ONLY to our engine code, not to 3rd party libs (like Flatbuffers).
+if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+    target_compile_options(VortexCore PRIVATE 
+        -Wall -Wextra -Wpedantic -Wno-missing-field-initializers
+    )
+endif()
+
 # C++ Sources
 target_sources(VortexCore PRIVATE
     src/Core.cpp
     # Add other engine source files here
 )
 
-# C++ Modules (Interfaces)
-# target_sources(VortexCore PUBLIC
-#     FILE_SET CXX_MODULES FILES 
-#     src/Engine.cppm
-# )
-
 # Enable module scanning for the library
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     set_target_properties(VortexCore PROPERTIES CXX_SCAN_FOR_MODULES ON)
 endif()
 
-# Include Directories
 target_include_directories(VortexCore PUBLIC 
     include
-    ${CMAKE_CURRENT_BINARY_DIR} # For generated configuration files
+    ${CMAKE_CURRENT_BINARY_DIR}
 )
 
 # --- Dependency Linking ---
 # PUBLIC linkage ensures the Game can access headers from these libraries
 target_link_libraries(VortexCore PUBLIC
+    # Graphics
     Vulkan::Vulkan
+    vk-bootstrap
+    GPUOpen::VulkanMemoryAllocator
     glfw
+    glslang::glslang
+    
+    # Math & Physics
+    glm::glm
+    JoltPhysics
+    
+    # ECS & Utils
+    EnTT::EnTT
+    spdlog::spdlog
+    bitsery::bitsery
+    flatbuffers::flatbuffers
+    stb_lib
+    
+    # UI
     imgui_lib
+    imguizmo_lib
     tinygltf_lib
 )
 

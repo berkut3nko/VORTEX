@@ -1,35 +1,33 @@
 include(FetchContent)
 
 # @brief Dependency Configuration
-# @details Fetches and configures external libraries required by the engine.
+# @details Fetches and configures external libraries required for the VORTEX engine.
 
 # ==========================================
 # 1. CORE & SYSTEM
 # ==========================================
 
-# --- Vulkan (System Package) ---
 find_package(Vulkan REQUIRED)
 
-# --- vk-bootstrap (Vulkan Setup Helper) ---
+# vk-bootstrap
 FetchContent_Declare(
     vk-bootstrap
     GIT_REPOSITORY https://github.com/charles-lunarg/vk-bootstrap.git
-    GIT_TAG v1.3.6
+    GIT_TAG v1.3.240
 )
 FetchContent_MakeAvailable(vk-bootstrap)
 
-# --- Vulkan Memory Allocator (VMA) ---
+# Vulkan Memory Allocator
 FetchContent_Declare(
     VulkanMemoryAllocator
     GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
     GIT_TAG master
 )
-# VMA is header-only, but provides a CMake interface
 set(VMA_BUILD_DOCUMENTATION OFF CACHE BOOL "" FORCE)
-set(VMA_BUILD_AMPLES OFF CACHE BOOL "" FORCE)
+set(VMA_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(VulkanMemoryAllocator)
 
-# --- GLFW (Windowing) ---
+# GLFW
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
@@ -42,20 +40,42 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(glfw)
 
-# --- spdlog (Logging) ---
+# spdlog
 FetchContent_Declare(
     spdlog
     GIT_REPOSITORY https://github.com/gabime/spdlog.git
-    GIT_TAG v1.13.0
+    GIT_TAG v1.15.0
 )
 FetchContent_MakeAvailable(spdlog)
 
 
 # ==========================================
-# 2. MATH & PHYSICS
+# 2. TESTING & BENCHMARKING
+# ==========================================
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG v1.15.2
+)
+FetchContent_MakeAvailable(googletest)
+
+if(BUILD_VORTEX_TESTS)
+    set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(
+        benchmark
+        GIT_REPOSITORY https://github.com/google/benchmark.git
+        GIT_TAG v1.9.1
+    )
+    FetchContent_MakeAvailable(benchmark)
+endif()
+
+
+# ==========================================
+# 3. MATH & PHYSICS
 # ==========================================
 
-# --- GLM (Mathematics) ---
+# GLM
 FetchContent_Declare(
     glm
     GIT_REPOSITORY https://github.com/g-truc/glm.git
@@ -63,36 +83,64 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(glm)
 
-# --- Jolt Physics ---
-# Optimize Jolt build options for game dev
+if(NOT TARGET glm::glm)
+    if(TARGET glm)
+        add_library(glm::glm ALIAS glm)
+    endif()
+endif()
+
+# Jolt Physics
+# @note Jolt Physics places its CMakeLists.txt in the 'Build' subdirectory, not the root.
 set(USE_SSE4_2 ON CACHE BOOL "" FORCE)
-set(TARGET_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+set(TARGET_UNIT_TESTS OFF CACHE BOOL "" FORCE) 
 set(TARGET_HELLO_WORLD OFF CACHE BOOL "" FORCE)
 set(TARGET_PERFORMANCE_TEST OFF CACHE BOOL "" FORCE)
 set(TARGET_SAMPLES OFF CACHE BOOL "" FORCE)
 set(TARGET_VIEWER OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
     jolt_physics
     GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
-    GIT_TAG master 
+    GIT_TAG v5.0.0 
 )
-FetchContent_MakeAvailable(jolt_physics)
+
+FetchContent_GetProperties(jolt_physics)
+if(NOT jolt_physics_POPULATED)
+    FetchContent_Populate(jolt_physics)
+    # CRITICAL FIX: The CMakeLists.txt is in the 'Build' folder!
+    add_subdirectory(${jolt_physics_SOURCE_DIR}/Build ${jolt_physics_BINARY_DIR})
+endif()
+
+# Robust target check and alias creation
+if(TARGET Jolt)
+    if(NOT TARGET JoltPhysics)
+        add_library(JoltPhysics ALIAS Jolt)
+    endif()
+    message(STATUS "VORTEX: Jolt Physics target 'Jolt' successfully aliased.")
+elseif(TARGET jolt)
+    if(NOT TARGET JoltPhysics)
+        add_library(JoltPhysics ALIAS jolt)
+    endif()
+    message(STATUS "VORTEX: Jolt Physics target 'jolt' successfully aliased.")
+else()
+    message(FATAL_ERROR "VORTEX: Jolt Physics target not found! Checked 'Jolt' and 'jolt'.")
+endif()
 
 
 # ==========================================
-# 3. ARCHITECTURE (ECS & SERIALIZATION)
+# 4. ARCHITECTURE (ECS & SERIALIZATION)
 # ==========================================
 
-# --- EnTT (ECS) ---
+# EnTT
 FetchContent_Declare(
     entt
     GIT_REPOSITORY https://github.com/skypjack/entt.git
-    GIT_TAG v3.13.1
+    GIT_TAG v3.14.0
 )
 FetchContent_MakeAvailable(entt)
 
-# --- Bitsery (Serialization) ---
+# Bitsery
 FetchContent_Declare(
     bitsery
     GIT_REPOSITORY https://github.com/fraillt/bitsery.git
@@ -100,22 +148,37 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(bitsery)
 
-# --- Flatbuffers (Serialization) ---
+if(NOT TARGET bitsery::bitsery)
+    if(TARGET bitsery)
+        add_library(bitsery::bitsery ALIAS bitsery)
+    else()
+        add_library(bitsery INTERFACE)
+        target_include_directories(bitsery INTERFACE ${bitsery_SOURCE_DIR}/include)
+        add_library(bitsery::bitsery ALIAS bitsery)
+    endif()
+endif()
+
+# Flatbuffers
 set(FLATBUFFERS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     flatbuffers
     GIT_REPOSITORY https://github.com/google/flatbuffers.git
-    GIT_TAG v23.5.26
+    GIT_TAG v24.3.25
 )
 FetchContent_MakeAvailable(flatbuffers)
 
+if(NOT TARGET flatbuffers::flatbuffers)
+    if(TARGET flatbuffers)
+        add_library(flatbuffers::flatbuffers ALIAS flatbuffers)
+    endif()
+endif()
+
 
 # ==========================================
-# 4. ASSETS & GRAPHICS UTILS
+# 5. ASSETS & GRAPHICS UTILS
 # ==========================================
 
-# --- stb (Image loading, etc) ---
-# stb is a collection of headers, no standard CMake. We fetch it and make an interface lib.
+# stb (Headers Only - no CMakeLists.txt)
 FetchContent_Declare(
     stb
     GIT_REPOSITORY https://github.com/nothings/stb.git
@@ -131,7 +194,7 @@ if(NOT TARGET stb_lib)
     target_include_directories(stb_lib INTERFACE ${stb_SOURCE_DIR})
 endif()
 
-# --- TinyGLTF ---
+# TinyGLTF
 FetchContent_Declare(
     tinygltf
     GIT_REPOSITORY https://github.com/syoyo/tinygltf.git
@@ -139,12 +202,16 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(tinygltf)
 
-# --- glslang (Shader Compilation) ---
-# Warning: This can take a while to build.
+if(NOT TARGET tinygltf_lib)
+    add_library(tinygltf_lib INTERFACE)
+    target_include_directories(tinygltf_lib INTERFACE ${tinygltf_SOURCE_DIR})
+endif()
+
+# glslang
 set(ENABLE_SPVREMAPPER OFF CACHE BOOL "" FORCE)
-set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
+set(ENABLE_GLSLANG_BINARIES ON CACHE BOOL "" FORCE)
 set(ENABLE_HLSL OFF CACHE BOOL "" FORCE)
-set(ENABLE_OPT OFF CACHE BOOL "" FORCE) # Disable spirv-opt to save build time if not needed
+set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
 set(ENABLE_CTEST OFF CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
@@ -156,16 +223,15 @@ FetchContent_MakeAvailable(glslang)
 
 
 # ==========================================
-# 5. UI & TOOLS
+# 6. UI & TOOLS
 # ==========================================
 
-# --- Dear ImGui ---
+# Dear ImGui
 FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
     GIT_TAG docking
 )
-
 FetchContent_GetProperties(imgui)
 if(NOT imgui_POPULATED)
     FetchContent_Populate(imgui)
@@ -188,7 +254,7 @@ if(NOT TARGET imgui_lib)
     target_link_libraries(imgui_lib PUBLIC glfw Vulkan::Vulkan)
 endif()
 
-# --- ImGuizmo ---
+# ImGuizmo
 FetchContent_Declare(
     imguizmo
     GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo.git
@@ -204,49 +270,5 @@ if(NOT TARGET imguizmo_lib)
         ${imguizmo_SOURCE_DIR}/ImGuizmo.cpp
     )
     target_include_directories(imguizmo_lib PUBLIC ${imguizmo_SOURCE_DIR})
-    # ImGuizmo depends on ImGui
     target_link_libraries(imguizmo_lib PUBLIC imgui_lib)
-endif()
-
-
-# ==========================================
-# 6. NETWORKING & TESTING
-# ==========================================
-
-# --- GameNetworkingSockets ---
-# Note: This is a heavy dependency. Ensure requirements (protobuf, openssl) are met in system or fetched.
-# For simplicity in this script, we fetch it, but in production, you might want to use a precompiled version.
-set(GNS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(GNS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-
-FetchContent_Declare(
-    GameNetworkingSockets
-    GIT_REPOSITORY https://github.com/ValveSoftware/GameNetworkingSockets.git
-    GIT_TAG master
-)
-# Note: Commenting out MakeAvailable for now as GNS often requires strict environment setup.
-# Uncomment if you have Protobuf and OpenSSL installed.
-# FetchContent_MakeAvailable(GameNetworkingSockets)
-
-
-# --- GoogleTest ---
-if(BUILD_VORTEX_TESTS)
-    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-    FetchContent_Declare(
-        googletest
-        GIT_REPOSITORY https://github.com/google/googletest.git
-        GIT_TAG v1.14.0
-    )
-    FetchContent_MakeAvailable(googletest)
-endif()
-
-# --- Google Benchmark ---
-if(BUILD_VORTEX_TESTS)
-    set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
-    FetchContent_Declare(
-        benchmark
-        GIT_REPOSITORY https://github.com/google/benchmark.git
-        GIT_TAG v1.8.3
-    )
-    FetchContent_MakeAvailable(benchmark)
 endif()
