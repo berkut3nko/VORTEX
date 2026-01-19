@@ -21,6 +21,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     endif()
 endif()
 
+
 # --- Dependency Management ---
 # Include dependencies BEFORE defining the target so FetchContent logic runs first
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -32,20 +33,41 @@ add_library(VortexCore STATIC)
 # Enforce C++20 features
 target_compile_features(VortexCore PUBLIC cxx_std_20)
 
-# --- Compiler Options ---
-# FIX: Use target_compile_options instead of add_compile_options.
-# This ensures strict warnings apply ONLY to our engine code, not to 3rd party libs (like Flatbuffers).
+# --- Compiler Options & Warning Suppression ---
+# 1. Base warnings for strict code quality
 if (CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU")
     target_compile_options(VortexCore PRIVATE 
         -Wall -Wextra -Wpedantic -Wno-missing-field-initializers
     )
 endif()
 
+# 2. Suppress specific Clang warnings caused by external libs (VMA, ImGui macros)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(VortexCore PRIVATE
+        -Wno-nullability-completeness
+        -Wno-nullability-extension
+        -Wno-unused-private-field
+        -Wno-missing-field-initializers
+        -Wno-unused-variable
+        -Wno-unused-parameter
+        -Wno-gnu-zero-variadic-macro-arguments
+    )
+endif()
+
 # C++ Sources
 target_sources(VortexCore PRIVATE
-    src/Core.cpp
-    # Add other engine source files here
+    src/core/internal/Engine.cpp
+    src/graphics/internal/VulkanContext.cpp
 )
+
+# C++ Modules (Interfaces)
+target_sources(VortexCore PUBLIC
+    FILE_SET CXX_MODULES FILES
+    
+    src/core/Core.cppm
+    src/graphics/Graphics.cppm
+)
+
 
 # Enable module scanning for the library
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")

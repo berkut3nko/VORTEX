@@ -230,7 +230,7 @@ FetchContent_MakeAvailable(glslang)
 FetchContent_Declare(
     imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG docking
+    GIT_TAG 139e99ca37a3e127c87690202faec005cd892d36
 )
 FetchContent_GetProperties(imgui)
 if(NOT imgui_POPULATED)
