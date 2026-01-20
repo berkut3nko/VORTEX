@@ -76,6 +76,13 @@ target_sources(VortexCore PUBLIC
 
     src/memory/Memory.cppm
     
+    # Voxel Engine Modules
+    src/voxel/Voxel.cppm
+    src/voxel/World.cppm
+    src/voxel/Material.cppm
+    src/voxel/Palette.cppm
+    src/voxel/Hierarchy.cppm
+    src/voxel/Object.cppm
     src/voxel/BeamOptimization.cppm
 )
 
