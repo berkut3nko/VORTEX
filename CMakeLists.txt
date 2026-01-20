@@ -67,6 +67,8 @@ target_sources(VortexCore PUBLIC
     FILE_SET CXX_MODULES FILES
     
     src/core/Core.cppm
+    src/core/Logger.cppm
+    src/core/Profiller.cppm
 
     src/graphics/Graphics.cppm
     

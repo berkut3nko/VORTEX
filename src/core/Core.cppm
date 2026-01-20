@@ -2,33 +2,18 @@ module;
 
 // Global Module Fragment
 #include <entt/entt.hpp>
-#include <spdlog/spdlog.h>
 #include <memory>
-#include <string>
 #include <string_view>
 
 export module vortex.core;
 
 // Import our internal modules
 import vortex.graphics;
+// Import core sub-modules
+export import :logger;
+export import :profiller;
 
 namespace vortex {
-
-    /**
-     * @brief Static logger wrapper to provide clean API in modules.
-     */
-    export class Log {
-    public:
-        static void Init();
-        
-        static void Info(const std::string& msg);
-        static void Warn(const std::string& msg);
-        static void Error(const std::string& msg);
-        
-        // Expose underlying spdlog logger if advanced usage is needed
-        static std::shared_ptr<spdlog::logger>& GetCoreLogger();
-    };
-
     /**
      * @brief The main Engine class orchestrating the ECS and Systems.
      */
