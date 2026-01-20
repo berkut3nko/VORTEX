@@ -58,6 +58,8 @@ endif()
 target_sources(VortexCore PRIVATE
     src/core/internal/Engine.cpp
     src/graphics/internal/VulkanContext.cpp
+    src/memory/internal/MemoryAllocator.cpp
+    src/graphics/internal/ShaderCompiler.cpp
 )
 
 # C++ Modules (Interfaces)
@@ -65,7 +67,14 @@ target_sources(VortexCore PUBLIC
     FILE_SET CXX_MODULES FILES
     
     src/core/Core.cppm
+
     src/graphics/Graphics.cppm
+    
+    src/graphics/Shader.cppm
+
+    src/memory/Memory.cppm
+    
+    src/voxel/BeamOptimization.cppm
 )
 
 

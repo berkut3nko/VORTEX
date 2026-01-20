@@ -1,0 +1,33 @@
+#version 460
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// Binding 0: Output Image
+layout(binding = 0, rgba8) uniform image2D resultImage;
+
+// Basic Camera UBO (Placeholder)
+layout(binding = 1) uniform Camera {
+    mat4 viewInverse;
+    mat4 projInverse;
+} cam;
+
+void main() {
+    ivec2 texelCoord = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(resultImage);
+
+    if (texelCoord.x >= size.x || texelCoord.y >= size.y) {
+        return;
+    }
+
+    // Normalized Device Coordinates (-1 to 1)
+    vec2 uv = (vec2(texelCoord) / vec2(size)) * 2.0 - 1.0;
+
+    // Simple gradient for testing Compute Shader dispatch
+    vec4 color = vec4(uv.x * 0.5 + 0.5, uv.y * 0.5 + 0.5, 0.0, 1.0);
+
+    // TODO: Ray generation & Beam Optimization logic here
+    // vec3 origin = (cam.viewInverse * vec4(0,0,0,1)).xyz;
+    // vec3 target = (cam.projInverse * vec4(uv.x, uv.y, 1, 1)).xyz;
+    // vec3 dir = normalize((cam.viewInverse * vec4(target, 0)).xyz);
+
+    imageStore(resultImage, texelCoord, vec4(0.5,0.2,0.3,1));
+}

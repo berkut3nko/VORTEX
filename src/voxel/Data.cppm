@@ -1,3 +1,3 @@
 module;
 
-export module Data;
+export module vortex.data;

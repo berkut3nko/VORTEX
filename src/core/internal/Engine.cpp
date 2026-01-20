@@ -95,7 +95,7 @@ namespace vortex {
     }
 
     void Engine::UpdateSystems(float deltaTime) {
-        // Placeholder: In a ECS, you would invoke systems here.
+        // Placeholder: In a real ECS, you would invoke systems here.
         // Example:
         // auto view = m_Registry.view<TransformComponent, VelocityComponent>();
         // for(auto entity : view) { ... }
