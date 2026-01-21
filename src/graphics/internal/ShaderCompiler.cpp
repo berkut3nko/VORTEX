@@ -14,7 +14,7 @@ module;
 module vortex.graphics; 
 
 import :shader; 
-import vortex.core;
+import vortex.log;
 
 namespace vortex::graphics {
 

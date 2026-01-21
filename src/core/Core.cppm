@@ -1,60 +1,41 @@
 module;
 
-// Global Module Fragment
-#include <entt/entt.hpp>
 #include <memory>
-#include <string_view>
+#include <string>
+#include <vector>
+#include <functional> // For std::function
 
 export module vortex.core;
 
-// Import our internal modules
-import vortex.graphics;
-// Import core sub-modules
-export import :logger;
+export import vortex.graphics;
+export import :camera;    
 export import :profiller;
 
 namespace vortex {
-    /**
-     * @brief The main Engine class orchestrating the ECS and Systems.
-     */
+
     export class Engine {
     public:
         Engine();
         ~Engine();
 
-        /**
-         * @brief Initializes the engine, window, and graphics context.
-         * @param title Window title.
-         * @param width Window width.
-         * @param height Window height.
-         */
         bool Initialize(const std::string& title, uint32_t width, uint32_t height);
-
+        
         /**
-         * @brief Starts the main loop.
+         * @brief Starts the main engine loop.
+         * @param onGuiRender Optional callback for rendering custom ImGui UI.
          */
-        void Run();
-
-        /**
-         * @brief Stops the engine loop.
-         */
+        void Run(std::function<void()> onGuiRender = nullptr);
+        
         void Shutdown();
-
-        /**
-         * @brief Access the ECS registry directly.
-         * @return Reference to the EnTT registry.
-         */
-        entt::registry& GetRegistry() { return m_Registry; }
+        
+        // Proxy methods to keep main.cpp clean
+        void UploadScene(const std::vector<graphics::SceneObject>& objects, const std::vector<graphics::SceneMaterial>& materials);
+        graphics::GraphicsContext& GetGraphics();
 
     private:
-        // Core systems
-        std::unique_ptr<graphics::GraphicsContext> m_GraphicsContext;
-        entt::registry m_Registry;
-        
-        bool m_IsRunning = false;
-
-        // Private helper to update ECS systems
         void UpdateSystems(float deltaTime);
-    };
 
+        struct InternalState;
+        std::unique_ptr<InternalState> m_State;
+    };
 }

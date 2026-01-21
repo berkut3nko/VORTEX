@@ -57,9 +57,18 @@ endif()
 # C++ Sources
 target_sources(VortexCore PRIVATE
     src/core/internal/Engine.cpp
-    src/graphics/internal/VulkanContext.cpp
+    src/core/internal/CameraController.cpp
     src/memory/internal/MemoryAllocator.cpp
+
+
+
     src/graphics/internal/ShaderCompiler.cpp
+    src/graphics/internal/RayTracingPipeline.cpp
+    src/graphics/internal/Graphics.cpp
+    src/graphics/internal/UI.cpp
+    src/graphics/internal/Swapchain.cpp
+    src/graphics/internal/Window.cpp
+    src/graphics/internal/Context.cpp
 )
 
 # C++ Modules (Interfaces)
@@ -67,14 +76,19 @@ target_sources(VortexCore PUBLIC
     FILE_SET CXX_MODULES FILES
     
     src/core/Core.cppm
+    src/core/CameraController.cppm
     src/core/Logger.cppm
     src/core/Profiller.cppm
-
-    src/graphics/Graphics.cppm
-    
-    src/graphics/Shader.cppm
-
     src/memory/Memory.cppm
+
+    # Graphics Modules
+    src/graphics/Graphics.cppm
+    src/graphics/UI.cppm
+    src/graphics/Swapchain.cppm
+    src/graphics/Window.cppm
+    src/graphics/Context.cppm
+    src/graphics/Shader.cppm
+    src/graphics/RayTracingPipeline.cppm
     
     # Voxel Engine Modules
     src/voxel/Voxel.cppm

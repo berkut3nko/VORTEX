@@ -7,7 +7,7 @@ module;
 
 module vortex.memory;
 
-import vortex.core; // For logging
+import vortex.log; // For logging
 
 namespace vortex::memory {
 

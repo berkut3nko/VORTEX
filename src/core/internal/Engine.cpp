@@ -1,58 +1,40 @@
 module;
 
-#include <spdlog/spdlog.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
 #include <entt/entt.hpp>
 #include <chrono>
+#include <memory> 
+#include <functional>
 
 module vortex.core;
 
+import vortex.log;
+import vortex.graphics;
+import :camera; // Import camera module implementation
+
 namespace vortex {
 
-    // --- Logger Implementation ---
-
-    std::shared_ptr<spdlog::logger> s_CoreLogger;
-
-    void Log::Init() {
-        spdlog::set_pattern("%^[%T] %n: %v%$");
-        s_CoreLogger = spdlog::stdout_color_mt("VORTEX");
-        s_CoreLogger->set_level(spdlog::level::trace);
-    }
-
-    void Log::Info(const std::string& msg) {
-        if (s_CoreLogger) s_CoreLogger->info(msg);
-    }
-
-    void Log::Warn(const std::string& msg) {
-        if (s_CoreLogger) s_CoreLogger->warn(msg);
-    }
-
-    void Log::Error(const std::string& msg) {
-        if (s_CoreLogger) s_CoreLogger->error(msg);
-    }
-
-    std::shared_ptr<spdlog::logger>& Log::GetCoreLogger() {
-        return s_CoreLogger;
-    }
+    // --- Pimpl Definition ---
+    struct Engine::InternalState {
+        std::unique_ptr<graphics::GraphicsContext> graphicsContext;
+        core::CameraController cameraController;
+        entt::registry registry;
+        bool isRunning = false;
+    };
 
     // --- Engine Implementation ---
 
-    Engine::Engine() {
-        // Automatically initialize logger on creation if not done
-        if (!s_CoreLogger) {
-            Log::Init();
-        }
-        m_GraphicsContext = std::make_unique<graphics::GraphicsContext>();
+    Engine::Engine() : m_State(std::make_unique<InternalState>()) {
+        Log::Init();
+        m_State->graphicsContext = std::make_unique<graphics::GraphicsContext>();
+        
+        // Default camera settings
+        m_State->cameraController.movementSpeed = 5.0f;
     }
 
-    Engine::~Engine() {
-        Shutdown();
-    }
+    Engine::~Engine() = default;
 
     bool Engine::Initialize(const std::string& title, uint32_t width, uint32_t height) {
-        Log::Info("Initializing Vortex Engine...");
-
-        if (!m_GraphicsContext->Initialize(title, width, height)) {
+        if (!m_State->graphicsContext->Initialize(title, width, height)) {
             Log::Error("Failed to initialize Graphics Context!");
             return false;
         }
@@ -61,29 +43,42 @@ namespace vortex {
         return true;
     }
 
-    void Engine::Run() {
-        m_IsRunning = true;
+    void Engine::Run(std::function<void()> onGuiRender) {
+        m_State->isRunning = true;
         Log::Info("Starting Main Loop...");
 
         auto lastTime = std::chrono::high_resolution_clock::now();
 
-        while (m_IsRunning) {
-            // Calculate Delta Time
+        while (m_State->isRunning) {
             auto currentTime = std::chrono::high_resolution_clock::now();
-            float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
+            float deltaTime = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - lastTime).count();
             lastTime = currentTime;
 
-            // 1. Begin Frame (Poll events, acquire swapchain)
-            if (!m_GraphicsContext->BeginFrame()) {
-                m_IsRunning = false;
+            // 1. Start Frame (Polls Inputs)
+            if (!m_State->graphicsContext->BeginFrame()) {
+                m_State->isRunning = false;
                 break;
             }
 
-            // 2. Update Gameplay Systems (ECS)
+            // 2. Update Camera Logic
+            m_State->cameraController.Update(
+                m_State->graphicsContext->GetWindow(), 
+                m_State->graphicsContext->GetCamera(), 
+                deltaTime
+            );
+
+            m_State->graphicsContext->UploadCamera();
+
+            // 3. Update Systems
             UpdateSystems(deltaTime);
 
-            // 3. Render Frame
-            m_GraphicsContext->EndFrame();
+            // 4. Custom UI Rendering (from main.cpp)
+            if (onGuiRender) {
+                onGuiRender();
+            }
+
+            // 5. Render
+            m_State->graphicsContext->EndFrame();
         }
 
         Log::Info("Main Loop finished.");
@@ -91,17 +86,21 @@ namespace vortex {
 
     void Engine::Shutdown() {
         Log::Info("Shutting down engine...");
-        m_GraphicsContext->Shutdown();
+        if (m_State && m_State->graphicsContext) {
+            m_State->graphicsContext->Shutdown();
+        }
     }
 
     void Engine::UpdateSystems(float deltaTime) {
-        // Placeholder: In a real ECS, you would invoke systems here.
-        // Example:
-        // auto view = m_Registry.view<TransformComponent, VelocityComponent>();
-        // for(auto entity : view) { ... }
-        
-        // For now, we just pass purely to keep the loop running.
-        (void)deltaTime; 
+        (void)deltaTime;
+        // ECS logic placeholder
     }
 
+    void Engine::UploadScene(const std::vector<graphics::SceneObject>& objects, const std::vector<graphics::SceneMaterial>& materials) {
+        m_State->graphicsContext->UploadScene(objects, materials);
+    }
+
+    graphics::GraphicsContext& Engine::GetGraphics() {
+        return *m_State->graphicsContext;
+    }
 }

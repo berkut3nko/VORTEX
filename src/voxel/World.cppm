@@ -15,7 +15,7 @@ export module vortex.voxel:world;
 import :object;
 import :hierarchy;
 import :palette;
-import vortex.core;
+import vortex.log;
 
 namespace vortex::voxel {
 

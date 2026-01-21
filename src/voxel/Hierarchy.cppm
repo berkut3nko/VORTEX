@@ -7,7 +7,7 @@ module;
 
 export module vortex.voxel:hierarchy;
 
-import vortex.core;
+import vortex.log;
 
 namespace vortex::voxel {
 

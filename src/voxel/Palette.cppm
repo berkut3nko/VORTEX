@@ -9,7 +9,7 @@ module;
 export module vortex.voxel:palette;
 
 import :material;
-import vortex.core; // For logging
+import vortex.log; // For logging
 
 namespace vortex::voxel {
 
