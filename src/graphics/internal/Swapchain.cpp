@@ -71,7 +71,6 @@ namespace vortex::graphics {
         m_Swapchain = VK_NULL_HANDLE; 
         
         Create(width, height);
-        Log::Info("Swapchain recreated: " + std::to_string(width) + "x" + std::to_string(height));
     }
 
     void Swapchain::Shutdown() {

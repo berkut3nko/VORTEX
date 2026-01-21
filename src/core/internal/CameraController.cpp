@@ -5,99 +5,116 @@ module;
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
-#include <string> 
 
 module vortex.core; 
 
 import :camera;
-import vortex.log;
+import vortex.log; // Залишаємо тільки для критичних повідомлень, якщо треба
 
 namespace vortex::core {
-
-    // Статичні змінні для збереження стану між викликами
-    static bool isCursorLocked = false;
-    static bool lastTabState = false;
 
     void CameraController::Update(GLFWwindow* window, graphics::Camera& camera, float deltaTime) {
         if (!window) return;
 
-        // --- 1. Обробка перемикання режимів (TAB) ---
-        bool currentTabState = glfwGetKey(window, GLFW_KEY_TAB) == GLFW_PRESS;
-        if (currentTabState && !lastTabState) {
-            isCursorLocked = !isCursorLocked;
+        // --- 1. Keyboard Movement (WASD) ---
+        float currentSpeed = movementSpeed * deltaTime;
+        
+        // Acceleration
+        if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) {
+            currentSpeed *= sprintMultiplier;
+        }
+
+        // Forward/Backward
+        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) 
+            camera.position += currentSpeed * camera.front;
+        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) 
+            camera.position -= currentSpeed * camera.front;
+        
+        // Strafe Left/Right
+        glm::vec3 right = glm::normalize(glm::cross(camera.front, camera.up));
+        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) 
+            camera.position -= currentSpeed * right;
+        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) 
+            camera.position += currentSpeed * right;
+
+        // Up/Down (Global Y)
+        if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) 
+            camera.position += currentSpeed * glm::vec3(0.0f, 1.0f, 0.0f);
+        if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) 
+            camera.position -= currentSpeed * glm::vec3(0.0f, 1.0f, 0.0f);
+
+        // --- 2. Mouse Rotation (Drag with LMB) ---
+        
+        // Check inputs
+        bool isLmbPressed = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+        bool wantCapture = ImGui::GetIO().WantCaptureMouse;
+
+        // If we are ALREADY dragging, we ignore ImGui's wantCapture.
+        // This prevents the camera from stopping if the mouse accidentally hovers over a UI element while turning.
+        if (m_IsDragging) {
+            wantCapture = false; 
+        }
+
+        // Logic: Rotate ONLY if LMB is pressed AND (we are already dragging OR mouse is not over UI)
+        if (isLmbPressed && !wantCapture) {
             
-            if (isCursorLocked) {
-                // Активація режиму камери
-                Log::Info("Camera: LOCKED (Tracking Motion)");
+            // Start Dragging Event
+            if (!m_IsDragging) {
+                m_IsDragging = true;
                 
-                // Блокуємо ImGui, щоб він не змінював курсор
+                // Lock ImGui cursor handling so it doesn't fight us
                 ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
-                
-                // Використовуємо звичайний курсор, щоб VM не сходила з розуму
+
+                // Use NORMAL cursor mode for VM compatibility.
+                // We will just read the delta. Cursor remains visible.
                 glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 
-                // Скидаємо початкову позицію, щоб уникнути ривка при вході
+                // Reset last position to current to avoid a "jump" on the first frame
                 double xpos, ypos;
                 glfwGetCursorPos(window, &xpos, &ypos);
                 m_LastX = (float)xpos;
                 m_LastY = (float)ypos;
-                
-            } else {
-                // Деактивація (режим UI)
-                Log::Info("Camera: UNLOCKED");
-                
-                // Дозволяємо ImGui керувати курсором
-                ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
             }
-        }
-        lastTabState = currentTabState;
 
-        // --- 2. Рух клавіатурою (WASD) ---
-        float currentSpeed = movementSpeed * deltaTime;
-        if (glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS) currentSpeed *= sprintMultiplier;
-
-        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) camera.position += currentSpeed * camera.front;
-        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) camera.position -= currentSpeed * camera.front;
-        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) camera.position -= currentSpeed * glm::normalize(glm::cross(camera.front, camera.up));
-        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) camera.position += currentSpeed * glm::normalize(glm::cross(camera.front, camera.up));
-        if (glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS) camera.position += currentSpeed * glm::vec3(0.0f, 1.0f, 0.0f);
-        if (glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS) camera.position -= currentSpeed * glm::vec3(0.0f, 1.0f, 0.0f);
-
-        // --- 3. Обертання мишею (Simple Delta) ---
-        if (isCursorLocked) {
-            // Отримуємо поточну позицію
+            // Continuous Rotation Logic
             double xpos, ypos;
             glfwGetCursorPos(window, &xpos, &ypos);
 
-            // Рахуємо різницю від ПОПЕРЕДНЬОГО кадру
             float xoffset = (float)xpos - m_LastX;
-            float yoffset = m_LastY - (float)ypos; // Інвертуємо Y (0 зверху)
-
-            // Оновлюємо "останню" позицію для наступного кадру
+            float yoffset = m_LastY - (float)ypos; // Reversed Y (GLFW 0 is top)
+            
+            // Update last position for next frame
             m_LastX = (float)xpos;
             m_LastY = (float)ypos;
 
-            // Якщо був рух - застосовуємо
-            if (xoffset != 0.0f || yoffset != 0.0f) {
-                // Log::Info("Delta: " + std::to_string(xoffset) + " " + std::to_string(yoffset));
+            // Apply sensitivity
+            xoffset *= mouseSensitivity;
+            yoffset *= mouseSensitivity;
 
-                xoffset *= mouseSensitivity;
-                yoffset *= mouseSensitivity;
+            camera.yaw += xoffset;
+            camera.pitch += yoffset;
 
-                camera.yaw += xoffset;
-                camera.pitch += yoffset;
+            // Constrain Pitch (prevent camera flip)
+            if (camera.pitch > 89.0f) camera.pitch = 89.0f;
+            if (camera.pitch < -89.0f) camera.pitch = -89.0f;
 
-                // Обмеження вертикального кута
-                if (camera.pitch > 89.0f) camera.pitch = 89.0f;
-                if (camera.pitch < -89.0f) camera.pitch = -89.0f;
+            // Recalculate Vectors
+            glm::vec3 front;
+            front.x = cos(glm::radians(camera.yaw)) * cos(glm::radians(camera.pitch));
+            front.y = sin(glm::radians(camera.pitch));
+            front.z = sin(glm::radians(camera.yaw)) * cos(glm::radians(camera.pitch));
+            camera.front = glm::normalize(front);
 
-                // Перерахунок векторів
-                glm::vec3 front;
-                front.x = cos(glm::radians(camera.yaw)) * cos(glm::radians(camera.pitch));
-                front.y = sin(glm::radians(camera.pitch));
-                front.z = sin(glm::radians(camera.yaw)) * cos(glm::radians(camera.pitch));
-                camera.front = glm::normalize(front);
+        } else {
+            // Stop Dragging Event
+            if (m_IsDragging) {
+                m_IsDragging = false;
+                
+                // Release ImGui lock
+                ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NoMouseCursorChange;
+                
+                // Ensure cursor is normal (it should be already, but just in case)
+                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
             }
         }
     }
