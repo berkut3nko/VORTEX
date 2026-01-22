@@ -16,7 +16,9 @@ namespace vortex::graphics {
         glm::vec4 direction;
         uint32_t objectCount;
         float _pad[3]; 
-        glm::mat4 viewProj; // New field for rasterization
+        glm::mat4 viewProj; 
+        glm::mat4 prevViewProj; // NEW: For Motion Vectors
+        glm::vec4 jitter;       // NEW: xy = current, zw = prev
     };
 
     export class RasterPipeline {
@@ -25,7 +27,8 @@ namespace vortex::graphics {
         ~RasterPipeline();
 
         void Initialize(VkDevice device, 
-                        VkFormat colorFormat, 
+                        VkFormat colorFormat,
+                        VkFormat velocityFormat, // NEW
                         VkFormat depthFormat,
                         const memory::AllocatedBuffer& cameraBuffer,
                         const memory::AllocatedBuffer& materialBuffer,
@@ -34,7 +37,6 @@ namespace vortex::graphics {
 
         void Shutdown();
         
-        // Replaces Dispatch
         void Bind(VkCommandBuffer cmd);
         void UpdateDescriptors();
 

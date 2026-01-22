@@ -29,6 +29,7 @@ namespace vortex::graphics {
 
     void RasterPipeline::Initialize(VkDevice device, 
                                     VkFormat colorFormat, 
+                                    VkFormat velocityFormat, // NEW
                                     VkFormat depthFormat,
                                     const memory::AllocatedBuffer& cameraBuffer,
                                     const memory::AllocatedBuffer& materialBuffer,
@@ -42,13 +43,9 @@ namespace vortex::graphics {
 
         // --- Descriptor Set Layout ---
         std::vector<VkDescriptorSetLayoutBinding> bindings(4);
-        // 0: Camera UBO (Vertex + Frag)
         bindings[0] = {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
-        // 1: Materials (Frag)
         bindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
-        // 2: Objects (Vertex + Frag)
         bindings[2] = {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
-        // 3: Chunks (Frag)
         bindings[3] = {3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
 
         VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
@@ -86,23 +83,19 @@ namespace vortex::graphics {
         };
 
         // --- States ---
-        VkPipelineVertexInputStateCreateInfo vertexInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO}; // Empty (generated in shader)
+        VkPipelineVertexInputStateCreateInfo vertexInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
         VkPipelineInputAssemblyStateCreateInfo inputAssembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
         inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
-        VkViewport viewport{}; // Dynamic
-        VkRect2D scissor{};    // Dynamic
         VkPipelineViewportStateCreateInfo viewportState{VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO};
         viewportState.viewportCount = 1;
         viewportState.scissorCount = 1;
 
-        // RASTERIZER
         VkPipelineRasterizationStateCreateInfo rasterizer{VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO};
         rasterizer.depthClampEnable = VK_FALSE;
         rasterizer.rasterizerDiscardEnable = VK_FALSE;
         rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
         rasterizer.lineWidth = 1.0f;
-        // Cull FRONT faces so we see the inside of the cube (back faces)
         rasterizer.cullMode = VK_CULL_MODE_FRONT_BIT; 
         rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 
@@ -110,22 +103,28 @@ namespace vortex::graphics {
         multisampling.sampleShadingEnable = VK_FALSE;
         multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
-        // DEPTH STENCIL
         VkPipelineDepthStencilStateCreateInfo depthStencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
         depthStencil.depthTestEnable = VK_TRUE;
         depthStencil.depthWriteEnable = VK_TRUE;
-        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS; // Standard depth test
+        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
         depthStencil.depthBoundsTestEnable = VK_FALSE;
         depthStencil.stencilTestEnable = VK_FALSE;
 
-        VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-        colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-        colorBlendAttachment.blendEnable = VK_FALSE; // No blending, DDA handles alpha/discard
+        // --- BLENDING (2 Attachments: Color, Velocity) ---
+        VkPipelineColorBlendAttachmentState blendStates[2] = {};
+        
+        // Attachment 0: Color (No Blend)
+        blendStates[0].colorWriteMask = 0xF; 
+        blendStates[0].blendEnable = VK_FALSE;
+
+        // Attachment 1: Velocity (No Blend)
+        blendStates[1].colorWriteMask = 0xF;
+        blendStates[1].blendEnable = VK_FALSE;
 
         VkPipelineColorBlendStateCreateInfo colorBlending{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
         colorBlending.logicOpEnable = VK_FALSE;
-        colorBlending.attachmentCount = 1;
-        colorBlending.pAttachments = &colorBlendAttachment;
+        colorBlending.attachmentCount = 2; // NEW
+        colorBlending.pAttachments = blendStates;
 
         VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
         VkPipelineDynamicStateCreateInfo dynamicState{VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO};
@@ -133,9 +132,10 @@ namespace vortex::graphics {
         dynamicState.pDynamicStates = dynamicStates;
 
         // Dynamic Rendering Info
+        VkFormat colorFormats[] = { colorFormat, velocityFormat }; // NEW
         VkPipelineRenderingCreateInfo renderingInfo{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
-        renderingInfo.colorAttachmentCount = 1;
-        renderingInfo.pColorAttachmentFormats = &colorFormat;
+        renderingInfo.colorAttachmentCount = 2;
+        renderingInfo.pColorAttachmentFormats = colorFormats;
         renderingInfo.depthAttachmentFormat = depthFormat;
 
         VkGraphicsPipelineCreateInfo pipelineInfo{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO};
@@ -175,7 +175,7 @@ namespace vortex::graphics {
         vkAllocateDescriptorSets(m_Device, &allocInfo, &m_DescriptorSet);
 
         UpdateDescriptors();
-        Log::Info("Raster Pipeline initialized.");
+        Log::Info("Raster Pipeline initialized (MRT: Color + Velocity).");
     }
 
     void RasterPipeline::UpdateDescriptors() {

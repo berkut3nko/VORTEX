@@ -31,22 +31,22 @@ namespace vortex::graphics {
     }
 
     bool VulkanContext::InitDevice(VkSurfaceKHR surface) {
-        // --- 1. Вмикаємо необхідні фічі Vulkan 1.3 ---
+        // --- 1. Enable Vulkan 1.3 features ---
         VkPhysicalDeviceVulkan13Features features13{};
         features13.dynamicRendering = VK_TRUE; 
         features13.synchronization2 = VK_TRUE;
-        features13.maintenance4 = VK_TRUE; // Корисно для спрощення бар'єрів
+        features13.maintenance4 = VK_TRUE; // Useful for simplifying barriers
 
-        // --- 2. Вмикаємо Vulkan 1.2 фічі (Scalar Block Layout для шейдерів) ---
+        // --- 2. Enable Vulkan 1.2 features (Scalar Block Layout) ---
         VkPhysicalDeviceVulkan12Features features12{};
-        features12.scalarBlockLayout = VK_TRUE; // КРИТИЧНО для GL_EXT_scalar_block_layout
-        features12.bufferDeviceAddress = VK_TRUE; // Корисно для майбутнього (RayTracing)
+        features12.scalarBlockLayout = VK_TRUE; // CRITICAL for GL_EXT_scalar_block_layout
+        features12.bufferDeviceAddress = VK_TRUE; // Useful for future (RayTracing)
 
         vkb::PhysicalDeviceSelector selector{m_Instance};
         auto phys_ret = selector.set_surface(surface)
                                 .set_minimum_version(1, 3)
                                 .set_required_features_13(features13)
-                                .set_required_features_12(features12) // Додаємо 1.2 фічі
+                                .set_required_features_12(features12) // Add 1.2 features
                                 .select();
         if (!phys_ret) {
             Log::Error("Failed to select Physical Device: " + phys_ret.error().message());
@@ -70,7 +70,7 @@ namespace vortex::graphics {
         allocatorInfo.device = m_Device.device;
         allocatorInfo.instance = m_Instance.instance;
         allocatorInfo.vulkanApiVersion = VK_API_VERSION_1_3;
-        allocatorInfo.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT; // Додаємо прапорець
+        allocatorInfo.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
         vmaCreateAllocator(&allocatorInfo, &m_VmaAllocator);
         m_MemoryAllocator = std::make_unique<memory::MemoryAllocator>(m_VmaAllocator, m_Device.device);
 

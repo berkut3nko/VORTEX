@@ -72,6 +72,7 @@ target_sources(VortexCore PRIVATE
 
     #src/graphics/pipelines/internal/RayTracingPipeline.cpp
     src/graphics/pipelines/internal/RasterPipeline.cpp
+    src/graphics/pipelines/internal/TAAPipeline.cpp
 )
 
 # C++ Modules (Interfaces)
@@ -94,6 +95,7 @@ target_sources(VortexCore PUBLIC
 
     #src/graphics/pipelines/RayTracingPipeline.cppm
     src/graphics/pipelines/RasterPipeline.cppm
+    src/graphics/pipelines/TAAPipeline.cppm
     
     # Voxel Engine Modules
     src/voxel/Voxel.cppm

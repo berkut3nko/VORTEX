@@ -1,0 +1,70 @@
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0) uniform sampler2D texColor;
+layout(binding = 1) uniform sampler2D texHistory;
+layout(binding = 2) uniform sampler2D texVelocity;
+layout(binding = 3) uniform sampler2D texDepth;
+layout(binding = 4, rgba8) uniform writeonly image2D imgOutput;
+
+// Catmull-Rom 9-tap filter (Optional, using Bilinear for now for speed)
+vec3 SampleHistory(vec2 uv) {
+    return texture(texHistory, uv).rgb;
+}
+
+void main() {
+    ivec2 pixelPos = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(imgOutput);
+    if(pixelPos.x >= size.x || pixelPos.y >= size.y) return;
+
+    vec2 uv = (vec2(pixelPos) + 0.5) / vec2(size);
+
+    // 1. Read Current Color
+    vec3 color = texture(texColor, uv).rgb;
+
+    // 2. Read Velocity
+    // Note: If using Upscaling, velocity texture might be smaller. 
+    // Here we assume TAA runs at Render Resolution.
+    vec2 velocity = texture(texVelocity, uv).rg;
+
+    // 3. Reproject to find History UV
+    vec2 prevUV = uv - velocity;
+
+    // 4. Check if history is valid (inside screen)
+    if(prevUV.x < 0.0 || prevUV.x > 1.0 || prevUV.y < 0.0 || prevUV.y > 1.0) {
+        imageStore(imgOutput, pixelPos, vec4(color, 1.0));
+        return;
+    }
+
+    // 5. Read History
+    vec3 history = texture(texHistory, prevUV).rgb;
+
+    // 6. Neighborhood Clamping (Anti-Ghosting)
+    // Sample 3x3 box around current pixel to find min/max color range
+    vec3 minColor = color;
+    vec3 maxColor = color;
+    
+    for(int x = -1; x <= 1; x++) {
+        for(int y = -1; y <= 1; y++) {
+            vec3 neighbor = textureOffset(texColor, uv, ivec2(x, y)).rgb;
+            minColor = min(minColor, neighbor);
+            maxColor = max(maxColor, neighbor);
+        }
+    }
+    
+    // Clamp history to the range of valid neighbors
+    history = clamp(history, minColor, maxColor);
+
+    // 7. Blend
+    // Blend factor typically 0.9 for history, 0.1 for new
+    float blend = 0.9;
+    
+    // Dynamic blend factor based on velocity (optional)
+    // float velMag = length(velocity * size);
+    // blend = mix(0.9, 0.5, clamp(velMag / 10.0, 0.0, 1.0)); // Less history if moving fast
+
+    vec3 result = mix(color, history, blend);
+
+    imageStore(imgOutput, pixelPos, vec4(result, 1.0));
+}

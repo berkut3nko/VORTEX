@@ -13,6 +13,7 @@ export import :context;
 export import :swapchain;
 export import :ui;
 export import :pipeline;
+export import :taapipeline;
 export import :shader;
 
 // Export Voxel definitions so consumers of Graphics (like Core) see Chunk

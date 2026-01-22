@@ -17,7 +17,13 @@ namespace vortex::voxel {
      */
     export class ShapeBuilder {
     public:
-        // Заповнює чанк суцільним кубом (або частиною)
+        /**
+         * @brief Fills a chunk region with a solid box.
+         * @param chunk Target chunk.
+         * @param min Minimum corner coordinates (inclusive).
+         * @param max Maximum corner coordinates (exclusive).
+         * @param materialId Voxel material ID.
+         */
         static void CreateBox(Chunk& chunk, const glm::ivec3& min, const glm::ivec3& max, uint8_t materialId) {
             for (int z = min.z; z < max.z; ++z) {
                 for (int y = min.y; y < max.y; ++y) {
@@ -30,7 +36,13 @@ namespace vortex::voxel {
             }
         }
 
-        // Заповнює чанк сферою
+        /**
+         * @brief Fills a chunk region with a sphere.
+         * @param chunk Target chunk.
+         * @param center Sphere center in local chunk coordinates.
+         * @param radius Sphere radius.
+         * @param materialId Voxel material ID.
+         */
         static void CreateSphere(Chunk& chunk, const glm::vec3& center, float radius, uint8_t materialId) {
             int minX = std::max(0, (int)std::floor(center.x - radius));
             int maxX = std::min(32, (int)std::ceil(center.x + radius));
