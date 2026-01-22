@@ -9,6 +9,7 @@ module vortex.core;
 
 import vortex.log;
 import vortex.graphics;
+import vortex.voxel;
 import :camera; // Import camera module implementation
 
 namespace vortex {
@@ -96,8 +97,13 @@ namespace vortex {
         // ECS logic placeholder
     }
 
-    void Engine::UploadScene(const std::vector<graphics::SceneObject>& objects, const std::vector<graphics::SceneMaterial>& materials) {
-        m_State->graphicsContext->UploadScene(objects, materials);
+    void Engine::UploadScene(
+        const std::vector<graphics::SceneObject>& objects, 
+        const std::vector<graphics::SceneMaterial>& materials,
+        const std::vector<voxel::Chunk>& chunks
+    ) {
+        // Proxy call
+        m_State->graphicsContext->UploadScene(objects, materials, chunks);
     }
 
     graphics::GraphicsContext& Engine::GetGraphics() {

@@ -63,12 +63,15 @@ target_sources(VortexCore PRIVATE
 
 
     src/graphics/internal/ShaderCompiler.cpp
-    src/graphics/internal/RayTracingPipeline.cpp
     src/graphics/internal/Graphics.cpp
     src/graphics/internal/UI.cpp
     src/graphics/internal/Swapchain.cpp
     src/graphics/internal/Window.cpp
     src/graphics/internal/Context.cpp
+
+
+    #src/graphics/pipelines/internal/RayTracingPipeline.cpp
+    src/graphics/pipelines/internal/RasterPipeline.cpp
 )
 
 # C++ Modules (Interfaces)
@@ -88,16 +91,19 @@ target_sources(VortexCore PUBLIC
     src/graphics/Window.cppm
     src/graphics/Context.cppm
     src/graphics/Shader.cppm
-    src/graphics/RayTracingPipeline.cppm
+
+    #src/graphics/pipelines/RayTracingPipeline.cppm
+    src/graphics/pipelines/RasterPipeline.cppm
     
     # Voxel Engine Modules
     src/voxel/Voxel.cppm
+    src/voxel/Chunk.cppm
     src/voxel/World.cppm
     src/voxel/Material.cppm
     src/voxel/Palette.cppm
     src/voxel/Hierarchy.cppm
     src/voxel/Object.cppm
-    src/voxel/BeamOptimization.cppm
+    src/voxel/ShapeBuilder.cppm
 )
 
 

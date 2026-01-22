@@ -7,13 +7,14 @@ module;
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <cstring>
-#include <vk_mem_alloc.h> // Fixed: Added include
-#include <GLFW/glfw3.h>   // Fixed: Added include
+#include <vk_mem_alloc.h>
+#include <GLFW/glfw3.h>
 
 module vortex.graphics;
 
 import vortex.log;
 import vortex.memory;
+import vortex.voxel;
 
 namespace vortex::graphics {
 
@@ -24,7 +25,8 @@ namespace vortex::graphics {
         VulkanContext context;
         Swapchain swapchain;
         UIOverlay ui;
-        RayTracingPipeline rtPipeline;
+        
+        RasterPipeline rasterPipeline;
         
         VkCommandPool commandPool{VK_NULL_HANDLE};
         std::vector<VkCommandBuffer> commandBuffers;
@@ -36,9 +38,6 @@ namespace vortex::graphics {
         uint32_t imageIndex = 0;
 
         Camera camera;
-        bool hasLoggedDispatch = false;
-        
-        // Fixed: Added member variable
         uint32_t objectCount = 0;
 
         memory::AllocatedBuffer cameraUBO;
@@ -67,30 +66,28 @@ namespace vortex::graphics {
         VkCommandPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
         poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
         poolInfo.queueFamilyIndex = i.context.GetQueueFamily();
-        if (vkCreateCommandPool(i.context.GetDevice(), &poolInfo, nullptr, &i.commandPool) != VK_SUCCESS) {
-            Log::Error("Failed to create Command Pool");
-            return false;
-        }
+        vkCreateCommandPool(i.context.GetDevice(), &poolInfo, nullptr, &i.commandPool);
 
         i.commandBuffers.resize(FRAMES_IN_FLIGHT);
         VkCommandBufferAllocateInfo allocInfo{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
         allocInfo.commandPool = i.commandPool;
         allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         allocInfo.commandBufferCount = FRAMES_IN_FLIGHT;
-        if (vkAllocateCommandBuffers(i.context.GetDevice(), &allocInfo, i.commandBuffers.data()) != VK_SUCCESS) {
-             Log::Error("Failed to allocate Command Buffers");
-             return false;
-        }
+        vkAllocateCommandBuffers(i.context.GetDevice(), &allocInfo, i.commandBuffers.data());
 
         i.InitSyncObjects();
 
         auto* mem = i.context.GetAllocator();
+        
         i.cameraUBO = mem->CreateBuffer(sizeof(CameraUBO), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-        i.materialsSSBO = mem->CreateBuffer(65536, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+        i.materialsSSBO = mem->CreateBuffer(sizeof(voxel::PhysicalMaterial) * 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
         i.objectsSSBO = mem->CreateBuffer(65536, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
         i.chunksSSBO = mem->CreateBuffer(1024*1024*32, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
 
-        i.rtPipeline.Initialize(i.context.GetDevice(), i.swapchain.GetRenderTarget(), i.cameraUBO, i.materialsSSBO, i.objectsSSBO, i.chunksSSBO);
+        i.rasterPipeline.Initialize(i.context.GetDevice(), 
+                                    i.swapchain.GetFormat(), 
+                                    i.swapchain.GetDepthFormat(),
+                                    i.cameraUBO, i.materialsSSBO, i.objectsSSBO, i.chunksSSBO);
         
         i.ui.Initialize(i.context, i.window, i.swapchain.GetFormat(), i.swapchain.GetExtent(), i.swapchain.GetImageViews());
 
@@ -101,11 +98,9 @@ namespace vortex::graphics {
         VkSemaphoreCreateInfo s = {VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
         VkFenceCreateInfo f = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
         f.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-        
         imageAvailableSemaphores.resize(FRAMES_IN_FLIGHT);
         renderFinishedSemaphores.resize(FRAMES_IN_FLIGHT);
         inFlightFences.resize(FRAMES_IN_FLIGHT);
-
         for(int i=0; i<FRAMES_IN_FLIGHT; i++) {
             vkCreateSemaphore(context.GetDevice(), &s, nullptr, &imageAvailableSemaphores[i]);
             vkCreateSemaphore(context.GetDevice(), &s, nullptr, &renderFinishedSemaphores[i]);
@@ -116,13 +111,12 @@ namespace vortex::graphics {
     bool GraphicsContext::BeginFrame() {
         auto& i = *m_Internal;
         if (i.window.ShouldClose()) return false;
-        
         i.window.PollEvents();
 
         if (i.window.wasResized) {
             int w, h; i.window.GetFramebufferSize(w, h);
             i.swapchain.Recreate(w, h);
-            i.rtPipeline.UpdateDescriptors(i.swapchain.GetRenderTarget());
+            i.rasterPipeline.UpdateDescriptors();
             i.ui.OnResize(i.swapchain.GetExtent(), i.swapchain.GetImageViews());
             i.window.wasResized = false;
         }
@@ -137,9 +131,7 @@ namespace vortex::graphics {
         }
 
         vkResetFences(i.context.GetDevice(), 1, &i.inFlightFences[i.currentFrame]);
-        
         i.ui.BeginFrame();
-        
         return true;
     }
 
@@ -150,66 +142,57 @@ namespace vortex::graphics {
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
         vkBeginCommandBuffer(cmd, &begin);
 
-        // 1. Compute Raytracing
-        VkImageMemoryBarrier toCompute{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-        toCompute.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; 
-        toCompute.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-        toCompute.image = i.swapchain.GetRenderTarget().image;
-        toCompute.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        toCompute.srcAccessMask = 0;
-        toCompute.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toCompute);
-
-        uint32_t width = i.swapchain.GetExtent().width;
-        uint32_t height = i.swapchain.GetExtent().height;
-
-        if (!i.hasLoggedDispatch) {
-            Log::Info("Dispatching Compute: " + std::to_string(width) + "x" + std::to_string(height));
-            i.hasLoggedDispatch = true;
-        }
-
-        i.rtPipeline.Dispatch(cmd, width, height);
-
-        // 2. Blit (Compute -> Swapchain)
-        VkImageMemoryBarrier toTransferSrc = toCompute;
-        toTransferSrc.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-        toTransferSrc.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-        toTransferSrc.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        toTransferSrc.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-
-        VkImageMemoryBarrier toTransferDst{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-        toTransferDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; 
-        toTransferDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        toTransferDst.image = i.swapchain.GetImages()[i.imageIndex];
-        toTransferDst.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        toTransferDst.srcAccessMask = 0;
-        toTransferDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toTransferSrc);
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toTransferDst);
-
-        VkClearColorValue clearColor = {{0.0f, 0.0f, 0.0f, 1.0f}};
-        vkCmdClearColorImage(cmd, i.swapchain.GetImages()[i.imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clearColor, 1, &toTransferDst.subresourceRange);
-
-        VkImageBlit blit{};
-        blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        blit.srcOffsets[1] = {(int32_t)width, (int32_t)height, 1};
-        blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-        blit.dstOffsets[1] = {(int32_t)width, (int32_t)height, 1};
+        VkImageMemoryBarrier toColor{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        toColor.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; 
+        toColor.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        toColor.image = i.swapchain.GetImages()[i.imageIndex];
+        toColor.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        toColor.srcAccessMask = 0;
+        toColor.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
         
-        vkCmdBlitImage(cmd, 
-            i.swapchain.GetRenderTarget().image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 
-            i.swapchain.GetImages()[i.imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 
-            1, &blit, VK_FILTER_NEAREST);
+        VkImageMemoryBarrier toDepth{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        toDepth.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        toDepth.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        toDepth.image = i.swapchain.GetDepthImage().image;
+        toDepth.subresourceRange = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        toDepth.srcAccessMask = 0;
+        toDepth.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
-        // 3. UI Render Pass
-        VkImageMemoryBarrier toColorAtt = toTransferDst;
-        toColorAtt.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        toColorAtt.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        toColorAtt.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        toColorAtt.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+        VkImageMemoryBarrier barriers[] = {toColor, toDepth};
+        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers);
 
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1, &toColorAtt);
+        VkRenderingAttachmentInfo colorAttachment{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        colorAttachment.imageView = i.swapchain.GetImageViews()[i.imageIndex];
+        colorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        colorAttachment.clearValue.color = {{0.5f, 0.7f, 0.9f, 1.0f}};
+
+        VkRenderingAttachmentInfo depthAttachment{VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        depthAttachment.imageView = i.swapchain.GetDepthImage().imageView;
+        depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+        depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+        depthAttachment.clearValue.depthStencil = {1.0f, 0};
+
+        VkRenderingInfo renderInfo{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        renderInfo.renderArea = {{0, 0}, i.swapchain.GetExtent()};
+        renderInfo.layerCount = 1;
+        renderInfo.colorAttachmentCount = 1;
+        renderInfo.pColorAttachments = &colorAttachment;
+        renderInfo.pDepthAttachment = &depthAttachment;
+
+        vkCmdBeginRendering(cmd, &renderInfo);
+
+        VkViewport viewport{0.0f, 0.0f, (float)i.swapchain.GetExtent().width, (float)i.swapchain.GetExtent().height, 0.0f, 1.0f};
+        VkRect2D scissor{{0, 0}, i.swapchain.GetExtent()};
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+        i.rasterPipeline.Bind(cmd);
+        vkCmdDraw(cmd, 36, i.objectCount, 0, 0);
+
+        vkCmdEndRendering(cmd);
 
         i.ui.Render(cmd, i.imageIndex);
 
@@ -244,13 +227,13 @@ namespace vortex::graphics {
         
         glm::mat4 view = glm::lookAt(i.camera.position, i.camera.position + i.camera.front, i.camera.up);
         float aspect = (float)i.swapchain.GetExtent().width / (float)i.swapchain.GetExtent().height;
-        
         glm::mat4 proj = glm::perspective(glm::radians(i.camera.fov), aspect, 0.1f, 100.0f);
         proj[1][1] *= -1; 
 
         ubo.viewInverse = glm::inverse(view);
         ubo.projInverse = glm::inverse(proj);
         ubo.objectCount = i.objectCount;
+        ubo.viewProj = proj * view;
 
         void* data;
         vmaMapMemory(i.context.GetVmaAllocator(), i.cameraUBO.allocation, &data);
@@ -258,15 +241,33 @@ namespace vortex::graphics {
         vmaUnmapMemory(i.context.GetVmaAllocator(), i.cameraUBO.allocation);
     }
 
-    void GraphicsContext::UploadScene(const std::vector<SceneObject>& objects, const std::vector<SceneMaterial>& materials) {
+    void GraphicsContext::UploadScene(
+        const std::vector<graphics::SceneObject>& objects, 
+        const std::vector<graphics::SceneMaterial>& materials,
+        const std::vector<voxel::Chunk>& chunks 
+    ) {
         auto& i = *m_Internal;
         i.objectCount = (uint32_t)objects.size();
+        
         void* data;
         
+        // --- 1. Upload Materials (FIXED) ---
+        std::vector<voxel::PhysicalMaterial> gpuMaterials(materials.size());
+        for(size_t k=0; k < materials.size(); ++k) {
+            gpuMaterials[k].color = materials[k].color;
+            gpuMaterials[k].density = 1.0f;
+            gpuMaterials[k].friction = 0.5f;
+            gpuMaterials[k].restitution = 0.0f;
+            gpuMaterials[k].hardness = 1.0f;
+            gpuMaterials[k].flags = 0;
+        }
+
         vmaMapMemory(i.context.GetVmaAllocator(), i.materialsSSBO.allocation, &data);
-        memcpy(data, materials.data(), materials.size() * sizeof(SceneMaterial));
+        // Копіюємо ПОВНИЙ розмір масиву PhysicalMaterial
+        memcpy(data, gpuMaterials.data(), gpuMaterials.size() * sizeof(voxel::PhysicalMaterial));
         vmaUnmapMemory(i.context.GetVmaAllocator(), i.materialsSSBO.allocation);
 
+        // --- 2. Upload Objects ---
         struct GPUObject {
             glm::mat4 model;
             glm::mat4 invModel;
@@ -275,11 +276,12 @@ namespace vortex::graphics {
             uint32_t flags;
             uint32_t pad;
         };
+        
         std::vector<GPUObject> gpuObjects(objects.size());
         for(size_t k=0; k<objects.size(); ++k) {
             gpuObjects[k].model = objects[k].model;
             gpuObjects[k].invModel = glm::inverse(objects[k].model);
-            gpuObjects[k].chunkIndex = 0; 
+            gpuObjects[k].chunkIndex = objects[k].materialIdx; 
             gpuObjects[k].paletteOffset = 0; 
             gpuObjects[k].flags = 0;
         }
@@ -287,21 +289,25 @@ namespace vortex::graphics {
         vmaMapMemory(i.context.GetVmaAllocator(), i.objectsSSBO.allocation, &data);
         memcpy(data, gpuObjects.data(), gpuObjects.size() * sizeof(GPUObject));
         vmaUnmapMemory(i.context.GetVmaAllocator(), i.objectsSSBO.allocation);
+
+        // --- 3. Upload Chunks ---
+        if (!chunks.empty()) {
+            size_t chunkSize = sizeof(voxel::Chunk);
+            size_t totalSize = chunks.size() * chunkSize;
+            
+            vmaMapMemory(i.context.GetVmaAllocator(), i.chunksSSBO.allocation, &data);
+            memcpy(data, chunks.data(), totalSize);
+            vmaUnmapMemory(i.context.GetVmaAllocator(), i.chunksSSBO.allocation);
+        }
     }
 
-    GLFWwindow* GraphicsContext::GetWindow() {
-        return m_Internal->window.GetNativeHandle();
-    }
+    GLFWwindow* GraphicsContext::GetWindow() { return m_Internal->window.GetNativeHandle(); }
 
     void GraphicsContext::Shutdown() {
         if (!m_Internal) return;
-        
-        if (m_Internal->context.GetDevice() != VK_NULL_HANDLE) {
-            vkDeviceWaitIdle(m_Internal->context.GetDevice());
-        }
-
+        vkDeviceWaitIdle(m_Internal->context.GetDevice());
         m_Internal->ui.Shutdown();
-        m_Internal->rtPipeline.Shutdown();
+        m_Internal->rasterPipeline.Shutdown();
         m_Internal->swapchain.Shutdown();
         m_Internal->window.Shutdown();
         m_Internal->context.Shutdown();

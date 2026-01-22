@@ -24,7 +24,6 @@ namespace vortex::graphics {
         auto swap_ret = swap_builder
             .set_desired_extent(width, height)
             .set_old_swapchain(m_Swapchain)
-            // .set_surface(m_Surface) // REMOVED: vkb::SwapchainBuilder infers surface from Device
             .add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
             .build();
 
@@ -34,7 +33,7 @@ namespace vortex::graphics {
         }
 
         if (m_Swapchain != VK_NULL_HANDLE) {
-            DestroyInternal(); // Clean up old views/target, keep swapchain handle for set_old_swapchain above logic
+            DestroyInternal();
         }
 
         m_VkbSwapchain = swap_ret.value();
@@ -44,32 +43,26 @@ namespace vortex::graphics {
         m_SwapchainExtent = m_VkbSwapchain.extent;
         m_SwapchainFormat = m_VkbSwapchain.image_format;
 
-        // Create RayTracing Render Target
-        m_RenderTarget = m_Context->GetAllocator()->CreateImage(
+        // --- Create Depth Buffer ---
+        m_DepthImage = m_Context->GetAllocator()->CreateImage(
             m_SwapchainExtent.width, m_SwapchainExtent.height, 
-            VK_FORMAT_R8G8B8A8_UNORM, 
-            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+            VK_FORMAT_D32_SFLOAT, 
+            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
         );
     }
 
     void Swapchain::DestroyInternal() {
-         // vkb::destroy_swapchain destroys views, but we manually destroy render target
-         if (m_RenderTarget.image != VK_NULL_HANDLE) {
-             m_Context->GetAllocator()->DestroyImage(m_RenderTarget);
-             m_RenderTarget = {};
+         if (m_DepthImage.image != VK_NULL_HANDLE) {
+             m_Context->GetAllocator()->DestroyImage(m_DepthImage);
+             m_DepthImage = {};
          }
-         // Note: We don't destroy m_Swapchain here if we are recreating, vkb handles logic
     }
 
     void Swapchain::Recreate(uint32_t width, uint32_t height) {
         vkDeviceWaitIdle(m_Context->GetDevice());
-        // In vkb, to recreate, we usually destroy the old wrapper but keep the handle for the builder?
-        // Actually vkb::destroy_swapchain kills the handle too. 
-        // Simplification: Full destroy then create.
         DestroyInternal();
         vkb::destroy_swapchain(m_VkbSwapchain);
         m_Swapchain = VK_NULL_HANDLE; 
-        
         Create(width, height);
     }
 

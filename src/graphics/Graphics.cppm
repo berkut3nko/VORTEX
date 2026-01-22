@@ -4,18 +4,19 @@ module;
 #include <string>
 #include <vector>
 #include <glm/glm.hpp>
-// Forward decl for GLFW
 struct GLFWwindow;
 
 export module vortex.graphics;
 
-// Export sub-modules so users can see types if needed
 export import :window;
 export import :context;
 export import :swapchain;
 export import :ui;
 export import :pipeline;
 export import :shader;
+
+// Export Voxel definitions so consumers of Graphics (like Core) see Chunk
+export import vortex.voxel;
 
 namespace vortex::graphics {
 
@@ -30,19 +31,15 @@ namespace vortex::graphics {
 
     export struct SceneObject {
         glm::mat4 model;
-        uint32_t materialIdx;
+        uint32_t materialIdx; 
     };
 
     export struct SceneMaterial {
         glm::vec4 color;
     };
 
-    // Forward declaration to hide implementation
     struct GraphicsInternal;
 
-    /**
-     * @brief Main facade for the graphics engine.
-     */
     export class GraphicsContext {
     public:
         GraphicsContext();
@@ -54,14 +51,13 @@ namespace vortex::graphics {
         bool BeginFrame();
         void EndFrame();
 
-        // Renamed to clarify intent: this only uploads data to GPU, doesn't handle input
         void UploadCamera(); 
         
-        void UploadScene(const std::vector<SceneObject>& objects, const std::vector<SceneMaterial>& materials);
+        void UploadScene(const std::vector<SceneObject>& objects, 
+                         const std::vector<SceneMaterial>& materials,
+                         const std::vector<vortex::voxel::Chunk>& chunks);
         
         Camera& GetCamera();
-        
-        // New: Access to window for Input Controller
         GLFWwindow* GetWindow();
 
     private:

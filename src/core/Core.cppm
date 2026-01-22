@@ -3,11 +3,14 @@ module;
 #include <memory>
 #include <string>
 #include <vector>
-#include <functional> // For std::function
+#include <functional> 
 
 export module vortex.core;
 
 export import vortex.graphics;
+// Explicitly import voxel module to ensure Chunk is visible in UploadScene signature
+import vortex.voxel; 
+
 export import :camera;    
 export import :profiller;
 
@@ -20,16 +23,16 @@ namespace vortex {
 
         bool Initialize(const std::string& title, uint32_t width, uint32_t height);
         
-        /**
-         * @brief Starts the main engine loop.
-         * @param onGuiRender Optional callback for rendering custom ImGui UI.
-         */
         void Run(std::function<void()> onGuiRender = nullptr);
         
         void Shutdown();
         
-        // Proxy methods to keep main.cpp clean
-        void UploadScene(const std::vector<graphics::SceneObject>& objects, const std::vector<graphics::SceneMaterial>& materials);
+        // Proxy methods
+        void UploadScene(
+            const std::vector<graphics::SceneObject>& objects, 
+            const std::vector<graphics::SceneMaterial>& materials,
+            const std::vector<voxel::Chunk>& chunks);
+            
         graphics::GraphicsContext& GetGraphics();
 
     private:
