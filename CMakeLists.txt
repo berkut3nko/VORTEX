@@ -68,6 +68,8 @@ target_sources(VortexCore PRIVATE
     src/graphics/internal/Swapchain.cpp
     src/graphics/internal/Window.cpp
     src/graphics/internal/Context.cpp
+    src/graphics/internal/SceneManager.cpp
+    src/graphics/internal/RenderResources.cpp
 
 
     #src/graphics/pipelines/internal/RayTracingPipeline.cpp
@@ -93,6 +95,9 @@ target_sources(VortexCore PUBLIC
     src/graphics/Window.cppm
     src/graphics/Context.cppm
     src/graphics/Shader.cppm
+    src/graphics/RenderResources.cppm
+    src/graphics/CameraStruct.cppm
+    src/graphics/SceneManager.cppm
 
     #src/graphics/pipelines/RayTracingPipeline.cppm
     src/graphics/pipelines/RasterPipeline.cppm

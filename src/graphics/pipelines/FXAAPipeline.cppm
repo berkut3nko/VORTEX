@@ -21,6 +21,7 @@ namespace vortex::graphics {
         // Compute Dispatch
         void Dispatch(VkCommandBuffer cmd, 
                       uint32_t frameIndex,
+                      VkSampler sampler, // <--- ADDED
                       const memory::AllocatedImage& input,
                       const memory::AllocatedImage& output,
                       uint32_t width, uint32_t height);

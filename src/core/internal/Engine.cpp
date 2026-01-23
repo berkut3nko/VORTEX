@@ -10,11 +10,14 @@ module vortex.core;
 import vortex.log;
 import vortex.graphics;
 import vortex.voxel;
-import :camera; // Import camera module implementation
+import :camera;
 
 namespace vortex {
 
-    // --- Pimpl Definition ---
+    /**
+     * @brief Internal Pimpl state for the Engine.
+     * @details Hides implementation details and dependencies (like EnTT) from the public API.
+     */
     struct Engine::InternalState {
         std::unique_ptr<graphics::GraphicsContext> graphicsContext;
         core::CameraController cameraController;
@@ -22,13 +25,9 @@ namespace vortex {
         bool isRunning = false;
     };
 
-    // --- Engine Implementation ---
-
     Engine::Engine() : m_State(std::make_unique<InternalState>()) {
         Log::Init();
         m_State->graphicsContext = std::make_unique<graphics::GraphicsContext>();
-        
-        // Default camera settings
         m_State->cameraController.movementSpeed = 5.0f;
     }
 
@@ -39,7 +38,6 @@ namespace vortex {
             Log::Error("Failed to initialize Graphics Context!");
             return false;
         }
-
         Log::Info("Engine initialized successfully.");
         return true;
     }
@@ -61,19 +59,18 @@ namespace vortex {
                 break;
             }
 
-            // 2. Update Camera Logic
+            // 2. Update Camera
             m_State->cameraController.Update(
                 m_State->graphicsContext->GetWindow(), 
                 m_State->graphicsContext->GetCamera(), 
                 deltaTime
             );
-
             m_State->graphicsContext->UploadCamera();
 
-            // 3. Update Systems
+            // 3. Update Game Logic
             UpdateSystems(deltaTime);
 
-            // 4. Custom UI Rendering (from main.cpp)
+            // 4. Custom GUI
             if (onGuiRender) {
                 onGuiRender();
             }
@@ -94,7 +91,7 @@ namespace vortex {
 
     void Engine::UpdateSystems(float deltaTime) {
         (void)deltaTime;
-        // ECS logic placeholder
+        // Placeholder for ECS system updates
     }
 
     void Engine::UploadScene(
@@ -102,7 +99,6 @@ namespace vortex {
         const std::vector<graphics::SceneMaterial>& materials,
         const std::vector<voxel::Chunk>& chunks
     ) {
-        // Proxy call
         m_State->graphicsContext->UploadScene(objects, materials, chunks);
     }
 

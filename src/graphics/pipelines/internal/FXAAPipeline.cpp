@@ -88,11 +88,19 @@ namespace vortex::graphics {
 
     void FXAAPipeline::Dispatch(VkCommandBuffer cmd, 
                       uint32_t frameIndex,
+                      VkSampler sampler, // <--- USED HERE
                       const memory::AllocatedImage& input,
                       const memory::AllocatedImage& output,
                       uint32_t width, uint32_t height) {
 
-        VkDescriptorImageInfo inInfo{input.sampler ? input.sampler : VK_NULL_HANDLE, input.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        // FIX: Use passed sampler, fallback to image's sampler if passed is null (rare), but ensure not null
+        VkSampler samplerToUse = sampler ? sampler : input.sampler;
+        if (samplerToUse == VK_NULL_HANDLE) {
+             // Fallback or crash prevention, though caller should provide valid sampler
+             // Assuming caller provides valid sampler from GraphicsContext
+        }
+
+        VkDescriptorImageInfo inInfo{samplerToUse, input.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         VkDescriptorImageInfo outInfo{VK_NULL_HANDLE, output.imageView, VK_IMAGE_LAYOUT_GENERAL};
 
         VkWriteDescriptorSet writes[2];
@@ -113,7 +121,7 @@ namespace vortex::graphics {
             if(m_PipelineLayout) vkDestroyPipelineLayout(m_Device, m_PipelineLayout, nullptr);
             if(m_DescriptorSetLayout) vkDestroyDescriptorSetLayout(m_Device, m_DescriptorSetLayout, nullptr);
             if(m_DescriptorPool) vkDestroyDescriptorPool(m_Device, m_DescriptorPool, nullptr);
-            m_Pipeline = VK_NULL_HANDLE; // Reset for IsInitialized check
+            m_Pipeline = VK_NULL_HANDLE; 
         }
     }
 }

@@ -3,20 +3,16 @@ module;
 #include <vulkan/vulkan.h>
 #include <memory>
 #include <vector>
-#include <imgui.h>
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <cstring>
-#include <algorithm> 
 #include <vk_mem_alloc.h>
 #include <GLFW/glfw3.h>
-#include <array>
 
 module vortex.graphics;
 
 import vortex.log;
 import vortex.memory;
 import vortex.voxel;
+import :render_resources;
+import :scene_manager;
 import :taapipeline; 
 import :fxaapipeline;
 
@@ -24,147 +20,70 @@ namespace vortex::graphics {
 
     constexpr int FRAMES_IN_FLIGHT = 2;
 
-    struct GPUObject {
-        glm::mat4 model;
-        glm::mat4 invModel;
-        uint32_t chunkIndex;
-        uint32_t paletteOffset;
-        uint32_t flags;
-        uint32_t pad;
-    };
-
-    float Halton(int index, int base) {
-        float f = 1.0f; float r = 0.0f;
-        while (index > 0) { f = f / (float)base; r = r + f * (index % base); index = index / base; }
-        return r;
-    }
-    
-    struct ViewFrustum {
-        std::array<glm::vec4, 6> planes;
-        void Update(const glm::mat4& viewProj) {
-            for (int i = 0; i < 3; ++i) {
-                for (int j = 0; j < 2; ++j) {
-                    planes[i * 2 + j].x = viewProj[0][3] + (j == 0 ? viewProj[0][i] : -viewProj[0][i]);
-                    planes[i * 2 + j].y = viewProj[1][3] + (j == 0 ? viewProj[1][i] : -viewProj[1][i]);
-                    planes[i * 2 + j].z = viewProj[2][3] + (j == 0 ? viewProj[2][i] : -viewProj[2][i]);
-                    planes[i * 2 + j].w = viewProj[3][3] + (j == 0 ? viewProj[3][i] : -viewProj[3][i]);
-                    float length = glm::length(glm::vec3(planes[i * 2 + j]));
-                    planes[i * 2 + j] /= length;
-                }
-            }
-        }
-        bool IsSphereVisible(const glm::vec3& center, float radius) const {
-            for (const auto& plane : planes) {
-                if (glm::dot(glm::vec3(plane), center) + plane.w < -radius) return false; 
-            }
-            return true;
-        }
-    };
-
     struct GraphicsInternal {
         Window window;
         VulkanContext context;
         Swapchain swapchain;
         UIOverlay ui;
         
+        // Modules
+        RenderResources resources;
+        SceneManager sceneManager;
+        
         RasterPipeline rasterPipeline;
         TAAPipeline taaPipeline; 
         FXAAPipeline fxaaPipeline;
 
+        // Synchronization
         VkCommandPool commandPool{VK_NULL_HANDLE};
         std::vector<VkCommandBuffer> commandBuffers;
         std::vector<VkSemaphore> imageAvailableSemaphores;
         std::vector<VkSemaphore> renderFinishedSemaphores;
         std::vector<VkFence> inFlightFences;
 
+        // State
         uint32_t currentFrame = 0;
         uint32_t imageIndex = 0;
         uint64_t frameCounter = 0;
 
         Camera camera;
-        glm::mat4 prevViewProj{1.0f};
-
         float renderScale = 1.0f; 
-        
-        // --- AA State ---
-        AntiAliasingMode currentAAMode = AntiAliasingMode::FXAA; // Default
-        
-        memory::AllocatedImage colorTarget;
-        memory::AllocatedImage velocityTarget;
-        memory::AllocatedImage depthTarget;
-        memory::AllocatedImage resolveTarget; // Output for AA compute shaders
-        
-        memory::AllocatedImage historyTexture[2]; 
-        int historyIndex = 0;
-        bool historyValid = false;
+        AntiAliasingMode currentAAMode = AntiAliasingMode::FXAA;
         
         VkSampler defaultSampler{VK_NULL_HANDLE};
 
-        std::vector<SceneObject> cachedObjects;
-        std::vector<GPUObject> visibleGPUObjects;
-
-        memory::AllocatedBuffer cameraUBO;
-        memory::AllocatedBuffer materialsSSBO;
-        memory::AllocatedBuffer objectsSSBO;
-        memory::AllocatedBuffer chunksSSBO;
-
+        // --- Methods ---
         void InitSyncObjects();
-        void CreateOffscreenResources(uint32_t w, uint32_t h);
+        
+        /**
+         * @brief Records commands for the current frame.
+         * @param cmd The command buffer to record into.
+         */
+        void RecordCommandBuffer(VkCommandBuffer cmd);
+        
+        // Render Passes
+        void PassGeometry(VkCommandBuffer cmd, size_t visibleCount);
+        void PassAA(VkCommandBuffer cmd, memory::AllocatedImage*& outImage);
+        void PassBlit(VkCommandBuffer cmd, memory::AllocatedImage* source);
+        void PassUI(VkCommandBuffer cmd);
+        
+        // Helpers
+        void TransitionLayout(VkCommandBuffer cmd, VkImage img, VkImageLayout oldL, VkImageLayout newL);
     };
 
     GraphicsContext::GraphicsContext() : m_Internal(std::make_unique<GraphicsInternal>()) {}
     GraphicsContext::~GraphicsContext() { Shutdown(); }
 
-    void GraphicsInternal::CreateOffscreenResources(uint32_t sw, uint32_t sh) {
-        auto* mem = context.GetAllocator();
-        uint32_t w = (uint32_t)(sw * renderScale);
-        uint32_t h = (uint32_t)(sh * renderScale);
-        if (w == 0) w = 1; if (h == 0) h = 1;
-
-        // --- OPTIMIZED RESOURCES (GPU_ONLY + OPTIMAL TILING) ---
-        colorTarget = mem->CreateImage(w, h, VK_FORMAT_R8G8B8A8_UNORM, 
-            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-            VMA_MEMORY_USAGE_GPU_ONLY);
-
-        velocityTarget = mem->CreateImage(w, h, VK_FORMAT_R16G16_SFLOAT, 
-            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-            VMA_MEMORY_USAGE_GPU_ONLY);
-
-        depthTarget = mem->CreateImage(w, h, VK_FORMAT_D32_SFLOAT, 
-            VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-            VMA_MEMORY_USAGE_GPU_ONLY);
-
-        resolveTarget = mem->CreateImage(w, h, VK_FORMAT_R8G8B8A8_UNORM, 
-            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-            VMA_MEMORY_USAGE_GPU_ONLY);
-
-        historyTexture[0] = mem->CreateImage(w, h, VK_FORMAT_R8G8B8A8_UNORM, 
-            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-            VMA_MEMORY_USAGE_GPU_ONLY);
-            
-        historyTexture[1] = mem->CreateImage(w, h, VK_FORMAT_R8G8B8A8_UNORM, 
-            VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
-            VMA_MEMORY_USAGE_GPU_ONLY);
-        
-        colorTarget.sampler = defaultSampler;
-        velocityTarget.sampler = defaultSampler;
-        depthTarget.sampler = defaultSampler;
-        resolveTarget.sampler = defaultSampler;
-        historyTexture[0].sampler = defaultSampler;
-        historyTexture[1].sampler = defaultSampler;
-        
-        historyValid = false;
-    }
-
     bool GraphicsContext::Initialize(const std::string& title, uint32_t width, uint32_t height) {
         auto& i = *m_Internal;
         
+        // 1. Core Vulkan Init
         if (!i.window.Initialize(title, width, height)) return false;
         if (!i.context.InitInstance(title.c_str())) return false;
-        VkSurfaceKHR surface = i.window.CreateSurface(i.context.GetInstance());
-        if (!i.context.InitDevice(surface)) return false;
-        if (!i.swapchain.Initialize(i.context, surface, width, height)) return false;
+        if (!i.context.InitDevice(i.window.CreateSurface(i.context.GetInstance()))) return false;
+        if (!i.swapchain.Initialize(i.context, i.window.CreateSurface(i.context.GetInstance()), width, height)) return false;
         
+        // 2. Command Pools
         VkCommandPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
         poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
         poolInfo.queueFamilyIndex = i.context.GetQueueFamily();
@@ -179,32 +98,34 @@ namespace vortex::graphics {
 
         i.InitSyncObjects();
 
+        // 3. Shared Resources
         VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
-        samplerInfo.magFilter = VK_FILTER_LINEAR;
-        samplerInfo.minFilter = VK_FILTER_LINEAR;
+        samplerInfo.magFilter = VK_FILTER_LINEAR; samplerInfo.minFilter = VK_FILTER_LINEAR;
+        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
         samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         vkCreateSampler(i.context.GetDevice(), &samplerInfo, nullptr, &i.defaultSampler);
 
-        i.CreateOffscreenResources(width, height);
+        i.resources.Initialize(i.context.GetAllocator(), width, height);
+        
+        // 4. Scene Management
+        i.sceneManager.Initialize(i.context.GetAllocator());
 
-        auto* mem = i.context.GetAllocator();
-        i.cameraUBO = mem->CreateBuffer(sizeof(CameraUBO), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-        i.materialsSSBO = mem->CreateBuffer(sizeof(voxel::PhysicalMaterial) * 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-        i.objectsSSBO = mem->CreateBuffer(sizeof(GPUObject) * 10000, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-        i.chunksSSBO = mem->CreateBuffer(1024*1024*32, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
-
+        // 5. Pipelines
         i.rasterPipeline.Initialize(i.context.GetDevice(), 
                                     VK_FORMAT_R8G8B8A8_UNORM,
                                     VK_FORMAT_R16G16_SFLOAT,
                                     VK_FORMAT_D32_SFLOAT,
                                     FRAMES_IN_FLIGHT,
-                                    i.cameraUBO, i.materialsSSBO, i.objectsSSBO, i.chunksSSBO);
+                                    i.sceneManager.GetCameraBuffer(), 
+                                    i.sceneManager.GetMaterialBuffer(), 
+                                    i.sceneManager.GetObjectBuffer(), 
+                                    i.sceneManager.GetChunkBuffer());
         
-        // DO NOT INITIALIZE TAA/FXAA HERE (Lazy Load)
-
         i.ui.Initialize(i.context, i.window, i.swapchain.GetFormat(), i.swapchain.GetExtent(), i.swapchain.GetImageViews());
+        
+        Log::Info("Graphics Subsystem Fully Initialized.");
         return true;
     }
 
@@ -229,28 +150,13 @@ namespace vortex::graphics {
         
         if (i.window.wasResized) {
             int w, h; i.window.GetFramebufferSize(w, h);
-            i.swapchain.Recreate(w, h);
-            
-            auto* mem = i.context.GetAllocator();
-            mem->DestroyImage(i.colorTarget);
-            mem->DestroyImage(i.velocityTarget);
-            mem->DestroyImage(i.depthTarget);
-            mem->DestroyImage(i.resolveTarget);
-            mem->DestroyImage(i.historyTexture[0]);
-            mem->DestroyImage(i.historyTexture[1]);
-            i.CreateOffscreenResources(w, h);
-            
-            for(int f=0; f<FRAMES_IN_FLIGHT; f++)
-                i.rasterPipeline.UpdateDescriptors(f);
-
-            // No need to update AA descriptors on resize if they are not initialized yet
-            // They will be created with correct size upon lazy init.
-            // If they WERE initialized, we should probably destroy and re-init them or update descriptors.
-            // For simplicity, let's just shutdown AA pipelines on resize so they re-init with new size.
-            i.taaPipeline.Shutdown();
-            i.fxaaPipeline.Shutdown();
-
-            i.ui.OnResize(i.swapchain.GetExtent(), i.swapchain.GetImageViews());
+            if (w > 0 && h > 0) {
+                i.swapchain.Recreate(w, h);
+                i.resources.Initialize(i.context.GetAllocator(), w, h);
+                i.taaPipeline.Shutdown(); 
+                i.fxaaPipeline.Shutdown();
+                i.ui.OnResize(i.swapchain.GetExtent(), i.swapchain.GetImageViews());
+            }
             i.window.wasResized = false;
         }
 
@@ -265,428 +171,228 @@ namespace vortex::graphics {
 
     void GraphicsContext::EndFrame() {
         auto& i = *m_Internal;
-        VkCommandBuffer cmd = i.commandBuffers[i.currentFrame];
-        vkResetCommandBuffer(cmd, 0);
-        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        vkBeginCommandBuffer(cmd, &begin);
-
-        // ... [CULLING & SORTING CODE SKIPPED FOR BREVITY - SAME AS BEFORE] ...
-        // Re-inserting culling for completeness
-        i.visibleGPUObjects.clear();
-        if (!i.cachedObjects.empty()) {
-            float aspect = (float)i.swapchain.GetExtent().width / (float)i.swapchain.GetExtent().height;
-            glm::mat4 view = glm::lookAt(i.camera.position, i.camera.position + i.camera.front, i.camera.up);
-            glm::mat4 proj = glm::perspective(glm::radians(i.camera.fov), aspect, 0.1f, 100.0f);
-            proj[1][1] *= -1;
-            glm::mat4 viewProj = proj * view;
-
-            ViewFrustum frustum;
-            frustum.Update(viewProj);
-
-            std::vector<SceneObject> visibleObjects;
-            visibleObjects.reserve(i.cachedObjects.size());
-            const float CHUNK_RADIUS = 28.0f; 
-
-            for(const auto& obj : i.cachedObjects) {
-                glm::vec3 worldCenter = glm::vec3(obj.model * glm::vec4(16.0f, 16.0f, 16.0f, 1.0f));
-                float maxScale = glm::length(glm::vec3(obj.model[0])); 
-                float radius = CHUNK_RADIUS * maxScale;
-
-                if (frustum.IsSphereVisible(worldCenter, radius)) {
-                    visibleObjects.push_back(obj);
-                }
-            }
-
-            glm::vec3 camPos = i.camera.position;
-            std::sort(visibleObjects.begin(), visibleObjects.end(), [camPos](const SceneObject& a, const SceneObject& b) {
-                glm::vec3 posA = glm::vec3(a.model[3]);
-                glm::vec3 posB = glm::vec3(b.model[3]);
-                return glm::dot(posA - camPos, posA - camPos) < glm::dot(posB - camPos, posB - camPos);
-            });
-
-            i.visibleGPUObjects.resize(visibleObjects.size());
-            for(size_t k=0; k<visibleObjects.size(); ++k) {
-                i.visibleGPUObjects[k].model = visibleObjects[k].model;
-                i.visibleGPUObjects[k].invModel = glm::inverse(visibleObjects[k].model);
-                i.visibleGPUObjects[k].chunkIndex = visibleObjects[k].materialIdx; 
-                i.visibleGPUObjects[k].paletteOffset = 0; 
-                i.visibleGPUObjects[k].flags = 0;
-            }
-
-            if (!i.visibleGPUObjects.empty()) {
-                vkCmdUpdateBuffer(cmd, i.objectsSSBO.buffer, 0, sizeof(GPUObject) * i.visibleGPUObjects.size(), i.visibleGPUObjects.data());
-
-                VkBufferMemoryBarrier bufBarrier{VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER};
-                bufBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-                bufBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-                bufBarrier.buffer = i.objectsSSBO.buffer;
-                bufBarrier.size = VK_WHOLE_SIZE;
-                vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 1, &bufBarrier, 0, nullptr);
-            }
-        }
-
-        // --- 1. RENDER SCENE (To Offscreen) ---
-        {
-            VkImageMemoryBarrier bar[3];
-            bar[0] = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-            bar[0].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; bar[0].newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            bar[0].image = i.colorTarget.image; bar[0].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            bar[0].srcAccessMask = 0; bar[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-            
-            bar[1] = bar[0];
-            bar[1].image = i.velocityTarget.image;
-            
-            bar[2] = bar[0];
-            bar[2].newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-            bar[2].image = i.depthTarget.image;
-            bar[2].subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-            bar[2].dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT|VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0, nullptr, 0, nullptr, 3, bar);
-
-            VkRenderingAttachmentInfo colors[2];
-            colors[0] = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-            colors[0].imageView = i.colorTarget.imageView;
-            colors[0].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            colors[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; colors[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-            colors[0].clearValue.color = {{0.5f, 0.7f, 0.9f, 1.0f}};
-            
-            colors[1] = colors[0];
-            colors[1].imageView = i.velocityTarget.imageView;
-            colors[1].clearValue.color = {{0.0f, 0.0f, 0.0f, 0.0f}};
-
-            VkRenderingAttachmentInfo depth = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-            depth.imageView = i.depthTarget.imageView;
-            depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-            depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-            depth.clearValue.depthStencil = {1.0f, 0};
-
-            VkExtent2D renderExtent;
-            renderExtent.width = (uint32_t)(i.swapchain.GetExtent().width * i.renderScale);
-            renderExtent.height = (uint32_t)(i.swapchain.GetExtent().height * i.renderScale);
-            
-            VkRenderingInfo renderInfo{VK_STRUCTURE_TYPE_RENDERING_INFO};
-            renderInfo.renderArea = {{0,0}, renderExtent};
-            renderInfo.layerCount = 1;
-            renderInfo.colorAttachmentCount = 2;
-            renderInfo.pColorAttachments = colors;
-            renderInfo.pDepthAttachment = &depth;
-
-            vkCmdBeginRendering(cmd, &renderInfo);
-            VkViewport vp{0,0,(float)renderExtent.width, (float)renderExtent.height, 0, 1};
-            VkRect2D sc{{0,0}, renderExtent};
-            vkCmdSetViewport(cmd, 0, 1, &vp);
-            vkCmdSetScissor(cmd, 0, 1, &sc);
-
-            if(!i.visibleGPUObjects.empty()) {
-                i.rasterPipeline.Bind(cmd, i.currentFrame);
-                vkCmdDraw(cmd, 36, (uint32_t)i.visibleGPUObjects.size(), 0, 0);
-            }
-            vkCmdEndRendering(cmd);
-        }
-
-        memory::AllocatedImage* sourceForBlit = &i.colorTarget; // Default: Blit directly from Color
-
-        // --- 2. SWITCH AA MODE ---
-        if (i.currentAAMode == AntiAliasingMode::FXAA) {
-            // --- FXAA PASS (Compute) ---
-            if (!i.fxaaPipeline.IsInitialized()) {
-                i.fxaaPipeline.Initialize(i.context.GetDevice(), FRAMES_IN_FLIGHT);
-            }
-
-            VkImageMemoryBarrier barriers[2];
-            barriers[0] = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-            barriers[0].oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            barriers[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            barriers[0].image = i.colorTarget.image;
-            barriers[0].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            barriers[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-            barriers[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-
-            barriers[1] = barriers[0];
-            barriers[1].oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            barriers[1].newLayout = VK_IMAGE_LAYOUT_GENERAL;
-            barriers[1].image = i.resolveTarget.image;
-            barriers[1].srcAccessMask = 0;
-            barriers[1].dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers);
-
-            uint32_t w = (uint32_t)(i.swapchain.GetExtent().width * i.renderScale);
-            uint32_t h = (uint32_t)(i.swapchain.GetExtent().height * i.renderScale);
-            if (w==0) w=1; if (h==0) h=1;
-
-            i.fxaaPipeline.Dispatch(cmd, i.currentFrame, i.colorTarget, i.resolveTarget, w, h);
-            
-            sourceForBlit = &i.resolveTarget; // Update source for blit
-
-            // Transition Resolve Target to Transfer Source
-            VkImageMemoryBarrier toBlit = barriers[1];
-            toBlit.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-            toBlit.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-            toBlit.image = i.resolveTarget.image;
-            toBlit.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-            toBlit.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toBlit);
-
-        } 
-        else if (i.currentAAMode == AntiAliasingMode::TAA) {
-            // --- TAA PASS (Compute) ---
-            if (!i.taaPipeline.IsInitialized()) {
-                i.taaPipeline.Initialize(i.context.GetDevice(), FRAMES_IN_FLIGHT);
-            }
-
-            int currHistory = i.historyIndex;
-            int prevHistory = (i.historyIndex + 1) % 2;
-
-            VkImageMemoryBarrier barriers[4];
-            // Color Read
-            barriers[0] = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-            barriers[0].oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            barriers[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            barriers[0].image = i.colorTarget.image;
-            barriers[0].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            barriers[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-            barriers[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-            
-            // Vel/Depth Read
-            barriers[1] = barriers[0]; barriers[1].image = i.velocityTarget.image;
-            barriers[2] = barriers[0]; barriers[2].oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL; 
-            barriers[2].image = i.depthTarget.image; barriers[2].subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
-            barriers[2].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-
-            // Prev History Read
-            barriers[3] = barriers[0];
-            barriers[3].oldLayout = i.historyValid ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_UNDEFINED;
-            barriers[3].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-            barriers[3].image = i.historyTexture[prevHistory].image;
-            barriers[3].srcAccessMask = i.historyValid ? VK_ACCESS_TRANSFER_READ_BIT : 0;
-
-            // Curr History Write (General)
-            VkImageMemoryBarrier outBar = barriers[0];
-            outBar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            outBar.newLayout = VK_IMAGE_LAYOUT_GENERAL;
-            outBar.image = i.historyTexture[currHistory].image;
-            outBar.srcAccessMask = 0;
-            outBar.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 4, barriers);
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &outBar);
-
-            uint32_t w = (uint32_t)(i.swapchain.GetExtent().width * i.renderScale);
-            uint32_t h = (uint32_t)(i.swapchain.GetExtent().height * i.renderScale);
-            if (w==0) w=1; if (h==0) h=1;
-
-            i.taaPipeline.Dispatch(cmd, i.currentFrame, 
-                i.colorTarget, i.historyTexture[prevHistory], i.velocityTarget, i.depthTarget, i.historyTexture[currHistory], 
-                w, h);
-
-            sourceForBlit = &i.historyTexture[currHistory];
-            i.historyIndex = (i.historyIndex + 1) % 2; 
-            i.historyValid = true;
-
-            // Transition Current History to Transfer Src
-            VkImageMemoryBarrier toBlit = outBar;
-            toBlit.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-            toBlit.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-            toBlit.image = sourceForBlit->image;
-            toBlit.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-            toBlit.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toBlit);
-        }
-        else {
-            // --- NONE (Direct Blit) ---
-            VkImageMemoryBarrier toBlit{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-            toBlit.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            toBlit.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-            toBlit.image = i.colorTarget.image;
-            toBlit.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            toBlit.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-            toBlit.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toBlit);
-        }
-
-        // --- 3. BLIT TO SWAPCHAIN ---
-        {
-            VkImageMemoryBarrier swapBar{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-            swapBar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED; 
-            swapBar.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            swapBar.image = i.swapchain.GetImages()[i.imageIndex];
-            swapBar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            swapBar.srcAccessMask = 0;
-            swapBar.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &swapBar);
-
-            uint32_t srcW = (uint32_t)(i.swapchain.GetExtent().width * i.renderScale);
-            uint32_t srcH = (uint32_t)(i.swapchain.GetExtent().height * i.renderScale);
-            if (srcW==0) srcW=1; if (srcH==0) srcH=1;
-
-            VkImageBlit blit{};
-            blit.srcOffsets[1] = { (int)srcW, (int)srcH, 1 };
-            blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-            blit.dstOffsets[1] = { (int)i.swapchain.GetExtent().width, (int)i.swapchain.GetExtent().height, 1 };
-            blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-            
-            vkCmdBlitImage(cmd, 
-                sourceForBlit->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-                i.swapchain.GetImages()[i.imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                1, &blit, VK_FILTER_LINEAR); 
-        }
-
-        // --- 4. UI RENDER (On Swapchain) ---
-        {
-            VkImageMemoryBarrier toColor{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-            toColor.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            toColor.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            toColor.image = i.swapchain.GetImages()[i.imageIndex];
-            toColor.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            toColor.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-            toColor.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1, &toColor);
-
-            VkRenderingAttachmentInfo swapColor = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
-            swapColor.imageView = i.swapchain.GetImageViews()[i.imageIndex];
-            swapColor.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            swapColor.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD; 
-            swapColor.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-
-            VkRenderingInfo finalInfo{VK_STRUCTURE_TYPE_RENDERING_INFO};
-            finalInfo.renderArea = {{0,0}, i.swapchain.GetExtent()};
-            finalInfo.layerCount = 1;
-            finalInfo.colorAttachmentCount = 1;
-            finalInfo.pColorAttachments = &swapColor;
-
-            vkCmdBeginRendering(cmd, &finalInfo);
-            i.ui.Render(cmd, i.imageIndex);
-            vkCmdEndRendering(cmd);
-        }
-
-        // --- 5. PRESENT BARRIER ---
-        VkImageMemoryBarrier toPresent{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-        toPresent.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        toPresent.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-        toPresent.image = i.swapchain.GetImages()[i.imageIndex];
-        toPresent.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-        toPresent.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-        toPresent.dstAccessMask = 0;
-        vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &toPresent);
-
-        vkEndCommandBuffer(cmd);
+        i.RecordCommandBuffer(i.commandBuffers[i.currentFrame]);
         
         VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
         VkSemaphore wait[] = {i.imageAvailableSemaphores[i.currentFrame]};
         VkPipelineStageFlags stage[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
         submit.waitSemaphoreCount = 1; submit.pWaitSemaphores = wait; submit.pWaitDstStageMask = stage;
-        submit.commandBufferCount = 1; submit.pCommandBuffers = &cmd;
+        submit.commandBufferCount = 1; submit.pCommandBuffers = &i.commandBuffers[i.currentFrame];
         VkSemaphore sig[] = {i.renderFinishedSemaphores[i.currentFrame]};
         submit.signalSemaphoreCount = 1; submit.pSignalSemaphores = sig;
+        
         vkQueueSubmit(i.context.GetGraphicsQueue(), 1, &submit, i.inFlightFences[i.currentFrame]);
         i.swapchain.Present(i.context.GetGraphicsQueue(), i.imageIndex, i.renderFinishedSemaphores[i.currentFrame]);
+        
         i.currentFrame = (i.currentFrame + 1) % FRAMES_IN_FLIGHT;
         i.frameCounter++;
     }
 
-    void GraphicsContext::SetAAMode(AntiAliasingMode mode) {
-        m_Internal->currentAAMode = mode;
-        // Invalidate history when switching modes to avoid garbage data ghosting
-        m_Internal->historyValid = false; 
+    void GraphicsInternal::RecordCommandBuffer(VkCommandBuffer cmd) {
+        vkResetCommandBuffer(cmd, 0);
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        vkBeginCommandBuffer(cmd, &begin);
+
+        // 1. Scene Logic
+        float aspect = (float)swapchain.GetExtent().width / (float)swapchain.GetExtent().height;
+        size_t visibleCount = sceneManager.CullAndUpload(camera, aspect);
+
+        // 2. Geometry Pass
+        PassGeometry(cmd, visibleCount);
+
+        // 3. Anti-Aliasing Pass
+        memory::AllocatedImage* finalImage = nullptr;
+        PassAA(cmd, finalImage);
+
+        // 4. Blit to Swapchain
+        PassBlit(cmd, finalImage);
+
+        // 5. UI Overlay
+        PassUI(cmd);
+
+        // 6. Transition for Present
+        TransitionLayout(cmd, swapchain.GetImages()[imageIndex], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+        vkEndCommandBuffer(cmd);
     }
 
-    AntiAliasingMode GraphicsContext::GetAAMode() const {
-        return m_Internal->currentAAMode;
-    }
+    void GraphicsInternal::PassGeometry(VkCommandBuffer cmd, size_t visibleCount) {
+        TransitionLayout(cmd, resources.GetColor().image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        TransitionLayout(cmd, resources.GetVelocity().image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        TransitionLayout(cmd, resources.GetDepth().image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
-    void GraphicsContext::UploadCamera() {
-        auto& i = *m_Internal;
+        VkRenderingAttachmentInfo colors[2];
+        colors[0] = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        colors[0].imageView = resources.GetColor().imageView;
+        colors[0].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        colors[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; 
+        colors[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        colors[0].clearValue.color = {{0.5f, 0.7f, 0.9f, 1.0f}}; 
         
-        CameraUBO ubo{};
-        ubo.position = glm::vec4(i.camera.position, 1.0f);
-        ubo.direction = glm::vec4(i.camera.front, 0.0f);
-        
-        float aspect = (float)i.swapchain.GetExtent().width / (float)i.swapchain.GetExtent().height;
-        glm::mat4 view = glm::lookAt(i.camera.position, i.camera.position + i.camera.front, i.camera.up);
-        glm::mat4 proj = glm::perspective(glm::radians(i.camera.fov), aspect, 0.1f, 100.0f);
-        proj[1][1] *= -1; 
+        colors[1] = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        colors[1].imageView = resources.GetVelocity().imageView;
+        colors[1].imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        colors[1].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; 
+        colors[1].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        colors[1].clearValue.color = {{0.0f, 0.0f, 0.0f, 0.0f}};
 
-        // Only jitter if TAA is active
-        if (i.currentAAMode == AntiAliasingMode::TAA) {
-            uint64_t sampleIdx = i.frameCounter % 16;
-            float jX = (Halton(sampleIdx + 1, 2) - 0.5f) / (float)(i.swapchain.GetExtent().width * i.renderScale);
-            float jY = (Halton(sampleIdx + 1, 3) - 0.5f) / (float)(i.swapchain.GetExtent().height * i.renderScale);
-            ubo.jitter = glm::vec4(jX, jY, 0.0f, 0.0f);
-            
-            glm::mat4 jitterProj = proj;
-            jitterProj[2][0] += jX * 2.0f; 
-            jitterProj[2][1] += jY * 2.0f;
-            ubo.viewProj = jitterProj * view;
-            ubo.projInverse = glm::inverse(jitterProj);
-        } else {
-            ubo.jitter = glm::vec4(0.0f);
-            ubo.viewProj = proj * view;
-            ubo.projInverse = glm::inverse(proj);
+        VkRenderingAttachmentInfo depth = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        depth.imageView = resources.GetDepth().imageView;
+        depth.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+        depth.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; 
+        depth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        depth.clearValue.depthStencil = {1.0f, 0}; 
+
+        VkExtent2D renderExtent;
+        renderExtent.width = (uint32_t)(swapchain.GetExtent().width * renderScale);
+        renderExtent.height = (uint32_t)(swapchain.GetExtent().height * renderScale);
+        
+        VkRenderingInfo renderInfo{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        renderInfo.renderArea = {{0,0}, renderExtent};
+        renderInfo.layerCount = 1;
+        renderInfo.colorAttachmentCount = 2;
+        renderInfo.pColorAttachments = colors;
+        renderInfo.pDepthAttachment = &depth;
+
+        vkCmdBeginRendering(cmd, &renderInfo);
+        
+        VkViewport vp{0,0,(float)renderExtent.width, (float)renderExtent.height, 0, 1};
+        VkRect2D sc{{0,0}, renderExtent};
+        vkCmdSetViewport(cmd, 0, 1, &vp);
+        vkCmdSetScissor(cmd, 0, 1, &sc);
+
+        if(visibleCount > 0) {
+            rasterPipeline.Bind(cmd, currentFrame);
+            vkCmdDraw(cmd, 36, (uint32_t)visibleCount, 0, 0);
         }
-
-        ubo.prevViewProj = i.prevViewProj;
-        i.prevViewProj = ubo.viewProj; 
         
-        ubo.viewInverse = glm::inverse(view);
-        ubo.objectCount = (uint32_t)i.visibleGPUObjects.size(); 
+        vkCmdEndRendering(cmd);
+    }
 
-        void* data;
-        vmaMapMemory(i.context.GetVmaAllocator(), i.cameraUBO.allocation, &data);
-        memcpy(data, &ubo, sizeof(CameraUBO));
-        vmaUnmapMemory(i.context.GetVmaAllocator(), i.cameraUBO.allocation);
+    void GraphicsInternal::PassAA(VkCommandBuffer cmd, memory::AllocatedImage*& outImage) {
+        if (currentAAMode == AntiAliasingMode::FXAA) {
+            if (!fxaaPipeline.IsInitialized()) fxaaPipeline.Initialize(context.GetDevice(), FRAMES_IN_FLIGHT);
+
+            TransitionLayout(cmd, resources.GetColor().image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            TransitionLayout(cmd, resources.GetResolve().image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+
+            uint32_t w = (uint32_t)(swapchain.GetExtent().width * renderScale);
+            uint32_t h = (uint32_t)(swapchain.GetExtent().height * renderScale);
+
+            // FIX: Pass defaultSampler to avoid null sampler crash
+            fxaaPipeline.Dispatch(cmd, currentFrame, defaultSampler, resources.GetColor(), resources.GetResolve(), w, h);
+            outImage = const_cast<memory::AllocatedImage*>(&resources.GetResolve());
+        } 
+        else if (currentAAMode == AntiAliasingMode::TAA) {
+            if (!taaPipeline.IsInitialized()) taaPipeline.Initialize(context.GetDevice(), FRAMES_IN_FLIGHT);
+
+            auto& histRead = resources.GetHistoryRead();
+            auto& histWrite = resources.GetHistoryWrite();
+
+            TransitionLayout(cmd, resources.GetColor().image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            TransitionLayout(cmd, resources.GetVelocity().image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+            TransitionLayout(cmd, resources.GetDepth().image, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL); 
+            
+            TransitionLayout(cmd, histWrite.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+
+            uint32_t w = (uint32_t)(swapchain.GetExtent().width * renderScale);
+            uint32_t h = (uint32_t)(swapchain.GetExtent().height * renderScale);
+
+            // FIX: Pass defaultSampler
+            taaPipeline.Dispatch(cmd, currentFrame, defaultSampler, resources.GetColor(), histRead, resources.GetVelocity(), resources.GetDepth(), histWrite, w, h);
+            
+            outImage = const_cast<memory::AllocatedImage*>(&histWrite);
+            resources.SwapHistory(); 
+        } 
+        else {
+            outImage = const_cast<memory::AllocatedImage*>(&resources.GetColor());
+        }
+    }
+
+    void GraphicsInternal::PassBlit(VkCommandBuffer cmd, memory::AllocatedImage* source) {
+        VkImageLayout srcLayout = (source == &resources.GetColor()) ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
+        if (currentAAMode == AntiAliasingMode::TAA) srcLayout = VK_IMAGE_LAYOUT_GENERAL; 
+        
+        TransitionLayout(cmd, source->image, srcLayout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+        TransitionLayout(cmd, swapchain.GetImages()[imageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+        VkImageBlit blit{};
+        blit.srcOffsets[1] = { (int)(swapchain.GetExtent().width * renderScale), (int)(swapchain.GetExtent().height * renderScale), 1 };
+        blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        blit.dstOffsets[1] = { (int)swapchain.GetExtent().width, (int)swapchain.GetExtent().height, 1 };
+        blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        
+        vkCmdBlitImage(cmd, source->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapchain.GetImages()[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit, VK_FILTER_LINEAR);
+    }
+
+    void GraphicsInternal::PassUI(VkCommandBuffer cmd) {
+        TransitionLayout(cmd, swapchain.GetImages()[imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+        
+        VkRenderingAttachmentInfo col = {VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO};
+        col.imageView = swapchain.GetImageViews()[imageIndex];
+        col.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        col.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD; 
+        col.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+        VkRenderingInfo info{VK_STRUCTURE_TYPE_RENDERING_INFO};
+        info.renderArea = {{0,0}, swapchain.GetExtent()};
+        info.layerCount = 1;
+        info.colorAttachmentCount = 1;
+        info.pColorAttachments = &col;
+
+        vkCmdBeginRendering(cmd, &info);
+        ui.Render(cmd, imageIndex);
+        vkCmdEndRendering(cmd);
+    }
+
+    void GraphicsInternal::TransitionLayout(VkCommandBuffer cmd, VkImage img, VkImageLayout oldL, VkImageLayout newL) {
+        VkImageMemoryBarrier barrier{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+        barrier.oldLayout = oldL;
+        barrier.newLayout = newL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = img;
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        if (newL == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL || oldL == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+            barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        }
+        barrier.subresourceRange.baseMipLevel = 0;
+        barrier.subresourceRange.levelCount = 1;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount = 1;
+
+        VkPipelineStageFlags srcStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        VkPipelineStageFlags dstStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        
+        barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+
+        vkCmdPipelineBarrier(cmd, srcStage, dstStage, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+    }
+
+    void GraphicsContext::UploadCamera() { 
+        auto& i = *m_Internal;
+        bool useJitter = (i.currentAAMode == AntiAliasingMode::TAA);
+        i.sceneManager.UploadCameraBuffer(i.camera, 
+            i.swapchain.GetExtent().width, 
+            i.swapchain.GetExtent().height, 
+            i.frameCounter, 
+            useJitter); 
+    }
+
+    void GraphicsContext::UploadScene(const std::vector<SceneObject>& o, 
+                                      const std::vector<SceneMaterial>& m, 
+                                      const std::vector<voxel::Chunk>& c) { 
+        m_Internal->sceneManager.UploadSceneData(o, m, c); 
+    }
+
+    void GraphicsContext::SetAAMode(AntiAliasingMode mode) { 
+        m_Internal->currentAAMode = mode; 
+        m_Internal->resources.InvalidateHistory(); 
     }
     
-    // ... UploadScene, GetWindow, Shutdown (use default) ...
-    void GraphicsContext::UploadScene(
-        const std::vector<SceneObject>& objects, 
-        const std::vector<SceneMaterial>& materials,
-        const std::vector<voxel::Chunk>& chunks 
-    ) {
-        auto& i = *m_Internal;
-        i.cachedObjects = objects;
-        
-        void* data;
-        
-        std::vector<voxel::PhysicalMaterial> gpuMaterials(materials.size());
-        for(size_t k=0; k < materials.size(); ++k) {
-            gpuMaterials[k].color = materials[k].color;
-            gpuMaterials[k].density = 1.0f;
-            gpuMaterials[k].friction = 0.5f;
-            gpuMaterials[k].restitution = 0.0f;
-            gpuMaterials[k].hardness = 1.0f;
-            gpuMaterials[k].flags = 0;
-        }
-
-        vmaMapMemory(i.context.GetVmaAllocator(), i.materialsSSBO.allocation, &data);
-        memcpy(data, gpuMaterials.data(), gpuMaterials.size() * sizeof(voxel::PhysicalMaterial));
-        vmaUnmapMemory(i.context.GetVmaAllocator(), i.materialsSSBO.allocation);
-
-        if (!chunks.empty()) {
-            size_t chunkSize = sizeof(voxel::Chunk);
-            size_t totalSize = chunks.size() * chunkSize;
-            
-            vmaMapMemory(i.context.GetVmaAllocator(), i.chunksSSBO.allocation, &data);
-            memcpy(data, chunks.data(), totalSize);
-            vmaUnmapMemory(i.context.GetVmaAllocator(), i.chunksSSBO.allocation);
-        }
-    }
-
-    GLFWwindow* GraphicsContext::GetWindow() { return m_Internal->window.GetNativeHandle(); }
-
-    void GraphicsContext::Shutdown() {
-        if (!m_Internal) return;
-        vkDeviceWaitIdle(m_Internal->context.GetDevice());
-        m_Internal->ui.Shutdown();
-        m_Internal->rasterPipeline.Shutdown();
-        m_Internal->fxaaPipeline.Shutdown(); 
-        m_Internal->taaPipeline.Shutdown();
-        m_Internal->swapchain.Shutdown();
-        m_Internal->window.Shutdown();
-        m_Internal->context.Shutdown();
-        m_Internal.reset();
-    }
-    
+    AntiAliasingMode GraphicsContext::GetAAMode() const { return m_Internal->currentAAMode; }
     Camera& GraphicsContext::GetCamera() { return m_Internal->camera; }
+    GLFWwindow* GraphicsContext::GetWindow() { return m_Internal->window.GetNativeHandle(); }
+    void GraphicsContext::Shutdown() { if(m_Internal) { vkDeviceWaitIdle(m_Internal->context.GetDevice()); m_Internal.reset(); } }
 }

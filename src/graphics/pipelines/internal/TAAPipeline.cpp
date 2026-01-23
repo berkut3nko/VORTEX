@@ -89,6 +89,7 @@ namespace vortex::graphics {
 
     void TAAPipeline::Dispatch(VkCommandBuffer cmd, 
                       uint32_t frameIndex,
+                      VkSampler sampler, // <--- ADDED
                       const memory::AllocatedImage& colorInput,
                       const memory::AllocatedImage& historyInput,
                       const memory::AllocatedImage& velocityInput,
@@ -96,10 +97,12 @@ namespace vortex::graphics {
                       const memory::AllocatedImage& output,
                       uint32_t width, uint32_t height) {
 
-        VkDescriptorImageInfo colorInfo{colorInput.sampler ? colorInput.sampler : VK_NULL_HANDLE, colorInput.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        VkDescriptorImageInfo histInfo{historyInput.sampler ? historyInput.sampler : VK_NULL_HANDLE, historyInput.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        VkDescriptorImageInfo velInfo{velocityInput.sampler ? velocityInput.sampler : VK_NULL_HANDLE, velocityInput.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        VkDescriptorImageInfo depthInfo{depthInput.sampler ? depthInput.sampler : VK_NULL_HANDLE, depthInput.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkSampler samplerToUse = sampler ? sampler : colorInput.sampler;
+
+        VkDescriptorImageInfo colorInfo{samplerToUse, colorInput.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkDescriptorImageInfo histInfo{samplerToUse, historyInput.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkDescriptorImageInfo velInfo{samplerToUse, velocityInput.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkDescriptorImageInfo depthInfo{samplerToUse, depthInput.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         VkDescriptorImageInfo outInfo{VK_NULL_HANDLE, output.imageView, VK_IMAGE_LAYOUT_GENERAL};
 
         VkWriteDescriptorSet writes[5];

@@ -19,6 +19,7 @@ namespace vortex::graphics {
         
         void Dispatch(VkCommandBuffer cmd, 
                       uint32_t frameIndex,
+                      VkSampler sampler, // <--- ADDED
                       const memory::AllocatedImage& colorInput,
                       const memory::AllocatedImage& historyInput,
                       const memory::AllocatedImage& velocityInput,

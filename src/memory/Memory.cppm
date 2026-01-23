@@ -22,13 +22,13 @@ namespace vortex::memory {
      */
     export struct AllocatedImage {
         VkImage image{VK_NULL_HANDLE};
-        VkImageView imageView{VK_NULL_HANDLE}; // Was 'view' in some contexts, correct is 'imageView'
+        VkImageView imageView{VK_NULL_HANDLE};
         VmaAllocation allocation{VK_NULL_HANDLE};
-        VkSampler sampler{VK_NULL_HANDLE};     // Added this field for TAA/Graphics resources
+        VkSampler sampler{VK_NULL_HANDLE};
     };
 
     /**
-     * @brief abstraction for VMA allocator operations.
+     * @brief Abstraction for VMA allocator operations.
      */
     export class MemoryAllocator {
     public:
@@ -40,6 +40,12 @@ namespace vortex::memory {
         
         AllocatedImage CreateImage(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, VmaMemoryUsage memoryUsage);
         void DestroyImage(const AllocatedImage& image);
+
+        /**
+         * @brief Returns the raw VMA allocator handle.
+         * @return VmaAllocator handle.
+         */
+        VmaAllocator GetVmaAllocator() const { return m_Allocator; }
 
     private:
         VmaAllocator m_Allocator;
