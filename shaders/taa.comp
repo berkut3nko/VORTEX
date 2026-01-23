@@ -14,9 +14,9 @@ void main() {
     if(pixelPos.x >= size.x || pixelPos.y >= size.y) return;
 
     vec2 uv = (vec2(pixelPos) + 0.5) / vec2(size);
-    vec2 texelSize = 1.0 / vec2(textureSize(texColor, 0)); // Get size of input texture
+    vec2 texelSize = 1.0 / vec2(textureSize(texColor, 0));
 
-    // 1. Read Current Color
+    // 1. Read Current Color (Center)
     vec3 color = texture(texColor, uv).rgb;
 
     // 2. Read Velocity
@@ -25,7 +25,7 @@ void main() {
     // 3. Reproject to find History UV
     vec2 prevUV = uv - velocity;
 
-    // 4. Check if history is valid (inside screen)
+    // 4. Check validity
     if(prevUV.x < 0.0 || prevUV.x > 1.0 || prevUV.y < 0.0 || prevUV.y > 1.0) {
         imageStore(imgOutput, pixelPos, vec4(color, 1.0));
         return;
@@ -34,29 +34,33 @@ void main() {
     // 5. Read History
     vec3 history = texture(texHistory, prevUV).rgb;
 
-    // 6. Neighborhood Clamping (Anti-Ghosting)
+    // 6. Optimized Neighborhood Clamping (5-tap Cross instead of 9-tap Box)
+    // Center is already in 'color'
     vec3 minColor = color;
     vec3 maxColor = color;
-    
-    // FIX: Use texture() with calculated UVs instead of textureOffset()
-    // This avoids "argument must be compile-time constant" error
-    for(int x = -1; x <= 1; x++) {
-        for(int y = -1; y <= 1; y++) {
-            if(x == 0 && y == 0) continue; // Skip center (already have it)
-            
-            vec2 sampleUV = uv + vec2(x, y) * texelSize;
-            vec3 neighbor = texture(texColor, sampleUV).rgb;
-            
-            minColor = min(minColor, neighbor);
-            maxColor = max(maxColor, neighbor);
-        }
+
+    // Offsets for Top, Bottom, Left, Right
+    const vec2 offsets[4] = vec2[](
+        vec2(0, 1), vec2(0, -1), vec2(1, 0), vec2(-1, 0)
+    );
+
+    for(int i = 0; i < 4; i++) {
+        vec3 neighbor = texture(texColor, uv + offsets[i] * texelSize).rgb;
+        minColor = min(minColor, neighbor);
+        maxColor = max(maxColor, neighbor);
     }
     
-    // Clamp history
+    // Clamp history to the range of neighbors
     history = clamp(history, minColor, maxColor);
 
     // 7. Blend
-    float blend = 0.9;
+    // Reduce blend factor slightly to be more responsive (less ghosting)
+    float blend = 0.9; 
+    
+    // Optional: Dynamic blend based on motion speed to reduce ghosting
+    // float speed = length(velocity * vec2(size));
+    // float dynamicBlend = mix(0.9, 0.8, clamp(speed * 0.1, 0.0, 1.0));
+
     vec3 result = mix(color, history, blend);
 
     imageStore(imgOutput, pixelPos, vec4(result, 1.0));

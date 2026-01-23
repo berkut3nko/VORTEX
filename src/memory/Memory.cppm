@@ -37,8 +37,8 @@ namespace vortex::memory {
 
         AllocatedBuffer CreateBuffer(size_t size, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage);
         void DestroyBuffer(const AllocatedBuffer& buffer);
-
-        AllocatedImage CreateImage(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage);
+        
+        AllocatedImage CreateImage(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, VmaMemoryUsage memoryUsage);
         void DestroyImage(const AllocatedImage& image);
 
     private:

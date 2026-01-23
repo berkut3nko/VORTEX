@@ -3,26 +3,25 @@ module;
 #include <vulkan/vulkan.h>
 #include <vector>
 
-export module vortex.graphics:taapipeline;
+export module vortex.graphics:fxaapipeline;
 
 import vortex.memory;
 
 namespace vortex::graphics {
 
-    export class TAAPipeline {
+    export class FXAAPipeline {
     public:
-        TAAPipeline();
-        ~TAAPipeline();
+        FXAAPipeline();
+        ~FXAAPipeline();
 
+        // Initialize compute pipeline
         void Initialize(VkDevice device, uint32_t framesInFlight);
         void Shutdown();
         
+        // Compute Dispatch
         void Dispatch(VkCommandBuffer cmd, 
                       uint32_t frameIndex,
-                      const memory::AllocatedImage& colorInput,
-                      const memory::AllocatedImage& historyInput,
-                      const memory::AllocatedImage& velocityInput,
-                      const memory::AllocatedImage& depthInput,
+                      const memory::AllocatedImage& input,
                       const memory::AllocatedImage& output,
                       uint32_t width, uint32_t height);
 

@@ -8,15 +8,15 @@ module;
 
 module vortex.graphics;
 
-import :taapipeline;
+import :fxaapipeline;
 import :shader;
 import vortex.log;
 import vortex.memory;
 
 namespace vortex::graphics {
 
-    TAAPipeline::TAAPipeline() {}
-    TAAPipeline::~TAAPipeline() { Shutdown(); }
+    FXAAPipeline::FXAAPipeline() {}
+    FXAAPipeline::~FXAAPipeline() { Shutdown(); }
 
     static std::string ReadFile(const std::string& filepath) {
         std::ifstream file(filepath);
@@ -26,15 +26,14 @@ namespace vortex::graphics {
         return buffer.str();
     }
 
-    void TAAPipeline::Initialize(VkDevice device, uint32_t framesInFlight) {
+    void FXAAPipeline::Initialize(VkDevice device, uint32_t framesInFlight) {
         m_Device = device;
 
-        std::vector<VkDescriptorSetLayoutBinding> bindings(5);
+        // Binding 0: Input Texture (Sampler)
+        // Binding 1: Output Texture (Storage Image)
+        std::vector<VkDescriptorSetLayoutBinding> bindings(2);
         bindings[0] = {0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
-        bindings[1] = {1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
-        bindings[2] = {2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
-        bindings[3] = {3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
-        bindings[4] = {4, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
+        bindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1, VK_SHADER_STAGE_COMPUTE_BIT, nullptr};
 
         VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
         layoutInfo.bindingCount = (uint32_t)bindings.size();
@@ -46,8 +45,8 @@ namespace vortex::graphics {
         pipeLayoutInfo.pSetLayouts = &m_DescriptorSetLayout;
         vkCreatePipelineLayout(m_Device, &pipeLayoutInfo, nullptr, &m_PipelineLayout);
 
-        auto source = ReadFile("assets/shaders/taa.comp");
-        if(source.empty()) { Log::Error("TAA shader missing!"); return; }
+        auto source = ReadFile("assets/shaders/fxaa.comp");
+        if(source.empty()) { Log::Error("FXAA shader missing!"); return; }
 
         auto spv = ShaderCompiler::Compile(ShaderStage::Compute, source);
         
@@ -66,7 +65,7 @@ namespace vortex::graphics {
 
         // Pool
         VkDescriptorPoolSize poolSizes[] = { 
-            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4 * framesInFlight},
+            {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1 * framesInFlight},
             {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1 * framesInFlight}
         };
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -84,32 +83,23 @@ namespace vortex::graphics {
         m_DescriptorSets.resize(framesInFlight);
         vkAllocateDescriptorSets(m_Device, &allocInfo, m_DescriptorSets.data());
         
-        Log::Info("TAA Pipeline Initialized (Lazy Load)");
+        Log::Info("FXAA Pipeline Initialized (Lazy Load)");
     }
 
-    void TAAPipeline::Dispatch(VkCommandBuffer cmd, 
+    void FXAAPipeline::Dispatch(VkCommandBuffer cmd, 
                       uint32_t frameIndex,
-                      const memory::AllocatedImage& colorInput,
-                      const memory::AllocatedImage& historyInput,
-                      const memory::AllocatedImage& velocityInput,
-                      const memory::AllocatedImage& depthInput,
+                      const memory::AllocatedImage& input,
                       const memory::AllocatedImage& output,
                       uint32_t width, uint32_t height) {
 
-        VkDescriptorImageInfo colorInfo{colorInput.sampler ? colorInput.sampler : VK_NULL_HANDLE, colorInput.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        VkDescriptorImageInfo histInfo{historyInput.sampler ? historyInput.sampler : VK_NULL_HANDLE, historyInput.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        VkDescriptorImageInfo velInfo{velocityInput.sampler ? velocityInput.sampler : VK_NULL_HANDLE, velocityInput.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
-        VkDescriptorImageInfo depthInfo{depthInput.sampler ? depthInput.sampler : VK_NULL_HANDLE, depthInput.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkDescriptorImageInfo inInfo{input.sampler ? input.sampler : VK_NULL_HANDLE, input.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
         VkDescriptorImageInfo outInfo{VK_NULL_HANDLE, output.imageView, VK_IMAGE_LAYOUT_GENERAL};
 
-        VkWriteDescriptorSet writes[5];
-        writes[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 0, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &colorInfo, nullptr, nullptr};
-        writes[1] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 1, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &histInfo, nullptr, nullptr};
-        writes[2] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 2, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &velInfo, nullptr, nullptr};
-        writes[3] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 3, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo, nullptr, nullptr};
-        writes[4] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 4, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &outInfo, nullptr, nullptr};
+        VkWriteDescriptorSet writes[2];
+        writes[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 0, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &inInfo, nullptr, nullptr};
+        writes[1] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &outInfo, nullptr, nullptr};
 
-        vkUpdateDescriptorSets(m_Device, 5, writes, 0, nullptr);
+        vkUpdateDescriptorSets(m_Device, 2, writes, 0, nullptr);
 
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_Pipeline);
         vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_PipelineLayout, 0, 1, &m_DescriptorSets[frameIndex], 0, nullptr);
@@ -117,13 +107,13 @@ namespace vortex::graphics {
         vkCmdDispatch(cmd, (width + 7) / 8, (height + 7) / 8, 1);
     }
 
-    void TAAPipeline::Shutdown() {
+    void FXAAPipeline::Shutdown() {
         if(m_Device) {
-            if (m_Pipeline) vkDestroyPipeline(m_Device, m_Pipeline, nullptr);
-            if (m_PipelineLayout) vkDestroyPipelineLayout(m_Device, m_PipelineLayout, nullptr);
-            if (m_DescriptorSetLayout) vkDestroyDescriptorSetLayout(m_Device, m_DescriptorSetLayout, nullptr);
-            if (m_DescriptorPool) vkDestroyDescriptorPool(m_Device, m_DescriptorPool, nullptr);
-            m_Pipeline = VK_NULL_HANDLE;
+            if(m_Pipeline) vkDestroyPipeline(m_Device, m_Pipeline, nullptr);
+            if(m_PipelineLayout) vkDestroyPipelineLayout(m_Device, m_PipelineLayout, nullptr);
+            if(m_DescriptorSetLayout) vkDestroyDescriptorSetLayout(m_Device, m_DescriptorSetLayout, nullptr);
+            if(m_DescriptorPool) vkDestroyDescriptorPool(m_Device, m_DescriptorPool, nullptr);
+            m_Pipeline = VK_NULL_HANDLE; // Reset for IsInitialized check
         }
     }
 }

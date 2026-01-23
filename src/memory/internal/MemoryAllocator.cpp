@@ -1,48 +1,33 @@
 module;
-
-#include <vulkan/vulkan.h>
-#define VMA_IMPLEMENTATION // Already defined in VulkanContext, but safe if guarded or separate TU. 
+// ВИЗНАЧАЄМО РЕАЛІЗАЦІЮ VMA ТУТ (ТІЛЬКИ В ОДНОМУ ФАЙЛІ ПРОЕКТУ)
+#define VMA_IMPLEMENTATION
 #include <vk_mem_alloc.h>
+#include <vulkan/vulkan.h>
 #include <stdexcept>
-
 module vortex.memory;
-
-import vortex.log; // For logging
 
 namespace vortex::memory {
 
-    MemoryAllocator::MemoryAllocator(VmaAllocator allocator, VkDevice device)
+    MemoryAllocator::MemoryAllocator(VmaAllocator allocator, VkDevice device) 
         : m_Allocator(allocator), m_Device(device) {}
 
     AllocatedBuffer MemoryAllocator::CreateBuffer(size_t size, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage) {
-        AllocatedBuffer newBuffer;
-
-        VkBufferCreateInfo bufferInfo{};
-        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        VkBufferCreateInfo bufferInfo = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
         bufferInfo.size = size;
         bufferInfo.usage = usage;
+        
+        VmaAllocationCreateInfo vmaallocInfo = {};
+        vmaallocInfo.usage = memoryUsage;
 
-        VmaAllocationCreateInfo vmaAllocInfo{};
-        vmaAllocInfo.usage = memoryUsage;
-
-        if (vmaCreateBuffer(m_Allocator, &bufferInfo, &vmaAllocInfo, 
-            &newBuffer.buffer, &newBuffer.allocation, &newBuffer.info) != VK_SUCCESS) {
-            Log::Error("Failed to allocate buffer!");
-            throw std::runtime_error("Buffer allocation failed");
+        AllocatedBuffer newBuffer;
+        if (vmaCreateBuffer(m_Allocator, &bufferInfo, &vmaallocInfo, &newBuffer.buffer, &newBuffer.allocation, nullptr) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create buffer");
         }
-
         return newBuffer;
     }
 
-    void MemoryAllocator::DestroyBuffer(const AllocatedBuffer& buffer) {
-        vmaDestroyBuffer(m_Allocator, buffer.buffer, buffer.allocation);
-    }
-
-    AllocatedImage MemoryAllocator::CreateImage(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage) {
-        AllocatedImage newImage;
-
-        VkImageCreateInfo imageInfo{};
-        imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    AllocatedImage MemoryAllocator::CreateImage(uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, VmaMemoryUsage memoryUsage) {
+        VkImageCreateInfo imageInfo = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
         imageInfo.imageType = VK_IMAGE_TYPE_2D;
         imageInfo.extent.width = width;
         imageInfo.extent.height = height;
@@ -50,43 +35,57 @@ namespace vortex::memory {
         imageInfo.mipLevels = 1;
         imageInfo.arrayLayers = 1;
         imageInfo.format = format;
-        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+        
+        // Critical for performance on integrated GPUs
+        imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL; 
+        
         imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
         imageInfo.usage = usage;
         imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+        imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-        VmaAllocationCreateInfo vmaAllocInfo{};
-        vmaAllocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-
-        if (vmaCreateImage(m_Allocator, &imageInfo, &vmaAllocInfo, 
-            &newImage.image, &newImage.allocation, nullptr) != VK_SUCCESS) {
-            Log::Error("Failed to allocate image!");
-            throw std::runtime_error("Image allocation failed");
+        VmaAllocationCreateInfo vmaallocInfo = {};
+        vmaallocInfo.usage = memoryUsage;
+        
+        // Ensure DEVICE_LOCAL is set for GPU_ONLY usage
+        if (memoryUsage == VMA_MEMORY_USAGE_GPU_ONLY) {
+            vmaallocInfo.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
         }
 
-        // Create View
-        VkImageViewCreateInfo viewInfo{};
-        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        AllocatedImage newImage;
+        if (vmaCreateImage(m_Allocator, &imageInfo, &vmaallocInfo, &newImage.image, &newImage.allocation, nullptr) != VK_SUCCESS) {
+            throw std::runtime_error("Failed to create image");
+        }
+        
+        VkImageViewCreateInfo viewInfo = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
         viewInfo.image = newImage.image;
         viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
         viewInfo.format = format;
-        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        
+        if (format == VK_FORMAT_D32_SFLOAT || format == VK_FORMAT_D16_UNORM) {
+            viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        } else {
+            viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        }
+        
         viewInfo.subresourceRange.baseMipLevel = 0;
         viewInfo.subresourceRange.levelCount = 1;
         viewInfo.subresourceRange.baseArrayLayer = 0;
         viewInfo.subresourceRange.layerCount = 1;
 
         if (vkCreateImageView(m_Device, &viewInfo, nullptr, &newImage.imageView) != VK_SUCCESS) {
-            Log::Error("Failed to create image view!");
-            throw std::runtime_error("Image view creation failed");
+            throw std::runtime_error("Failed to create image view");
         }
 
         return newImage;
     }
 
-    void MemoryAllocator::DestroyImage(const AllocatedImage& image) {
-        vkDestroyImageView(m_Device, image.imageView, nullptr);
-        vmaDestroyImage(m_Allocator, image.image, image.allocation);
+    void MemoryAllocator::DestroyBuffer(const AllocatedBuffer& buffer) {
+        vmaDestroyBuffer(m_Allocator, buffer.buffer, buffer.allocation);
     }
 
+    void MemoryAllocator::DestroyImage(const AllocatedImage& image) {
+        if (image.imageView) vkDestroyImageView(m_Device, image.imageView, nullptr);
+        if (image.image) vmaDestroyImage(m_Allocator, image.image, image.allocation);
+    }
 }

@@ -29,8 +29,9 @@ namespace vortex::graphics {
 
     void RasterPipeline::Initialize(VkDevice device, 
                                     VkFormat colorFormat, 
-                                    VkFormat velocityFormat, // NEW
+                                    VkFormat velocityFormat, 
                                     VkFormat depthFormat,
+                                    uint32_t framesInFlight, // NEW
                                     const memory::AllocatedBuffer& cameraBuffer,
                                     const memory::AllocatedBuffer& materialBuffer,
                                     const memory::AllocatedBuffer& objectBuffer,
@@ -110,20 +111,14 @@ namespace vortex::graphics {
         depthStencil.depthBoundsTestEnable = VK_FALSE;
         depthStencil.stencilTestEnable = VK_FALSE;
 
-        // --- BLENDING (2 Attachments: Color, Velocity) ---
+        // --- BLENDING ---
         VkPipelineColorBlendAttachmentState blendStates[2] = {};
-        
-        // Attachment 0: Color (No Blend)
-        blendStates[0].colorWriteMask = 0xF; 
-        blendStates[0].blendEnable = VK_FALSE;
-
-        // Attachment 1: Velocity (No Blend)
-        blendStates[1].colorWriteMask = 0xF;
-        blendStates[1].blendEnable = VK_FALSE;
+        blendStates[0].colorWriteMask = 0xF; blendStates[0].blendEnable = VK_FALSE;
+        blendStates[1].colorWriteMask = 0xF; blendStates[1].blendEnable = VK_FALSE;
 
         VkPipelineColorBlendStateCreateInfo colorBlending{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO};
         colorBlending.logicOpEnable = VK_FALSE;
-        colorBlending.attachmentCount = 2; // NEW
+        colorBlending.attachmentCount = 2;
         colorBlending.pAttachments = blendStates;
 
         VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
@@ -131,8 +126,7 @@ namespace vortex::graphics {
         dynamicState.dynamicStateCount = 2;
         dynamicState.pDynamicStates = dynamicStates;
 
-        // Dynamic Rendering Info
-        VkFormat colorFormats[] = { colorFormat, velocityFormat }; // NEW
+        VkFormat colorFormats[] = { colorFormat, velocityFormat };
         VkPipelineRenderingCreateInfo renderingInfo{VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
         renderingInfo.colorAttachmentCount = 2;
         renderingInfo.pColorAttachmentFormats = colorFormats;
@@ -157,45 +151,52 @@ namespace vortex::graphics {
         vkDestroyShaderModule(m_Device, vertMod, nullptr);
         vkDestroyShaderModule(m_Device, fragMod, nullptr);
 
-        // --- Descriptors ---
+        // --- Descriptors (Scaled by frames) ---
         VkDescriptorPoolSize sizes[] = {
-            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 },
-            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 }
+            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 * framesInFlight },
+            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 * framesInFlight }
         };
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
-        poolInfo.maxSets = 1;
+        poolInfo.maxSets = framesInFlight;
         poolInfo.poolSizeCount = 2;
         poolInfo.pPoolSizes = sizes;
         vkCreateDescriptorPool(m_Device, &poolInfo, nullptr, &m_DescriptorPool);
 
+        std::vector<VkDescriptorSetLayout> layouts(framesInFlight, m_DescriptorSetLayout);
         VkDescriptorSetAllocateInfo allocInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         allocInfo.descriptorPool = m_DescriptorPool;
-        allocInfo.descriptorSetCount = 1;
-        allocInfo.pSetLayouts = &m_DescriptorSetLayout;
-        vkAllocateDescriptorSets(m_Device, &allocInfo, &m_DescriptorSet);
+        allocInfo.descriptorSetCount = framesInFlight;
+        allocInfo.pSetLayouts = layouts.data();
+        
+        m_DescriptorSets.resize(framesInFlight);
+        vkAllocateDescriptorSets(m_Device, &allocInfo, m_DescriptorSets.data());
 
-        UpdateDescriptors();
-        Log::Info("Raster Pipeline initialized (MRT: Color + Velocity).");
+        // Initialize all sets
+        for(uint32_t i=0; i<framesInFlight; i++) {
+            UpdateDescriptors(i);
+        }
+        
+        Log::Info("Raster Pipeline initialized (Multi-buffered).");
     }
 
-    void RasterPipeline::UpdateDescriptors() {
+    void RasterPipeline::UpdateDescriptors(uint32_t frameIndex) {
         VkDescriptorBufferInfo camInfo{m_CameraBuffer, 0, VK_WHOLE_SIZE};
         VkDescriptorBufferInfo matInfo{m_MaterialBuffer, 0, VK_WHOLE_SIZE};
         VkDescriptorBufferInfo objInfo{m_ObjectBuffer, 0, VK_WHOLE_SIZE};
         VkDescriptorBufferInfo chkInfo{m_ChunkBuffer, 0, VK_WHOLE_SIZE};
 
         std::vector<VkWriteDescriptorSet> writes(4);
-        writes[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSet, 0, 0, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr, &camInfo, nullptr};
-        writes[1] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSet, 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &matInfo, nullptr};
-        writes[2] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSet, 2, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &objInfo, nullptr};
-        writes[3] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSet, 3, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &chkInfo, nullptr};
+        writes[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 0, 0, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr, &camInfo, nullptr};
+        writes[1] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &matInfo, nullptr};
+        writes[2] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 2, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &objInfo, nullptr};
+        writes[3] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 3, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &chkInfo, nullptr};
 
         vkUpdateDescriptorSets(m_Device, (uint32_t)writes.size(), writes.data(), 0, nullptr);
     }
 
-    void RasterPipeline::Bind(VkCommandBuffer cmd) {
+    void RasterPipeline::Bind(VkCommandBuffer cmd, uint32_t frameIndex) {
         vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_Pipeline);
-        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_PipelineLayout, 0, 1, &m_DescriptorSet, 0, nullptr);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, m_PipelineLayout, 0, 1, &m_DescriptorSets[frameIndex], 0, nullptr);
     }
 
     void RasterPipeline::Shutdown() {

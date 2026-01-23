@@ -14,12 +14,18 @@ export import :swapchain;
 export import :ui;
 export import :pipeline;
 export import :taapipeline;
+export import :fxaapipeline; // FXAA Pipeline
 export import :shader;
 
-// Export Voxel definitions so consumers of Graphics (like Core) see Chunk
 export import vortex.voxel;
 
 namespace vortex::graphics {
+
+    export enum class AntiAliasingMode {
+        None,
+        FXAA,
+        TAA
+    };
 
     export struct Camera {
         glm::vec3 position{0.0f, 0.0f, 5.0f};
@@ -60,6 +66,10 @@ namespace vortex::graphics {
         
         Camera& GetCamera();
         GLFWwindow* GetWindow();
+
+        // --- AA Settings ---
+        void SetAAMode(AntiAliasingMode mode);
+        AntiAliasingMode GetAAMode() const;
 
     private:
         std::unique_ptr<GraphicsInternal> m_Internal;

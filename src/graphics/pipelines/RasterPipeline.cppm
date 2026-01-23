@@ -2,6 +2,7 @@ module;
 
 #include <vulkan/vulkan.h>
 #include <glm/glm.hpp>
+#include <vector> // Додано для std::vector
 
 export module vortex.graphics:pipeline;
 
@@ -17,8 +18,8 @@ namespace vortex::graphics {
         uint32_t objectCount;
         float _pad[3]; 
         glm::mat4 viewProj; 
-        glm::mat4 prevViewProj; // NEW: For Motion Vectors
-        glm::vec4 jitter;       // NEW: xy = current, zw = prev
+        glm::mat4 prevViewProj; 
+        glm::vec4 jitter;       
     };
 
     export class RasterPipeline {
@@ -26,10 +27,12 @@ namespace vortex::graphics {
         RasterPipeline();
         ~RasterPipeline();
 
+        // Додано параметр framesInFlight
         void Initialize(VkDevice device, 
                         VkFormat colorFormat,
-                        VkFormat velocityFormat, // NEW
+                        VkFormat velocityFormat, 
                         VkFormat depthFormat,
+                        uint32_t framesInFlight,
                         const memory::AllocatedBuffer& cameraBuffer,
                         const memory::AllocatedBuffer& materialBuffer,
                         const memory::AllocatedBuffer& objectBuffer,
@@ -37,8 +40,9 @@ namespace vortex::graphics {
 
         void Shutdown();
         
-        void Bind(VkCommandBuffer cmd);
-        void UpdateDescriptors();
+        // Додано frameIndex
+        void Bind(VkCommandBuffer cmd, uint32_t frameIndex);
+        void UpdateDescriptors(uint32_t frameIndex);
 
     private:
         VkDevice m_Device{VK_NULL_HANDLE};
@@ -47,7 +51,9 @@ namespace vortex::graphics {
         
         VkDescriptorSetLayout m_DescriptorSetLayout{VK_NULL_HANDLE};
         VkDescriptorPool m_DescriptorPool{VK_NULL_HANDLE};
-        VkDescriptorSet m_DescriptorSet{VK_NULL_HANDLE};
+        
+        // Змінено на вектор
+        std::vector<VkDescriptorSet> m_DescriptorSets;
 
         VkBuffer m_CameraBuffer{VK_NULL_HANDLE};
         VkBuffer m_MaterialBuffer{VK_NULL_HANDLE};
