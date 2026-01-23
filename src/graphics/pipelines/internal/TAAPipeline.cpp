@@ -96,18 +96,26 @@ namespace vortex::graphics {
                       const memory::AllocatedImage& output,
                       uint32_t width, uint32_t height) {
 
-        // Need a sampler for inputs (linear for TAA usually fine, or nearest for depth/velocity)
-        // For simplicity, assuming image views have internal samplers or we create a temp static sampler?
-        // Actually, Descriptor Update needs a valid sampler.
-        // Let's create an immutable sampler or just a static one in Initialize?
-        // For now, let's assuming we have a global sampler or create one on fly (bad perf).
-        // BETTER: Create a sampler in Initialize and cache it.
-        // But for this snippet, I'll cheat and assume we updated descriptors previously? No, must update here or have separate method.
-        // Let's do update here for simplicity.
+        // Use correct member names: imageView (not view) and sampler (now exists)
+        VkDescriptorImageInfo colorInfo{colorInput.sampler ? colorInput.sampler : VK_NULL_HANDLE, colorInput.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkDescriptorImageInfo histInfo{historyInput.sampler ? historyInput.sampler : VK_NULL_HANDLE, historyInput.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkDescriptorImageInfo velInfo{velocityInput.sampler ? velocityInput.sampler : VK_NULL_HANDLE, velocityInput.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkDescriptorImageInfo depthInfo{depthInput.sampler ? depthInput.sampler : VK_NULL_HANDLE, depthInput.imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        VkDescriptorImageInfo outInfo{VK_NULL_HANDLE, output.imageView, VK_IMAGE_LAYOUT_GENERAL};
 
-        // WARNING: Creating sampler every frame is bad. In real engine, put in GraphicsContext.
-        // I will assume GraphicsContext provides a default Linear Sampler.
-        // Placeholder:
+        VkWriteDescriptorSet writes[5];
+        writes[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSet, 0, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &colorInfo, nullptr, nullptr};
+        writes[1] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSet, 1, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &histInfo, nullptr, nullptr};
+        writes[2] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSet, 2, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &velInfo, nullptr, nullptr};
+        writes[3] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSet, 3, 0, 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, &depthInfo, nullptr, nullptr};
+        writes[4] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSet, 4, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, &outInfo, nullptr, nullptr};
+
+        vkUpdateDescriptorSets(m_Device, 5, writes, 0, nullptr);
+
+        vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_Pipeline);
+        vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, m_PipelineLayout, 0, 1, &m_DescriptorSet, 0, nullptr);
+        
+        vkCmdDispatch(cmd, (width + 7) / 8, (height + 7) / 8, 1);
     }
 
     void TAAPipeline::Shutdown() {
@@ -116,6 +124,7 @@ namespace vortex::graphics {
             vkDestroyPipelineLayout(m_Device, m_PipelineLayout, nullptr);
             vkDestroyDescriptorSetLayout(m_Device, m_DescriptorSetLayout, nullptr);
             vkDestroyDescriptorPool(m_Device, m_DescriptorPool, nullptr);
+            m_Device = VK_NULL_HANDLE;
         }
     }
 }

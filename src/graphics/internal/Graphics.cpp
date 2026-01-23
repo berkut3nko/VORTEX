@@ -17,6 +17,7 @@ module vortex.graphics;
 import vortex.log;
 import vortex.memory;
 import vortex.voxel;
+import :taapipeline; 
 
 namespace vortex::graphics {
 
@@ -31,22 +32,14 @@ namespace vortex::graphics {
         uint32_t pad;
     };
 
-    // Halton Sequence Generator
     float Halton(int index, int base) {
-        float f = 1.0f;
-        float r = 0.0f;
-        while (index > 0) {
-            f = f / (float)base;
-            r = r + f * (index % base);
-            index = index / base;
-        }
+        float f = 1.0f; float r = 0.0f;
+        while (index > 0) { f = f / (float)base; r = r + f * (index % base); index = index / base; }
         return r;
     }
     
-    // --- Frustum Culling Helpers ---
     struct ViewFrustum {
         std::array<glm::vec4, 6> planes;
-
         void Update(const glm::mat4& viewProj) {
             for (int i = 0; i < 3; ++i) {
                 for (int j = 0; j < 2; ++j) {
@@ -59,12 +52,9 @@ namespace vortex::graphics {
                 }
             }
         }
-
         bool IsSphereVisible(const glm::vec3& center, float radius) const {
             for (const auto& plane : planes) {
-                if (glm::dot(glm::vec3(plane), center) + plane.w < -radius) {
-                    return false; 
-                }
+                if (glm::dot(glm::vec3(plane), center) + plane.w < -radius) return false; 
             }
             return true;
         }
@@ -77,6 +67,7 @@ namespace vortex::graphics {
         UIOverlay ui;
         
         RasterPipeline rasterPipeline;
+        TAAPipeline taaPipeline; 
 
         VkCommandPool commandPool{VK_NULL_HANDLE};
         std::vector<VkCommandBuffer> commandBuffers;
@@ -91,7 +82,8 @@ namespace vortex::graphics {
         Camera camera;
         glm::mat4 prevViewProj{1.0f};
 
-        float renderScale = 0.7f; 
+        // Render Scale 0.5 for testing TAA upscale
+        float renderScale = 1.0f; 
         
         memory::AllocatedImage colorTarget;
         memory::AllocatedImage velocityTarget;
@@ -121,13 +113,21 @@ namespace vortex::graphics {
         auto* mem = context.GetAllocator();
         uint32_t w = (uint32_t)(sw * renderScale);
         uint32_t h = (uint32_t)(sh * renderScale);
-        
+        if (w == 0) w = 1; if (h == 0) h = 1;
+
         colorTarget = mem->CreateImage(w, h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
         velocityTarget = mem->CreateImage(w, h, VK_FORMAT_R16G16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
         depthTarget = mem->CreateImage(w, h, VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
 
-        historyTexture[0] = mem->CreateImage(w, h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
-        historyTexture[1] = mem->CreateImage(w, h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+        historyTexture[0] = mem->CreateImage(w, h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+        historyTexture[1] = mem->CreateImage(w, h, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT);
+        
+        // Assign default sampler
+        colorTarget.sampler = defaultSampler;
+        velocityTarget.sampler = defaultSampler;
+        depthTarget.sampler = defaultSampler;
+        historyTexture[0].sampler = defaultSampler;
+        historyTexture[1].sampler = defaultSampler;
     }
 
     bool GraphicsContext::Initialize(const std::string& title, uint32_t width, uint32_t height) {
@@ -175,6 +175,8 @@ namespace vortex::graphics {
                                     VK_FORMAT_D32_SFLOAT,
                                     i.cameraUBO, i.materialsSSBO, i.objectsSSBO, i.chunksSSBO);
         
+        i.taaPipeline.Initialize(i.context.GetDevice()); // Initialize TAA
+
         i.ui.Initialize(i.context, i.window, i.swapchain.GetFormat(), i.swapchain.GetExtent(), i.swapchain.GetImageViews());
         return true;
     }
@@ -324,6 +326,9 @@ namespace vortex::graphics {
             VkExtent2D renderExtent;
             renderExtent.width = (uint32_t)(i.swapchain.GetExtent().width * i.renderScale);
             renderExtent.height = (uint32_t)(i.swapchain.GetExtent().height * i.renderScale);
+            
+            if (renderExtent.width == 0) renderExtent.width = 1;
+            if (renderExtent.height == 0) renderExtent.height = 1;
 
             VkRenderingInfo renderInfo{VK_STRUCTURE_TYPE_RENDERING_INFO};
             renderInfo.renderArea = {{0,0}, renderExtent};
@@ -345,38 +350,98 @@ namespace vortex::graphics {
             vkCmdEndRendering(cmd);
         }
 
-        // --- 2. TAA PASS (Simulated Blit) ---
+        // --- 2. TAA PASS (Actual Compute Shader) ---
         {
-            VkImageMemoryBarrier srcBar{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-            srcBar.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-            srcBar.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
-            srcBar.image = i.colorTarget.image;
-            srcBar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            srcBar.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
-            srcBar.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            int currHistory = i.historyIndex;
+            int prevHistory = (i.historyIndex + 1) % 2;
 
-            VkImageMemoryBarrier dstBar{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
-            dstBar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-            dstBar.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-            dstBar.image = i.swapchain.GetImages()[i.imageIndex];
-            dstBar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-            dstBar.srcAccessMask = 0;
-            dstBar.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+            VkImageMemoryBarrier barriers[4];
+            
+            // Color -> Read
+            barriers[0] = {VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
+            barriers[0].oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            barriers[0].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            barriers[0].image = i.colorTarget.image;
+            barriers[0].subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            barriers[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+            barriers[0].dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+            
+            // Velocity -> Read
+            barriers[1] = barriers[0];
+            barriers[1].image = i.velocityTarget.image;
 
-            VkImageMemoryBarrier barriers[] = {srcBar, dstBar};
-            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, barriers);
+            // Depth -> Read
+            barriers[2] = barriers[0];
+            barriers[2].oldLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            barriers[2].image = i.depthTarget.image;
+            barriers[2].subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            barriers[2].srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+
+            // Prev History (Read)
+            barriers[3] = barriers[0];
+            barriers[3].oldLayout = VK_IMAGE_LAYOUT_GENERAL; 
+            barriers[3].newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            barriers[3].image = i.historyTexture[prevHistory].image;
+            barriers[3].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+
+            // Curr History (Write) - transition to GENERAL
+            VkImageMemoryBarrier outBar = barriers[0];
+            outBar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            outBar.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+            outBar.image = i.historyTexture[currHistory].image;
+            outBar.srcAccessMask = 0;
+            outBar.dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+
+            vkCmdPipelineBarrier(cmd, 
+                VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
+                VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 
+                0, 0, nullptr, 0, nullptr, 4, barriers);
+            
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &outBar);
+
+            uint32_t w = (uint32_t)(i.swapchain.GetExtent().width * i.renderScale);
+            uint32_t h = (uint32_t)(i.swapchain.GetExtent().height * i.renderScale);
+            if (w==0) w=1; if (h==0) h=1;
+
+            i.taaPipeline.Dispatch(cmd, 
+                i.colorTarget, 
+                i.historyTexture[prevHistory], 
+                i.velocityTarget, 
+                i.depthTarget, 
+                i.historyTexture[currHistory], 
+                w, h);
+
+            // Prepare Curr History for Blit (TRANSFER_SRC)
+            VkImageMemoryBarrier toBlit = outBar;
+            toBlit.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
+            toBlit.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+            toBlit.image = i.historyTexture[currHistory].image;
+            toBlit.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            toBlit.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+            
+            // Prepare Swapchain for Blit (TRANSFER_DST)
+            VkImageMemoryBarrier swapBar = outBar;
+            swapBar.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            swapBar.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            swapBar.image = i.swapchain.GetImages()[i.imageIndex];
+            swapBar.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            swapBar.srcAccessMask = 0;
+            swapBar.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+            VkImageMemoryBarrier blitBars[] = {toBlit, swapBar};
+            vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 2, blitBars);
 
             VkImageBlit blit{};
-            blit.srcOffsets[1] = { (int)(i.swapchain.GetExtent().width * i.renderScale), (int)(i.swapchain.GetExtent().height * i.renderScale), 1 };
+            blit.srcOffsets[1] = { (int)w, (int)h, 1 };
             blit.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
             blit.dstOffsets[1] = { (int)i.swapchain.GetExtent().width, (int)i.swapchain.GetExtent().height, 1 };
             blit.dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-
+            
             vkCmdBlitImage(cmd, 
-                i.colorTarget.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                i.historyTexture[currHistory].image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
                 i.swapchain.GetImages()[i.imageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                 1, &blit, VK_FILTER_LINEAR); 
-            
+
              VkImageMemoryBarrier toUI{VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER};
              toUI.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
              toUI.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
@@ -385,6 +450,8 @@ namespace vortex::graphics {
              toUI.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
              toUI.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
              vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr, 0, nullptr, 1, &toUI);
+
+             i.historyIndex = (i.historyIndex + 1) % 2; 
         }
 
         // --- 3. UI RENDER ---
@@ -506,6 +573,7 @@ namespace vortex::graphics {
         vkDeviceWaitIdle(m_Internal->context.GetDevice());
         m_Internal->ui.Shutdown();
         m_Internal->rasterPipeline.Shutdown();
+        m_Internal->taaPipeline.Shutdown(); // Shutdown TAA
         m_Internal->swapchain.Shutdown();
         m_Internal->window.Shutdown();
         m_Internal->context.Shutdown();

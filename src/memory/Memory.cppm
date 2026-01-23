@@ -22,8 +22,9 @@ namespace vortex::memory {
      */
     export struct AllocatedImage {
         VkImage image{VK_NULL_HANDLE};
-        VkImageView imageView{VK_NULL_HANDLE};
+        VkImageView imageView{VK_NULL_HANDLE}; // Was 'view' in some contexts, correct is 'imageView'
         VmaAllocation allocation{VK_NULL_HANDLE};
+        VkSampler sampler{VK_NULL_HANDLE};     // Added this field for TAA/Graphics resources
     };
 
     /**

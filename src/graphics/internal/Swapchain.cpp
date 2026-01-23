@@ -24,6 +24,12 @@ namespace vortex::graphics {
         auto swap_ret = swap_builder
             .set_desired_extent(width, height)
             .set_old_swapchain(m_Swapchain)
+            // --- VSYNC SETTINGS ---
+            // VK_PRESENT_MODE_FIFO_KHR = VSync (Default, 60/144 FPS lock)
+            // VK_PRESENT_MODE_MAILBOX_KHR = Triple Buffering (Uncapped FPS, No Tearing) - BEST
+            // VK_PRESENT_MODE_IMMEDIATE_KHR = No VSync (Uncapped FPS, Tearing possible) - FASTEST
+            .set_desired_present_mode(VK_PRESENT_MODE_MAILBOX_KHR) 
+            // ---------------------
             .add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
             .build();
 
