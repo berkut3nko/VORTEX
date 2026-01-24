@@ -47,7 +47,7 @@ namespace vortex::graphics {
         uint64_t frameCounter = 0;
 
         Camera camera;
-        float renderScale = 1.0f; 
+        float renderScale = 0.6f; 
         AntiAliasingMode currentAAMode = AntiAliasingMode::FXAA;
         
         VkSampler defaultSampler{VK_NULL_HANDLE};

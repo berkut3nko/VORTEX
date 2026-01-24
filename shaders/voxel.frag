@@ -2,10 +2,10 @@
 #extension GL_EXT_scalar_block_layout : enable
 
 /**
- * @brief Voxel Raymarching Fragment Shader (Optimized Single-Level DDA).
+ * @brief Voxel Raymarching Fragment Shader (Optimized Single-Level DDA + SoA).
  * @details 
- * 1. Uses Single-Level DDA for geometric stability (no artifacts).
- * 2. Uses Geometric Depth Reconstruction for smooth surfaces.
+ * 1. Uses Single-Level DDA for geometric stability (no artifacts on steps).
+ * 2. Uses Structure of Arrays (SoA) memory layout for better cache efficiency.
  * 3. OPTIMIZATION: Uses Hierarchy Bitmask to skip Voxel Memory Fetch in empty areas.
  */
 
@@ -32,9 +32,12 @@ struct Object {
     uint _pad;
 };
 
+// --- UPDATED Chunk Layout (SoA) ---
+// Matches src/voxel/Chunk.cppm
 struct Chunk {
-    uint voxels[8192];   
-    uint hierarchy[16]; 
+    uint voxelIDs[8192];   // Material Indices (8 bits/voxel). Packed 4 per uint.
+    uint voxelFlags[2048]; // Flags (2 bits/voxel). Packed 16 per uint.
+    uint hierarchy[16];    // 512-bit Hierarchy Mask.
 };
 
 layout(binding = 0, std140) uniform Camera {
@@ -74,7 +77,8 @@ bool IsBlockOccupied(uint chunkIdx, ivec3 mapPos) {
 
 uint GetVoxel(uint chunkIdx, ivec3 pos) {
     uint index = pos.x + pos.y * 32 + pos.z * 1024;
-    return (chunkBuffer.chunks[chunkIdx].voxels[index >> 2] >> ((index & 3) << 3)) & 0xFF;
+    // Access voxelIDs array (SoA layout)
+    return (chunkBuffer.chunks[chunkIdx].voxelIDs[index >> 2] >> ((index & 3) << 3)) & 0xFF;
 }
 
 bool IntersectAABB(vec3 ro, vec3 rd, vec3 boxMin, vec3 boxMax, out float tNear, out float tFar) {
@@ -98,7 +102,10 @@ void main() {
 
     // --- 1. Ray Setup ---
     vec3 localCamPos = (obj.invModel * vec4(cam.position.xyz, 1.0)).xyz;
-    vec3 localDir = normalize(v_LocalPos - localCamPos);
+    // Safe normalize (avoid NaN if pos == camPos, unlikely but safe)
+    vec3 rawDir = v_LocalPos - localCamPos;
+    if (dot(rawDir, rawDir) < 1e-6) discard;
+    vec3 localDir = normalize(rawDir);
 
     float tNear, tFar;
     if (!IntersectAABB(localCamPos, localDir, vec3(0.0), vec3(32.0), tNear, tFar)) {
@@ -112,8 +119,14 @@ void main() {
     ivec3 mapPos = ivec3(floor(rayPos));
     mapPos = clamp(mapPos, ivec3(0), ivec3(31));
 
-    vec3 deltaDist = abs(1.0 / localDir);
-    ivec3 stepDir = ivec3(sign(localDir));
+    // Avoid division by zero in deltaDist
+    vec3 safeDir = localDir;
+    if (abs(safeDir.x) < 1e-6) safeDir.x = 1e-6;
+    if (abs(safeDir.y) < 1e-6) safeDir.y = 1e-6;
+    if (abs(safeDir.z) < 1e-6) safeDir.z = 1e-6;
+
+    vec3 deltaDist = abs(1.0 / safeDir);
+    ivec3 stepDir = ivec3(sign(safeDir));
     
     vec3 sideDist;
     sideDist.x = (sign(localDir.x) * (vec3(mapPos).x - rayPos.x) + (sign(localDir.x) * 0.5) + 0.5) * deltaDist.x;
@@ -122,7 +135,7 @@ void main() {
 
     ivec3 mask = ivec3(0);
 
-    // --- 2. Optimized DDA Loop ---
+    // --- 2. Optimized Single-Level DDA Loop ---
     for (int i = 0; i < 128; i++) {
         // Bounds Check
         if (mapPos.x < 0 || mapPos.x >= 32 || mapPos.y < 0 || mapPos.y >= 32 || mapPos.z < 0 || mapPos.z >= 32) break;
@@ -139,7 +152,7 @@ void main() {
             if (voxel != 0) {
                 // --- HIT RESPONSE ---
                 vec4 color = matBuffer.materials[voxel].color;
-                if (color.a < 0.01) color = vec4(1.0, 0.0, 1.0, 1.0); 
+                if (color.a < 0.01) color = vec4(1.0, 0.0, 1.0, 1.0); // Debug pink for invisible materials
 
                 vec3 normal = vec3(0.0);
                 if (mask.x != 0) normal.x = -float(stepDir.x);
@@ -147,6 +160,7 @@ void main() {
                 else if (mask.z != 0) normal.z = -float(stepDir.z);
                 if (mask == ivec3(0)) normal = -localDir;
 
+                // Simple lighting
                 float diff = max(0.0, dot(normal, normalize(vec3(0.5, 1.0, 0.5))));
                 outColor = vec4(color.rgb * (0.3 + diff * 0.7), 1.0);
                 
@@ -171,10 +185,9 @@ void main() {
             }
         }
 
-        // --- STEP ---
-        // Even if block is empty, we do standard small steps.
-        // This ensures we don't skip corners or create artifacts,
-        // but the loop runs much faster because we skip the heavy GetVoxel() call.
+        // --- STEP (Single Level) ---
+        // Even if block is empty, we step one voxel at a time.
+        // This is slower than Hierarchical leaping but visually robust.
         if (sideDist.x < sideDist.y) {
             if (sideDist.x < sideDist.z) {
                 sideDist.x += deltaDist.x;

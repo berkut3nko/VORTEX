@@ -3,7 +3,6 @@ module;
 #include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
 
-// CRITICAL FIX: Force GLM to use Vulkan depth range [0, 1]
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -59,15 +58,28 @@ namespace vortex::graphics {
         m_CameraUBO = allocator->CreateBuffer(sizeof(CameraUBO), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
         // Assuming 256 materials max for now
         m_MaterialsSSBO = allocator->CreateBuffer(sizeof(voxel::PhysicalMaterial) * 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-        // Max 10000 objects
+        
+        // Max 10000 objects - Persistent Map Optimization
         m_ObjectsSSBO = allocator->CreateBuffer(sizeof(GPUObject) * 10000, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
         
+        // Map once at startup
+        VkResult result = vmaMapMemory(m_Allocator->GetVmaAllocator(), m_ObjectsSSBO.allocation, &m_MappedObjectBuffer);
+        if (result != VK_SUCCESS) {
+            Log::Error("Failed to map object buffer!");
+        }
+
         // 64MB buffer for chunks (CPU_TO_GPU for direct access)
         m_ChunksSSBO = allocator->CreateBuffer(1024*1024*64, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
     }
 
     void SceneManager::Shutdown() {
         if (m_Allocator) {
+            // Unmap before destruction
+            if (m_MappedObjectBuffer) {
+                vmaUnmapMemory(m_Allocator->GetVmaAllocator(), m_ObjectsSSBO.allocation);
+                m_MappedObjectBuffer = nullptr;
+            }
+
             m_Allocator->DestroyBuffer(m_CameraUBO);
             m_Allocator->DestroyBuffer(m_MaterialsSSBO);
             m_Allocator->DestroyBuffer(m_ObjectsSSBO);
@@ -120,7 +132,7 @@ namespace vortex::graphics {
         
         float aspect = (float)width / (float)height;
         glm::mat4 view = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
-        glm::mat4 proj = glm::perspective(glm::radians(camera.fov), aspect, 0.1f, 100.0f);
+        glm::mat4 proj = glm::perspective(glm::radians(camera.fov), aspect, 0.1f, 400.0f);
         
         // Note: With GLM_FORCE_DEPTH_ZERO_TO_ONE, Y-flip is still needed for Vulkan
         proj[1][1] *= -1; 
@@ -157,7 +169,7 @@ namespace vortex::graphics {
         if (m_CachedObjects.empty()) return 0;
 
         glm::mat4 view = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
-        glm::mat4 proj = glm::perspective(glm::radians(camera.fov), aspectRatio, 0.1f, 100.0f);
+        glm::mat4 proj = glm::perspective(glm::radians(camera.fov), aspectRatio, 0.1f, 400.0f);
         proj[1][1] *= -1;
         glm::mat4 viewProj = proj * view;
 
@@ -191,11 +203,9 @@ namespace vortex::graphics {
         }
 
         // Upload
-        if (!m_VisibleGPUObjects.empty()) {
-            void* data;
-            vmaMapMemory(m_Allocator->GetVmaAllocator(), m_ObjectsSSBO.allocation, &data);
-            memcpy(data, m_VisibleGPUObjects.data(), m_VisibleGPUObjects.size() * sizeof(GPUObject));
-            vmaUnmapMemory(m_Allocator->GetVmaAllocator(), m_ObjectsSSBO.allocation);
+        if (!m_VisibleGPUObjects.empty() && m_MappedObjectBuffer) {
+            // Optimized: Direct memcpy without map/unmap overhead per frame
+            memcpy(m_MappedObjectBuffer, m_VisibleGPUObjects.data(), m_VisibleGPUObjects.size() * sizeof(GPUObject));
         }
 
         return m_VisibleGPUObjects.size();

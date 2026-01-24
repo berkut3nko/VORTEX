@@ -105,6 +105,9 @@ namespace vortex::graphics {
         memory::AllocatedBuffer m_ObjectsSSBO;
         memory::AllocatedBuffer m_ChunksSSBO;
 
+        // OPTIMIZATION: Persistent mapped pointer to avoid per-frame vmaMapMemory calls
+        void* m_MappedObjectBuffer = nullptr;
+
         std::vector<SceneObject> m_CachedObjects;
         std::vector<GPUObject> m_VisibleGPUObjects;
         

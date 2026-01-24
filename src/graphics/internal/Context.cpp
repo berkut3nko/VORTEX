@@ -18,8 +18,6 @@ namespace vortex::graphics {
     bool VulkanContext::InitInstance(const char* title) {
         vkb::InstanceBuilder builder;
         auto inst_ret = builder.set_app_name(title)
-                               // ВИМКНЕНО ДЛЯ ПРОДУКТИВНОСТІ
-                               // Увімкніть назад, якщо будуть краші
                                .request_validation_layers(false) 
                                .require_api_version(1, 3, 0)
                                .use_default_debug_messenger()
