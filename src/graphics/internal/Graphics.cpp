@@ -54,11 +54,6 @@ namespace vortex::graphics {
 
         // --- Methods ---
         void InitSyncObjects();
-        
-        /**
-         * @brief Records commands for the current frame.
-         * @param cmd The command buffer to record into.
-         */
         void RecordCommandBuffer(VkCommandBuffer cmd);
         
         // Render Passes
@@ -279,7 +274,6 @@ namespace vortex::graphics {
             uint32_t w = (uint32_t)(swapchain.GetExtent().width * renderScale);
             uint32_t h = (uint32_t)(swapchain.GetExtent().height * renderScale);
 
-            // FIX: Pass defaultSampler to avoid null sampler crash
             fxaaPipeline.Dispatch(cmd, currentFrame, defaultSampler, resources.GetColor(), resources.GetResolve(), w, h);
             outImage = const_cast<memory::AllocatedImage*>(&resources.GetResolve());
         } 
@@ -298,7 +292,6 @@ namespace vortex::graphics {
             uint32_t w = (uint32_t)(swapchain.GetExtent().width * renderScale);
             uint32_t h = (uint32_t)(swapchain.GetExtent().height * renderScale);
 
-            // FIX: Pass defaultSampler
             taaPipeline.Dispatch(cmd, currentFrame, defaultSampler, resources.GetColor(), histRead, resources.GetVelocity(), resources.GetDepth(), histWrite, w, h);
             
             outImage = const_cast<memory::AllocatedImage*>(&histWrite);
@@ -384,6 +377,10 @@ namespace vortex::graphics {
                                       const std::vector<SceneMaterial>& m, 
                                       const std::vector<voxel::Chunk>& c) { 
         m_Internal->sceneManager.UploadSceneData(o, m, c); 
+    }
+
+    SceneManager& GraphicsContext::GetSceneManager() {
+        return m_Internal->sceneManager;
     }
 
     void GraphicsContext::SetAAMode(AntiAliasingMode mode) { 

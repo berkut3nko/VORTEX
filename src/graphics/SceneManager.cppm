@@ -10,10 +10,22 @@ import vortex.memory;
 import vortex.voxel;
 
 namespace vortex::graphics {
-    // Forward declarations or re-definitions if not exported from a pure type module
-    export struct SceneObject { glm::mat4 model; uint32_t materialIdx; };
+    /**
+     * @brief High-level CPU representation of an object.
+     * @details Contains transform and metadata used by the engine and editor.
+     */
+    export struct SceneObject { 
+        glm::mat4 model; 
+        uint32_t materialIdx;
+        
+        // Editor/Logic fields (NOT sent to GPU directly)
+        glm::vec3 logicalCenter{16.0f}; // Default to center of 32^3 chunk
+        uint32_t voxelCount{0};
+    };
+    
     export struct SceneMaterial { glm::vec4 color; };
     
+    // Internal GPU structure (Matches Shader std430 layout)
     struct GPUObject {
         glm::mat4 model;
         glm::mat4 invModel;
@@ -65,6 +77,19 @@ namespace vortex::graphics {
          * @return Number of visible objects.
          */
         size_t CullAndUpload(const Camera& camera, float aspectRatio);
+
+        /**
+         * @brief Updates a specific object's transform directly in the cached list.
+         * @note Requires next CullAndUpload call to sync with GPU.
+         * @param index Index of the object in the scene list.
+         * @param newModel New model matrix.
+         */
+        void SetObjectTransform(uint32_t index, const glm::mat4& newModel);
+
+        /**
+         * @brief Accessor for cached scene objects (Editable).
+         */
+        std::vector<SceneObject>& GetObjects() { return m_CachedObjects; }
 
         // Getters for Buffers
         const memory::AllocatedBuffer& GetCameraBuffer() const { return m_CameraUBO; }

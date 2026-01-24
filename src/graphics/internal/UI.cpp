@@ -5,7 +5,8 @@ module;
 #include <imgui.h>
 #include <backends/imgui_impl_glfw.h>
 #include <backends/imgui_impl_vulkan.h>
-#include <VkBootstrap.h> // Included for vkb types if needed
+#include <ImGuizmo.h> // Include ImGuizmo
+#include <VkBootstrap.h> 
 #include <vector>
 
 module vortex.graphics;
@@ -54,14 +55,10 @@ namespace vortex::graphics {
         ImGui_ImplVulkan_Init(&init_info);
 
         // Upload Fonts
-        // ImGui_ImplVulkan_CreateFontsTexture handles command buffer creation/submission internally
-        // using the queue provided in init_info.
         if (!ImGui_ImplVulkan_CreateFontsTexture()) {
             Log::Error("Failed to create ImGui font texture!");
         }
         
-        // No need to manually destroy font upload objects here, ImGui handles it or it stays until shutdown.
-        // Wait for idle to ensure fonts are uploaded before rendering
         vkDeviceWaitIdle(m_Device);
     }
 
@@ -138,6 +135,7 @@ namespace vortex::graphics {
         ImGui_ImplVulkan_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
+        ImGuizmo::BeginFrame();
     }
 
     void UIOverlay::Render(VkCommandBuffer cmd, uint32_t imageIndex) {

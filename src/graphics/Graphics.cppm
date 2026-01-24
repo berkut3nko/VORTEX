@@ -44,6 +44,11 @@ namespace vortex::graphics {
                          const std::vector<SceneMaterial>& materials,
                          const std::vector<vortex::voxel::Chunk>& chunks);
         
+        /**
+         * @brief Access to scene manager for editor.
+         */
+        SceneManager& GetSceneManager();
+
         Camera& GetCamera();
         GLFWwindow* GetWindow();
         void SetAAMode(AntiAliasingMode mode);

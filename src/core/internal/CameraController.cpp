@@ -33,12 +33,12 @@ namespace vortex::core {
 
         // --- 2. Mouse Rotation ---
         
-        bool isLmbPressed = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+        bool isRmbPressed = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
         bool wantCapture = ImGui::GetIO().WantCaptureMouse;
 
         if (m_IsDragging) wantCapture = false; 
 
-        if (isLmbPressed && !wantCapture) {
+        if (isRmbPressed && !wantCapture) {
             
             if (!m_IsDragging) {
                 m_IsDragging = true;

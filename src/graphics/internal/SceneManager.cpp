@@ -106,6 +106,13 @@ namespace vortex::graphics {
         Log::Info("Scene Data Uploaded: " + std::to_string(objects.size()) + " objects, " + std::to_string(chunks.size()) + " chunks.");
     }
 
+    void SceneManager::SetObjectTransform(uint32_t index, const glm::mat4& newModel) {
+        if (index < m_CachedObjects.size()) {
+            m_CachedObjects[index].model = newModel;
+            // The GPU buffer will be updated on the next CullAndUpload call
+        }
+    }
+
     void SceneManager::UploadCameraBuffer(const Camera& camera, uint32_t width, uint32_t height, uint64_t frameCount, bool useJitter) {
         CameraUBO ubo{};
         ubo.position = glm::vec4(camera.position, 1.0f);

@@ -4,23 +4,25 @@ module;
 #include <chrono>
 #include <memory> 
 #include <functional>
+#include <GLFW/glfw3.h> // needed for window handle
 
 module vortex.core;
 
 import vortex.log;
 import vortex.graphics;
 import vortex.voxel;
+import vortex.editor; // Import Editor
 import :camera;
 
 namespace vortex {
 
     /**
      * @brief Internal Pimpl state for the Engine.
-     * @details Hides implementation details and dependencies (like EnTT) from the public API.
      */
     struct Engine::InternalState {
         std::unique_ptr<graphics::GraphicsContext> graphicsContext;
         core::CameraController cameraController;
+        editor::Editor editor; // Editor Instance
         entt::registry registry;
         bool isRunning = false;
     };
@@ -59,7 +61,20 @@ namespace vortex {
                 break;
             }
 
-            // 2. Update Camera
+            // Get Window dimensions for Raycast/Gizmo
+            int width, height;
+            glfwGetFramebufferSize(m_State->graphicsContext->GetWindow(), &width, &height);
+
+            // 2. Editor Update (Raycast & Shortcuts)
+            // BEFORE Camera Update to block input if needed
+            m_State->editor.Update(
+                m_State->graphicsContext->GetWindow(), 
+                m_State->graphicsContext->GetCamera(),
+                m_State->graphicsContext->GetSceneManager(),
+                width, height
+            );
+
+            // 3. Update Camera
             m_State->cameraController.Update(
                 m_State->graphicsContext->GetWindow(), 
                 m_State->graphicsContext->GetCamera(), 
@@ -67,15 +82,21 @@ namespace vortex {
             );
             m_State->graphicsContext->UploadCamera();
 
-            // 3. Update Game Logic
+            // 4. Update Game Logic
             UpdateSystems(deltaTime);
 
-            // 4. Custom GUI
+            // 5. Custom GUI + Editor Render
             if (onGuiRender) {
                 onGuiRender();
             }
+            
+            // Render Gizmo (Must be called inside ImGui frame)
+            m_State->editor.RenderGizmo(
+                m_State->graphicsContext->GetCamera(),
+                width, height
+            );
 
-            // 5. Render
+            // 6. Render
             m_State->graphicsContext->EndFrame();
         }
 
