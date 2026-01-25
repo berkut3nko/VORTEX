@@ -59,6 +59,7 @@ target_sources(VortexCore PRIVATE
     src/editor/internal/Editor.cpp
 
     src/core/internal/Engine.cpp
+    src/core/internal/Profiler.cpp
     src/core/internal/CameraController.cpp
     src/memory/internal/MemoryAllocator.cpp
 
@@ -89,7 +90,7 @@ target_sources(VortexCore PUBLIC
     src/core/Core.cppm
     src/core/CameraController.cppm
     src/core/Logger.cppm
-    src/core/Profiller.cppm
+    src/core/Profiler.cppm
     src/memory/Memory.cppm
 
     # Graphics Modules

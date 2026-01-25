@@ -19,6 +19,7 @@ import :fxaapipeline;
 namespace vortex::graphics {
 
     constexpr int FRAMES_IN_FLIGHT = 2;
+    constexpr int QUERY_COUNT = 4; // 2 timestamps for Geometry, 2 for AA
 
     struct GraphicsInternal {
         Window window;
@@ -41,6 +42,12 @@ namespace vortex::graphics {
         std::vector<VkSemaphore> renderFinishedSemaphores;
         std::vector<VkFence> inFlightFences;
 
+        // Profiling
+        VkQueryPool queryPools[FRAMES_IN_FLIGHT];
+        float timestampPeriod = 1.0f;
+        float lastSceneTime = 0.0f;
+        float lastAATime = 0.0f;
+
         // State
         uint32_t currentFrame = 0;
         uint32_t imageIndex = 0;
@@ -52,14 +59,17 @@ namespace vortex::graphics {
         
         VkSampler defaultSampler{VK_NULL_HANDLE};
 
+        // Temporary storage for AA result to pass between RecordAA and EndFrame
+        memory::AllocatedImage* currentFinalImage = nullptr; 
+
         // --- Methods ---
         void InitSyncObjects();
-        void RecordCommandBuffer(VkCommandBuffer cmd);
+        void InitQueries();
         
         // Render Passes
         void PassGeometry(VkCommandBuffer cmd, size_t visibleCount);
         void PassAA(VkCommandBuffer cmd, memory::AllocatedImage*& outImage);
-        void PassBlit(VkCommandBuffer cmd, memory::AllocatedImage* source);
+        void PassBlit(VkCommandBuffer cmd, const memory::AllocatedImage* source);
         void PassUI(VkCommandBuffer cmd);
         
         // Helpers
@@ -92,6 +102,7 @@ namespace vortex::graphics {
         vkAllocateCommandBuffers(i.context.GetDevice(), &allocInfo, i.commandBuffers.data());
 
         i.InitSyncObjects();
+        i.InitQueries();
 
         // 3. Shared Resources
         VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -138,6 +149,22 @@ namespace vortex::graphics {
         }
     }
 
+    void GraphicsInternal::InitQueries() {
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(context.GetPhysicalDevice(), &props);
+        timestampPeriod = props.limits.timestampPeriod;
+
+        VkQueryPoolCreateInfo queryPoolInfo{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+        queryPoolInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        queryPoolInfo.queryCount = QUERY_COUNT;
+
+        for (int i = 0; i < FRAMES_IN_FLIGHT; i++) {
+            if (vkCreateQueryPool(context.GetDevice(), &queryPoolInfo, nullptr, &queryPools[i]) != VK_SUCCESS) {
+                Log::Error("Failed to create Query Pool for frame " + std::to_string(i));
+            }
+        }
+    }
+
     bool GraphicsContext::BeginFrame() {
         auto& i = *m_Internal;
         if (i.window.ShouldClose()) return false;
@@ -156,6 +183,23 @@ namespace vortex::graphics {
         }
 
         vkWaitForFences(i.context.GetDevice(), 1, &i.inFlightFences[i.currentFrame], VK_TRUE, UINT64_MAX);
+
+        // --- Read Previous Frame Queries ---
+        // Guaranteed to be ready because Fence is signaled
+        uint64_t buffer[QUERY_COUNT];
+        VkResult res = vkGetQueryPoolResults(i.context.GetDevice(), i.queryPools[i.currentFrame], 0, QUERY_COUNT, 
+                                             sizeof(buffer), buffer, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
+        
+        if (res == VK_SUCCESS) {
+            // Index 0: Start Scene, 1: End Scene
+            // Index 2: Start AA, 3: End AA
+            double sceneTicks = (double)(buffer[1] - buffer[0]);
+            double aaTicks = (double)(buffer[3] - buffer[2]);
+            
+            i.lastSceneTime = (float)(sceneTicks * i.timestampPeriod * 1e-6); // ns to ms
+            i.lastAATime = (float)(aaTicks * i.timestampPeriod * 1e-6);
+        }
+
         i.imageIndex = i.swapchain.AcquireNextImage(i.imageAvailableSemaphores[i.currentFrame]);
         if (i.imageIndex == UINT32_MAX) return true; 
         
@@ -164,9 +208,65 @@ namespace vortex::graphics {
         return true;
     }
 
+    void GraphicsContext::BeginRecording() {
+        auto& i = *m_Internal;
+        VkCommandBuffer cmd = i.commandBuffers[i.currentFrame];
+        vkResetCommandBuffer(cmd, 0);
+        
+        // Reset Query Pool at start of recording
+        vkCmdResetQueryPool(cmd, i.queryPools[i.currentFrame], 0, QUERY_COUNT);
+
+        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        vkBeginCommandBuffer(cmd, &begin);
+    }
+
+    void GraphicsContext::RecordScene() {
+        auto& i = *m_Internal;
+        VkCommandBuffer cmd = i.commandBuffers[i.currentFrame];
+
+        // 1. Scene Logic (Culling)
+        float aspect = (float)i.swapchain.GetExtent().width / (float)i.swapchain.GetExtent().height;
+        size_t visibleCount = i.sceneManager.CullAndUpload(i.camera, aspect);
+
+        // Record Timestamp START (Geometry)
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, i.queryPools[i.currentFrame], 0);
+
+        // 2. Geometry Pass
+        i.PassGeometry(cmd, visibleCount);
+
+        // Record Timestamp END (Geometry)
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, i.queryPools[i.currentFrame], 1);
+    }
+
+    void GraphicsContext::RecordAA() {
+        auto& i = *m_Internal;
+        VkCommandBuffer cmd = i.commandBuffers[i.currentFrame];
+        
+        // Record Timestamp START (AA)
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, i.queryPools[i.currentFrame], 2);
+
+        // 3. Anti-Aliasing Pass
+        i.currentFinalImage = nullptr; // Reset
+        i.PassAA(cmd, i.currentFinalImage);
+        
+        // Record Timestamp END (AA)
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, i.queryPools[i.currentFrame], 3);
+    }
+
     void GraphicsContext::EndFrame() {
         auto& i = *m_Internal;
-        i.RecordCommandBuffer(i.commandBuffers[i.currentFrame]);
+        VkCommandBuffer cmd = i.commandBuffers[i.currentFrame];
+
+        // 4. Blit to Swapchain
+        i.PassBlit(cmd, i.currentFinalImage);
+
+        // 5. UI Overlay
+        i.PassUI(cmd);
+
+        // 6. Transition for Present
+        i.TransitionLayout(cmd, i.swapchain.GetImages()[i.imageIndex], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+
+        vkEndCommandBuffer(cmd);
         
         VkSubmitInfo submit{VK_STRUCTURE_TYPE_SUBMIT_INFO};
         VkSemaphore wait[] = {i.imageAvailableSemaphores[i.currentFrame]};
@@ -181,34 +281,6 @@ namespace vortex::graphics {
         
         i.currentFrame = (i.currentFrame + 1) % FRAMES_IN_FLIGHT;
         i.frameCounter++;
-    }
-
-    void GraphicsInternal::RecordCommandBuffer(VkCommandBuffer cmd) {
-        vkResetCommandBuffer(cmd, 0);
-        VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        vkBeginCommandBuffer(cmd, &begin);
-
-        // 1. Scene Logic
-        float aspect = (float)swapchain.GetExtent().width / (float)swapchain.GetExtent().height;
-        size_t visibleCount = sceneManager.CullAndUpload(camera, aspect);
-
-        // 2. Geometry Pass
-        PassGeometry(cmd, visibleCount);
-
-        // 3. Anti-Aliasing Pass
-        memory::AllocatedImage* finalImage = nullptr;
-        PassAA(cmd, finalImage);
-
-        // 4. Blit to Swapchain
-        PassBlit(cmd, finalImage);
-
-        // 5. UI Overlay
-        PassUI(cmd);
-
-        // 6. Transition for Present
-        TransitionLayout(cmd, swapchain.GetImages()[imageIndex], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
-
-        vkEndCommandBuffer(cmd);
     }
 
     void GraphicsInternal::PassGeometry(VkCommandBuffer cmd, size_t visibleCount) {
@@ -302,7 +374,9 @@ namespace vortex::graphics {
         }
     }
 
-    void GraphicsInternal::PassBlit(VkCommandBuffer cmd, memory::AllocatedImage* source) {
+    void GraphicsInternal::PassBlit(VkCommandBuffer cmd, const memory::AllocatedImage* source) {
+        if (!source) source = &resources.GetColor(); // Fallback
+
         VkImageLayout srcLayout = (source == &resources.GetColor()) ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
         if (currentAAMode == AntiAliasingMode::TAA) srcLayout = VK_IMAGE_LAYOUT_GENERAL; 
         
@@ -346,7 +420,8 @@ namespace vortex::graphics {
         barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         barrier.image = img;
         barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        if (newL == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL || oldL == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+        if (newL == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL || oldL == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL || 
+            oldL == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL) {
             barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
         }
         barrier.subresourceRange.baseMipLevel = 0;
@@ -391,5 +466,21 @@ namespace vortex::graphics {
     AntiAliasingMode GraphicsContext::GetAAMode() const { return m_Internal->currentAAMode; }
     Camera& GraphicsContext::GetCamera() { return m_Internal->camera; }
     GLFWwindow* GraphicsContext::GetWindow() { return m_Internal->window.GetNativeHandle(); }
-    void GraphicsContext::Shutdown() { if(m_Internal) { vkDeviceWaitIdle(m_Internal->context.GetDevice()); m_Internal.reset(); } }
+    void GraphicsContext::Shutdown() { 
+        if(m_Internal) { 
+            vkDeviceWaitIdle(m_Internal->context.GetDevice()); 
+            
+            // Destroy queries
+            for(int i=0; i<FRAMES_IN_FLIGHT; i++) {
+                if (m_Internal->queryPools[i]) {
+                    vkDestroyQueryPool(m_Internal->context.GetDevice(), m_Internal->queryPools[i], nullptr);
+                }
+            }
+            
+            m_Internal.reset(); 
+        } 
+    }
+
+    float GraphicsContext::GetSceneGPUTime() const { return m_Internal->lastSceneTime; }
+    float GraphicsContext::GetAAGPUTime() const { return m_Internal->lastAATime; }
 }

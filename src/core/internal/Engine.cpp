@@ -4,7 +4,8 @@ module;
 #include <chrono>
 #include <memory> 
 #include <functional>
-#include <GLFW/glfw3.h> // needed for window handle
+#include <GLFW/glfw3.h>
+#include <imgui.h> 
 
 module vortex.core;
 
@@ -13,6 +14,9 @@ import vortex.graphics;
 import vortex.voxel;
 import vortex.editor; // Import Editor
 import :camera;
+
+// Use profiler partition implicitly available via vortex.core
+// or explicitly if needed, but 'import vortex.core' exports it.
 
 namespace vortex {
 
@@ -51,53 +55,111 @@ namespace vortex {
         auto lastTime = std::chrono::high_resolution_clock::now();
 
         while (m_State->isRunning) {
+            // Scope for the entire frame time
+            core::ProfileScope frameTimer("Total Frame Time");
+
             auto currentTime = std::chrono::high_resolution_clock::now();
             float deltaTime = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - lastTime).count();
             lastTime = currentTime;
 
-            // 1. Start Frame (Polls Inputs)
-            if (!m_State->graphicsContext->BeginFrame()) {
-                m_State->isRunning = false;
-                break;
+            // 1. Start Frame (Polls Inputs & Acquires Image)
+            {
+                core::ProfileScope p("Wait & Acquire");
+                if (!m_State->graphicsContext->BeginFrame()) {
+                    m_State->isRunning = false;
+                    break;
+                }
             }
+            
+            // Push GPU Timings to Profiler (from previous frame)
+            core::Profiler::AddSample("GPU: Scene Geometry", m_State->graphicsContext->GetSceneGPUTime());
+            core::Profiler::AddSample("GPU: Anti-Aliasing", m_State->graphicsContext->GetAAGPUTime());
 
             // Get Window dimensions for Raycast/Gizmo
             int width, height;
             glfwGetFramebufferSize(m_State->graphicsContext->GetWindow(), &width, &height);
 
             // 2. Editor Update (Raycast & Shortcuts)
-            // BEFORE Camera Update to block input if needed
-            m_State->editor.Update(
-                m_State->graphicsContext->GetWindow(), 
-                m_State->graphicsContext->GetCamera(),
-                m_State->graphicsContext->GetSceneManager(),
-                width, height
-            );
+            {
+                core::ProfileScope p("Editor Update");
+                m_State->editor.Update(
+                    m_State->graphicsContext->GetWindow(), 
+                    m_State->graphicsContext->GetCamera(),
+                    m_State->graphicsContext->GetSceneManager(),
+                    width, height
+                );
+            }
 
             // 3. Update Camera
-            m_State->cameraController.Update(
-                m_State->graphicsContext->GetWindow(), 
-                m_State->graphicsContext->GetCamera(), 
-                deltaTime
-            );
-            m_State->graphicsContext->UploadCamera();
+            {
+                core::ProfileScope p("Camera Update");
+                m_State->cameraController.Update(
+                    m_State->graphicsContext->GetWindow(), 
+                    m_State->graphicsContext->GetCamera(), 
+                    deltaTime
+                );
+                m_State->graphicsContext->UploadCamera();
+            }
 
             // 4. Update Game Logic
-            UpdateSystems(deltaTime);
+            {
+                core::ProfileScope p("Game Logic");
+                UpdateSystems(deltaTime);
+            }
 
-            // 5. Custom GUI + Editor Render
+            // --- RENDER RECORDING ---
+            
+            // 5. Begin Command Buffer
+            m_State->graphicsContext->BeginRecording();
+
+            // 6. Record Scene Geometry
+            {
+                core::ProfileScope p("Render: Geometry (CPU Rec)");
+                // This measures how long CPU takes to generate draw calls
+                m_State->graphicsContext->RecordScene();
+            }
+
+            // 7. Record Anti-Aliasing (Compute Dispatch)
+            {
+                core::ProfileScope p("Render: Anti-Aliasing (CPU Rec)");
+                // This measures how long CPU takes to dispatch compute shader
+                m_State->graphicsContext->RecordAA();
+            }
+
+            // GUI Rendering
+            ImGui::Begin("Voxel Stats");
+            
             if (onGuiRender) {
                 onGuiRender();
             }
+            ImGui::Separator();        
+            // AA Selector
+            static int currentAA = 1; // Default FXAA (Enum index)
+            const char* aaModes[] = { "None", "FXAA", "TAA" };
+            
+            if (ImGui::Combo("Anti-Aliasing", &currentAA, aaModes, IM_ARRAYSIZE(aaModes))) {
+                m_State->graphicsContext->SetAAMode((vortex::graphics::AntiAliasingMode)currentAA);
+            }
+            
+            ImGui::End();
             
             // Render Gizmo (Must be called inside ImGui frame)
-            m_State->editor.RenderGizmo(
-                m_State->graphicsContext->GetCamera(),
-                width, height
-            );
+            {
+                core::ProfileScope p("Gizmo Render");
+                m_State->editor.RenderGizmo(
+                    m_State->graphicsContext->GetCamera(),
+                    width, height
+                );
+            }
 
-            // 6. Render
-            m_State->graphicsContext->EndFrame();
+            // Render Profiler Window
+            core::Profiler::Render();
+
+            // 8. Submit & Present (UI, Blit, End)
+            {
+                core::ProfileScope p("GPU Submit & Present");
+                m_State->graphicsContext->EndFrame();
+            }
         }
 
         Log::Info("Main Loop finished.");

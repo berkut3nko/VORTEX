@@ -136,7 +136,7 @@ void main() {
     ivec3 mask = ivec3(0);
 
     // --- 2. Optimized Single-Level DDA Loop ---
-    for (int i = 0; i < 128; i++) {
+    for (int i = 0; i < 64; i++) {
         // Bounds Check
         if (mapPos.x < 0 || mapPos.x >= 32 || mapPos.y < 0 || mapPos.y >= 32 || mapPos.z < 0 || mapPos.z >= 32) break;
 
