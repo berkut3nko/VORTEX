@@ -50,7 +50,7 @@ const vec3 CUBE_VERTS[8] = vec3[](
 const int CUBE_INDICES[36] = int[](
     // Top (+Y)
     2,6,7, 7,3,2, 
-    // Bottom (-Y) - FIXED WINDING (0,5,4 instead of 0,4,5)
+    // Bottom (-Y)
     0,5,4, 0,1,5, 
     // Front (-Z)
     0,2,3, 3,1,0, 

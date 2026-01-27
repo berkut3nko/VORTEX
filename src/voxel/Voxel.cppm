@@ -9,3 +9,7 @@ export import :object;
 export import :world;
 export import :shapebuilder;
 export import :chunk;
+export import :entity;
+
+export import :mesh_converter;
+export import :dynamic_mesh;

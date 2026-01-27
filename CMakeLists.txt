@@ -72,11 +72,11 @@ target_sources(VortexCore PRIVATE
     src/graphics/internal/SceneManager.cpp
     src/graphics/internal/RenderResources.cpp
 
-
-    #src/graphics/pipelines/internal/RayTracingPipeline.cpp
     src/graphics/pipelines/internal/RasterPipeline.cpp
     src/graphics/pipelines/internal/TAAPipeline.cpp
     src/graphics/pipelines/internal/FXAAPipeline.cpp
+
+    src/mesh/internal/MeshConverter.cpp
 )
 
 # C++ Modules (Interfaces)
@@ -118,6 +118,12 @@ target_sources(VortexCore PUBLIC
     src/voxel/Hierarchy.cppm
     src/voxel/Object.cppm
     src/voxel/ShapeBuilder.cppm
+    src/voxel/Entity.cppm
+
+    # Dynamic Mesh Objects
+    src/mesh/MeshObject.cppm
+    src/mesh/MeshConverter.cppm
+    
 )
 
 

@@ -31,7 +31,7 @@ namespace vortex::graphics {
                                     VkFormat colorFormat, 
                                     VkFormat velocityFormat, 
                                     VkFormat depthFormat,
-                                    uint32_t framesInFlight, // NEW
+                                    uint32_t framesInFlight, 
                                     const memory::AllocatedBuffer& cameraBuffer,
                                     const memory::AllocatedBuffer& materialBuffer,
                                     const memory::AllocatedBuffer& objectBuffer,
@@ -42,7 +42,6 @@ namespace vortex::graphics {
         m_ObjectBuffer = objectBuffer.buffer;
         m_ChunkBuffer = chunkBuffer.buffer;
 
-        // --- Descriptor Set Layout ---
         std::vector<VkDescriptorSetLayoutBinding> bindings(4);
         bindings[0] = {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
         bindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
@@ -54,13 +53,11 @@ namespace vortex::graphics {
         layoutInfo.pBindings = bindings.data();
         vkCreateDescriptorSetLayout(m_Device, &layoutInfo, nullptr, &m_DescriptorSetLayout);
 
-        // --- Pipeline Layout ---
         VkPipelineLayoutCreateInfo pipeLayoutInfo{VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
         pipeLayoutInfo.setLayoutCount = 1;
         pipeLayoutInfo.pSetLayouts = &m_DescriptorSetLayout;
         vkCreatePipelineLayout(m_Device, &pipeLayoutInfo, nullptr, &m_PipelineLayout);
 
-        // --- Shaders ---
         auto vertSource = ReadFile("assets/shaders/voxel.vert");
         auto fragSource = ReadFile("assets/shaders/voxel.frag");
 
@@ -69,7 +66,6 @@ namespace vortex::graphics {
 
         VkShaderModule vertMod, fragMod;
         VkShaderModuleCreateInfo modInfo{VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        
         modInfo.codeSize = vertSpv.size() * 4;
         modInfo.pCode = vertSpv.data();
         vkCreateShaderModule(m_Device, &modInfo, nullptr, &vertMod);
@@ -83,7 +79,6 @@ namespace vortex::graphics {
             {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO, nullptr, 0, VK_SHADER_STAGE_FRAGMENT_BIT, fragMod, "main", nullptr}
         };
 
-        // --- States ---
         VkPipelineVertexInputStateCreateInfo vertexInput{VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO};
         VkPipelineInputAssemblyStateCreateInfo inputAssembly{VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO};
         inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -97,8 +92,13 @@ namespace vortex::graphics {
         rasterizer.rasterizerDiscardEnable = VK_FALSE;
         rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
         rasterizer.lineWidth = 1.0f;
-        rasterizer.cullMode = VK_CULL_MODE_FRONT_BIT; 
-        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+        
+        // --- OPTIMIZATION FIX ---
+        // Back-face culling enabled.
+        // We use CLOCKWISE because Vulkan's Y-flip in projection makes standard CCW triangles appear CW.
+        // This ensures we only draw the FRONT face (1x shader run per pixel).
+        rasterizer.cullMode = VK_CULL_MODE_BACK_BIT; 
+        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
 
         VkPipelineMultisampleStateCreateInfo multisampling{VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO};
         multisampling.sampleShadingEnable = VK_FALSE;
@@ -107,11 +107,10 @@ namespace vortex::graphics {
         VkPipelineDepthStencilStateCreateInfo depthStencil{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO};
         depthStencil.depthTestEnable = VK_TRUE;
         depthStencil.depthWriteEnable = VK_TRUE;
-        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS;
+        depthStencil.depthCompareOp = VK_COMPARE_OP_LESS; 
         depthStencil.depthBoundsTestEnable = VK_FALSE;
         depthStencil.stencilTestEnable = VK_FALSE;
 
-        // --- BLENDING ---
         VkPipelineColorBlendAttachmentState blendStates[2] = {};
         blendStates[0].colorWriteMask = 0xF; blendStates[0].blendEnable = VK_FALSE;
         blendStates[1].colorWriteMask = 0xF; blendStates[1].blendEnable = VK_FALSE;
@@ -151,7 +150,7 @@ namespace vortex::graphics {
         vkDestroyShaderModule(m_Device, vertMod, nullptr);
         vkDestroyShaderModule(m_Device, fragMod, nullptr);
 
-        // --- Descriptors (Scaled by frames) ---
+        // Descriptors
         VkDescriptorPoolSize sizes[] = {
             { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 * framesInFlight },
             { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 * framesInFlight }
@@ -171,12 +170,11 @@ namespace vortex::graphics {
         m_DescriptorSets.resize(framesInFlight);
         vkAllocateDescriptorSets(m_Device, &allocInfo, m_DescriptorSets.data());
 
-        // Initialize all sets
         for(uint32_t i=0; i<framesInFlight; i++) {
             UpdateDescriptors(i);
         }
         
-        Log::Info("Raster Pipeline initialized (Multi-buffered).");
+        Log::Info("Raster Pipeline initialized.");
     }
 
     void RasterPipeline::UpdateDescriptors(uint32_t frameIndex) {
