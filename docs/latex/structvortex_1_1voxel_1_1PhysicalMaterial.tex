@@ -1,0 +1,163 @@
+\doxysection{vortex\+::voxel\+::Physical\+Material Struct Reference}
+\hypertarget{structvortex_1_1voxel_1_1PhysicalMaterial}{}\label{structvortex_1_1voxel_1_1PhysicalMaterial}\index{vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}}
+
+
+Represents a single material definition for SHRED physics and rendering.  
+
+
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+glm\+::vec4 \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial_a7ee5955b0495773e2197e9ff511c18ca}{color}}
+\begin{DoxyCompactList}\small\item\em RGBA color. Alpha can be used for transparency or emission strength. \end{DoxyCompactList}\item 
+float \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial_aff319928159bec61ef98f3138b8056e2}{density}}
+\begin{DoxyCompactList}\small\item\em Mass per volume unit (affects physics simulation). \end{DoxyCompactList}\item 
+float \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial_abe875227b33f4140e9878017253fa5b1}{friction}}
+\begin{DoxyCompactList}\small\item\em Surface friction coefficient \mbox{[}0..1\mbox{]}. \end{DoxyCompactList}\item 
+float \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial_ac78d1f9b412eb3ec21736198dfc4cdaa}{restitution}}
+\begin{DoxyCompactList}\small\item\em Bounciness \mbox{[}0..1\mbox{]}. \end{DoxyCompactList}\item 
+float \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial_a7d15d7a1b2f37ade50c2ee3d387a4c91}{hardness}}
+\begin{DoxyCompactList}\small\item\em Resistance to damage/penetration. \end{DoxyCompactList}\item 
+float \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial_a836423f4a870599b4038ed6a1a23efd4}{structural\+Health}}
+\begin{DoxyCompactList}\small\item\em Max health before voxel destruction. \end{DoxyCompactList}\item 
+float \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial_aabd048a71378f2cf9920f9c9d37e3ccd}{flammability}}
+\begin{DoxyCompactList}\small\item\em How easily it catches fire. \end{DoxyCompactList}\item 
+float \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial_a7d7be077f6ee10b3b274edc658227f20}{heat\+Resistance}}
+\begin{DoxyCompactList}\small\item\em Melting point or damage threshold from heat. \end{DoxyCompactList}\item 
+uint32\+\_\+t \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial_a127a1973b22e4d4fcebbe29c78c1fb5c}{flags}}
+\begin{DoxyCompactList}\small\item\em Bitmask of Material\+Flags. \end{DoxyCompactList}\item 
+uint32\+\_\+t \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial_ae45260ef0cbcfeca61cc366ac2b833f3}{texture\+Index}}
+\item 
+uint32\+\_\+t \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial_a2060b1af9f53d197d0998a91f5e92d93}{sound\+Impact\+ID}}
+\item 
+uint32\+\_\+t \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial_a243f77d57b8c1e91779a9c3b8ce8bbea}{sound\+Destroy\+ID}}
+\item 
+uint32\+\_\+t \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial_a1edd76aa618fe8f87a845c5be6daf3f5}{\+\_\+pad0}}
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Represents a single material definition for SHRED physics and rendering. 
+
+Aligned to 16 bytes for GPU Storage Buffer compatibility (std430 layout). Total size\+: 64 bytes (cache-\/line friendly). 
+
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structvortex_1_1voxel_1_1PhysicalMaterial_a1edd76aa618fe8f87a845c5be6daf3f5}\label{structvortex_1_1voxel_1_1PhysicalMaterial_a1edd76aa618fe8f87a845c5be6daf3f5} 
+\index{vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}!\_pad0@{\_pad0}}
+\index{\_pad0@{\_pad0}!vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}}
+\doxysubsubsection{\texorpdfstring{\_pad0}{\_pad0}}
+{\footnotesize\ttfamily uint32\+\_\+t vortex\+::voxel\+::\+Physical\+Material\+::\+\_\+pad0}
+
+\Hypertarget{structvortex_1_1voxel_1_1PhysicalMaterial_a7ee5955b0495773e2197e9ff511c18ca}\label{structvortex_1_1voxel_1_1PhysicalMaterial_a7ee5955b0495773e2197e9ff511c18ca} 
+\index{vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}!color@{color}}
+\index{color@{color}!vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}}
+\doxysubsubsection{\texorpdfstring{color}{color}}
+{\footnotesize\ttfamily glm\+::vec4 vortex\+::voxel\+::\+Physical\+Material\+::color}
+
+
+
+RGBA color. Alpha can be used for transparency or emission strength. 
+
+\Hypertarget{structvortex_1_1voxel_1_1PhysicalMaterial_aff319928159bec61ef98f3138b8056e2}\label{structvortex_1_1voxel_1_1PhysicalMaterial_aff319928159bec61ef98f3138b8056e2} 
+\index{vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}!density@{density}}
+\index{density@{density}!vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}}
+\doxysubsubsection{\texorpdfstring{density}{density}}
+{\footnotesize\ttfamily float vortex\+::voxel\+::\+Physical\+Material\+::density}
+
+
+
+Mass per volume unit (affects physics simulation). 
+
+\Hypertarget{structvortex_1_1voxel_1_1PhysicalMaterial_a127a1973b22e4d4fcebbe29c78c1fb5c}\label{structvortex_1_1voxel_1_1PhysicalMaterial_a127a1973b22e4d4fcebbe29c78c1fb5c} 
+\index{vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}!flags@{flags}}
+\index{flags@{flags}!vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}}
+\doxysubsubsection{\texorpdfstring{flags}{flags}}
+{\footnotesize\ttfamily uint32\+\_\+t vortex\+::voxel\+::\+Physical\+Material\+::flags}
+
+
+
+Bitmask of Material\+Flags. 
+
+\Hypertarget{structvortex_1_1voxel_1_1PhysicalMaterial_aabd048a71378f2cf9920f9c9d37e3ccd}\label{structvortex_1_1voxel_1_1PhysicalMaterial_aabd048a71378f2cf9920f9c9d37e3ccd} 
+\index{vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}!flammability@{flammability}}
+\index{flammability@{flammability}!vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}}
+\doxysubsubsection{\texorpdfstring{flammability}{flammability}}
+{\footnotesize\ttfamily float vortex\+::voxel\+::\+Physical\+Material\+::flammability}
+
+
+
+How easily it catches fire. 
+
+\Hypertarget{structvortex_1_1voxel_1_1PhysicalMaterial_abe875227b33f4140e9878017253fa5b1}\label{structvortex_1_1voxel_1_1PhysicalMaterial_abe875227b33f4140e9878017253fa5b1} 
+\index{vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}!friction@{friction}}
+\index{friction@{friction}!vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}}
+\doxysubsubsection{\texorpdfstring{friction}{friction}}
+{\footnotesize\ttfamily float vortex\+::voxel\+::\+Physical\+Material\+::friction}
+
+
+
+Surface friction coefficient \mbox{[}0..1\mbox{]}. 
+
+\Hypertarget{structvortex_1_1voxel_1_1PhysicalMaterial_a7d15d7a1b2f37ade50c2ee3d387a4c91}\label{structvortex_1_1voxel_1_1PhysicalMaterial_a7d15d7a1b2f37ade50c2ee3d387a4c91} 
+\index{vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}!hardness@{hardness}}
+\index{hardness@{hardness}!vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}}
+\doxysubsubsection{\texorpdfstring{hardness}{hardness}}
+{\footnotesize\ttfamily float vortex\+::voxel\+::\+Physical\+Material\+::hardness}
+
+
+
+Resistance to damage/penetration. 
+
+\Hypertarget{structvortex_1_1voxel_1_1PhysicalMaterial_a7d7be077f6ee10b3b274edc658227f20}\label{structvortex_1_1voxel_1_1PhysicalMaterial_a7d7be077f6ee10b3b274edc658227f20} 
+\index{vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}!heatResistance@{heatResistance}}
+\index{heatResistance@{heatResistance}!vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}}
+\doxysubsubsection{\texorpdfstring{heatResistance}{heatResistance}}
+{\footnotesize\ttfamily float vortex\+::voxel\+::\+Physical\+Material\+::heat\+Resistance}
+
+
+
+Melting point or damage threshold from heat. 
+
+\Hypertarget{structvortex_1_1voxel_1_1PhysicalMaterial_ac78d1f9b412eb3ec21736198dfc4cdaa}\label{structvortex_1_1voxel_1_1PhysicalMaterial_ac78d1f9b412eb3ec21736198dfc4cdaa} 
+\index{vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}!restitution@{restitution}}
+\index{restitution@{restitution}!vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}}
+\doxysubsubsection{\texorpdfstring{restitution}{restitution}}
+{\footnotesize\ttfamily float vortex\+::voxel\+::\+Physical\+Material\+::restitution}
+
+
+
+Bounciness \mbox{[}0..1\mbox{]}. 
+
+\Hypertarget{structvortex_1_1voxel_1_1PhysicalMaterial_a243f77d57b8c1e91779a9c3b8ce8bbea}\label{structvortex_1_1voxel_1_1PhysicalMaterial_a243f77d57b8c1e91779a9c3b8ce8bbea} 
+\index{vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}!soundDestroyID@{soundDestroyID}}
+\index{soundDestroyID@{soundDestroyID}!vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}}
+\doxysubsubsection{\texorpdfstring{soundDestroyID}{soundDestroyID}}
+{\footnotesize\ttfamily uint32\+\_\+t vortex\+::voxel\+::\+Physical\+Material\+::sound\+Destroy\+ID}
+
+\Hypertarget{structvortex_1_1voxel_1_1PhysicalMaterial_a2060b1af9f53d197d0998a91f5e92d93}\label{structvortex_1_1voxel_1_1PhysicalMaterial_a2060b1af9f53d197d0998a91f5e92d93} 
+\index{vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}!soundImpactID@{soundImpactID}}
+\index{soundImpactID@{soundImpactID}!vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}}
+\doxysubsubsection{\texorpdfstring{soundImpactID}{soundImpactID}}
+{\footnotesize\ttfamily uint32\+\_\+t vortex\+::voxel\+::\+Physical\+Material\+::sound\+Impact\+ID}
+
+\Hypertarget{structvortex_1_1voxel_1_1PhysicalMaterial_a836423f4a870599b4038ed6a1a23efd4}\label{structvortex_1_1voxel_1_1PhysicalMaterial_a836423f4a870599b4038ed6a1a23efd4} 
+\index{vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}!structuralHealth@{structuralHealth}}
+\index{structuralHealth@{structuralHealth}!vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}}
+\doxysubsubsection{\texorpdfstring{structuralHealth}{structuralHealth}}
+{\footnotesize\ttfamily float vortex\+::voxel\+::\+Physical\+Material\+::structural\+Health}
+
+
+
+Max health before voxel destruction. 
+
+\Hypertarget{structvortex_1_1voxel_1_1PhysicalMaterial_ae45260ef0cbcfeca61cc366ac2b833f3}\label{structvortex_1_1voxel_1_1PhysicalMaterial_ae45260ef0cbcfeca61cc366ac2b833f3} 
+\index{vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}!textureIndex@{textureIndex}}
+\index{textureIndex@{textureIndex}!vortex::voxel::PhysicalMaterial@{vortex::voxel::PhysicalMaterial}}
+\doxysubsubsection{\texorpdfstring{textureIndex}{textureIndex}}
+{\footnotesize\ttfamily uint32\+\_\+t vortex\+::voxel\+::\+Physical\+Material\+::texture\+Index}
+
+
+
+The documentation for this struct was generated from the following file\+:\begin{DoxyCompactItemize}
+\item 
+src/voxel/\mbox{\hyperlink{Material_8cppm}{Material.\+cppm}}\end{DoxyCompactItemize}

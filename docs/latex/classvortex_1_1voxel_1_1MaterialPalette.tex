@@ -1,0 +1,85 @@
+\doxysection{vortex\+::voxel\+::Material\+Palette Class Reference}
+\hypertarget{classvortex_1_1voxel_1_1MaterialPalette}{}\label{classvortex_1_1voxel_1_1MaterialPalette}\index{vortex::voxel::MaterialPalette@{vortex::voxel::MaterialPalette}}
+
+
+Manages a collection of materials indexed by voxel IDs.  
+
+
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{classvortex_1_1voxel_1_1MaterialPalette_a2c1ac406a4e1003e8bf9eb1b2f948279}{Material\+Palette}} ()
+\begin{DoxyCompactList}\small\item\em Initializes the palette with a default "{}\+Air"{} material at index 0. \end{DoxyCompactList}\item 
+uint8\+\_\+t \mbox{\hyperlink{classvortex_1_1voxel_1_1MaterialPalette_aea6e3499d3060055ad4adf049ad3724a}{Add\+Material}} (const \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{Physical\+Material}} \&mat)
+\begin{DoxyCompactList}\small\item\em Adds a new material to the palette. \end{DoxyCompactList}\item 
+const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{Physical\+Material}} $>$ \& \mbox{\hyperlink{classvortex_1_1voxel_1_1MaterialPalette_a93c9a23eef2bb12a2860da1ed0ccc924}{Get\+Data}} () const
+\begin{DoxyCompactList}\small\item\em Retrieves the raw data for GPU upload. \end{DoxyCompactList}\item 
+const \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{Physical\+Material}} \& \mbox{\hyperlink{classvortex_1_1voxel_1_1MaterialPalette_a97f11895aa516022d95d989ef9df3635}{Get}} (uint8\+\_\+t index) const
+\begin{DoxyCompactList}\small\item\em Returns material by index (CPU side lookup). \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Manages a collection of materials indexed by voxel IDs. 
+
+Maximum 256 materials per palette (since Voxels are uint8\+\_\+t). Index 0 is reserved for "{}\+Empty/\+Air"{}. 
+
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{classvortex_1_1voxel_1_1MaterialPalette_a2c1ac406a4e1003e8bf9eb1b2f948279}\label{classvortex_1_1voxel_1_1MaterialPalette_a2c1ac406a4e1003e8bf9eb1b2f948279} 
+\index{vortex::voxel::MaterialPalette@{vortex::voxel::MaterialPalette}!MaterialPalette@{MaterialPalette}}
+\index{MaterialPalette@{MaterialPalette}!vortex::voxel::MaterialPalette@{vortex::voxel::MaterialPalette}}
+\doxysubsubsection{\texorpdfstring{MaterialPalette()}{MaterialPalette()}}
+{\footnotesize\ttfamily vortex\+::voxel\+::\+Material\+Palette\+::\+Material\+Palette (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Initializes the palette with a default "{}\+Air"{} material at index 0. 
+
+
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1voxel_1_1MaterialPalette_aea6e3499d3060055ad4adf049ad3724a}\label{classvortex_1_1voxel_1_1MaterialPalette_aea6e3499d3060055ad4adf049ad3724a} 
+\index{vortex::voxel::MaterialPalette@{vortex::voxel::MaterialPalette}!AddMaterial@{AddMaterial}}
+\index{AddMaterial@{AddMaterial}!vortex::voxel::MaterialPalette@{vortex::voxel::MaterialPalette}}
+\doxysubsubsection{\texorpdfstring{AddMaterial()}{AddMaterial()}}
+{\footnotesize\ttfamily uint8\+\_\+t vortex\+::voxel\+::\+Material\+Palette\+::\+Add\+Material (\begin{DoxyParamCaption}\item[{const \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{Physical\+Material}} \&}]{mat }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Adds a new material to the palette. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em mat} & The material definition. \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+The index of the added material. 
+\end{DoxyReturn}
+\begin{DoxyWarning}{Warning}
+Throws if palette size exceeds 255. 
+\end{DoxyWarning}
+\Hypertarget{classvortex_1_1voxel_1_1MaterialPalette_a97f11895aa516022d95d989ef9df3635}\label{classvortex_1_1voxel_1_1MaterialPalette_a97f11895aa516022d95d989ef9df3635} 
+\index{vortex::voxel::MaterialPalette@{vortex::voxel::MaterialPalette}!Get@{Get}}
+\index{Get@{Get}!vortex::voxel::MaterialPalette@{vortex::voxel::MaterialPalette}}
+\doxysubsubsection{\texorpdfstring{Get()}{Get()}}
+{\footnotesize\ttfamily const \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{Physical\+Material}} \& vortex\+::voxel\+::\+Material\+Palette\+::\+Get (\begin{DoxyParamCaption}\item[{uint8\+\_\+t}]{index }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Returns material by index (CPU side lookup). 
+
+\Hypertarget{classvortex_1_1voxel_1_1MaterialPalette_a93c9a23eef2bb12a2860da1ed0ccc924}\label{classvortex_1_1voxel_1_1MaterialPalette_a93c9a23eef2bb12a2860da1ed0ccc924} 
+\index{vortex::voxel::MaterialPalette@{vortex::voxel::MaterialPalette}!GetData@{GetData}}
+\index{GetData@{GetData}!vortex::voxel::MaterialPalette@{vortex::voxel::MaterialPalette}}
+\doxysubsubsection{\texorpdfstring{GetData()}{GetData()}}
+{\footnotesize\ttfamily const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{Physical\+Material}} $>$ \& vortex\+::voxel\+::\+Material\+Palette\+::\+Get\+Data (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Retrieves the raw data for GPU upload. 
+
+
+
+The documentation for this class was generated from the following file\+:\begin{DoxyCompactItemize}
+\item 
+src/voxel/\mbox{\hyperlink{Palette_8cppm}{Palette.\+cppm}}\end{DoxyCompactItemize}

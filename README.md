@@ -1,28 +1,28 @@
 # Fast start
 Ensure you have the Vulkan SDK, compiler, and necessary libraries installed:
-```
+```bash
 sudo apt install cmake ninja-build clang-18 lld-18 libvulkan-dev vulkan-tools libwayland-dev libxkbcommon-dev xorg-dev
 ```
 `Note: Requires a GPU with Vulkan support.`
 
 ## Adding engine into your game (with Cmake)
 - Clone to your game directory
-```
+```bash
 git clone https://github.com/berkut3nko/VORTEX
 ```
 - Add sub-directory
-```
+```php
 add_subdirectory(engine)
 ```
 - Link dependencies and engine
-```
+```php
 # --- Linking ---
 # The game depends ONLY on the engine core.
 # Transitive dependencies (Vulkan, GLFW, ImGui) are propagated via PUBLIC links in the engine.
 target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE VortexCore)
 ```
 - Copy engine assets
-```
+```php
 # --- Post-Build Steps ---
 # Create an assets directory in the binary output folder
 add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
@@ -39,7 +39,7 @@ add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
 )
 ```
 - In code change current folder or run directly from build (helps find assets)
-```
+```C++
 #include <filesystem>
 
     std::filesystem::path exePath = std::filesystem::canonical(argv[0]);
@@ -50,10 +50,8 @@ add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
 # Roadmap
 [GitHub Project](https://github.com/users/berkut3nko/projects/2/views/1)
 
-# Git cheatsheet: Close Issue
-[Read more](CloseIssue.md)
-
 # Code structure
+```text
 engine/
 ├── cmake/
 ├── shaders/
@@ -98,7 +96,7 @@ engine/
 └── main.cpp
 │
 └── tests/
-
+```
 
 # LICENSE
 VORTEX is licensed under the MIT License, see [LICENSE.txt](LICENSE) for more information.

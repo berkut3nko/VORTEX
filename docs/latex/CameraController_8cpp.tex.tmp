@@ -1,0 +1,18 @@
+\doxysection{src/core/internal/\+Camera\+Controller.cpp File Reference}
+\hypertarget{CameraController_8cpp}{}\label{CameraController_8cpp}\index{src/core/internal/CameraController.cpp@{src/core/internal/CameraController.cpp}}
+{\ttfamily \#include $<$GLFW/glfw3.\+h$>$}\newline
+{\ttfamily \#include $<$imgui.\+h$>$}\newline
+{\ttfamily \#include $<$glm/glm.\+hpp$>$}\newline
+{\ttfamily \#include $<$glm/gtc/matrix\+\_\+transform.\+hpp$>$}\newline
+{\ttfamily \#include $<$cmath$>$}\newline
+{\ttfamily import vortex.\+log;}\newline
+{\ttfamily import vortex.\+core\+:camera;}\newline
+Include dependency graph for Camera\+Controller.\+cpp\+:
+% FIG 0
+\doxysubsubsection*{Namespaces}
+\begin{DoxyCompactItemize}
+\item 
+namespace \mbox{\hyperlink{namespacevortex}{vortex}}
+\item 
+namespace \mbox{\hyperlink{namespacevortex_1_1core}{vortex\+::core}}
+\end{DoxyCompactItemize}

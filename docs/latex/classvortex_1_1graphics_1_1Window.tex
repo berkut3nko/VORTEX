@@ -1,0 +1,159 @@
+\doxysection{vortex\+::graphics\+::Window Class Reference}
+\hypertarget{classvortex_1_1graphics_1_1Window}{}\label{classvortex_1_1graphics_1_1Window}\index{vortex::graphics::Window@{vortex::graphics::Window}}
+
+
+Manages the GLFW window and Vulkan Surface creation.  
+
+
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1Window_a96413531f03e229ecdbf116dc9e3b5f5}{Window}} ()
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1Window_accd8becdf494645e4f0ff1772a9934dc}{\texorpdfstring{$\sim$}{\string~}\+Window}} ()
+\item 
+bool \mbox{\hyperlink{classvortex_1_1graphics_1_1Window_a9bfee453f71a63f81b68045580fad01c}{Initialize}} (const std\+::string \&title, uint32\+\_\+t width, uint32\+\_\+t height)
+\begin{DoxyCompactList}\small\item\em Initializes GLFW and creates the window. \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1Window_a901da149a4eebcfa6a9e98bc2e94e179}{Shutdown}} ()
+\begin{DoxyCompactList}\small\item\em Destroys the window and terminates GLFW. \end{DoxyCompactList}\item 
+Vk\+Surface\+KHR \mbox{\hyperlink{classvortex_1_1graphics_1_1Window_a0f802ae5707e4128c12ed4226e5fe3e5}{Create\+Surface}} (Vk\+Instance instance)
+\begin{DoxyCompactList}\small\item\em Creates a Vulkan surface for this window. \end{DoxyCompactList}\item 
+bool \mbox{\hyperlink{classvortex_1_1graphics_1_1Window_ac57131aa5dae847762415aad5d4e0e39}{Should\+Close}} () const
+\begin{DoxyCompactList}\small\item\em Checks if the window should close. \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1Window_ad62ec0b030faf783c2d88796bf74e39a}{Poll\+Events}} ()
+\begin{DoxyCompactList}\small\item\em Polls input events. \end{DoxyCompactList}\item 
+GLFWwindow \texorpdfstring{$\ast$}{*} \mbox{\hyperlink{classvortex_1_1graphics_1_1Window_ae86b43456caf1421b8e331b538cdedcb}{Get\+Native\+Handle}} () const
+\begin{DoxyCompactList}\small\item\em Gets the raw GLFW window handle. \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1Window_affd015bc318047054701d28a0bbec431}{Get\+Framebuffer\+Size}} (int \&width, int \&height) const
+\begin{DoxyCompactList}\small\item\em Gets current framebuffer size. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+bool \mbox{\hyperlink{classvortex_1_1graphics_1_1Window_a51eff50332bc61ce511d1526efeea2d3}{was\+Resized}} = false
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Manages the GLFW window and Vulkan Surface creation. 
+
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1Window_a96413531f03e229ecdbf116dc9e3b5f5}\label{classvortex_1_1graphics_1_1Window_a96413531f03e229ecdbf116dc9e3b5f5} 
+\index{vortex::graphics::Window@{vortex::graphics::Window}!Window@{Window}}
+\index{Window@{Window}!vortex::graphics::Window@{vortex::graphics::Window}}
+\doxysubsubsection{\texorpdfstring{Window()}{Window()}}
+{\footnotesize\ttfamily vortex\+::graphics\+::\+Window\+::\+Window (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1Window_accd8becdf494645e4f0ff1772a9934dc}\label{classvortex_1_1graphics_1_1Window_accd8becdf494645e4f0ff1772a9934dc} 
+\index{vortex::graphics::Window@{vortex::graphics::Window}!````~Window@{\texorpdfstring{$\sim$}{\string~}Window}}
+\index{````~Window@{\texorpdfstring{$\sim$}{\string~}Window}!vortex::graphics::Window@{vortex::graphics::Window}}
+\doxysubsubsection{\texorpdfstring{\texorpdfstring{$\sim$}{\string~}Window()}{\string~Window()}}
+{\footnotesize\ttfamily vortex\+::graphics\+::\+Window\+::\texorpdfstring{$\sim$}{\string~}\+Window (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1Window_a0f802ae5707e4128c12ed4226e5fe3e5}\label{classvortex_1_1graphics_1_1Window_a0f802ae5707e4128c12ed4226e5fe3e5} 
+\index{vortex::graphics::Window@{vortex::graphics::Window}!CreateSurface@{CreateSurface}}
+\index{CreateSurface@{CreateSurface}!vortex::graphics::Window@{vortex::graphics::Window}}
+\doxysubsubsection{\texorpdfstring{CreateSurface()}{CreateSurface()}}
+{\footnotesize\ttfamily Vk\+Surface\+KHR vortex\+::graphics\+::\+Window\+::\+Create\+Surface (\begin{DoxyParamCaption}\item[{Vk\+Instance}]{instance }\end{DoxyParamCaption})}
+
+
+
+Creates a Vulkan surface for this window. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em instance} & The Vulkan instance. \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+The created surface handle. 
+\end{DoxyReturn}
+\Hypertarget{classvortex_1_1graphics_1_1Window_affd015bc318047054701d28a0bbec431}\label{classvortex_1_1graphics_1_1Window_affd015bc318047054701d28a0bbec431} 
+\index{vortex::graphics::Window@{vortex::graphics::Window}!GetFramebufferSize@{GetFramebufferSize}}
+\index{GetFramebufferSize@{GetFramebufferSize}!vortex::graphics::Window@{vortex::graphics::Window}}
+\doxysubsubsection{\texorpdfstring{GetFramebufferSize()}{GetFramebufferSize()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Window\+::\+Get\+Framebuffer\+Size (\begin{DoxyParamCaption}\item[{int \&}]{width,  }\item[{int \&}]{height }\end{DoxyParamCaption}) const}
+
+
+
+Gets current framebuffer size. 
+
+\Hypertarget{classvortex_1_1graphics_1_1Window_ae86b43456caf1421b8e331b538cdedcb}\label{classvortex_1_1graphics_1_1Window_ae86b43456caf1421b8e331b538cdedcb} 
+\index{vortex::graphics::Window@{vortex::graphics::Window}!GetNativeHandle@{GetNativeHandle}}
+\index{GetNativeHandle@{GetNativeHandle}!vortex::graphics::Window@{vortex::graphics::Window}}
+\doxysubsubsection{\texorpdfstring{GetNativeHandle()}{GetNativeHandle()}}
+{\footnotesize\ttfamily GLFWwindow \texorpdfstring{$\ast$}{*} vortex\+::graphics\+::\+Window\+::\+Get\+Native\+Handle (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Gets the raw GLFW window handle. 
+
+\Hypertarget{classvortex_1_1graphics_1_1Window_a9bfee453f71a63f81b68045580fad01c}\label{classvortex_1_1graphics_1_1Window_a9bfee453f71a63f81b68045580fad01c} 
+\index{vortex::graphics::Window@{vortex::graphics::Window}!Initialize@{Initialize}}
+\index{Initialize@{Initialize}!vortex::graphics::Window@{vortex::graphics::Window}}
+\doxysubsubsection{\texorpdfstring{Initialize()}{Initialize()}}
+{\footnotesize\ttfamily bool vortex\+::graphics\+::\+Window\+::\+Initialize (\begin{DoxyParamCaption}\item[{const std\+::string \&}]{title,  }\item[{uint32\+\_\+t}]{width,  }\item[{uint32\+\_\+t}]{height }\end{DoxyParamCaption})}
+
+
+
+Initializes GLFW and creates the window. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em title} & \doxylink{classvortex_1_1graphics_1_1Window}{Window} title. \\
+\hline
+{\em width} & \doxylink{classvortex_1_1graphics_1_1Window}{Window} width. \\
+\hline
+{\em height} & \doxylink{classvortex_1_1graphics_1_1Window}{Window} height. \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+True if successful. 
+\end{DoxyReturn}
+\Hypertarget{classvortex_1_1graphics_1_1Window_ad62ec0b030faf783c2d88796bf74e39a}\label{classvortex_1_1graphics_1_1Window_ad62ec0b030faf783c2d88796bf74e39a} 
+\index{vortex::graphics::Window@{vortex::graphics::Window}!PollEvents@{PollEvents}}
+\index{PollEvents@{PollEvents}!vortex::graphics::Window@{vortex::graphics::Window}}
+\doxysubsubsection{\texorpdfstring{PollEvents()}{PollEvents()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Window\+::\+Poll\+Events (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+
+
+Polls input events. 
+
+\Hypertarget{classvortex_1_1graphics_1_1Window_ac57131aa5dae847762415aad5d4e0e39}\label{classvortex_1_1graphics_1_1Window_ac57131aa5dae847762415aad5d4e0e39} 
+\index{vortex::graphics::Window@{vortex::graphics::Window}!ShouldClose@{ShouldClose}}
+\index{ShouldClose@{ShouldClose}!vortex::graphics::Window@{vortex::graphics::Window}}
+\doxysubsubsection{\texorpdfstring{ShouldClose()}{ShouldClose()}}
+{\footnotesize\ttfamily bool vortex\+::graphics\+::\+Window\+::\+Should\+Close (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const}
+
+
+
+Checks if the window should close. 
+
+\Hypertarget{classvortex_1_1graphics_1_1Window_a901da149a4eebcfa6a9e98bc2e94e179}\label{classvortex_1_1graphics_1_1Window_a901da149a4eebcfa6a9e98bc2e94e179} 
+\index{vortex::graphics::Window@{vortex::graphics::Window}!Shutdown@{Shutdown}}
+\index{Shutdown@{Shutdown}!vortex::graphics::Window@{vortex::graphics::Window}}
+\doxysubsubsection{\texorpdfstring{Shutdown()}{Shutdown()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Window\+::\+Shutdown (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+
+
+Destroys the window and terminates GLFW. 
+
+
+
+\doxysubsection{Member Data Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1Window_a51eff50332bc61ce511d1526efeea2d3}\label{classvortex_1_1graphics_1_1Window_a51eff50332bc61ce511d1526efeea2d3} 
+\index{vortex::graphics::Window@{vortex::graphics::Window}!wasResized@{wasResized}}
+\index{wasResized@{wasResized}!vortex::graphics::Window@{vortex::graphics::Window}}
+\doxysubsubsection{\texorpdfstring{wasResized}{wasResized}}
+{\footnotesize\ttfamily bool vortex\+::graphics\+::\+Window\+::was\+Resized = false}
+
+
+
+The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}
+\item 
+src/graphics/\mbox{\hyperlink{Window_8cppm}{Window.\+cppm}}\item 
+src/graphics/internal/\mbox{\hyperlink{Window_8cpp}{Window.\+cpp}}\end{DoxyCompactItemize}

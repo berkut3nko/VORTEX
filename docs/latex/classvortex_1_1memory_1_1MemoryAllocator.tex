@@ -1,0 +1,88 @@
+\doxysection{vortex\+::memory\+::Memory\+Allocator Class Reference}
+\hypertarget{classvortex_1_1memory_1_1MemoryAllocator}{}\label{classvortex_1_1memory_1_1MemoryAllocator}\index{vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}}
+
+
+Abstraction for VMA allocator operations.  
+
+
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator_a264f80a89ac3ee433b02ba4bcf9b9c55}{Memory\+Allocator}} (Vma\+Allocator allocator, Vk\+Device device)
+\item 
+\mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator_a797cef454c6f234072f1bab8b4660a88}{\texorpdfstring{$\sim$}{\string~}\+Memory\+Allocator}} ()=default
+\item 
+\mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{Allocated\+Buffer}} \mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator_a692ecdc24a82baff91f6b4d1e6daf53d}{Create\+Buffer}} (size\+\_\+t size, Vk\+Buffer\+Usage\+Flags usage, Vma\+Memory\+Usage memory\+Usage)
+\item 
+void \mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator_a7b43f7fb060b7180430e4459c5283fa2}{Destroy\+Buffer}} (const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{Allocated\+Buffer}} \&buffer)
+\item 
+\mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{Allocated\+Image}} \mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator_ab446f11a33ff910b4ca0ff65bebcc1c6}{Create\+Image}} (uint32\+\_\+t width, uint32\+\_\+t height, Vk\+Format format, Vk\+Image\+Usage\+Flags usage, Vma\+Memory\+Usage memory\+Usage)
+\item 
+void \mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator_aa7e8fe3acdb13ef07063b9e93117a86b}{Destroy\+Image}} (const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{Allocated\+Image}} \&image)
+\item 
+Vma\+Allocator \mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator_a3f400eab8ff97d77f6028042b9d2bc6e}{Get\+Vma\+Allocator}} () const
+\begin{DoxyCompactList}\small\item\em Returns the raw VMA allocator handle. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Abstraction for VMA allocator operations. 
+
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{classvortex_1_1memory_1_1MemoryAllocator_a264f80a89ac3ee433b02ba4bcf9b9c55}\label{classvortex_1_1memory_1_1MemoryAllocator_a264f80a89ac3ee433b02ba4bcf9b9c55} 
+\index{vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}!MemoryAllocator@{MemoryAllocator}}
+\index{MemoryAllocator@{MemoryAllocator}!vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}}
+\doxysubsubsection{\texorpdfstring{MemoryAllocator()}{MemoryAllocator()}}
+{\footnotesize\ttfamily vortex\+::memory\+::\+Memory\+Allocator\+::\+Memory\+Allocator (\begin{DoxyParamCaption}\item[{Vma\+Allocator}]{allocator,  }\item[{Vk\+Device}]{device }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1memory_1_1MemoryAllocator_a797cef454c6f234072f1bab8b4660a88}\label{classvortex_1_1memory_1_1MemoryAllocator_a797cef454c6f234072f1bab8b4660a88} 
+\index{vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}!````~MemoryAllocator@{\texorpdfstring{$\sim$}{\string~}MemoryAllocator}}
+\index{````~MemoryAllocator@{\texorpdfstring{$\sim$}{\string~}MemoryAllocator}!vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}}
+\doxysubsubsection{\texorpdfstring{\texorpdfstring{$\sim$}{\string~}MemoryAllocator()}{\string~MemoryAllocator()}}
+{\footnotesize\ttfamily vortex\+::memory\+::\+Memory\+Allocator\+::\texorpdfstring{$\sim$}{\string~}\+Memory\+Allocator (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [default]}}
+
+
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1memory_1_1MemoryAllocator_a692ecdc24a82baff91f6b4d1e6daf53d}\label{classvortex_1_1memory_1_1MemoryAllocator_a692ecdc24a82baff91f6b4d1e6daf53d} 
+\index{vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}!CreateBuffer@{CreateBuffer}}
+\index{CreateBuffer@{CreateBuffer}!vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}}
+\doxysubsubsection{\texorpdfstring{CreateBuffer()}{CreateBuffer()}}
+{\footnotesize\ttfamily \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{Allocated\+Buffer}} vortex\+::memory\+::\+Memory\+Allocator\+::\+Create\+Buffer (\begin{DoxyParamCaption}\item[{size\+\_\+t}]{size,  }\item[{Vk\+Buffer\+Usage\+Flags}]{usage,  }\item[{Vma\+Memory\+Usage}]{memory\+Usage }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1memory_1_1MemoryAllocator_ab446f11a33ff910b4ca0ff65bebcc1c6}\label{classvortex_1_1memory_1_1MemoryAllocator_ab446f11a33ff910b4ca0ff65bebcc1c6} 
+\index{vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}!CreateImage@{CreateImage}}
+\index{CreateImage@{CreateImage}!vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}}
+\doxysubsubsection{\texorpdfstring{CreateImage()}{CreateImage()}}
+{\footnotesize\ttfamily \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{Allocated\+Image}} vortex\+::memory\+::\+Memory\+Allocator\+::\+Create\+Image (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{width,  }\item[{uint32\+\_\+t}]{height,  }\item[{Vk\+Format}]{format,  }\item[{Vk\+Image\+Usage\+Flags}]{usage,  }\item[{Vma\+Memory\+Usage}]{memory\+Usage }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1memory_1_1MemoryAllocator_a7b43f7fb060b7180430e4459c5283fa2}\label{classvortex_1_1memory_1_1MemoryAllocator_a7b43f7fb060b7180430e4459c5283fa2} 
+\index{vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}!DestroyBuffer@{DestroyBuffer}}
+\index{DestroyBuffer@{DestroyBuffer}!vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}}
+\doxysubsubsection{\texorpdfstring{DestroyBuffer()}{DestroyBuffer()}}
+{\footnotesize\ttfamily void vortex\+::memory\+::\+Memory\+Allocator\+::\+Destroy\+Buffer (\begin{DoxyParamCaption}\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{Allocated\+Buffer}} \&}]{buffer }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1memory_1_1MemoryAllocator_aa7e8fe3acdb13ef07063b9e93117a86b}\label{classvortex_1_1memory_1_1MemoryAllocator_aa7e8fe3acdb13ef07063b9e93117a86b} 
+\index{vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}!DestroyImage@{DestroyImage}}
+\index{DestroyImage@{DestroyImage}!vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}}
+\doxysubsubsection{\texorpdfstring{DestroyImage()}{DestroyImage()}}
+{\footnotesize\ttfamily void vortex\+::memory\+::\+Memory\+Allocator\+::\+Destroy\+Image (\begin{DoxyParamCaption}\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{Allocated\+Image}} \&}]{image }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1memory_1_1MemoryAllocator_a3f400eab8ff97d77f6028042b9d2bc6e}\label{classvortex_1_1memory_1_1MemoryAllocator_a3f400eab8ff97d77f6028042b9d2bc6e} 
+\index{vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}!GetVmaAllocator@{GetVmaAllocator}}
+\index{GetVmaAllocator@{GetVmaAllocator}!vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}}
+\doxysubsubsection{\texorpdfstring{GetVmaAllocator()}{GetVmaAllocator()}}
+{\footnotesize\ttfamily Vma\+Allocator vortex\+::memory\+::\+Memory\+Allocator\+::\+Get\+Vma\+Allocator (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Returns the raw VMA allocator handle. 
+
+\begin{DoxyReturn}{Returns}
+Vma\+Allocator handle. 
+\end{DoxyReturn}
+
+
+The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}
+\item 
+src/memory/\mbox{\hyperlink{Memory_8cppm}{Memory.\+cppm}}\item 
+src/memory/internal/\mbox{\hyperlink{MemoryAllocator_8cpp}{Memory\+Allocator.\+cpp}}\end{DoxyCompactItemize}

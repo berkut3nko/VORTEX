@@ -1,0 +1,101 @@
+\doxysection{vortex\+::core\+::Profiler Class Reference}
+\hypertarget{classvortex_1_1core_1_1Profiler}{}\label{classvortex_1_1core_1_1Profiler}\index{vortex::core::Profiler@{vortex::core::Profiler}}
+
+
+Static class for performance profiling and timing.  
+
+
+\doxysubsubsection*{Static Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+static void \mbox{\hyperlink{classvortex_1_1core_1_1Profiler_a30f2f4e772c8960091a31a4b50a6b1af}{Begin\+Frame}} ()
+\begin{DoxyCompactList}\small\item\em Clears frame data and prepares for new measurements. \end{DoxyCompactList}\item 
+static void \mbox{\hyperlink{classvortex_1_1core_1_1Profiler_a074bbd3b73fc05d478fc86b41225c02b}{Begin}} (const std\+::string \&name)
+\begin{DoxyCompactList}\small\item\em Starts measuring time for a named section (CPU). \end{DoxyCompactList}\item 
+static void \mbox{\hyperlink{classvortex_1_1core_1_1Profiler_a769b665942ef2aab77f1307a969df544}{End}} (const std\+::string \&name)
+\begin{DoxyCompactList}\small\item\em Stops measuring time for the named section (CPU). \end{DoxyCompactList}\item 
+static void \mbox{\hyperlink{classvortex_1_1core_1_1Profiler_a4f18708ce19989afd5403d607a576d77}{Add\+Sample}} (const std\+::string \&name, float time\+Ms)
+\begin{DoxyCompactList}\small\item\em Adds a manual time sample (e.\+g. for GPU timers). \end{DoxyCompactList}\item 
+static void \mbox{\hyperlink{classvortex_1_1core_1_1Profiler_aaa52845419e36398eb2429a92c95b0b8}{Render}} ()
+\begin{DoxyCompactList}\small\item\em Renders the profiling data as Im\+Gui graphs. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Static class for performance profiling and timing. 
+
+Collects execution times of named sections and renders them using Im\+Gui. 
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1core_1_1Profiler_a4f18708ce19989afd5403d607a576d77}\label{classvortex_1_1core_1_1Profiler_a4f18708ce19989afd5403d607a576d77} 
+\index{vortex::core::Profiler@{vortex::core::Profiler}!AddSample@{AddSample}}
+\index{AddSample@{AddSample}!vortex::core::Profiler@{vortex::core::Profiler}}
+\doxysubsubsection{\texorpdfstring{AddSample()}{AddSample()}}
+{\footnotesize\ttfamily void vortex\+::core\+::\+Profiler\+::\+Add\+Sample (\begin{DoxyParamCaption}\item[{const std\+::string \&}]{name,  }\item[{float}]{time\+Ms }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [static]}}
+
+
+
+Adds a manual time sample (e.\+g. for GPU timers). 
+
+
+\begin{DoxyParams}{Parameters}
+{\em name} & Name of the metric. \\
+\hline
+{\em time\+Ms} & Time in milliseconds. \\
+\hline
+\end{DoxyParams}
+\Hypertarget{classvortex_1_1core_1_1Profiler_a074bbd3b73fc05d478fc86b41225c02b}\label{classvortex_1_1core_1_1Profiler_a074bbd3b73fc05d478fc86b41225c02b} 
+\index{vortex::core::Profiler@{vortex::core::Profiler}!Begin@{Begin}}
+\index{Begin@{Begin}!vortex::core::Profiler@{vortex::core::Profiler}}
+\doxysubsubsection{\texorpdfstring{Begin()}{Begin()}}
+{\footnotesize\ttfamily void vortex\+::core\+::\+Profiler\+::\+Begin (\begin{DoxyParamCaption}\item[{const std\+::string \&}]{name }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [static]}}
+
+
+
+Starts measuring time for a named section (CPU). 
+
+
+\begin{DoxyParams}{Parameters}
+{\em name} & Unique name of the section (used for display). \\
+\hline
+\end{DoxyParams}
+\Hypertarget{classvortex_1_1core_1_1Profiler_a30f2f4e772c8960091a31a4b50a6b1af}\label{classvortex_1_1core_1_1Profiler_a30f2f4e772c8960091a31a4b50a6b1af} 
+\index{vortex::core::Profiler@{vortex::core::Profiler}!BeginFrame@{BeginFrame}}
+\index{BeginFrame@{BeginFrame}!vortex::core::Profiler@{vortex::core::Profiler}}
+\doxysubsubsection{\texorpdfstring{BeginFrame()}{BeginFrame()}}
+{\footnotesize\ttfamily void vortex\+::core\+::\+Profiler\+::\+Begin\+Frame (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [static]}}
+
+
+
+Clears frame data and prepares for new measurements. 
+
+Should be called at the very beginning of the frame. \Hypertarget{classvortex_1_1core_1_1Profiler_a769b665942ef2aab77f1307a969df544}\label{classvortex_1_1core_1_1Profiler_a769b665942ef2aab77f1307a969df544} 
+\index{vortex::core::Profiler@{vortex::core::Profiler}!End@{End}}
+\index{End@{End}!vortex::core::Profiler@{vortex::core::Profiler}}
+\doxysubsubsection{\texorpdfstring{End()}{End()}}
+{\footnotesize\ttfamily void vortex\+::core\+::\+Profiler\+::\+End (\begin{DoxyParamCaption}\item[{const std\+::string \&}]{name }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [static]}}
+
+
+
+Stops measuring time for the named section (CPU). 
+
+
+\begin{DoxyParams}{Parameters}
+{\em name} & Name of the section to stop. \\
+\hline
+\end{DoxyParams}
+\Hypertarget{classvortex_1_1core_1_1Profiler_aaa52845419e36398eb2429a92c95b0b8}\label{classvortex_1_1core_1_1Profiler_aaa52845419e36398eb2429a92c95b0b8} 
+\index{vortex::core::Profiler@{vortex::core::Profiler}!Render@{Render}}
+\index{Render@{Render}!vortex::core::Profiler@{vortex::core::Profiler}}
+\doxysubsubsection{\texorpdfstring{Render()}{Render()}}
+{\footnotesize\ttfamily void vortex\+::core\+::\+Profiler\+::\+Render (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [static]}}
+
+
+
+Renders the profiling data as Im\+Gui graphs. 
+
+Creates a new Im\+Gui window "{}\+Performance Profiler"{}. 
+
+The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}
+\item 
+src/core/\mbox{\hyperlink{Profiler_8cppm}{Profiler.\+cppm}}\item 
+src/core/internal/\mbox{\hyperlink{Profiler_8cpp}{Profiler.\+cpp}}\end{DoxyCompactItemize}

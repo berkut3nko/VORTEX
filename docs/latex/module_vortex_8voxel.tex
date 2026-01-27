@@ -1,0 +1,64 @@
+\doxysection{vortex.\+voxel Module Reference}
+\hypertarget{module_vortex_8voxel}{}\label{module_vortex_8voxel}\index{vortex.voxel Module Reference@{vortex.voxel Module Reference}}
+\doxysubsubsection*{Classes}
+\begin{DoxyCompactItemize}
+\item 
+class \mbox{\hyperlink{classvortex_1_1voxel_1_1MaterialPalette}{vortex\+::voxel\+::\+Material\+Palette}}
+\begin{DoxyCompactList}\small\item\em Manages a collection of materials indexed by voxel IDs. \end{DoxyCompactList}\item 
+struct \mbox{\hyperlink{structvortex_1_1voxel_1_1HierarchyMask}{vortex\+::voxel\+::\+Hierarchy\+Mask}}
+\begin{DoxyCompactList}\small\item\em Acceleration structure for Ray Tracing (Grid Hierarchy). \end{DoxyCompactList}\item 
+struct \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{vortex\+::voxel\+::\+Physical\+Material}}
+\begin{DoxyCompactList}\small\item\em Represents a single material definition for SHRED physics and rendering. \end{DoxyCompactList}\item 
+struct \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelObject}{vortex\+::voxel\+::\+Voxel\+Object}}
+\item 
+class \mbox{\hyperlink{classvortex_1_1voxel_1_1ShapeBuilder}{vortex\+::voxel\+::\+Shape\+Builder}}
+\begin{DoxyCompactList}\small\item\em Helper class to procedurally generate voxel shapes into Chunks. \end{DoxyCompactList}\item 
+struct \mbox{\hyperlink{structvortex_1_1voxel_1_1ObjectInstance}{vortex\+::voxel\+::\+Object\+Instance}}
+\item 
+struct \mbox{\hyperlink{structvortex_1_1voxel_1_1ChunkPool}{vortex\+::voxel\+::\+Chunk\+Pool}}
+\item 
+class \mbox{\hyperlink{classvortex_1_1voxel_1_1VoxelWorld}{vortex\+::voxel\+::\+Voxel\+World}}
+\item 
+struct \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{vortex\+::voxel\+::\+Chunk}}
+\begin{DoxyCompactList}\small\item\em A single 32x32x32 voxel chunk (SoA Layout). \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Enumerations}
+\begin{DoxyCompactItemize}
+\item 
+enum class \mbox{\hyperlink{namespacevortex_1_1voxel_a88673e8a0c64aecd6a8eedc7e31f970a}{vortex\+::voxel\+::\+Material\+Flags}} \+: uint32\+\_\+t \{ \newline
+\mbox{\hyperlink{namespacevortex_1_1voxel_a88673e8a0c64aecd6a8eedc7e31f970aa6adf97f83acf6453d4a6a4b1070f3754}{None}} = 0
+, \newline
+\mbox{\hyperlink{namespacevortex_1_1voxel_a88673e8a0c64aecd6a8eedc7e31f970aa84a8921b25f505d0d2077aeb5db4bc16}{Static}} = 1 \texorpdfstring{$<$}{<}\texorpdfstring{$<$}{<} 0
+, \newline
+\mbox{\hyperlink{namespacevortex_1_1voxel_a88673e8a0c64aecd6a8eedc7e31f970aa092f20920cbb55b8f5679b2b1f99d2ea}{Flammable}} = 1 \texorpdfstring{$<$}{<}\texorpdfstring{$<$}{<} 1
+, \newline
+\mbox{\hyperlink{namespacevortex_1_1voxel_a88673e8a0c64aecd6a8eedc7e31f970aa8a1b257a56f9faecf0ee70004ab5c7d3}{Conductive}} = 1 \texorpdfstring{$<$}{<}\texorpdfstring{$<$}{<} 2
+, \newline
+\mbox{\hyperlink{namespacevortex_1_1voxel_a88673e8a0c64aecd6a8eedc7e31f970aa5635bf596d97c1c2e7afe481ed060774}{Liquid}} = 1 \texorpdfstring{$<$}{<}\texorpdfstring{$<$}{<} 3
+, \newline
+\mbox{\hyperlink{namespacevortex_1_1voxel_a88673e8a0c64aecd6a8eedc7e31f970aa49c0bca4593ff6e2e8a52d3cd726df59}{Glowing}} = 1 \texorpdfstring{$<$}{<}\texorpdfstring{$<$}{<} 4
+ \}
+\begin{DoxyCompactList}\small\item\em Bit flags defining material behavior. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Functions}
+\begin{DoxyCompactItemize}
+\item 
+constexpr uint32\+\_\+t \mbox{\hyperlink{namespacevortex_1_1voxel_ae40dbb4c8f787f57def4025d15ef2c1b}{vortex\+::voxel\+::operator\texorpdfstring{$\vert$}{|}}} (Material\+Flags a, Material\+Flags b)
+\begin{DoxyCompactList}\small\item\em Helper to combine flags. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Files}
+\begin{DoxyCompactItemize}
+\item 
+file src/voxel/\mbox{\hyperlink{Voxel_8cppm}{Voxel.\+cppm}}
+\item 
+file src/voxel/\mbox{\hyperlink{Chunk_8cppm}{Chunk.\+cppm}}
+\item 
+file src/voxel/\mbox{\hyperlink{Hierarchy_8cppm}{Hierarchy.\+cppm}}
+\item 
+file src/voxel/\mbox{\hyperlink{Material_8cppm}{Material.\+cppm}}
+\item 
+file src/voxel/\mbox{\hyperlink{Object_8cppm}{Object.\+cppm}}
+\item 
+file src/voxel/\mbox{\hyperlink{Palette_8cppm}{Palette.\+cppm}}
+\item 
+file src/voxel/\mbox{\hyperlink{ShapeBuilder_8cppm}{Shape\+Builder.\+cppm}}
+\item 
+file src/voxel/\mbox{\hyperlink{World_8cppm}{World.\+cppm}}
+\end{DoxyCompactItemize}

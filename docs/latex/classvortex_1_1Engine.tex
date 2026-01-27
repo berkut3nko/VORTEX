@@ -1,0 +1,78 @@
+\doxysection{vortex\+::Engine Class Reference}
+\hypertarget{classvortex_1_1Engine}{}\label{classvortex_1_1Engine}\index{vortex::Engine@{vortex::Engine}}
+\doxysubsubsection*{Classes}
+\begin{DoxyCompactItemize}
+\item 
+struct \mbox{\hyperlink{structvortex_1_1Engine_1_1InternalState}{Internal\+State}}
+\begin{DoxyCompactList}\small\item\em Internal Pimpl state for the \doxylink{classvortex_1_1Engine}{Engine}. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{classvortex_1_1Engine_af7bb0d497dafbe828ff21a29e34ff34a}{Engine}} ()
+\item 
+\mbox{\hyperlink{classvortex_1_1Engine_a17f11ae849064413ae99708d3353c5f3}{\texorpdfstring{$\sim$}{\string~}\+Engine}} ()
+\item 
+bool \mbox{\hyperlink{classvortex_1_1Engine_af779661626cb8c76e21620a145a42d7d}{Initialize}} (const std\+::string \&title, uint32\+\_\+t width, uint32\+\_\+t height)
+\item 
+void \mbox{\hyperlink{classvortex_1_1Engine_a15118a0752b685fa091e071d98504fb8}{Run}} (std\+::function$<$ void()$>$ on\+Gui\+Render=nullptr)
+\item 
+void \mbox{\hyperlink{classvortex_1_1Engine_a565795d41f752558181ae73107ea8232}{Shutdown}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1Engine_a000df94e7b44a36343fab7a0485a1ceb}{Upload\+Scene}} (const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{graphics\+::\+Scene\+Object}} $>$ \&objects, const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneMaterial}{graphics\+::\+Scene\+Material}} $>$ \&materials, const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{voxel\+::\+Chunk}} $>$ \&chunks)
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext}{graphics\+::\+Graphics\+Context}} \& \mbox{\hyperlink{classvortex_1_1Engine_a88460bf47cc1dc1a7c4ea7219a23af76}{Get\+Graphics}} ()
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{classvortex_1_1Engine_af7bb0d497dafbe828ff21a29e34ff34a}\label{classvortex_1_1Engine_af7bb0d497dafbe828ff21a29e34ff34a} 
+\index{vortex::Engine@{vortex::Engine}!Engine@{Engine}}
+\index{Engine@{Engine}!vortex::Engine@{vortex::Engine}}
+\doxysubsubsection{\texorpdfstring{Engine()}{Engine()}}
+{\footnotesize\ttfamily vortex\+::\+Engine\+::\+Engine (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1Engine_a17f11ae849064413ae99708d3353c5f3}\label{classvortex_1_1Engine_a17f11ae849064413ae99708d3353c5f3} 
+\index{vortex::Engine@{vortex::Engine}!````~Engine@{\texorpdfstring{$\sim$}{\string~}Engine}}
+\index{````~Engine@{\texorpdfstring{$\sim$}{\string~}Engine}!vortex::Engine@{vortex::Engine}}
+\doxysubsubsection{\texorpdfstring{\texorpdfstring{$\sim$}{\string~}Engine()}{\string~Engine()}}
+{\footnotesize\ttfamily vortex\+::\+Engine\+::\texorpdfstring{$\sim$}{\string~}\+Engine (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}, {\ttfamily [default]}}
+
+
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1Engine_a88460bf47cc1dc1a7c4ea7219a23af76}\label{classvortex_1_1Engine_a88460bf47cc1dc1a7c4ea7219a23af76} 
+\index{vortex::Engine@{vortex::Engine}!GetGraphics@{GetGraphics}}
+\index{GetGraphics@{GetGraphics}!vortex::Engine@{vortex::Engine}}
+\doxysubsubsection{\texorpdfstring{GetGraphics()}{GetGraphics()}}
+{\footnotesize\ttfamily \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext}{graphics\+::\+Graphics\+Context}} \& vortex\+::\+Engine\+::\+Get\+Graphics (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1Engine_af779661626cb8c76e21620a145a42d7d}\label{classvortex_1_1Engine_af779661626cb8c76e21620a145a42d7d} 
+\index{vortex::Engine@{vortex::Engine}!Initialize@{Initialize}}
+\index{Initialize@{Initialize}!vortex::Engine@{vortex::Engine}}
+\doxysubsubsection{\texorpdfstring{Initialize()}{Initialize()}}
+{\footnotesize\ttfamily bool vortex\+::\+Engine\+::\+Initialize (\begin{DoxyParamCaption}\item[{const std\+::string \&}]{title,  }\item[{uint32\+\_\+t}]{width,  }\item[{uint32\+\_\+t}]{height }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1Engine_a15118a0752b685fa091e071d98504fb8}\label{classvortex_1_1Engine_a15118a0752b685fa091e071d98504fb8} 
+\index{vortex::Engine@{vortex::Engine}!Run@{Run}}
+\index{Run@{Run}!vortex::Engine@{vortex::Engine}}
+\doxysubsubsection{\texorpdfstring{Run()}{Run()}}
+{\footnotesize\ttfamily void vortex\+::\+Engine\+::\+Run (\begin{DoxyParamCaption}\item[{std\+::function$<$ void()$>$}]{on\+Gui\+Render = {\ttfamily nullptr} }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1Engine_a565795d41f752558181ae73107ea8232}\label{classvortex_1_1Engine_a565795d41f752558181ae73107ea8232} 
+\index{vortex::Engine@{vortex::Engine}!Shutdown@{Shutdown}}
+\index{Shutdown@{Shutdown}!vortex::Engine@{vortex::Engine}}
+\doxysubsubsection{\texorpdfstring{Shutdown()}{Shutdown()}}
+{\footnotesize\ttfamily void vortex\+::\+Engine\+::\+Shutdown (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1Engine_a000df94e7b44a36343fab7a0485a1ceb}\label{classvortex_1_1Engine_a000df94e7b44a36343fab7a0485a1ceb} 
+\index{vortex::Engine@{vortex::Engine}!UploadScene@{UploadScene}}
+\index{UploadScene@{UploadScene}!vortex::Engine@{vortex::Engine}}
+\doxysubsubsection{\texorpdfstring{UploadScene()}{UploadScene()}}
+{\footnotesize\ttfamily void vortex\+::\+Engine\+::\+Upload\+Scene (\begin{DoxyParamCaption}\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{graphics\+::\+Scene\+Object}} $>$ \&}]{objects,  }\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneMaterial}{graphics\+::\+Scene\+Material}} $>$ \&}]{materials,  }\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{voxel\+::\+Chunk}} $>$ \&}]{chunks }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+
+
+The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}
+\item 
+src/core/\mbox{\hyperlink{Core_8cppm}{Core.\+cppm}}\item 
+src/core/internal/\mbox{\hyperlink{Engine_8cpp}{Engine.\+cpp}}\end{DoxyCompactItemize}

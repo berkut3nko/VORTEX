@@ -1,0 +1,62 @@
+\doxysection{vortex\+::voxel\+::Shape\+Builder Class Reference}
+\hypertarget{classvortex_1_1voxel_1_1ShapeBuilder}{}\label{classvortex_1_1voxel_1_1ShapeBuilder}\index{vortex::voxel::ShapeBuilder@{vortex::voxel::ShapeBuilder}}
+
+
+Helper class to procedurally generate voxel shapes into Chunks.  
+
+
+\doxysubsubsection*{Static Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+static void \mbox{\hyperlink{classvortex_1_1voxel_1_1ShapeBuilder_a6ce0587c1dc0288d80362a45db7204be}{Create\+Box}} (\mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{Chunk}} \&chunk, glm\+::vec3 \&logical\+Center, uint32\+\_\+t \&voxel\+Count, const glm\+::ivec3 \&min, const glm\+::ivec3 \&max, uint8\+\_\+t material\+Id)
+\begin{DoxyCompactList}\small\item\em Fills a chunk region with a solid box and updates object stats. \end{DoxyCompactList}\item 
+static void \mbox{\hyperlink{classvortex_1_1voxel_1_1ShapeBuilder_af6dd9389404c2de518da48ac17360dea}{Create\+Sphere}} (\mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{Chunk}} \&chunk, glm\+::vec3 \&logical\+Center, uint32\+\_\+t \&voxel\+Count, const glm\+::vec3 \&center, float radius, uint8\+\_\+t material\+Id)
+\begin{DoxyCompactList}\small\item\em Fills a chunk region with a sphere and updates object stats. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Helper class to procedurally generate voxel shapes into Chunks. 
+
+Updates logical center and voxel count incrementally. 
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1voxel_1_1ShapeBuilder_a6ce0587c1dc0288d80362a45db7204be}\label{classvortex_1_1voxel_1_1ShapeBuilder_a6ce0587c1dc0288d80362a45db7204be} 
+\index{vortex::voxel::ShapeBuilder@{vortex::voxel::ShapeBuilder}!CreateBox@{CreateBox}}
+\index{CreateBox@{CreateBox}!vortex::voxel::ShapeBuilder@{vortex::voxel::ShapeBuilder}}
+\doxysubsubsection{\texorpdfstring{CreateBox()}{CreateBox()}}
+{\footnotesize\ttfamily static void vortex\+::voxel\+::\+Shape\+Builder\+::\+Create\+Box (\begin{DoxyParamCaption}\item[{\mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{Chunk}} \&}]{chunk,  }\item[{glm\+::vec3 \&}]{logical\+Center,  }\item[{uint32\+\_\+t \&}]{voxel\+Count,  }\item[{const glm\+::ivec3 \&}]{min,  }\item[{const glm\+::ivec3 \&}]{max,  }\item[{uint8\+\_\+t}]{material\+Id }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}, {\ttfamily [static]}}
+
+
+
+Fills a chunk region with a solid box and updates object stats. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em chunk} & Target chunk. \\
+\hline
+{\em logical\+Center} & Reference to the object\textquotesingle{}s logical center (will be updated). \\
+\hline
+{\em voxel\+Count} & Reference to the object\textquotesingle{}s voxel count (will be updated). \\
+\hline
+{\em min} & Minimum corner coordinates (inclusive). \\
+\hline
+{\em max} & Maximum corner coordinates (exclusive). \\
+\hline
+{\em material\+Id} & Voxel material ID (0 to remove). \\
+\hline
+\end{DoxyParams}
+\Hypertarget{classvortex_1_1voxel_1_1ShapeBuilder_af6dd9389404c2de518da48ac17360dea}\label{classvortex_1_1voxel_1_1ShapeBuilder_af6dd9389404c2de518da48ac17360dea} 
+\index{vortex::voxel::ShapeBuilder@{vortex::voxel::ShapeBuilder}!CreateSphere@{CreateSphere}}
+\index{CreateSphere@{CreateSphere}!vortex::voxel::ShapeBuilder@{vortex::voxel::ShapeBuilder}}
+\doxysubsubsection{\texorpdfstring{CreateSphere()}{CreateSphere()}}
+{\footnotesize\ttfamily static void vortex\+::voxel\+::\+Shape\+Builder\+::\+Create\+Sphere (\begin{DoxyParamCaption}\item[{\mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{Chunk}} \&}]{chunk,  }\item[{glm\+::vec3 \&}]{logical\+Center,  }\item[{uint32\+\_\+t \&}]{voxel\+Count,  }\item[{const glm\+::vec3 \&}]{center,  }\item[{float}]{radius,  }\item[{uint8\+\_\+t}]{material\+Id }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}, {\ttfamily [static]}}
+
+
+
+Fills a chunk region with a sphere and updates object stats. 
+
+
+
+The documentation for this class was generated from the following file\+:\begin{DoxyCompactItemize}
+\item 
+src/voxel/\mbox{\hyperlink{ShapeBuilder_8cppm}{Shape\+Builder.\+cppm}}\end{DoxyCompactItemize}

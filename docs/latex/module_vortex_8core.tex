@@ -1,0 +1,52 @@
+\doxysection{vortex.\+core Module Reference}
+\hypertarget{module_vortex_8core}{}\label{module_vortex_8core}\index{vortex.core Module Reference@{vortex.core Module Reference}}
+\doxysubsubsection*{Exported Modules}
+\begin{DoxyCompactItemize}
+\item 
+module \mbox{\hyperlink{module_vortex_8graphics}{vortex.\+graphics}}
+\item 
+module \mbox{\hyperlink{module_vortex_8voxel}{vortex.\+voxel}}
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Classes}
+\begin{DoxyCompactItemize}
+\item 
+class \mbox{\hyperlink{classvortex_1_1Engine}{vortex\+::\+Engine}}
+\item 
+class \mbox{\hyperlink{classvortex_1_1core_1_1Profiler}{vortex\+::core\+::\+Profiler}}
+\begin{DoxyCompactList}\small\item\em Static class for performance profiling and timing. \end{DoxyCompactList}\item 
+struct \mbox{\hyperlink{structvortex_1_1core_1_1ProfileScope}{vortex\+::core\+::\+Profile\+Scope}}
+\begin{DoxyCompactList}\small\item\em RAII wrapper for automatic profiling scopes. \end{DoxyCompactList}\item 
+class \mbox{\hyperlink{classvortex_1_1core_1_1CameraController}{vortex\+::core\+::\+Camera\+Controller}}
+\begin{DoxyCompactList}\small\item\em Handles camera movement and rotation based on input. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Functions}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{classvortex_1_1Engine_af7bb0d497dafbe828ff21a29e34ff34a}{Engine}} ()
+\item 
+\mbox{\hyperlink{classvortex_1_1Engine_a17f11ae849064413ae99708d3353c5f3}{\texorpdfstring{$\sim$}{\string~}\+Engine}} ()
+\item 
+bool \mbox{\hyperlink{classvortex_1_1Engine_af779661626cb8c76e21620a145a42d7d}{Initialize}} (const std\+::string \&title, uint32\+\_\+t width, uint32\+\_\+t height)
+\item 
+void \mbox{\hyperlink{classvortex_1_1Engine_a15118a0752b685fa091e071d98504fb8}{Run}} (std\+::function$<$ void()$>$ on\+Gui\+Render=nullptr)
+\item 
+void \mbox{\hyperlink{classvortex_1_1Engine_a565795d41f752558181ae73107ea8232}{Shutdown}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1Engine_a000df94e7b44a36343fab7a0485a1ceb}{Upload\+Scene}} (const std\+::vector$<$ graphics\+::\+Scene\+Object $>$ \&objects, const std\+::vector$<$ graphics\+::\+Scene\+Material $>$ \&materials, const std\+::vector$<$ voxel\+::\+Chunk $>$ \&chunks)
+\item 
+graphics\+::\+Graphics\+Context \& \mbox{\hyperlink{classvortex_1_1Engine_a88460bf47cc1dc1a7c4ea7219a23af76}{Get\+Graphics}} ()
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Files}
+\begin{DoxyCompactItemize}
+\item 
+file src/core/\mbox{\hyperlink{Core_8cppm}{Core.\+cppm}}
+\item 
+file src/core/\mbox{\hyperlink{CameraController_8cppm}{Camera\+Controller.\+cppm}}
+\item 
+file src/core/\mbox{\hyperlink{Profiler_8cppm}{Profiler.\+cppm}}
+\item 
+file src/core/internal/\mbox{\hyperlink{CameraController_8cpp}{Camera\+Controller.\+cpp}}
+\item 
+file src/core/internal/\mbox{\hyperlink{Engine_8cpp}{Engine.\+cpp}}
+\item 
+file src/core/internal/\mbox{\hyperlink{Profiler_8cpp}{Profiler.\+cpp}}
+\end{DoxyCompactItemize}

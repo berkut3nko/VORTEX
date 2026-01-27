@@ -1,0 +1,27 @@
+var searchData=
+[
+  ['vertex_0',['Vertex',['../namespacevortex_1_1graphics.html#ad192ced9733e603683ec1267075bd664ab22b929ba52471a02d18bb3a4e4472e6',1,'vortex::graphics']]],
+  ['viewfrustum_1',['ViewFrustum',['../structvortex_1_1graphics_1_1ViewFrustum.html',1,'vortex::graphics']]],
+  ['viewinverse_2',['viewInverse',['../structvortex_1_1graphics_1_1CameraUBO.html#a6a0739ba3a6f2230948f85b5b62e25f5',1,'vortex::graphics::CameraUBO']]],
+  ['viewproj_3',['viewProj',['../structvortex_1_1graphics_1_1CameraUBO.html#ae8800f166be0583a39526110a4993d54',1,'vortex::graphics::CameraUBO']]],
+  ['vma_5fimplementation_4',['VMA_IMPLEMENTATION',['../MemoryAllocator_8cpp.html#abea80547807da765ebe9fce1c6dd6a8d',1,'MemoryAllocator.cpp']]],
+  ['vortex_5',['vortex',['../namespacevortex.html',1,'']]],
+  ['vortex_2ecore_6',['vortex.core',['../module_vortex_8core.html',1,'']]],
+  ['vortex_2eeditor_7',['vortex.editor',['../module_vortex_8editor.html',1,'']]],
+  ['vortex_2egraphics_8',['vortex.graphics',['../module_vortex_8graphics.html',1,'']]],
+  ['vortex_2elog_9',['vortex.log',['../module_vortex_8log.html',1,'']]],
+  ['vortex_2ememory_10',['vortex.memory',['../module_vortex_8memory.html',1,'']]],
+  ['vortex_2evoxel_11',['vortex.voxel',['../module_vortex_8voxel.html',1,'']]],
+  ['vortex_3a_3acore_12',['core',['../namespacevortex_1_1core.html',1,'vortex']]],
+  ['vortex_3a_3aeditor_13',['editor',['../namespacevortex_1_1editor.html',1,'vortex']]],
+  ['vortex_3a_3agraphics_14',['graphics',['../namespacevortex_1_1graphics.html',1,'vortex']]],
+  ['vortex_3a_3amemory_15',['memory',['../namespacevortex_1_1memory.html',1,'vortex']]],
+  ['vortex_3a_3avoxel_16',['voxel',['../namespacevortex_1_1voxel.html',1,'vortex']]],
+  ['voxel_2ecppm_17',['Voxel.cppm',['../Voxel_8cppm.html',1,'']]],
+  ['voxelcount_18',['voxelCount',['../structvortex_1_1graphics_1_1SceneObject.html#a0ee86a84ede03a0c08c9ffd730df815b',1,'vortex::graphics::SceneObject::voxelCount'],['../structvortex_1_1voxel_1_1VoxelObject.html#a4d1d999fb715063bb3a5de90e08a9514',1,'vortex::voxel::VoxelObject::voxelCount']]],
+  ['voxelflags_19',['voxelFlags',['../structvortex_1_1voxel_1_1Chunk.html#acf44e3d69151bbbd6ca5c79731d26ad1',1,'vortex::voxel::Chunk']]],
+  ['voxelids_20',['voxelIDs',['../structvortex_1_1voxel_1_1Chunk.html#a46eadc6b6b3fe5e7776f28c6431fa280',1,'vortex::voxel::Chunk']]],
+  ['voxelobject_21',['VoxelObject',['../structvortex_1_1voxel_1_1VoxelObject.html',1,'vortex::voxel']]],
+  ['voxelworld_22',['VoxelWorld',['../classvortex_1_1voxel_1_1VoxelWorld.html',1,'vortex::voxel::VoxelWorld'],['../classvortex_1_1voxel_1_1VoxelWorld.html#ab7ef2faf64df15abe97d1e16d1bfe39e',1,'vortex::voxel::VoxelWorld::VoxelWorld()']]],
+  ['vulkancontext_23',['VulkanContext',['../classvortex_1_1graphics_1_1VulkanContext.html',1,'vortex::graphics::VulkanContext'],['../classvortex_1_1graphics_1_1VulkanContext.html#a8249a3ba828015d09b6f4cd36bb394d3',1,'vortex::graphics::VulkanContext::VulkanContext()']]]
+];

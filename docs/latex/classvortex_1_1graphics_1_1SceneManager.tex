@@ -1,0 +1,162 @@
+\doxysection{vortex\+::graphics\+::Scene\+Manager Class Reference}
+\hypertarget{classvortex_1_1graphics_1_1SceneManager}{}\label{classvortex_1_1graphics_1_1SceneManager}\index{vortex::graphics::SceneManager@{vortex::graphics::SceneManager}}
+
+
+Handles scene data, culling, and GPU buffer updates.  
+
+
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_a7d3bed53ae50cb0297e6430eb9107d8c}{Scene\+Manager}} ()=default
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_a0b06245149892396a94d57a706a25da3}{\texorpdfstring{$\sim$}{\string~}\+Scene\+Manager}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_a45eb9cc9c68f19d022a0896f417d3524}{Initialize}} (\mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator}{memory\+::\+Memory\+Allocator}} \texorpdfstring{$\ast$}{*}allocator)
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_ab9dc59b4e9c3dafeb624498882d6abc2}{Shutdown}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_af40b1e02541daecbd82f522af2b3b6fd}{Upload\+Camera\+Buffer}} (const \mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{Camera}} \&camera, uint32\+\_\+t width, uint32\+\_\+t height, uint64\+\_\+t frame\+Count, bool use\+Jitter)
+\begin{DoxyCompactList}\small\item\em Updates camera UBO with new view/proj matrices and TAA jitter. \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_a1be3dc5048b0b2778a0432b2176efb38}{Upload\+Scene\+Data}} (const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{Scene\+Object}} $>$ \&objects, const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneMaterial}{Scene\+Material}} $>$ \&materials, const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{vortex\+::voxel\+::\+Chunk}} $>$ \&chunks)
+\begin{DoxyCompactList}\small\item\em Uploads raw scene data (CPU side cache). \end{DoxyCompactList}\item 
+size\+\_\+t \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_a2c5949a72621ab85e874c53f1d88bfc5}{Cull\+And\+Upload}} (const \mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{Camera}} \&camera, float aspect\+Ratio)
+\begin{DoxyCompactList}\small\item\em Performs frustum culling and updates the GPU Object Buffer. \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_aea7e535be119e59ba5b49a7a9223f209}{Set\+Object\+Transform}} (uint32\+\_\+t index, const glm\+::mat4 \&new\+Model)
+\begin{DoxyCompactList}\small\item\em Updates a specific object\textquotesingle{}s transform directly in the cached list. \end{DoxyCompactList}\item 
+std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{Scene\+Object}} $>$ \& \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_a4975f53dd5f78ea2d944cc66f3f7f0de}{Get\+Objects}} ()
+\begin{DoxyCompactList}\small\item\em Accessor for cached scene objects (Editable). \end{DoxyCompactList}\item 
+const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \& \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_a42137e04785e4a2bf6cab533e6ce7639}{Get\+Camera\+Buffer}} () const
+\item 
+const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \& \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_a060e152f2886c886f2ed322ae3c47014}{Get\+Material\+Buffer}} () const
+\item 
+const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \& \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_ab15f68606327cb8c0930e4b079c76d12}{Get\+Object\+Buffer}} () const
+\item 
+const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \& \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_a465f2cd4678618297d188803528afeda}{Get\+Chunk\+Buffer}} () const
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Handles scene data, culling, and GPU buffer updates. 
+
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1SceneManager_a7d3bed53ae50cb0297e6430eb9107d8c}\label{classvortex_1_1graphics_1_1SceneManager_a7d3bed53ae50cb0297e6430eb9107d8c} 
+\index{vortex::graphics::SceneManager@{vortex::graphics::SceneManager}!SceneManager@{SceneManager}}
+\index{SceneManager@{SceneManager}!vortex::graphics::SceneManager@{vortex::graphics::SceneManager}}
+\doxysubsubsection{\texorpdfstring{SceneManager()}{SceneManager()}}
+{\footnotesize\ttfamily vortex\+::graphics\+::\+Scene\+Manager\+::\+Scene\+Manager (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [default]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1SceneManager_a0b06245149892396a94d57a706a25da3}\label{classvortex_1_1graphics_1_1SceneManager_a0b06245149892396a94d57a706a25da3} 
+\index{vortex::graphics::SceneManager@{vortex::graphics::SceneManager}!````~SceneManager@{\texorpdfstring{$\sim$}{\string~}SceneManager}}
+\index{````~SceneManager@{\texorpdfstring{$\sim$}{\string~}SceneManager}!vortex::graphics::SceneManager@{vortex::graphics::SceneManager}}
+\doxysubsubsection{\texorpdfstring{\texorpdfstring{$\sim$}{\string~}SceneManager()}{\string~SceneManager()}}
+{\footnotesize\ttfamily vortex\+::graphics\+::\+Scene\+Manager\+::\texorpdfstring{$\sim$}{\string~}\+Scene\+Manager (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1SceneManager_a2c5949a72621ab85e874c53f1d88bfc5}\label{classvortex_1_1graphics_1_1SceneManager_a2c5949a72621ab85e874c53f1d88bfc5} 
+\index{vortex::graphics::SceneManager@{vortex::graphics::SceneManager}!CullAndUpload@{CullAndUpload}}
+\index{CullAndUpload@{CullAndUpload}!vortex::graphics::SceneManager@{vortex::graphics::SceneManager}}
+\doxysubsubsection{\texorpdfstring{CullAndUpload()}{CullAndUpload()}}
+{\footnotesize\ttfamily size\+\_\+t vortex\+::graphics\+::\+Scene\+Manager\+::\+Cull\+And\+Upload (\begin{DoxyParamCaption}\item[{const \mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{Camera}} \&}]{camera,  }\item[{float}]{aspect\+Ratio }\end{DoxyParamCaption})}
+
+
+
+Performs frustum culling and updates the GPU Object Buffer. 
+
+\begin{DoxyReturn}{Returns}
+Number of visible objects. 
+\end{DoxyReturn}
+\Hypertarget{classvortex_1_1graphics_1_1SceneManager_a42137e04785e4a2bf6cab533e6ce7639}\label{classvortex_1_1graphics_1_1SceneManager_a42137e04785e4a2bf6cab533e6ce7639} 
+\index{vortex::graphics::SceneManager@{vortex::graphics::SceneManager}!GetCameraBuffer@{GetCameraBuffer}}
+\index{GetCameraBuffer@{GetCameraBuffer}!vortex::graphics::SceneManager@{vortex::graphics::SceneManager}}
+\doxysubsubsection{\texorpdfstring{GetCameraBuffer()}{GetCameraBuffer()}}
+{\footnotesize\ttfamily const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \& vortex\+::graphics\+::\+Scene\+Manager\+::\+Get\+Camera\+Buffer (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1SceneManager_a465f2cd4678618297d188803528afeda}\label{classvortex_1_1graphics_1_1SceneManager_a465f2cd4678618297d188803528afeda} 
+\index{vortex::graphics::SceneManager@{vortex::graphics::SceneManager}!GetChunkBuffer@{GetChunkBuffer}}
+\index{GetChunkBuffer@{GetChunkBuffer}!vortex::graphics::SceneManager@{vortex::graphics::SceneManager}}
+\doxysubsubsection{\texorpdfstring{GetChunkBuffer()}{GetChunkBuffer()}}
+{\footnotesize\ttfamily const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \& vortex\+::graphics\+::\+Scene\+Manager\+::\+Get\+Chunk\+Buffer (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1SceneManager_a060e152f2886c886f2ed322ae3c47014}\label{classvortex_1_1graphics_1_1SceneManager_a060e152f2886c886f2ed322ae3c47014} 
+\index{vortex::graphics::SceneManager@{vortex::graphics::SceneManager}!GetMaterialBuffer@{GetMaterialBuffer}}
+\index{GetMaterialBuffer@{GetMaterialBuffer}!vortex::graphics::SceneManager@{vortex::graphics::SceneManager}}
+\doxysubsubsection{\texorpdfstring{GetMaterialBuffer()}{GetMaterialBuffer()}}
+{\footnotesize\ttfamily const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \& vortex\+::graphics\+::\+Scene\+Manager\+::\+Get\+Material\+Buffer (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1SceneManager_ab15f68606327cb8c0930e4b079c76d12}\label{classvortex_1_1graphics_1_1SceneManager_ab15f68606327cb8c0930e4b079c76d12} 
+\index{vortex::graphics::SceneManager@{vortex::graphics::SceneManager}!GetObjectBuffer@{GetObjectBuffer}}
+\index{GetObjectBuffer@{GetObjectBuffer}!vortex::graphics::SceneManager@{vortex::graphics::SceneManager}}
+\doxysubsubsection{\texorpdfstring{GetObjectBuffer()}{GetObjectBuffer()}}
+{\footnotesize\ttfamily const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \& vortex\+::graphics\+::\+Scene\+Manager\+::\+Get\+Object\+Buffer (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1SceneManager_a4975f53dd5f78ea2d944cc66f3f7f0de}\label{classvortex_1_1graphics_1_1SceneManager_a4975f53dd5f78ea2d944cc66f3f7f0de} 
+\index{vortex::graphics::SceneManager@{vortex::graphics::SceneManager}!GetObjects@{GetObjects}}
+\index{GetObjects@{GetObjects}!vortex::graphics::SceneManager@{vortex::graphics::SceneManager}}
+\doxysubsubsection{\texorpdfstring{GetObjects()}{GetObjects()}}
+{\footnotesize\ttfamily std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{Scene\+Object}} $>$ \& vortex\+::graphics\+::\+Scene\+Manager\+::\+Get\+Objects (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Accessor for cached scene objects (Editable). 
+
+\Hypertarget{classvortex_1_1graphics_1_1SceneManager_a45eb9cc9c68f19d022a0896f417d3524}\label{classvortex_1_1graphics_1_1SceneManager_a45eb9cc9c68f19d022a0896f417d3524} 
+\index{vortex::graphics::SceneManager@{vortex::graphics::SceneManager}!Initialize@{Initialize}}
+\index{Initialize@{Initialize}!vortex::graphics::SceneManager@{vortex::graphics::SceneManager}}
+\doxysubsubsection{\texorpdfstring{Initialize()}{Initialize()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Scene\+Manager\+::\+Initialize (\begin{DoxyParamCaption}\item[{\mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator}{memory\+::\+Memory\+Allocator}} \texorpdfstring{$\ast$}{*}}]{allocator }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1SceneManager_aea7e535be119e59ba5b49a7a9223f209}\label{classvortex_1_1graphics_1_1SceneManager_aea7e535be119e59ba5b49a7a9223f209} 
+\index{vortex::graphics::SceneManager@{vortex::graphics::SceneManager}!SetObjectTransform@{SetObjectTransform}}
+\index{SetObjectTransform@{SetObjectTransform}!vortex::graphics::SceneManager@{vortex::graphics::SceneManager}}
+\doxysubsubsection{\texorpdfstring{SetObjectTransform()}{SetObjectTransform()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Scene\+Manager\+::\+Set\+Object\+Transform (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{index,  }\item[{const glm\+::mat4 \&}]{new\+Model }\end{DoxyParamCaption})}
+
+
+
+Updates a specific object\textquotesingle{}s transform directly in the cached list. 
+
+\begin{DoxyNote}{Note}
+Requires next Cull\+And\+Upload call to sync with GPU. 
+\end{DoxyNote}
+
+\begin{DoxyParams}{Parameters}
+{\em index} & Index of the object in the scene list. \\
+\hline
+{\em new\+Model} & New model matrix. \\
+\hline
+\end{DoxyParams}
+\Hypertarget{classvortex_1_1graphics_1_1SceneManager_ab9dc59b4e9c3dafeb624498882d6abc2}\label{classvortex_1_1graphics_1_1SceneManager_ab9dc59b4e9c3dafeb624498882d6abc2} 
+\index{vortex::graphics::SceneManager@{vortex::graphics::SceneManager}!Shutdown@{Shutdown}}
+\index{Shutdown@{Shutdown}!vortex::graphics::SceneManager@{vortex::graphics::SceneManager}}
+\doxysubsubsection{\texorpdfstring{Shutdown()}{Shutdown()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Scene\+Manager\+::\+Shutdown (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1SceneManager_af40b1e02541daecbd82f522af2b3b6fd}\label{classvortex_1_1graphics_1_1SceneManager_af40b1e02541daecbd82f522af2b3b6fd} 
+\index{vortex::graphics::SceneManager@{vortex::graphics::SceneManager}!UploadCameraBuffer@{UploadCameraBuffer}}
+\index{UploadCameraBuffer@{UploadCameraBuffer}!vortex::graphics::SceneManager@{vortex::graphics::SceneManager}}
+\doxysubsubsection{\texorpdfstring{UploadCameraBuffer()}{UploadCameraBuffer()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Scene\+Manager\+::\+Upload\+Camera\+Buffer (\begin{DoxyParamCaption}\item[{const \mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{Camera}} \&}]{camera,  }\item[{uint32\+\_\+t}]{width,  }\item[{uint32\+\_\+t}]{height,  }\item[{uint64\+\_\+t}]{frame\+Count,  }\item[{bool}]{use\+Jitter }\end{DoxyParamCaption})}
+
+
+
+Updates camera UBO with new view/proj matrices and TAA jitter. 
+
+\Hypertarget{classvortex_1_1graphics_1_1SceneManager_a1be3dc5048b0b2778a0432b2176efb38}\label{classvortex_1_1graphics_1_1SceneManager_a1be3dc5048b0b2778a0432b2176efb38} 
+\index{vortex::graphics::SceneManager@{vortex::graphics::SceneManager}!UploadSceneData@{UploadSceneData}}
+\index{UploadSceneData@{UploadSceneData}!vortex::graphics::SceneManager@{vortex::graphics::SceneManager}}
+\doxysubsubsection{\texorpdfstring{UploadSceneData()}{UploadSceneData()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Scene\+Manager\+::\+Upload\+Scene\+Data (\begin{DoxyParamCaption}\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{Scene\+Object}} $>$ \&}]{objects,  }\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneMaterial}{Scene\+Material}} $>$ \&}]{materials,  }\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{vortex\+::voxel\+::\+Chunk}} $>$ \&}]{chunks }\end{DoxyParamCaption})}
+
+
+
+Uploads raw scene data (CPU side cache). 
+
+
+
+The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}
+\item 
+src/graphics/\mbox{\hyperlink{SceneManager_8cppm}{Scene\+Manager.\+cppm}}\item 
+src/graphics/internal/\mbox{\hyperlink{SceneManager_8cpp}{Scene\+Manager.\+cpp}}\end{DoxyCompactItemize}

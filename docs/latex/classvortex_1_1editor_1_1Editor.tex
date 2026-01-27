@@ -1,0 +1,79 @@
+\doxysection{vortex\+::editor\+::Editor Class Reference}
+\hypertarget{classvortex_1_1editor_1_1Editor}{}\label{classvortex_1_1editor_1_1Editor}\index{vortex::editor::Editor@{vortex::editor::Editor}}
+
+
+\doxylink{classvortex_1_1editor_1_1Editor}{Editor} module for object manipulation and selection.  
+
+
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{classvortex_1_1editor_1_1Editor_a5172c5417457fbdfdd7e7c8b99e0a9e7}{Editor}} ()=default
+\item 
+void \mbox{\hyperlink{classvortex_1_1editor_1_1Editor_ac84cb7a48f128a3eda71dd8ca49edf81}{Update}} (GLFWwindow \texorpdfstring{$\ast$}{*}window, \mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{graphics\+::\+Camera}} \&camera, \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager}{graphics\+::\+Scene\+Manager}} \&scene\+Manager, uint32\+\_\+t width, uint32\+\_\+t height)
+\begin{DoxyCompactList}\small\item\em Updates editor state (input handling, shortcuts). \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1editor_1_1Editor_adcb6c0576863e79f29a94ac06bc44f4a}{Render\+Gizmo}} (\mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{graphics\+::\+Camera}} \&camera, uint32\+\_\+t width, uint32\+\_\+t height)
+\begin{DoxyCompactList}\small\item\em Renders Gizmos. Must be called inside Im\+Gui frame. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+\doxylink{classvortex_1_1editor_1_1Editor}{Editor} module for object manipulation and selection. 
+
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{classvortex_1_1editor_1_1Editor_a5172c5417457fbdfdd7e7c8b99e0a9e7}\label{classvortex_1_1editor_1_1Editor_a5172c5417457fbdfdd7e7c8b99e0a9e7} 
+\index{vortex::editor::Editor@{vortex::editor::Editor}!Editor@{Editor}}
+\index{Editor@{Editor}!vortex::editor::Editor@{vortex::editor::Editor}}
+\doxysubsubsection{\texorpdfstring{Editor()}{Editor()}}
+{\footnotesize\ttfamily vortex\+::editor\+::\+Editor\+::\+Editor (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [default]}}
+
+
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1editor_1_1Editor_adcb6c0576863e79f29a94ac06bc44f4a}\label{classvortex_1_1editor_1_1Editor_adcb6c0576863e79f29a94ac06bc44f4a} 
+\index{vortex::editor::Editor@{vortex::editor::Editor}!RenderGizmo@{RenderGizmo}}
+\index{RenderGizmo@{RenderGizmo}!vortex::editor::Editor@{vortex::editor::Editor}}
+\doxysubsubsection{\texorpdfstring{RenderGizmo()}{RenderGizmo()}}
+{\footnotesize\ttfamily void vortex\+::editor\+::\+Editor\+::\+Render\+Gizmo (\begin{DoxyParamCaption}\item[{\mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{graphics\+::\+Camera}} \&}]{camera,  }\item[{uint32\+\_\+t}]{width,  }\item[{uint32\+\_\+t}]{height }\end{DoxyParamCaption})}
+
+
+
+Renders Gizmos. Must be called inside Im\+Gui frame. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em camera} & Main camera. \\
+\hline
+{\em width} & Screen width. \\
+\hline
+{\em height} & Screen height. \\
+\hline
+\end{DoxyParams}
+\Hypertarget{classvortex_1_1editor_1_1Editor_ac84cb7a48f128a3eda71dd8ca49edf81}\label{classvortex_1_1editor_1_1Editor_ac84cb7a48f128a3eda71dd8ca49edf81} 
+\index{vortex::editor::Editor@{vortex::editor::Editor}!Update@{Update}}
+\index{Update@{Update}!vortex::editor::Editor@{vortex::editor::Editor}}
+\doxysubsubsection{\texorpdfstring{Update()}{Update()}}
+{\footnotesize\ttfamily void vortex\+::editor\+::\+Editor\+::\+Update (\begin{DoxyParamCaption}\item[{GLFWwindow \texorpdfstring{$\ast$}{*}}]{window,  }\item[{\mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{graphics\+::\+Camera}} \&}]{camera,  }\item[{\mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager}{graphics\+::\+Scene\+Manager}} \&}]{scene\+Manager,  }\item[{uint32\+\_\+t}]{width,  }\item[{uint32\+\_\+t}]{height }\end{DoxyParamCaption})}
+
+
+
+Updates editor state (input handling, shortcuts). 
+
+
+\begin{DoxyParams}{Parameters}
+{\em window} & Raw GLFW window. \\
+\hline
+{\em camera} & Main camera. \\
+\hline
+{\em scene\+Manager} & Scene manager for object access. \\
+\hline
+{\em width} & Screen width. \\
+\hline
+{\em height} & Screen height. \\
+\hline
+\end{DoxyParams}
+
+
+The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}
+\item 
+src/editor/\mbox{\hyperlink{Editor_8cppm}{Editor.\+cppm}}\item 
+src/editor/internal/\mbox{\hyperlink{Editor_8cpp}{Editor.\+cpp}}\end{DoxyCompactItemize}

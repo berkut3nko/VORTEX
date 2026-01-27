@@ -1,0 +1,121 @@
+\doxysection{vortex\+::graphics\+::Swapchain Class Reference}
+\hypertarget{classvortex_1_1graphics_1_1Swapchain}{}\label{classvortex_1_1graphics_1_1Swapchain}\index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_a795c1943caaf65a4962fd44340e15ae6}{Swapchain}} ()=default
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_a164763d62091557993aed469d665a1df}{\texorpdfstring{$\sim$}{\string~}\+Swapchain}} ()
+\item 
+bool \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_aaa85f760ac4e64187a4afc88baba2332}{Initialize}} (\mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext}{Vulkan\+Context}} \&context, Vk\+Surface\+KHR surface, uint32\+\_\+t width, uint32\+\_\+t height)
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_a086d2f21c35993fc6e37a3f9e10aa3e4}{Recreate}} (uint32\+\_\+t width, uint32\+\_\+t height)
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_addc0020def18d9aa595b927a3c3faa8f}{Shutdown}} ()
+\item 
+uint32\+\_\+t \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_a32ca338a1cc4c5a961c90a01420a7fdf}{Acquire\+Next\+Image}} (Vk\+Semaphore semaphore)
+\item 
+Vk\+Result \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_a59ade8df3129fdc3ab3e6684fd226b5c}{Present}} (Vk\+Queue queue, uint32\+\_\+t image\+Index, Vk\+Semaphore render\+Finished\+Semaphore)
+\item 
+Vk\+Format \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_aed75604ca9df5907323689ea4dc4f66f}{Get\+Format}} () const
+\item 
+Vk\+Format \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_a19fe6bb3a4035177937b41161f5e9415}{Get\+Depth\+Format}} () const
+\item 
+Vk\+Extent2D \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_ada1a48697ce31063d98a261938415f9d}{Get\+Extent}} () const
+\item 
+const std\+::vector$<$ Vk\+Image $>$ \& \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_aa507584fdfae3e88b8399b46175486b6}{Get\+Images}} () const
+\item 
+const std\+::vector$<$ Vk\+Image\+View $>$ \& \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_a764e61870ee095b3eadd53aa6c129d33}{Get\+Image\+Views}} () const
+\item 
+const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \& \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_aaab11fcafb984ec0c0c83f8b8ad6db50}{Get\+Depth\+Image}} () const
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1Swapchain_a795c1943caaf65a4962fd44340e15ae6}\label{classvortex_1_1graphics_1_1Swapchain_a795c1943caaf65a4962fd44340e15ae6} 
+\index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}!Swapchain@{Swapchain}}
+\index{Swapchain@{Swapchain}!vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
+\doxysubsubsection{\texorpdfstring{Swapchain()}{Swapchain()}}
+{\footnotesize\ttfamily vortex\+::graphics\+::\+Swapchain\+::\+Swapchain (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [default]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1Swapchain_a164763d62091557993aed469d665a1df}\label{classvortex_1_1graphics_1_1Swapchain_a164763d62091557993aed469d665a1df} 
+\index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}!````~Swapchain@{\texorpdfstring{$\sim$}{\string~}Swapchain}}
+\index{````~Swapchain@{\texorpdfstring{$\sim$}{\string~}Swapchain}!vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
+\doxysubsubsection{\texorpdfstring{\texorpdfstring{$\sim$}{\string~}Swapchain()}{\string~Swapchain()}}
+{\footnotesize\ttfamily vortex\+::graphics\+::\+Swapchain\+::\texorpdfstring{$\sim$}{\string~}\+Swapchain (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1Swapchain_a32ca338a1cc4c5a961c90a01420a7fdf}\label{classvortex_1_1graphics_1_1Swapchain_a32ca338a1cc4c5a961c90a01420a7fdf} 
+\index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}!AcquireNextImage@{AcquireNextImage}}
+\index{AcquireNextImage@{AcquireNextImage}!vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
+\doxysubsubsection{\texorpdfstring{AcquireNextImage()}{AcquireNextImage()}}
+{\footnotesize\ttfamily uint32\+\_\+t vortex\+::graphics\+::\+Swapchain\+::\+Acquire\+Next\+Image (\begin{DoxyParamCaption}\item[{Vk\+Semaphore}]{semaphore }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1Swapchain_a19fe6bb3a4035177937b41161f5e9415}\label{classvortex_1_1graphics_1_1Swapchain_a19fe6bb3a4035177937b41161f5e9415} 
+\index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}!GetDepthFormat@{GetDepthFormat}}
+\index{GetDepthFormat@{GetDepthFormat}!vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
+\doxysubsubsection{\texorpdfstring{GetDepthFormat()}{GetDepthFormat()}}
+{\footnotesize\ttfamily Vk\+Format vortex\+::graphics\+::\+Swapchain\+::\+Get\+Depth\+Format (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1Swapchain_aaab11fcafb984ec0c0c83f8b8ad6db50}\label{classvortex_1_1graphics_1_1Swapchain_aaab11fcafb984ec0c0c83f8b8ad6db50} 
+\index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}!GetDepthImage@{GetDepthImage}}
+\index{GetDepthImage@{GetDepthImage}!vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
+\doxysubsubsection{\texorpdfstring{GetDepthImage()}{GetDepthImage()}}
+{\footnotesize\ttfamily const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \& vortex\+::graphics\+::\+Swapchain\+::\+Get\+Depth\+Image (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1Swapchain_ada1a48697ce31063d98a261938415f9d}\label{classvortex_1_1graphics_1_1Swapchain_ada1a48697ce31063d98a261938415f9d} 
+\index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}!GetExtent@{GetExtent}}
+\index{GetExtent@{GetExtent}!vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
+\doxysubsubsection{\texorpdfstring{GetExtent()}{GetExtent()}}
+{\footnotesize\ttfamily Vk\+Extent2D vortex\+::graphics\+::\+Swapchain\+::\+Get\+Extent (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1Swapchain_aed75604ca9df5907323689ea4dc4f66f}\label{classvortex_1_1graphics_1_1Swapchain_aed75604ca9df5907323689ea4dc4f66f} 
+\index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}!GetFormat@{GetFormat}}
+\index{GetFormat@{GetFormat}!vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
+\doxysubsubsection{\texorpdfstring{GetFormat()}{GetFormat()}}
+{\footnotesize\ttfamily Vk\+Format vortex\+::graphics\+::\+Swapchain\+::\+Get\+Format (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1Swapchain_aa507584fdfae3e88b8399b46175486b6}\label{classvortex_1_1graphics_1_1Swapchain_aa507584fdfae3e88b8399b46175486b6} 
+\index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}!GetImages@{GetImages}}
+\index{GetImages@{GetImages}!vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
+\doxysubsubsection{\texorpdfstring{GetImages()}{GetImages()}}
+{\footnotesize\ttfamily const std\+::vector$<$ Vk\+Image $>$ \& vortex\+::graphics\+::\+Swapchain\+::\+Get\+Images (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1Swapchain_a764e61870ee095b3eadd53aa6c129d33}\label{classvortex_1_1graphics_1_1Swapchain_a764e61870ee095b3eadd53aa6c129d33} 
+\index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}!GetImageViews@{GetImageViews}}
+\index{GetImageViews@{GetImageViews}!vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
+\doxysubsubsection{\texorpdfstring{GetImageViews()}{GetImageViews()}}
+{\footnotesize\ttfamily const std\+::vector$<$ Vk\+Image\+View $>$ \& vortex\+::graphics\+::\+Swapchain\+::\+Get\+Image\+Views (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1Swapchain_aaa85f760ac4e64187a4afc88baba2332}\label{classvortex_1_1graphics_1_1Swapchain_aaa85f760ac4e64187a4afc88baba2332} 
+\index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}!Initialize@{Initialize}}
+\index{Initialize@{Initialize}!vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
+\doxysubsubsection{\texorpdfstring{Initialize()}{Initialize()}}
+{\footnotesize\ttfamily bool vortex\+::graphics\+::\+Swapchain\+::\+Initialize (\begin{DoxyParamCaption}\item[{\mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext}{Vulkan\+Context}} \&}]{context,  }\item[{Vk\+Surface\+KHR}]{surface,  }\item[{uint32\+\_\+t}]{width,  }\item[{uint32\+\_\+t}]{height }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1Swapchain_a59ade8df3129fdc3ab3e6684fd226b5c}\label{classvortex_1_1graphics_1_1Swapchain_a59ade8df3129fdc3ab3e6684fd226b5c} 
+\index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}!Present@{Present}}
+\index{Present@{Present}!vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
+\doxysubsubsection{\texorpdfstring{Present()}{Present()}}
+{\footnotesize\ttfamily Vk\+Result vortex\+::graphics\+::\+Swapchain\+::\+Present (\begin{DoxyParamCaption}\item[{Vk\+Queue}]{queue,  }\item[{uint32\+\_\+t}]{image\+Index,  }\item[{Vk\+Semaphore}]{render\+Finished\+Semaphore }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1Swapchain_a086d2f21c35993fc6e37a3f9e10aa3e4}\label{classvortex_1_1graphics_1_1Swapchain_a086d2f21c35993fc6e37a3f9e10aa3e4} 
+\index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}!Recreate@{Recreate}}
+\index{Recreate@{Recreate}!vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
+\doxysubsubsection{\texorpdfstring{Recreate()}{Recreate()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Swapchain\+::\+Recreate (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{width,  }\item[{uint32\+\_\+t}]{height }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1Swapchain_addc0020def18d9aa595b927a3c3faa8f}\label{classvortex_1_1graphics_1_1Swapchain_addc0020def18d9aa595b927a3c3faa8f} 
+\index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}!Shutdown@{Shutdown}}
+\index{Shutdown@{Shutdown}!vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
+\doxysubsubsection{\texorpdfstring{Shutdown()}{Shutdown()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Swapchain\+::\+Shutdown (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+
+
+The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}
+\item 
+src/graphics/\mbox{\hyperlink{Swapchain_8cppm}{Swapchain.\+cppm}}\item 
+src/graphics/internal/\mbox{\hyperlink{Swapchain_8cpp}{Swapchain.\+cpp}}\end{DoxyCompactItemize}

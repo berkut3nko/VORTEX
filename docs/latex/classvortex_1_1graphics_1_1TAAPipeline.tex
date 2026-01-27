@@ -1,0 +1,65 @@
+\doxysection{vortex\+::graphics\+::TAAPipeline Class Reference}
+\hypertarget{classvortex_1_1graphics_1_1TAAPipeline}{}\label{classvortex_1_1graphics_1_1TAAPipeline}\index{vortex::graphics::TAAPipeline@{vortex::graphics::TAAPipeline}}
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1TAAPipeline_a6e5f039d29f94286a8db76299ce4e0be}{TAAPipeline}} ()
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1TAAPipeline_aad1bfa50d8cfb188c523cdf6b97a12f9}{\texorpdfstring{$\sim$}{\string~}\+TAAPipeline}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1TAAPipeline_afa2868e2ce95acb9e6253566b7711d01}{Initialize}} (Vk\+Device device, uint32\+\_\+t frames\+In\+Flight)
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1TAAPipeline_abe826e76948f87b21262c6310096384b}{Shutdown}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1TAAPipeline_a929611217a9638d438d39783adf49b18}{Dispatch}} (Vk\+Command\+Buffer cmd, uint32\+\_\+t frame\+Index, Vk\+Sampler sampler, const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \&color\+Input, const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \&history\+Input, const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \&velocity\+Input, const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \&depth\+Input, const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \&output, uint32\+\_\+t width, uint32\+\_\+t height)
+\item 
+bool \mbox{\hyperlink{classvortex_1_1graphics_1_1TAAPipeline_a792af4a115829d4db9570a3f0a8af770}{Is\+Initialized}} () const
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1TAAPipeline_a6e5f039d29f94286a8db76299ce4e0be}\label{classvortex_1_1graphics_1_1TAAPipeline_a6e5f039d29f94286a8db76299ce4e0be} 
+\index{vortex::graphics::TAAPipeline@{vortex::graphics::TAAPipeline}!TAAPipeline@{TAAPipeline}}
+\index{TAAPipeline@{TAAPipeline}!vortex::graphics::TAAPipeline@{vortex::graphics::TAAPipeline}}
+\doxysubsubsection{\texorpdfstring{TAAPipeline()}{TAAPipeline()}}
+{\footnotesize\ttfamily vortex\+::graphics\+::\+TAAPipeline\+::\+TAAPipeline (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1TAAPipeline_aad1bfa50d8cfb188c523cdf6b97a12f9}\label{classvortex_1_1graphics_1_1TAAPipeline_aad1bfa50d8cfb188c523cdf6b97a12f9} 
+\index{vortex::graphics::TAAPipeline@{vortex::graphics::TAAPipeline}!````~TAAPipeline@{\texorpdfstring{$\sim$}{\string~}TAAPipeline}}
+\index{````~TAAPipeline@{\texorpdfstring{$\sim$}{\string~}TAAPipeline}!vortex::graphics::TAAPipeline@{vortex::graphics::TAAPipeline}}
+\doxysubsubsection{\texorpdfstring{\texorpdfstring{$\sim$}{\string~}TAAPipeline()}{\string~TAAPipeline()}}
+{\footnotesize\ttfamily vortex\+::graphics\+::\+TAAPipeline\+::\texorpdfstring{$\sim$}{\string~}\+TAAPipeline (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1TAAPipeline_a929611217a9638d438d39783adf49b18}\label{classvortex_1_1graphics_1_1TAAPipeline_a929611217a9638d438d39783adf49b18} 
+\index{vortex::graphics::TAAPipeline@{vortex::graphics::TAAPipeline}!Dispatch@{Dispatch}}
+\index{Dispatch@{Dispatch}!vortex::graphics::TAAPipeline@{vortex::graphics::TAAPipeline}}
+\doxysubsubsection{\texorpdfstring{Dispatch()}{Dispatch()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+TAAPipeline\+::\+Dispatch (\begin{DoxyParamCaption}\item[{Vk\+Command\+Buffer}]{cmd,  }\item[{uint32\+\_\+t}]{frame\+Index,  }\item[{Vk\+Sampler}]{sampler,  }\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \&}]{color\+Input,  }\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \&}]{history\+Input,  }\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \&}]{velocity\+Input,  }\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \&}]{depth\+Input,  }\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \&}]{output,  }\item[{uint32\+\_\+t}]{width,  }\item[{uint32\+\_\+t}]{height }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1TAAPipeline_afa2868e2ce95acb9e6253566b7711d01}\label{classvortex_1_1graphics_1_1TAAPipeline_afa2868e2ce95acb9e6253566b7711d01} 
+\index{vortex::graphics::TAAPipeline@{vortex::graphics::TAAPipeline}!Initialize@{Initialize}}
+\index{Initialize@{Initialize}!vortex::graphics::TAAPipeline@{vortex::graphics::TAAPipeline}}
+\doxysubsubsection{\texorpdfstring{Initialize()}{Initialize()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+TAAPipeline\+::\+Initialize (\begin{DoxyParamCaption}\item[{Vk\+Device}]{device,  }\item[{uint32\+\_\+t}]{frames\+In\+Flight }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1TAAPipeline_a792af4a115829d4db9570a3f0a8af770}\label{classvortex_1_1graphics_1_1TAAPipeline_a792af4a115829d4db9570a3f0a8af770} 
+\index{vortex::graphics::TAAPipeline@{vortex::graphics::TAAPipeline}!IsInitialized@{IsInitialized}}
+\index{IsInitialized@{IsInitialized}!vortex::graphics::TAAPipeline@{vortex::graphics::TAAPipeline}}
+\doxysubsubsection{\texorpdfstring{IsInitialized()}{IsInitialized()}}
+{\footnotesize\ttfamily bool vortex\+::graphics\+::\+TAAPipeline\+::\+Is\+Initialized (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1TAAPipeline_abe826e76948f87b21262c6310096384b}\label{classvortex_1_1graphics_1_1TAAPipeline_abe826e76948f87b21262c6310096384b} 
+\index{vortex::graphics::TAAPipeline@{vortex::graphics::TAAPipeline}!Shutdown@{Shutdown}}
+\index{Shutdown@{Shutdown}!vortex::graphics::TAAPipeline@{vortex::graphics::TAAPipeline}}
+\doxysubsubsection{\texorpdfstring{Shutdown()}{Shutdown()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+TAAPipeline\+::\+Shutdown (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+
+
+The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}
+\item 
+src/graphics/pipelines/\mbox{\hyperlink{TAAPipeline_8cppm}{TAAPipeline.\+cppm}}\item 
+src/graphics/pipelines/internal/\mbox{\hyperlink{TAAPipeline_8cpp}{TAAPipeline.\+cpp}}\end{DoxyCompactItemize}

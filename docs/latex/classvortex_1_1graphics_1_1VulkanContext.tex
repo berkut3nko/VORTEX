@@ -1,0 +1,129 @@
+\doxysection{vortex\+::graphics\+::Vulkan\+Context Class Reference}
+\hypertarget{classvortex_1_1graphics_1_1VulkanContext}{}\label{classvortex_1_1graphics_1_1VulkanContext}\index{vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}}
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_a8249a3ba828015d09b6f4cd36bb394d3}{Vulkan\+Context}} ()=default
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_a9dda4e9f44fa69de3d3206cb01e9eb69}{\texorpdfstring{$\sim$}{\string~}\+Vulkan\+Context}} ()
+\item 
+bool \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_a2737506afff4ac93451e2114643bead1}{Init\+Instance}} (const char \texorpdfstring{$\ast$}{*}title)
+\item 
+bool \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_a63efa3b6af08582ae4f5e06f14fccf42}{Init\+Device}} (Vk\+Surface\+KHR surface)
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_ac060bbf03cb9edf9705756ec86139287}{Shutdown}} ()
+\item 
+Vk\+Instance \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_adb3906181e66744af5bda865cde18fa9}{Get\+Instance}} () const
+\item 
+Vk\+Device \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_a4a7330dee69c3ef344a37ce7de253154}{Get\+Device}} () const
+\item 
+Vk\+Physical\+Device \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_a93ec2b81ecd661c4d4fa5494508bfca4}{Get\+Physical\+Device}} () const
+\item 
+Vk\+Queue \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_a99118d514230e884e78be02b245985f6}{Get\+Graphics\+Queue}} () const
+\item 
+uint32\+\_\+t \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_afa7fb8b0277dc09d04f29d6154c9dfbf}{Get\+Queue\+Family}} () const
+\item 
+vkb\+::\+Instance \& \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_af832193aa3986688e2a89bb9d3437950}{Get\+Vkb\+Instance}} ()
+\item 
+vkb\+::\+Device \& \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_a2d54f0c1fb91f001a378e0fb397b900a}{Get\+Vkb\+Device}} ()
+\item 
+\mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator}{memory\+::\+Memory\+Allocator}} \texorpdfstring{$\ast$}{*} \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_a565bbe0830bbd860170ffac1f9f2a9e5}{Get\+Allocator}} ()
+\item 
+Vma\+Allocator \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_adda0de347d2f1db9936d8d5327c78fbd}{Get\+Vma\+Allocator}} ()
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1VulkanContext_a8249a3ba828015d09b6f4cd36bb394d3}\label{classvortex_1_1graphics_1_1VulkanContext_a8249a3ba828015d09b6f4cd36bb394d3} 
+\index{vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}!VulkanContext@{VulkanContext}}
+\index{VulkanContext@{VulkanContext}!vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}}
+\doxysubsubsection{\texorpdfstring{VulkanContext()}{VulkanContext()}}
+{\footnotesize\ttfamily vortex\+::graphics\+::\+Vulkan\+Context\+::\+Vulkan\+Context (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [default]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1VulkanContext_a9dda4e9f44fa69de3d3206cb01e9eb69}\label{classvortex_1_1graphics_1_1VulkanContext_a9dda4e9f44fa69de3d3206cb01e9eb69} 
+\index{vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}!````~VulkanContext@{\texorpdfstring{$\sim$}{\string~}VulkanContext}}
+\index{````~VulkanContext@{\texorpdfstring{$\sim$}{\string~}VulkanContext}!vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}}
+\doxysubsubsection{\texorpdfstring{\texorpdfstring{$\sim$}{\string~}VulkanContext()}{\string~VulkanContext()}}
+{\footnotesize\ttfamily vortex\+::graphics\+::\+Vulkan\+Context\+::\texorpdfstring{$\sim$}{\string~}\+Vulkan\+Context (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1VulkanContext_a565bbe0830bbd860170ffac1f9f2a9e5}\label{classvortex_1_1graphics_1_1VulkanContext_a565bbe0830bbd860170ffac1f9f2a9e5} 
+\index{vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}!GetAllocator@{GetAllocator}}
+\index{GetAllocator@{GetAllocator}!vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}}
+\doxysubsubsection{\texorpdfstring{GetAllocator()}{GetAllocator()}}
+{\footnotesize\ttfamily \mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator}{memory\+::\+Memory\+Allocator}} \texorpdfstring{$\ast$}{*} vortex\+::graphics\+::\+Vulkan\+Context\+::\+Get\+Allocator (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1VulkanContext_a4a7330dee69c3ef344a37ce7de253154}\label{classvortex_1_1graphics_1_1VulkanContext_a4a7330dee69c3ef344a37ce7de253154} 
+\index{vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}!GetDevice@{GetDevice}}
+\index{GetDevice@{GetDevice}!vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}}
+\doxysubsubsection{\texorpdfstring{GetDevice()}{GetDevice()}}
+{\footnotesize\ttfamily Vk\+Device vortex\+::graphics\+::\+Vulkan\+Context\+::\+Get\+Device (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1VulkanContext_a99118d514230e884e78be02b245985f6}\label{classvortex_1_1graphics_1_1VulkanContext_a99118d514230e884e78be02b245985f6} 
+\index{vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}!GetGraphicsQueue@{GetGraphicsQueue}}
+\index{GetGraphicsQueue@{GetGraphicsQueue}!vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}}
+\doxysubsubsection{\texorpdfstring{GetGraphicsQueue()}{GetGraphicsQueue()}}
+{\footnotesize\ttfamily Vk\+Queue vortex\+::graphics\+::\+Vulkan\+Context\+::\+Get\+Graphics\+Queue (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1VulkanContext_adb3906181e66744af5bda865cde18fa9}\label{classvortex_1_1graphics_1_1VulkanContext_adb3906181e66744af5bda865cde18fa9} 
+\index{vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}!GetInstance@{GetInstance}}
+\index{GetInstance@{GetInstance}!vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}}
+\doxysubsubsection{\texorpdfstring{GetInstance()}{GetInstance()}}
+{\footnotesize\ttfamily Vk\+Instance vortex\+::graphics\+::\+Vulkan\+Context\+::\+Get\+Instance (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1VulkanContext_a93ec2b81ecd661c4d4fa5494508bfca4}\label{classvortex_1_1graphics_1_1VulkanContext_a93ec2b81ecd661c4d4fa5494508bfca4} 
+\index{vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}!GetPhysicalDevice@{GetPhysicalDevice}}
+\index{GetPhysicalDevice@{GetPhysicalDevice}!vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}}
+\doxysubsubsection{\texorpdfstring{GetPhysicalDevice()}{GetPhysicalDevice()}}
+{\footnotesize\ttfamily Vk\+Physical\+Device vortex\+::graphics\+::\+Vulkan\+Context\+::\+Get\+Physical\+Device (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1VulkanContext_afa7fb8b0277dc09d04f29d6154c9dfbf}\label{classvortex_1_1graphics_1_1VulkanContext_afa7fb8b0277dc09d04f29d6154c9dfbf} 
+\index{vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}!GetQueueFamily@{GetQueueFamily}}
+\index{GetQueueFamily@{GetQueueFamily}!vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}}
+\doxysubsubsection{\texorpdfstring{GetQueueFamily()}{GetQueueFamily()}}
+{\footnotesize\ttfamily uint32\+\_\+t vortex\+::graphics\+::\+Vulkan\+Context\+::\+Get\+Queue\+Family (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1VulkanContext_a2d54f0c1fb91f001a378e0fb397b900a}\label{classvortex_1_1graphics_1_1VulkanContext_a2d54f0c1fb91f001a378e0fb397b900a} 
+\index{vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}!GetVkbDevice@{GetVkbDevice}}
+\index{GetVkbDevice@{GetVkbDevice}!vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}}
+\doxysubsubsection{\texorpdfstring{GetVkbDevice()}{GetVkbDevice()}}
+{\footnotesize\ttfamily vkb\+::\+Device \& vortex\+::graphics\+::\+Vulkan\+Context\+::\+Get\+Vkb\+Device (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1VulkanContext_af832193aa3986688e2a89bb9d3437950}\label{classvortex_1_1graphics_1_1VulkanContext_af832193aa3986688e2a89bb9d3437950} 
+\index{vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}!GetVkbInstance@{GetVkbInstance}}
+\index{GetVkbInstance@{GetVkbInstance}!vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}}
+\doxysubsubsection{\texorpdfstring{GetVkbInstance()}{GetVkbInstance()}}
+{\footnotesize\ttfamily vkb\+::\+Instance \& vortex\+::graphics\+::\+Vulkan\+Context\+::\+Get\+Vkb\+Instance (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1VulkanContext_adda0de347d2f1db9936d8d5327c78fbd}\label{classvortex_1_1graphics_1_1VulkanContext_adda0de347d2f1db9936d8d5327c78fbd} 
+\index{vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}!GetVmaAllocator@{GetVmaAllocator}}
+\index{GetVmaAllocator@{GetVmaAllocator}!vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}}
+\doxysubsubsection{\texorpdfstring{GetVmaAllocator()}{GetVmaAllocator()}}
+{\footnotesize\ttfamily Vma\+Allocator vortex\+::graphics\+::\+Vulkan\+Context\+::\+Get\+Vma\+Allocator (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1VulkanContext_a63efa3b6af08582ae4f5e06f14fccf42}\label{classvortex_1_1graphics_1_1VulkanContext_a63efa3b6af08582ae4f5e06f14fccf42} 
+\index{vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}!InitDevice@{InitDevice}}
+\index{InitDevice@{InitDevice}!vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}}
+\doxysubsubsection{\texorpdfstring{InitDevice()}{InitDevice()}}
+{\footnotesize\ttfamily bool vortex\+::graphics\+::\+Vulkan\+Context\+::\+Init\+Device (\begin{DoxyParamCaption}\item[{Vk\+Surface\+KHR}]{surface }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1VulkanContext_a2737506afff4ac93451e2114643bead1}\label{classvortex_1_1graphics_1_1VulkanContext_a2737506afff4ac93451e2114643bead1} 
+\index{vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}!InitInstance@{InitInstance}}
+\index{InitInstance@{InitInstance}!vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}}
+\doxysubsubsection{\texorpdfstring{InitInstance()}{InitInstance()}}
+{\footnotesize\ttfamily bool vortex\+::graphics\+::\+Vulkan\+Context\+::\+Init\+Instance (\begin{DoxyParamCaption}\item[{const char \texorpdfstring{$\ast$}{*}}]{title }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1VulkanContext_ac060bbf03cb9edf9705756ec86139287}\label{classvortex_1_1graphics_1_1VulkanContext_ac060bbf03cb9edf9705756ec86139287} 
+\index{vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}!Shutdown@{Shutdown}}
+\index{Shutdown@{Shutdown}!vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}}
+\doxysubsubsection{\texorpdfstring{Shutdown()}{Shutdown()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Vulkan\+Context\+::\+Shutdown (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+
+
+The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}
+\item 
+src/graphics/\mbox{\hyperlink{Context_8cppm}{Context.\+cppm}}\item 
+src/graphics/internal/\mbox{\hyperlink{Context_8cpp}{Context.\+cpp}}\end{DoxyCompactItemize}

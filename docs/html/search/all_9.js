@@ -1,0 +1,26 @@
+var searchData=
+[
+  ['image_0',['image',['../structvortex_1_1memory_1_1AllocatedImage.html#aeed0fa981b91091fb46e4d14db975390',1,'vortex::memory::AllocatedImage']]],
+  ['imageavailablesemaphores_1',['imageAvailableSemaphores',['../structvortex_1_1graphics_1_1GraphicsInternal.html#ab38629a8e9093d8a00919403aa827d29',1,'vortex::graphics::GraphicsInternal']]],
+  ['imageindex_2',['imageIndex',['../structvortex_1_1graphics_1_1GraphicsInternal.html#a1cc574196f5b8eee1b38175d2bbedbc7',1,'vortex::graphics::GraphicsInternal']]],
+  ['imageview_3',['imageView',['../structvortex_1_1memory_1_1AllocatedImage.html#a13866f52a6f7487e62fc681b399a4fd0',1,'vortex::memory::AllocatedImage']]],
+  ['inflightfences_4',['inFlightFences',['../structvortex_1_1graphics_1_1GraphicsInternal.html#aaca897e94fb7527dbd24bda9d09a96a3',1,'vortex::graphics::GraphicsInternal']]],
+  ['info_5',['Info',['../classvortex_1_1Log.html#a740e3c853acf1b0fe85e431c88587e86',1,'vortex::Log']]],
+  ['info_6',['info',['../structvortex_1_1memory_1_1AllocatedBuffer.html#ac1f46aa94d09132725e5817643dbb905',1,'vortex::memory::AllocatedBuffer']]],
+  ['init_7',['Init',['../classvortex_1_1Log.html#a0ebd926f014a2d28748ca783cb14f2cb',1,'vortex::Log::Init()'],['../classvortex_1_1graphics_1_1ShaderCompiler.html#af12e9e01eaf44e66f141680e235c9a8e',1,'vortex::graphics::ShaderCompiler::Init()']]],
+  ['initdevice_8',['InitDevice',['../classvortex_1_1graphics_1_1VulkanContext.html#a63efa3b6af08582ae4f5e06f14fccf42',1,'vortex::graphics::VulkanContext']]],
+  ['initialize_9',['Initialize',['../classvortex_1_1Engine.html#af779661626cb8c76e21620a145a42d7d',1,'vortex::Engine::Initialize()'],['../classvortex_1_1graphics_1_1GraphicsContext.html#a81fffc7c692b29db7ed68c78162a1141',1,'vortex::graphics::GraphicsContext::Initialize()'],['../classvortex_1_1graphics_1_1FXAAPipeline.html#add43c6823a3947eacf6f6ca218e00d06',1,'vortex::graphics::FXAAPipeline::Initialize()'],['../classvortex_1_1graphics_1_1RasterPipeline.html#a105d93ebbdbc0b3429dc637aed6c9243',1,'vortex::graphics::RasterPipeline::Initialize()'],['../classvortex_1_1graphics_1_1TAAPipeline.html#afa2868e2ce95acb9e6253566b7711d01',1,'vortex::graphics::TAAPipeline::Initialize()'],['../classvortex_1_1graphics_1_1RenderResources.html#adc6fa784a651cca0a111161f2ce8da2f',1,'vortex::graphics::RenderResources::Initialize()'],['../classvortex_1_1graphics_1_1SceneManager.html#a45eb9cc9c68f19d022a0896f417d3524',1,'vortex::graphics::SceneManager::Initialize()'],['../classvortex_1_1graphics_1_1Swapchain.html#aaa85f760ac4e64187a4afc88baba2332',1,'vortex::graphics::Swapchain::Initialize()'],['../classvortex_1_1graphics_1_1UIOverlay.html#ad227f106bf5de33065ef894526e48ed9',1,'vortex::graphics::UIOverlay::Initialize()'],['../classvortex_1_1graphics_1_1Window.html#a9bfee453f71a63f81b68045580fad01c',1,'vortex::graphics::Window::Initialize()']]],
+  ['initinstance_10',['InitInstance',['../classvortex_1_1graphics_1_1VulkanContext.html#a2737506afff4ac93451e2114643bead1',1,'vortex::graphics::VulkanContext']]],
+  ['initqueries_11',['InitQueries',['../structvortex_1_1graphics_1_1GraphicsInternal.html#a9684b151b4ddf452c0a90bcdfd267b98',1,'vortex::graphics::GraphicsInternal']]],
+  ['initsyncobjects_12',['InitSyncObjects',['../structvortex_1_1graphics_1_1GraphicsInternal.html#ac2ca7acc772cfa2f6809caf48030399b',1,'vortex::graphics::GraphicsInternal']]],
+  ['internalstate_13',['InternalState',['../structvortex_1_1Engine_1_1InternalState.html',1,'vortex::Engine']]],
+  ['intersectrayaabb_14',['IntersectRayAABB',['../namespacevortex_1_1editor.html#aeea89c897c3caccb3b0a3232521b0331',1,'vortex::editor']]],
+  ['invalidatehistory_15',['InvalidateHistory',['../classvortex_1_1graphics_1_1RenderResources.html#a2bc4973cf530bf119321eb38571b1e42',1,'vortex::graphics::RenderResources']]],
+  ['invmodel_16',['invModel',['../structvortex_1_1graphics_1_1GPUObject.html#a2f147e1f7336308cf1466ff47723bea2',1,'vortex::graphics::GPUObject']]],
+  ['isblockempty_17',['IsBlockEmpty',['../structvortex_1_1voxel_1_1HierarchyMask.html#af01cc9e99a45f9f4777b19bddc6305bd',1,'vortex::voxel::HierarchyMask']]],
+  ['ishistoryvalid_18',['IsHistoryValid',['../classvortex_1_1graphics_1_1RenderResources.html#ade74f58763a1354b4f5f9123e2fbab3f',1,'vortex::graphics::RenderResources']]],
+  ['isinitialized_19',['IsInitialized',['../classvortex_1_1graphics_1_1FXAAPipeline.html#a59dd2fe337b7307e56f4400c59532a09',1,'vortex::graphics::FXAAPipeline::IsInitialized()'],['../classvortex_1_1graphics_1_1TAAPipeline.html#a792af4a115829d4db9570a3f0a8af770',1,'vortex::graphics::TAAPipeline::IsInitialized()']]],
+  ['isrunning_20',['isRunning',['../structvortex_1_1Engine_1_1InternalState.html#a84c3a45f6ac66175f39dd96f0edcb8f1',1,'vortex::Engine::InternalState']]],
+  ['isspherevisible_21',['IsSphereVisible',['../structvortex_1_1graphics_1_1ViewFrustum.html#a9d615bf3efa1cc31acea0ee01b4f14f5',1,'vortex::graphics::ViewFrustum']]],
+  ['isstatic_22',['isStatic',['../structvortex_1_1voxel_1_1VoxelObject.html#ababf21901dac46d2f0d3a021962b4603',1,'vortex::voxel::VoxelObject']]]
+];

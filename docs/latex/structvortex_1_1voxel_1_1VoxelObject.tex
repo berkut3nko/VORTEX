@@ -1,0 +1,95 @@
+\doxysection{vortex\+::voxel\+::Voxel\+Object Struct Reference}
+\hypertarget{structvortex_1_1voxel_1_1VoxelObject}{}\label{structvortex_1_1voxel_1_1VoxelObject}\index{vortex::voxel::VoxelObject@{vortex::voxel::VoxelObject}}
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+glm\+::mat4 \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelObject_a5fe0b72e6004ba5d860d6e002caa0899}{Get\+Transform\+Matrix}} () const
+\item 
+void \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelObject_a7bb175c840d0fd5c680c2d401d9378ba}{Recalculate\+Center}} ()
+\begin{DoxyCompactList}\small\item\em Recalculates the logical center based on voxel positions. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+glm\+::vec3 \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelObject_a2d83cdb10a0bbdf069ac25353c73f833}{position}} \{0.\+0f\}
+\item 
+glm\+::quat \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelObject_a0303196d75d352f52fae99a018aaa935}{rotation}} \{1.\+0f, 0.\+0f, 0.\+0f, 0.\+0f\}
+\item 
+glm\+::vec3 \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelObject_a47181c1699d25e4b4ba01cebfcf3ed3a}{scale}} \{1.\+0f\}
+\item 
+glm\+::vec3 \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelObject_ad13dea51d3df1309cf5b58c6fc6e2585}{logical\+Center}} \{16.\+0f\}
+\item 
+uint32\+\_\+t \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelObject_a4d1d999fb715063bb3a5de90e08a9514}{voxel\+Count}} \{0\}
+\item 
+std\+::shared\+\_\+ptr$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{Chunk}} $>$ \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelObject_a5439dc3c4149a3a314039c7dc4ebdca8}{chunk}}
+\item 
+bool \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelObject_ababf21901dac46d2f0d3a021962b4603}{is\+Static}} = false
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{structvortex_1_1voxel_1_1VoxelObject_a5fe0b72e6004ba5d860d6e002caa0899}\label{structvortex_1_1voxel_1_1VoxelObject_a5fe0b72e6004ba5d860d6e002caa0899} 
+\index{vortex::voxel::VoxelObject@{vortex::voxel::VoxelObject}!GetTransformMatrix@{GetTransformMatrix}}
+\index{GetTransformMatrix@{GetTransformMatrix}!vortex::voxel::VoxelObject@{vortex::voxel::VoxelObject}}
+\doxysubsubsection{\texorpdfstring{GetTransformMatrix()}{GetTransformMatrix()}}
+{\footnotesize\ttfamily glm\+::mat4 vortex\+::voxel\+::\+Voxel\+Object\+::\+Get\+Transform\+Matrix (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{structvortex_1_1voxel_1_1VoxelObject_a7bb175c840d0fd5c680c2d401d9378ba}\label{structvortex_1_1voxel_1_1VoxelObject_a7bb175c840d0fd5c680c2d401d9378ba} 
+\index{vortex::voxel::VoxelObject@{vortex::voxel::VoxelObject}!RecalculateCenter@{RecalculateCenter}}
+\index{RecalculateCenter@{RecalculateCenter}!vortex::voxel::VoxelObject@{vortex::voxel::VoxelObject}}
+\doxysubsubsection{\texorpdfstring{RecalculateCenter()}{RecalculateCenter()}}
+{\footnotesize\ttfamily void vortex\+::voxel\+::\+Voxel\+Object\+::\+Recalculate\+Center (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Recalculates the logical center based on voxel positions. 
+
+Should be called after modifying the chunk. 
+
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structvortex_1_1voxel_1_1VoxelObject_a5439dc3c4149a3a314039c7dc4ebdca8}\label{structvortex_1_1voxel_1_1VoxelObject_a5439dc3c4149a3a314039c7dc4ebdca8} 
+\index{vortex::voxel::VoxelObject@{vortex::voxel::VoxelObject}!chunk@{chunk}}
+\index{chunk@{chunk}!vortex::voxel::VoxelObject@{vortex::voxel::VoxelObject}}
+\doxysubsubsection{\texorpdfstring{chunk}{chunk}}
+{\footnotesize\ttfamily std\+::shared\+\_\+ptr$<$\mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{Chunk}}$>$ vortex\+::voxel\+::\+Voxel\+Object\+::chunk}
+
+\Hypertarget{structvortex_1_1voxel_1_1VoxelObject_ababf21901dac46d2f0d3a021962b4603}\label{structvortex_1_1voxel_1_1VoxelObject_ababf21901dac46d2f0d3a021962b4603} 
+\index{vortex::voxel::VoxelObject@{vortex::voxel::VoxelObject}!isStatic@{isStatic}}
+\index{isStatic@{isStatic}!vortex::voxel::VoxelObject@{vortex::voxel::VoxelObject}}
+\doxysubsubsection{\texorpdfstring{isStatic}{isStatic}}
+{\footnotesize\ttfamily bool vortex\+::voxel\+::\+Voxel\+Object\+::is\+Static = false}
+
+\Hypertarget{structvortex_1_1voxel_1_1VoxelObject_ad13dea51d3df1309cf5b58c6fc6e2585}\label{structvortex_1_1voxel_1_1VoxelObject_ad13dea51d3df1309cf5b58c6fc6e2585} 
+\index{vortex::voxel::VoxelObject@{vortex::voxel::VoxelObject}!logicalCenter@{logicalCenter}}
+\index{logicalCenter@{logicalCenter}!vortex::voxel::VoxelObject@{vortex::voxel::VoxelObject}}
+\doxysubsubsection{\texorpdfstring{logicalCenter}{logicalCenter}}
+{\footnotesize\ttfamily glm\+::vec3 vortex\+::voxel\+::\+Voxel\+Object\+::logical\+Center \{16.\+0f\}}
+
+\Hypertarget{structvortex_1_1voxel_1_1VoxelObject_a2d83cdb10a0bbdf069ac25353c73f833}\label{structvortex_1_1voxel_1_1VoxelObject_a2d83cdb10a0bbdf069ac25353c73f833} 
+\index{vortex::voxel::VoxelObject@{vortex::voxel::VoxelObject}!position@{position}}
+\index{position@{position}!vortex::voxel::VoxelObject@{vortex::voxel::VoxelObject}}
+\doxysubsubsection{\texorpdfstring{position}{position}}
+{\footnotesize\ttfamily glm\+::vec3 vortex\+::voxel\+::\+Voxel\+Object\+::position \{0.\+0f\}}
+
+\Hypertarget{structvortex_1_1voxel_1_1VoxelObject_a0303196d75d352f52fae99a018aaa935}\label{structvortex_1_1voxel_1_1VoxelObject_a0303196d75d352f52fae99a018aaa935} 
+\index{vortex::voxel::VoxelObject@{vortex::voxel::VoxelObject}!rotation@{rotation}}
+\index{rotation@{rotation}!vortex::voxel::VoxelObject@{vortex::voxel::VoxelObject}}
+\doxysubsubsection{\texorpdfstring{rotation}{rotation}}
+{\footnotesize\ttfamily glm\+::quat vortex\+::voxel\+::\+Voxel\+Object\+::rotation \{1.\+0f, 0.\+0f, 0.\+0f, 0.\+0f\}}
+
+\Hypertarget{structvortex_1_1voxel_1_1VoxelObject_a47181c1699d25e4b4ba01cebfcf3ed3a}\label{structvortex_1_1voxel_1_1VoxelObject_a47181c1699d25e4b4ba01cebfcf3ed3a} 
+\index{vortex::voxel::VoxelObject@{vortex::voxel::VoxelObject}!scale@{scale}}
+\index{scale@{scale}!vortex::voxel::VoxelObject@{vortex::voxel::VoxelObject}}
+\doxysubsubsection{\texorpdfstring{scale}{scale}}
+{\footnotesize\ttfamily glm\+::vec3 vortex\+::voxel\+::\+Voxel\+Object\+::scale \{1.\+0f\}}
+
+\Hypertarget{structvortex_1_1voxel_1_1VoxelObject_a4d1d999fb715063bb3a5de90e08a9514}\label{structvortex_1_1voxel_1_1VoxelObject_a4d1d999fb715063bb3a5de90e08a9514} 
+\index{vortex::voxel::VoxelObject@{vortex::voxel::VoxelObject}!voxelCount@{voxelCount}}
+\index{voxelCount@{voxelCount}!vortex::voxel::VoxelObject@{vortex::voxel::VoxelObject}}
+\doxysubsubsection{\texorpdfstring{voxelCount}{voxelCount}}
+{\footnotesize\ttfamily uint32\+\_\+t vortex\+::voxel\+::\+Voxel\+Object\+::voxel\+Count \{0\}}
+
+
+
+The documentation for this struct was generated from the following file\+:\begin{DoxyCompactItemize}
+\item 
+src/voxel/\mbox{\hyperlink{Object_8cppm}{Object.\+cppm}}\end{DoxyCompactItemize}

@@ -1,0 +1,66 @@
+\doxysection{vortex\+::core\+::Profile\+Scope Struct Reference}
+\hypertarget{structvortex_1_1core_1_1ProfileScope}{}\label{structvortex_1_1core_1_1ProfileScope}\index{vortex::core::ProfileScope@{vortex::core::ProfileScope}}
+
+
+RAII wrapper for automatic profiling scopes.  
+
+
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{structvortex_1_1core_1_1ProfileScope_abbfbbb8a7c0dc3d3dbd27c7229c34a1b}{Profile\+Scope}} (const std\+::string \&n)
+\begin{DoxyCompactList}\small\item\em Starts a profiling scope. \end{DoxyCompactList}\item 
+\mbox{\hyperlink{structvortex_1_1core_1_1ProfileScope_a4842e64867ec9eb9c9a485c34565bc7d}{\texorpdfstring{$\sim$}{\string~}\+Profile\+Scope}} ()
+\begin{DoxyCompactList}\small\item\em Ends the profiling scope automatically. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+std\+::string \mbox{\hyperlink{structvortex_1_1core_1_1ProfileScope_ae3d68d7ce869ff8a5c9c4172a86e2971}{name}}
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+RAII wrapper for automatic profiling scopes. 
+
+Automatically calls \doxylink{classvortex_1_1core_1_1Profiler_a074bbd3b73fc05d478fc86b41225c02b}{Profiler\+::\+Begin} in constructor and \doxylink{classvortex_1_1core_1_1Profiler_a769b665942ef2aab77f1307a969df544}{Profiler\+::\+End} in destructor. 
+
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{structvortex_1_1core_1_1ProfileScope_abbfbbb8a7c0dc3d3dbd27c7229c34a1b}\label{structvortex_1_1core_1_1ProfileScope_abbfbbb8a7c0dc3d3dbd27c7229c34a1b} 
+\index{vortex::core::ProfileScope@{vortex::core::ProfileScope}!ProfileScope@{ProfileScope}}
+\index{ProfileScope@{ProfileScope}!vortex::core::ProfileScope@{vortex::core::ProfileScope}}
+\doxysubsubsection{\texorpdfstring{ProfileScope()}{ProfileScope()}}
+{\footnotesize\ttfamily vortex\+::core\+::\+Profile\+Scope\+::\+Profile\+Scope (\begin{DoxyParamCaption}\item[{const std\+::string \&}]{n }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}, {\ttfamily [explicit]}}
+
+
+
+Starts a profiling scope. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em n} & Name of the scope. \\
+\hline
+\end{DoxyParams}
+\Hypertarget{structvortex_1_1core_1_1ProfileScope_a4842e64867ec9eb9c9a485c34565bc7d}\label{structvortex_1_1core_1_1ProfileScope_a4842e64867ec9eb9c9a485c34565bc7d} 
+\index{vortex::core::ProfileScope@{vortex::core::ProfileScope}!````~ProfileScope@{\texorpdfstring{$\sim$}{\string~}ProfileScope}}
+\index{````~ProfileScope@{\texorpdfstring{$\sim$}{\string~}ProfileScope}!vortex::core::ProfileScope@{vortex::core::ProfileScope}}
+\doxysubsubsection{\texorpdfstring{\texorpdfstring{$\sim$}{\string~}ProfileScope()}{\string~ProfileScope()}}
+{\footnotesize\ttfamily vortex\+::core\+::\+Profile\+Scope\+::\texorpdfstring{$\sim$}{\string~}\+Profile\+Scope (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Ends the profiling scope automatically. 
+
+
+
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structvortex_1_1core_1_1ProfileScope_ae3d68d7ce869ff8a5c9c4172a86e2971}\label{structvortex_1_1core_1_1ProfileScope_ae3d68d7ce869ff8a5c9c4172a86e2971} 
+\index{vortex::core::ProfileScope@{vortex::core::ProfileScope}!name@{name}}
+\index{name@{name}!vortex::core::ProfileScope@{vortex::core::ProfileScope}}
+\doxysubsubsection{\texorpdfstring{name}{name}}
+{\footnotesize\ttfamily std\+::string vortex\+::core\+::\+Profile\+Scope\+::name}
+
+
+
+The documentation for this struct was generated from the following file\+:\begin{DoxyCompactItemize}
+\item 
+src/core/\mbox{\hyperlink{Profiler_8cppm}{Profiler.\+cppm}}\end{DoxyCompactItemize}

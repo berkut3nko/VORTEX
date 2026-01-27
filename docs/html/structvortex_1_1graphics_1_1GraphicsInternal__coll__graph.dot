@@ -1,0 +1,31 @@
+digraph "vortex::graphics::GraphicsInternal"
+{
+ // LATEX_PDF_SIZE
+  bgcolor="transparent";
+  edge [fontname=Helvetica,fontsize=10,labelfontname=Helvetica,labelfontsize=10];
+  node [fontname=Helvetica,fontsize=10,shape=box,height=0.2,width=0.4];
+  rankdir="LR";
+  Node1 [id="Node000001",label="vortex::graphics::Graphics\lInternal",height=0.2,width=0.4,color="gray40", fillcolor="grey60", style="filled", fontcolor="black",tooltip=" "];
+  Node2 -> Node1 [id="edge1_Node000001_Node000002",dir="back",color="darkorchid3",style="dashed",tooltip=" ",label=" window",fontcolor="grey" ];
+  Node2 [id="Node000002",label="vortex::graphics::Window",height=0.2,width=0.4,color="gray40", fillcolor="white", style="filled",URL="$classvortex_1_1graphics_1_1Window.html",tooltip="Manages the GLFW window and Vulkan Surface creation."];
+  Node3 -> Node1 [id="edge2_Node000001_Node000003",dir="back",color="darkorchid3",style="dashed",tooltip=" ",label=" context",fontcolor="grey" ];
+  Node3 [id="Node000003",label="vortex::graphics::Vulkan\lContext",height=0.2,width=0.4,color="gray40", fillcolor="white", style="filled",URL="$classvortex_1_1graphics_1_1VulkanContext.html",tooltip=" "];
+  Node4 -> Node1 [id="edge3_Node000001_Node000004",dir="back",color="darkorchid3",style="dashed",tooltip=" ",label=" swapchain",fontcolor="grey" ];
+  Node4 [id="Node000004",label="vortex::graphics::Swapchain",height=0.2,width=0.4,color="gray40", fillcolor="white", style="filled",URL="$classvortex_1_1graphics_1_1Swapchain.html",tooltip=" "];
+  Node5 -> Node1 [id="edge4_Node000001_Node000005",dir="back",color="darkorchid3",style="dashed",tooltip=" ",label=" ui",fontcolor="grey" ];
+  Node5 [id="Node000005",label="vortex::graphics::UIOverlay",height=0.2,width=0.4,color="gray40", fillcolor="white", style="filled",URL="$classvortex_1_1graphics_1_1UIOverlay.html",tooltip="Handles ImGui integration."];
+  Node6 -> Node1 [id="edge5_Node000001_Node000006",dir="back",color="darkorchid3",style="dashed",tooltip=" ",label=" resources",fontcolor="grey" ];
+  Node6 [id="Node000006",label="vortex::graphics::Render\lResources",height=0.2,width=0.4,color="gray40", fillcolor="white", style="filled",URL="$classvortex_1_1graphics_1_1RenderResources.html",tooltip="Manages offscreen render targets (Color, Depth, Velocity, TAA History)."];
+  Node7 -> Node1 [id="edge6_Node000001_Node000007",dir="back",color="darkorchid3",style="dashed",tooltip=" ",label=" sceneManager",fontcolor="grey" ];
+  Node7 [id="Node000007",label="vortex::graphics::SceneManager",height=0.2,width=0.4,color="gray40", fillcolor="white", style="filled",URL="$classvortex_1_1graphics_1_1SceneManager.html",tooltip="Handles scene data, culling, and GPU buffer updates."];
+  Node8 -> Node1 [id="edge7_Node000001_Node000008",dir="back",color="darkorchid3",style="dashed",tooltip=" ",label=" rasterPipeline",fontcolor="grey" ];
+  Node8 [id="Node000008",label="vortex::graphics::Raster\lPipeline",height=0.2,width=0.4,color="gray40", fillcolor="white", style="filled",URL="$classvortex_1_1graphics_1_1RasterPipeline.html",tooltip=" "];
+  Node9 -> Node1 [id="edge8_Node000001_Node000009",dir="back",color="darkorchid3",style="dashed",tooltip=" ",label=" taaPipeline",fontcolor="grey" ];
+  Node9 [id="Node000009",label="vortex::graphics::TAAPipeline",height=0.2,width=0.4,color="gray40", fillcolor="white", style="filled",URL="$classvortex_1_1graphics_1_1TAAPipeline.html",tooltip=" "];
+  Node10 -> Node1 [id="edge9_Node000001_Node000010",dir="back",color="darkorchid3",style="dashed",tooltip=" ",label=" fxaaPipeline",fontcolor="grey" ];
+  Node10 [id="Node000010",label="vortex::graphics::FXAAPipeline",height=0.2,width=0.4,color="gray40", fillcolor="white", style="filled",URL="$classvortex_1_1graphics_1_1FXAAPipeline.html",tooltip=" "];
+  Node11 -> Node1 [id="edge10_Node000001_Node000011",dir="back",color="darkorchid3",style="dashed",tooltip=" ",label=" camera",fontcolor="grey" ];
+  Node11 [id="Node000011",label="vortex::graphics::Camera",height=0.2,width=0.4,color="gray40", fillcolor="white", style="filled",URL="$structvortex_1_1graphics_1_1Camera.html",tooltip=" "];
+  Node12 -> Node1 [id="edge11_Node000001_Node000012",dir="back",color="darkorchid3",style="dashed",tooltip=" ",label=" currentFinalImage",fontcolor="grey" ];
+  Node12 [id="Node000012",label="vortex::memory::Allocated\lImage",height=0.2,width=0.4,color="gray40", fillcolor="white", style="filled",URL="$structvortex_1_1memory_1_1AllocatedImage.html",tooltip="Represents an image allocated on GPU."];
+}

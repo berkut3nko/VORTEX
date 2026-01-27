@@ -1,0 +1,169 @@
+\doxysection{vortex\+::graphics\+::Graphics\+Context Class Reference}
+\hypertarget{classvortex_1_1graphics_1_1GraphicsContext}{}\label{classvortex_1_1graphics_1_1GraphicsContext}\index{vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}}
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_aa9c5047126dfbe560fd8c2292c8cac15}{Graphics\+Context}} ()
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a7cf8573d5a3de42b64618bdf9cb4493b}{\texorpdfstring{$\sim$}{\string~}\+Graphics\+Context}} ()
+\item 
+bool \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a81fffc7c692b29db7ed68c78162a1141}{Initialize}} (const std\+::string \&title, uint32\+\_\+t width, uint32\+\_\+t height)
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a1d14ea5ce84150c7999fce6ca9caeab3}{Shutdown}} ()
+\item 
+bool \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_aba9f48112ca61e20c7e6540cb4aae21a}{Begin\+Frame}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a6e1484fcb4384d824fae4e525654c81e}{Begin\+Recording}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_aedd13eaed9f1a210b6a954304e388dc5}{Record\+Scene}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a467c3863c8f5f6af03ff4b4f56b4bd19}{Record\+AA}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_ab813e567d0f2ef58e2f93c1d0383205e}{End\+Frame}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_acc66a19ac90a8c0ba26c83810b582f02}{Upload\+Camera}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_aefa4bd98c389208c98543a511b39cab7}{Upload\+Scene}} (const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{Scene\+Object}} $>$ \&objects, const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneMaterial}{Scene\+Material}} $>$ \&materials, const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{vortex\+::voxel\+::\+Chunk}} $>$ \&chunks)
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager}{Scene\+Manager}} \& \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a31fc52b0df2b087d94e53bc6e2ba8fae}{Get\+Scene\+Manager}} ()
+\item 
+\mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{Camera}} \& \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a0f514549570dcec1f034aa80b923e09c}{Get\+Camera}} ()
+\item 
+GLFWwindow \texorpdfstring{$\ast$}{*} \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_ae05f4677697f57d72303b75775f819fa}{Get\+Window}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_af17abda7ed5b033a3c46d60dc4f4347d}{Set\+AAMode}} (\mbox{\hyperlink{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895ee}{Anti\+Aliasing\+Mode}} mode)
+\item 
+\mbox{\hyperlink{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895ee}{Anti\+Aliasing\+Mode}} \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_ab8ecfc71e1636bcd68cacd05c34a22bb}{Get\+AAMode}} () const
+\item 
+float \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a01e1aed6635800ed9367d3e2f527996c}{Get\+Scene\+GPUTime}} () const
+\begin{DoxyCompactList}\small\item\em Gets the GPU execution time for the Geometry pass in ms. \end{DoxyCompactList}\item 
+float \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_addd5311452e0c6a29b1d22874e73e76f}{Get\+AAGPUTime}} () const
+\begin{DoxyCompactList}\small\item\em Gets the GPU execution time for the AA pass in ms. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1GraphicsContext_aa9c5047126dfbe560fd8c2292c8cac15}\label{classvortex_1_1graphics_1_1GraphicsContext_aa9c5047126dfbe560fd8c2292c8cac15} 
+\index{vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}!GraphicsContext@{GraphicsContext}}
+\index{GraphicsContext@{GraphicsContext}!vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}}
+\doxysubsubsection{\texorpdfstring{GraphicsContext()}{GraphicsContext()}}
+{\footnotesize\ttfamily vortex\+::graphics\+::\+Graphics\+Context\+::\+Graphics\+Context (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1GraphicsContext_a7cf8573d5a3de42b64618bdf9cb4493b}\label{classvortex_1_1graphics_1_1GraphicsContext_a7cf8573d5a3de42b64618bdf9cb4493b} 
+\index{vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}!````~GraphicsContext@{\texorpdfstring{$\sim$}{\string~}GraphicsContext}}
+\index{````~GraphicsContext@{\texorpdfstring{$\sim$}{\string~}GraphicsContext}!vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}}
+\doxysubsubsection{\texorpdfstring{\texorpdfstring{$\sim$}{\string~}GraphicsContext()}{\string~GraphicsContext()}}
+{\footnotesize\ttfamily vortex\+::graphics\+::\+Graphics\+Context\+::\texorpdfstring{$\sim$}{\string~}\+Graphics\+Context (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1GraphicsContext_aba9f48112ca61e20c7e6540cb4aae21a}\label{classvortex_1_1graphics_1_1GraphicsContext_aba9f48112ca61e20c7e6540cb4aae21a} 
+\index{vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}!BeginFrame@{BeginFrame}}
+\index{BeginFrame@{BeginFrame}!vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}}
+\doxysubsubsection{\texorpdfstring{BeginFrame()}{BeginFrame()}}
+{\footnotesize\ttfamily bool vortex\+::graphics\+::\+Graphics\+Context\+::\+Begin\+Frame (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1GraphicsContext_a6e1484fcb4384d824fae4e525654c81e}\label{classvortex_1_1graphics_1_1GraphicsContext_a6e1484fcb4384d824fae4e525654c81e} 
+\index{vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}!BeginRecording@{BeginRecording}}
+\index{BeginRecording@{BeginRecording}!vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}}
+\doxysubsubsection{\texorpdfstring{BeginRecording()}{BeginRecording()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Graphics\+Context\+::\+Begin\+Recording (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1GraphicsContext_ab813e567d0f2ef58e2f93c1d0383205e}\label{classvortex_1_1graphics_1_1GraphicsContext_ab813e567d0f2ef58e2f93c1d0383205e} 
+\index{vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}!EndFrame@{EndFrame}}
+\index{EndFrame@{EndFrame}!vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}}
+\doxysubsubsection{\texorpdfstring{EndFrame()}{EndFrame()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Graphics\+Context\+::\+End\+Frame (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1GraphicsContext_addd5311452e0c6a29b1d22874e73e76f}\label{classvortex_1_1graphics_1_1GraphicsContext_addd5311452e0c6a29b1d22874e73e76f} 
+\index{vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}!GetAAGPUTime@{GetAAGPUTime}}
+\index{GetAAGPUTime@{GetAAGPUTime}!vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}}
+\doxysubsubsection{\texorpdfstring{GetAAGPUTime()}{GetAAGPUTime()}}
+{\footnotesize\ttfamily float vortex\+::graphics\+::\+Graphics\+Context\+::\+Get\+AAGPUTime (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [export]}}
+
+
+
+Gets the GPU execution time for the AA pass in ms. 
+
+\Hypertarget{classvortex_1_1graphics_1_1GraphicsContext_ab8ecfc71e1636bcd68cacd05c34a22bb}\label{classvortex_1_1graphics_1_1GraphicsContext_ab8ecfc71e1636bcd68cacd05c34a22bb} 
+\index{vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}!GetAAMode@{GetAAMode}}
+\index{GetAAMode@{GetAAMode}!vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}}
+\doxysubsubsection{\texorpdfstring{GetAAMode()}{GetAAMode()}}
+{\footnotesize\ttfamily \mbox{\hyperlink{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895ee}{Anti\+Aliasing\+Mode}} vortex\+::graphics\+::\+Graphics\+Context\+::\+Get\+AAMode (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1GraphicsContext_a0f514549570dcec1f034aa80b923e09c}\label{classvortex_1_1graphics_1_1GraphicsContext_a0f514549570dcec1f034aa80b923e09c} 
+\index{vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}!GetCamera@{GetCamera}}
+\index{GetCamera@{GetCamera}!vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}}
+\doxysubsubsection{\texorpdfstring{GetCamera()}{GetCamera()}}
+{\footnotesize\ttfamily \mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{Camera}} \& vortex\+::graphics\+::\+Graphics\+Context\+::\+Get\+Camera (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1GraphicsContext_a01e1aed6635800ed9367d3e2f527996c}\label{classvortex_1_1graphics_1_1GraphicsContext_a01e1aed6635800ed9367d3e2f527996c} 
+\index{vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}!GetSceneGPUTime@{GetSceneGPUTime}}
+\index{GetSceneGPUTime@{GetSceneGPUTime}!vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}}
+\doxysubsubsection{\texorpdfstring{GetSceneGPUTime()}{GetSceneGPUTime()}}
+{\footnotesize\ttfamily float vortex\+::graphics\+::\+Graphics\+Context\+::\+Get\+Scene\+GPUTime (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [export]}}
+
+
+
+Gets the GPU execution time for the Geometry pass in ms. 
+
+\Hypertarget{classvortex_1_1graphics_1_1GraphicsContext_a31fc52b0df2b087d94e53bc6e2ba8fae}\label{classvortex_1_1graphics_1_1GraphicsContext_a31fc52b0df2b087d94e53bc6e2ba8fae} 
+\index{vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}!GetSceneManager@{GetSceneManager}}
+\index{GetSceneManager@{GetSceneManager}!vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}}
+\doxysubsubsection{\texorpdfstring{GetSceneManager()}{GetSceneManager()}}
+{\footnotesize\ttfamily \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager}{Scene\+Manager}} \& vortex\+::graphics\+::\+Graphics\+Context\+::\+Get\+Scene\+Manager (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1GraphicsContext_ae05f4677697f57d72303b75775f819fa}\label{classvortex_1_1graphics_1_1GraphicsContext_ae05f4677697f57d72303b75775f819fa} 
+\index{vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}!GetWindow@{GetWindow}}
+\index{GetWindow@{GetWindow}!vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}}
+\doxysubsubsection{\texorpdfstring{GetWindow()}{GetWindow()}}
+{\footnotesize\ttfamily GLFWwindow \texorpdfstring{$\ast$}{*} vortex\+::graphics\+::\+Graphics\+Context\+::\+Get\+Window (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1GraphicsContext_a81fffc7c692b29db7ed68c78162a1141}\label{classvortex_1_1graphics_1_1GraphicsContext_a81fffc7c692b29db7ed68c78162a1141} 
+\index{vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}!Initialize@{Initialize}}
+\index{Initialize@{Initialize}!vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}}
+\doxysubsubsection{\texorpdfstring{Initialize()}{Initialize()}}
+{\footnotesize\ttfamily bool vortex\+::graphics\+::\+Graphics\+Context\+::\+Initialize (\begin{DoxyParamCaption}\item[{const std\+::string \&}]{title,  }\item[{uint32\+\_\+t}]{width,  }\item[{uint32\+\_\+t}]{height }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1GraphicsContext_a467c3863c8f5f6af03ff4b4f56b4bd19}\label{classvortex_1_1graphics_1_1GraphicsContext_a467c3863c8f5f6af03ff4b4f56b4bd19} 
+\index{vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}!RecordAA@{RecordAA}}
+\index{RecordAA@{RecordAA}!vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}}
+\doxysubsubsection{\texorpdfstring{RecordAA()}{RecordAA()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Graphics\+Context\+::\+Record\+AA (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1GraphicsContext_aedd13eaed9f1a210b6a954304e388dc5}\label{classvortex_1_1graphics_1_1GraphicsContext_aedd13eaed9f1a210b6a954304e388dc5} 
+\index{vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}!RecordScene@{RecordScene}}
+\index{RecordScene@{RecordScene}!vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}}
+\doxysubsubsection{\texorpdfstring{RecordScene()}{RecordScene()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Graphics\+Context\+::\+Record\+Scene (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1GraphicsContext_af17abda7ed5b033a3c46d60dc4f4347d}\label{classvortex_1_1graphics_1_1GraphicsContext_af17abda7ed5b033a3c46d60dc4f4347d} 
+\index{vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}!SetAAMode@{SetAAMode}}
+\index{SetAAMode@{SetAAMode}!vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}}
+\doxysubsubsection{\texorpdfstring{SetAAMode()}{SetAAMode()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Graphics\+Context\+::\+Set\+AAMode (\begin{DoxyParamCaption}\item[{\mbox{\hyperlink{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895ee}{Anti\+Aliasing\+Mode}}}]{mode }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1GraphicsContext_a1d14ea5ce84150c7999fce6ca9caeab3}\label{classvortex_1_1graphics_1_1GraphicsContext_a1d14ea5ce84150c7999fce6ca9caeab3} 
+\index{vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}!Shutdown@{Shutdown}}
+\index{Shutdown@{Shutdown}!vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}}
+\doxysubsubsection{\texorpdfstring{Shutdown()}{Shutdown()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Graphics\+Context\+::\+Shutdown (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1GraphicsContext_acc66a19ac90a8c0ba26c83810b582f02}\label{classvortex_1_1graphics_1_1GraphicsContext_acc66a19ac90a8c0ba26c83810b582f02} 
+\index{vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}!UploadCamera@{UploadCamera}}
+\index{UploadCamera@{UploadCamera}!vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}}
+\doxysubsubsection{\texorpdfstring{UploadCamera()}{UploadCamera()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Graphics\+Context\+::\+Upload\+Camera (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1GraphicsContext_aefa4bd98c389208c98543a511b39cab7}\label{classvortex_1_1graphics_1_1GraphicsContext_aefa4bd98c389208c98543a511b39cab7} 
+\index{vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}!UploadScene@{UploadScene}}
+\index{UploadScene@{UploadScene}!vortex::graphics::GraphicsContext@{vortex::graphics::GraphicsContext}}
+\doxysubsubsection{\texorpdfstring{UploadScene()}{UploadScene()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Graphics\+Context\+::\+Upload\+Scene (\begin{DoxyParamCaption}\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{Scene\+Object}} $>$ \&}]{objects,  }\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneMaterial}{Scene\+Material}} $>$ \&}]{materials,  }\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{vortex\+::voxel\+::\+Chunk}} $>$ \&}]{chunks }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+
+
+The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}
+\item 
+src/graphics/\mbox{\hyperlink{Graphics_8cppm}{Graphics.\+cppm}}\item 
+src/graphics/internal/\mbox{\hyperlink{Graphics_8cpp}{Graphics.\+cpp}}\end{DoxyCompactItemize}

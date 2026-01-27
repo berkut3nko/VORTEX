@@ -1,0 +1,162 @@
+\doxysection{vortex\+::graphics\+::Render\+Resources Class Reference}
+\hypertarget{classvortex_1_1graphics_1_1RenderResources}{}\label{classvortex_1_1graphics_1_1RenderResources}\index{vortex::graphics::RenderResources@{vortex::graphics::RenderResources}}
+
+
+Manages offscreen render targets (Color, Depth, Velocity, TAA History).  
+
+
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1RenderResources_a0b90661197f141e18a2dbaddce7f2509}{Render\+Resources}} ()=default
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1RenderResources_a156893d0d8d9d8463f910eefd01f7e84}{\texorpdfstring{$\sim$}{\string~}\+Render\+Resources}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1RenderResources_adc6fa784a651cca0a111161f2ce8da2f}{Initialize}} (\mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator}{memory\+::\+Memory\+Allocator}} \texorpdfstring{$\ast$}{*}allocator, uint32\+\_\+t width, uint32\+\_\+t height)
+\begin{DoxyCompactList}\small\item\em Allocates all necessary offscreen images. \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1RenderResources_abcb2ba0e10bf9546229d0397e74af27d}{Shutdown}} ()
+\begin{DoxyCompactList}\small\item\em Destroys all allocated resources. \end{DoxyCompactList}\item 
+const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \& \mbox{\hyperlink{classvortex_1_1graphics_1_1RenderResources_a7872a367217aae21c95c8d242f1a825e}{Get\+Color}} () const
+\item 
+const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \& \mbox{\hyperlink{classvortex_1_1graphics_1_1RenderResources_a26a8e1fee14964d21737c0b937ab5404}{Get\+Velocity}} () const
+\item 
+const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \& \mbox{\hyperlink{classvortex_1_1graphics_1_1RenderResources_aa5871304251c54e1d1c7a641f6b94ea8}{Get\+Depth}} () const
+\item 
+const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \& \mbox{\hyperlink{classvortex_1_1graphics_1_1RenderResources_adefc362d80204a153ec3d0cd7e565e72}{Get\+Resolve}} () const
+\item 
+const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \& \mbox{\hyperlink{classvortex_1_1graphics_1_1RenderResources_a8293bbbc5b8c8fd68529e352b95aba42}{Get\+History\+Read}} () const
+\begin{DoxyCompactList}\small\item\em Gets the history texture for reading (previous frame). \end{DoxyCompactList}\item 
+const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \& \mbox{\hyperlink{classvortex_1_1graphics_1_1RenderResources_ae5e9e7eb5e4214886b23463a4b46a681}{Get\+History\+Write}} () const
+\begin{DoxyCompactList}\small\item\em Gets the history texture for writing (current frame). \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1RenderResources_a9e36000c1e8cf9e9abb357e9b0d77bc6}{Swap\+History}} ()
+\begin{DoxyCompactList}\small\item\em Swaps history buffers for TAA ping-\/ponging. \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1RenderResources_a2bc4973cf530bf119321eb38571b1e42}{Invalidate\+History}} ()
+\begin{DoxyCompactList}\small\item\em Invalidates history (e.\+g. on teleport or camera cut). \end{DoxyCompactList}\item 
+bool \mbox{\hyperlink{classvortex_1_1graphics_1_1RenderResources_ade74f58763a1354b4f5f9123e2fbab3f}{Is\+History\+Valid}} () const
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Manages offscreen render targets (Color, Depth, Velocity, TAA History). 
+
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1RenderResources_a0b90661197f141e18a2dbaddce7f2509}\label{classvortex_1_1graphics_1_1RenderResources_a0b90661197f141e18a2dbaddce7f2509} 
+\index{vortex::graphics::RenderResources@{vortex::graphics::RenderResources}!RenderResources@{RenderResources}}
+\index{RenderResources@{RenderResources}!vortex::graphics::RenderResources@{vortex::graphics::RenderResources}}
+\doxysubsubsection{\texorpdfstring{RenderResources()}{RenderResources()}}
+{\footnotesize\ttfamily vortex\+::graphics\+::\+Render\+Resources\+::\+Render\+Resources (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [default]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1RenderResources_a156893d0d8d9d8463f910eefd01f7e84}\label{classvortex_1_1graphics_1_1RenderResources_a156893d0d8d9d8463f910eefd01f7e84} 
+\index{vortex::graphics::RenderResources@{vortex::graphics::RenderResources}!````~RenderResources@{\texorpdfstring{$\sim$}{\string~}RenderResources}}
+\index{````~RenderResources@{\texorpdfstring{$\sim$}{\string~}RenderResources}!vortex::graphics::RenderResources@{vortex::graphics::RenderResources}}
+\doxysubsubsection{\texorpdfstring{\texorpdfstring{$\sim$}{\string~}RenderResources()}{\string~RenderResources()}}
+{\footnotesize\ttfamily vortex\+::graphics\+::\+Render\+Resources\+::\texorpdfstring{$\sim$}{\string~}\+Render\+Resources (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1RenderResources_a7872a367217aae21c95c8d242f1a825e}\label{classvortex_1_1graphics_1_1RenderResources_a7872a367217aae21c95c8d242f1a825e} 
+\index{vortex::graphics::RenderResources@{vortex::graphics::RenderResources}!GetColor@{GetColor}}
+\index{GetColor@{GetColor}!vortex::graphics::RenderResources@{vortex::graphics::RenderResources}}
+\doxysubsubsection{\texorpdfstring{GetColor()}{GetColor()}}
+{\footnotesize\ttfamily const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \& vortex\+::graphics\+::\+Render\+Resources\+::\+Get\+Color (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1RenderResources_aa5871304251c54e1d1c7a641f6b94ea8}\label{classvortex_1_1graphics_1_1RenderResources_aa5871304251c54e1d1c7a641f6b94ea8} 
+\index{vortex::graphics::RenderResources@{vortex::graphics::RenderResources}!GetDepth@{GetDepth}}
+\index{GetDepth@{GetDepth}!vortex::graphics::RenderResources@{vortex::graphics::RenderResources}}
+\doxysubsubsection{\texorpdfstring{GetDepth()}{GetDepth()}}
+{\footnotesize\ttfamily const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \& vortex\+::graphics\+::\+Render\+Resources\+::\+Get\+Depth (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1RenderResources_a8293bbbc5b8c8fd68529e352b95aba42}\label{classvortex_1_1graphics_1_1RenderResources_a8293bbbc5b8c8fd68529e352b95aba42} 
+\index{vortex::graphics::RenderResources@{vortex::graphics::RenderResources}!GetHistoryRead@{GetHistoryRead}}
+\index{GetHistoryRead@{GetHistoryRead}!vortex::graphics::RenderResources@{vortex::graphics::RenderResources}}
+\doxysubsubsection{\texorpdfstring{GetHistoryRead()}{GetHistoryRead()}}
+{\footnotesize\ttfamily const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \& vortex\+::graphics\+::\+Render\+Resources\+::\+Get\+History\+Read (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Gets the history texture for reading (previous frame). 
+
+\Hypertarget{classvortex_1_1graphics_1_1RenderResources_ae5e9e7eb5e4214886b23463a4b46a681}\label{classvortex_1_1graphics_1_1RenderResources_ae5e9e7eb5e4214886b23463a4b46a681} 
+\index{vortex::graphics::RenderResources@{vortex::graphics::RenderResources}!GetHistoryWrite@{GetHistoryWrite}}
+\index{GetHistoryWrite@{GetHistoryWrite}!vortex::graphics::RenderResources@{vortex::graphics::RenderResources}}
+\doxysubsubsection{\texorpdfstring{GetHistoryWrite()}{GetHistoryWrite()}}
+{\footnotesize\ttfamily const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \& vortex\+::graphics\+::\+Render\+Resources\+::\+Get\+History\+Write (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Gets the history texture for writing (current frame). 
+
+\Hypertarget{classvortex_1_1graphics_1_1RenderResources_adefc362d80204a153ec3d0cd7e565e72}\label{classvortex_1_1graphics_1_1RenderResources_adefc362d80204a153ec3d0cd7e565e72} 
+\index{vortex::graphics::RenderResources@{vortex::graphics::RenderResources}!GetResolve@{GetResolve}}
+\index{GetResolve@{GetResolve}!vortex::graphics::RenderResources@{vortex::graphics::RenderResources}}
+\doxysubsubsection{\texorpdfstring{GetResolve()}{GetResolve()}}
+{\footnotesize\ttfamily const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \& vortex\+::graphics\+::\+Render\+Resources\+::\+Get\+Resolve (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1RenderResources_a26a8e1fee14964d21737c0b937ab5404}\label{classvortex_1_1graphics_1_1RenderResources_a26a8e1fee14964d21737c0b937ab5404} 
+\index{vortex::graphics::RenderResources@{vortex::graphics::RenderResources}!GetVelocity@{GetVelocity}}
+\index{GetVelocity@{GetVelocity}!vortex::graphics::RenderResources@{vortex::graphics::RenderResources}}
+\doxysubsubsection{\texorpdfstring{GetVelocity()}{GetVelocity()}}
+{\footnotesize\ttfamily const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \& vortex\+::graphics\+::\+Render\+Resources\+::\+Get\+Velocity (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1RenderResources_adc6fa784a651cca0a111161f2ce8da2f}\label{classvortex_1_1graphics_1_1RenderResources_adc6fa784a651cca0a111161f2ce8da2f} 
+\index{vortex::graphics::RenderResources@{vortex::graphics::RenderResources}!Initialize@{Initialize}}
+\index{Initialize@{Initialize}!vortex::graphics::RenderResources@{vortex::graphics::RenderResources}}
+\doxysubsubsection{\texorpdfstring{Initialize()}{Initialize()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Render\+Resources\+::\+Initialize (\begin{DoxyParamCaption}\item[{\mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator}{memory\+::\+Memory\+Allocator}} \texorpdfstring{$\ast$}{*}}]{allocator,  }\item[{uint32\+\_\+t}]{width,  }\item[{uint32\+\_\+t}]{height }\end{DoxyParamCaption})}
+
+
+
+Allocates all necessary offscreen images. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em allocator} & Pointer to memory allocator. \\
+\hline
+{\em width} & Render width. \\
+\hline
+{\em height} & Render height. \\
+\hline
+\end{DoxyParams}
+\Hypertarget{classvortex_1_1graphics_1_1RenderResources_a2bc4973cf530bf119321eb38571b1e42}\label{classvortex_1_1graphics_1_1RenderResources_a2bc4973cf530bf119321eb38571b1e42} 
+\index{vortex::graphics::RenderResources@{vortex::graphics::RenderResources}!InvalidateHistory@{InvalidateHistory}}
+\index{InvalidateHistory@{InvalidateHistory}!vortex::graphics::RenderResources@{vortex::graphics::RenderResources}}
+\doxysubsubsection{\texorpdfstring{InvalidateHistory()}{InvalidateHistory()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Render\+Resources\+::\+Invalidate\+History (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Invalidates history (e.\+g. on teleport or camera cut). 
+
+\Hypertarget{classvortex_1_1graphics_1_1RenderResources_ade74f58763a1354b4f5f9123e2fbab3f}\label{classvortex_1_1graphics_1_1RenderResources_ade74f58763a1354b4f5f9123e2fbab3f} 
+\index{vortex::graphics::RenderResources@{vortex::graphics::RenderResources}!IsHistoryValid@{IsHistoryValid}}
+\index{IsHistoryValid@{IsHistoryValid}!vortex::graphics::RenderResources@{vortex::graphics::RenderResources}}
+\doxysubsubsection{\texorpdfstring{IsHistoryValid()}{IsHistoryValid()}}
+{\footnotesize\ttfamily bool vortex\+::graphics\+::\+Render\+Resources\+::\+Is\+History\+Valid (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1RenderResources_abcb2ba0e10bf9546229d0397e74af27d}\label{classvortex_1_1graphics_1_1RenderResources_abcb2ba0e10bf9546229d0397e74af27d} 
+\index{vortex::graphics::RenderResources@{vortex::graphics::RenderResources}!Shutdown@{Shutdown}}
+\index{Shutdown@{Shutdown}!vortex::graphics::RenderResources@{vortex::graphics::RenderResources}}
+\doxysubsubsection{\texorpdfstring{Shutdown()}{Shutdown()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Render\+Resources\+::\+Shutdown (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+
+
+Destroys all allocated resources. 
+
+\Hypertarget{classvortex_1_1graphics_1_1RenderResources_a9e36000c1e8cf9e9abb357e9b0d77bc6}\label{classvortex_1_1graphics_1_1RenderResources_a9e36000c1e8cf9e9abb357e9b0d77bc6} 
+\index{vortex::graphics::RenderResources@{vortex::graphics::RenderResources}!SwapHistory@{SwapHistory}}
+\index{SwapHistory@{SwapHistory}!vortex::graphics::RenderResources@{vortex::graphics::RenderResources}}
+\doxysubsubsection{\texorpdfstring{SwapHistory()}{SwapHistory()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Render\+Resources\+::\+Swap\+History (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Swaps history buffers for TAA ping-\/ponging. 
+
+
+
+The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}
+\item 
+src/graphics/\mbox{\hyperlink{RenderResources_8cppm}{Render\+Resources.\+cppm}}\item 
+src/graphics/internal/\mbox{\hyperlink{RenderResources_8cpp}{Render\+Resources.\+cpp}}\end{DoxyCompactItemize}

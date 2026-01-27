@@ -1,0 +1,53 @@
+\doxysection{vortex\+::voxel\+::Hierarchy\+Mask Struct Reference}
+\hypertarget{structvortex_1_1voxel_1_1HierarchyMask}{}\label{structvortex_1_1voxel_1_1HierarchyMask}\index{vortex::voxel::HierarchyMask@{vortex::voxel::HierarchyMask}}
+
+
+Acceleration structure for Ray Tracing (Grid Hierarchy).  
+
+
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+bool \mbox{\hyperlink{structvortex_1_1voxel_1_1HierarchyMask_af01cc9e99a45f9f4777b19bddc6305bd}{Is\+Block\+Empty}} (int bx, int by, int bz) const
+\item 
+void \mbox{\hyperlink{structvortex_1_1voxel_1_1HierarchyMask_ae25babd90da77513f7dee5e570c9428d}{Set\+Block\+Status}} (int bx, int by, int bz, bool not\+Empty)
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+uint64\+\_\+t \mbox{\hyperlink{structvortex_1_1voxel_1_1HierarchyMask_a28671016c04737745a03d896a697c235}{masks}} \mbox{[}8\mbox{]}
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Acceleration structure for Ray Tracing (Grid Hierarchy). 
+
+Represents a 32x32x32 chunk divided into 8x8x8 blocks (4x4x4 voxels each). Each bit corresponds to one 4x4x4 block. 512 bits total (64 bytes). 
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{structvortex_1_1voxel_1_1HierarchyMask_af01cc9e99a45f9f4777b19bddc6305bd}\label{structvortex_1_1voxel_1_1HierarchyMask_af01cc9e99a45f9f4777b19bddc6305bd} 
+\index{vortex::voxel::HierarchyMask@{vortex::voxel::HierarchyMask}!IsBlockEmpty@{IsBlockEmpty}}
+\index{IsBlockEmpty@{IsBlockEmpty}!vortex::voxel::HierarchyMask@{vortex::voxel::HierarchyMask}}
+\doxysubsubsection{\texorpdfstring{IsBlockEmpty()}{IsBlockEmpty()}}
+{\footnotesize\ttfamily bool vortex\+::voxel\+::\+Hierarchy\+Mask\+::\+Is\+Block\+Empty (\begin{DoxyParamCaption}\item[{int}]{bx,  }\item[{int}]{by,  }\item[{int}]{bz }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{structvortex_1_1voxel_1_1HierarchyMask_ae25babd90da77513f7dee5e570c9428d}\label{structvortex_1_1voxel_1_1HierarchyMask_ae25babd90da77513f7dee5e570c9428d} 
+\index{vortex::voxel::HierarchyMask@{vortex::voxel::HierarchyMask}!SetBlockStatus@{SetBlockStatus}}
+\index{SetBlockStatus@{SetBlockStatus}!vortex::voxel::HierarchyMask@{vortex::voxel::HierarchyMask}}
+\doxysubsubsection{\texorpdfstring{SetBlockStatus()}{SetBlockStatus()}}
+{\footnotesize\ttfamily void vortex\+::voxel\+::\+Hierarchy\+Mask\+::\+Set\+Block\+Status (\begin{DoxyParamCaption}\item[{int}]{bx,  }\item[{int}]{by,  }\item[{int}]{bz,  }\item[{bool}]{not\+Empty }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structvortex_1_1voxel_1_1HierarchyMask_a28671016c04737745a03d896a697c235}\label{structvortex_1_1voxel_1_1HierarchyMask_a28671016c04737745a03d896a697c235} 
+\index{vortex::voxel::HierarchyMask@{vortex::voxel::HierarchyMask}!masks@{masks}}
+\index{masks@{masks}!vortex::voxel::HierarchyMask@{vortex::voxel::HierarchyMask}}
+\doxysubsubsection{\texorpdfstring{masks}{masks}}
+{\footnotesize\ttfamily uint64\+\_\+t vortex\+::voxel\+::\+Hierarchy\+Mask\+::masks\mbox{[}8\mbox{]}}
+
+
+
+The documentation for this struct was generated from the following file\+:\begin{DoxyCompactItemize}
+\item 
+src/voxel/\mbox{\hyperlink{Hierarchy_8cppm}{Hierarchy.\+cppm}}\end{DoxyCompactItemize}

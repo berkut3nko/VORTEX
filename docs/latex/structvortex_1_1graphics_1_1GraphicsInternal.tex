@@ -1,0 +1,287 @@
+\doxysection{vortex\+::graphics\+::Graphics\+Internal Struct Reference}
+\hypertarget{structvortex_1_1graphics_1_1GraphicsInternal}{}\label{structvortex_1_1graphics_1_1GraphicsInternal}\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+
+
+Collaboration diagram for vortex\+::graphics\+::Graphics\+Internal\+:
+% FIG 0
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+void \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_ac2ca7acc772cfa2f6809caf48030399b}{Init\+Sync\+Objects}} ()
+\item 
+void \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_a9684b151b4ddf452c0a90bcdfd267b98}{Init\+Queries}} ()
+\item 
+void \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_a11f01117dd8e3550ed856bd11c093867}{Pass\+Geometry}} (Vk\+Command\+Buffer cmd, size\+\_\+t visible\+Count)
+\item 
+void \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_ae54742f0e45e8746106ea4e532b7e293}{Pass\+AA}} (Vk\+Command\+Buffer cmd, \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \texorpdfstring{$\ast$}{*}\&out\+Image)
+\item 
+void \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_a4b16d65bda5a0309a5fa0e13f7e02ec0}{Pass\+Blit}} (Vk\+Command\+Buffer cmd, const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \texorpdfstring{$\ast$}{*}source)
+\item 
+void \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_ad0a0ce7e7b68cbef3daa678001af980a}{Pass\+UI}} (Vk\+Command\+Buffer cmd)
+\item 
+void \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_a9397f08de9592507ae493892c471ecf4}{Transition\+Layout}} (Vk\+Command\+Buffer cmd, Vk\+Image img, Vk\+Image\+Layout oldL, Vk\+Image\+Layout newL)
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1Window}{Window}} \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_af9382809864c764ecbdb0bc281c13737}{window}}
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext}{Vulkan\+Context}} \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_a24fc84564872dd6468e6ce4b01213004}{context}}
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain}{Swapchain}} \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_aad04a76c658b41b9747f7eaf2f9d75de}{swapchain}}
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay}{UIOverlay}} \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_a9d0ffa9df5ef40c527da30405520fe20}{ui}}
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1RenderResources}{Render\+Resources}} \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_ab7513a9cd38fd06b1c5cb5d8c55d5956}{resources}}
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager}{Scene\+Manager}} \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_a274cdf40cbf8e4fd5fea7ec1e464c740}{scene\+Manager}}
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline}{Raster\+Pipeline}} \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_a044611b9c75429689ce20d166e132d5c}{raster\+Pipeline}}
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1TAAPipeline}{TAAPipeline}} \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_a351b6bd215c1f9b2a94aa15f69064337}{taa\+Pipeline}}
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1FXAAPipeline}{FXAAPipeline}} \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_ac2a050ebee57ddfb64ca3c3c55ccf8c1}{fxaa\+Pipeline}}
+\item 
+Vk\+Command\+Pool \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_ab93d6b10ccbc0e686be52b4806abd649}{command\+Pool}} \{VK\+\_\+\+NULL\+\_\+\+HANDLE\}
+\item 
+std\+::vector$<$ Vk\+Command\+Buffer $>$ \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_af406bc29eee457c65b019a5e5b0b076f}{command\+Buffers}}
+\item 
+std\+::vector$<$ Vk\+Semaphore $>$ \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_ab38629a8e9093d8a00919403aa827d29}{image\+Available\+Semaphores}}
+\item 
+std\+::vector$<$ Vk\+Semaphore $>$ \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_a286069cb72f1163afd3eff63fb8841ae}{render\+Finished\+Semaphores}}
+\item 
+std\+::vector$<$ Vk\+Fence $>$ \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_aaca897e94fb7527dbd24bda9d09a96a3}{in\+Flight\+Fences}}
+\item 
+Vk\+Query\+Pool \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_a24340a6657811b90e992998837bb298c}{query\+Pools}} \mbox{[}\mbox{\hyperlink{namespacevortex_1_1graphics_adf340c9caa94ef8c577bf6cc451fa727}{FRAMES\+\_\+\+IN\+\_\+\+FLIGHT}}\mbox{]}
+\item 
+float \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_aa86f807bde3d9f1537c6ce7050d81835}{timestamp\+Period}} = 1.\+0f
+\item 
+float \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_a319d8f616e5a26b4fdb9542b48979eb1}{last\+Scene\+Time}} = 0.\+0f
+\item 
+float \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_a82c6766d36eaf75aa2c8ff9d266c1583}{last\+AATime}} = 0.\+0f
+\item 
+uint32\+\_\+t \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_a34cdc9136233ccf356625dd453efbf90}{current\+Frame}} = 0
+\item 
+uint32\+\_\+t \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_a1cc574196f5b8eee1b38175d2bbedbc7}{image\+Index}} = 0
+\item 
+uint64\+\_\+t \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_a6e166f149cac8c42c82dd474359cc8d0}{frame\+Counter}} = 0
+\item 
+\mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{Camera}} \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_a3ffd49c185704c2ac831615b632aaea6}{camera}}
+\item 
+float \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_a532222a8de83b006c92f5cd336f43a31}{render\+Scale}} = 0.\+6f
+\item 
+\mbox{\hyperlink{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895ee}{Anti\+Aliasing\+Mode}} \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_a48f19ae50359db3e09c8d4ff65732264}{current\+AAMode}} = \mbox{\hyperlink{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895eeaaa9ebfd80da9bf23f763a63c052a452a}{Anti\+Aliasing\+Mode\+::\+FXAA}}
+\item 
+Vk\+Sampler \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_aba69ca3674ca99368d95ca85dcfa1ce4}{default\+Sampler}} \{VK\+\_\+\+NULL\+\_\+\+HANDLE\}
+\item 
+\mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \texorpdfstring{$\ast$}{*} \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal_ac9231148293b4989437e552b5133c00f}{current\+Final\+Image}} = nullptr
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_a9684b151b4ddf452c0a90bcdfd267b98}\label{structvortex_1_1graphics_1_1GraphicsInternal_a9684b151b4ddf452c0a90bcdfd267b98} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!InitQueries@{InitQueries}}
+\index{InitQueries@{InitQueries}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{InitQueries()}{InitQueries()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Graphics\+Internal\+::\+Init\+Queries (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_ac2ca7acc772cfa2f6809caf48030399b}\label{structvortex_1_1graphics_1_1GraphicsInternal_ac2ca7acc772cfa2f6809caf48030399b} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!InitSyncObjects@{InitSyncObjects}}
+\index{InitSyncObjects@{InitSyncObjects}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{InitSyncObjects()}{InitSyncObjects()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Graphics\+Internal\+::\+Init\+Sync\+Objects (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_ae54742f0e45e8746106ea4e532b7e293}\label{structvortex_1_1graphics_1_1GraphicsInternal_ae54742f0e45e8746106ea4e532b7e293} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!PassAA@{PassAA}}
+\index{PassAA@{PassAA}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{PassAA()}{PassAA()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Graphics\+Internal\+::\+Pass\+AA (\begin{DoxyParamCaption}\item[{Vk\+Command\+Buffer}]{cmd,  }\item[{\mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \texorpdfstring{$\ast$}{*}\&}]{out\+Image }\end{DoxyParamCaption})}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_a4b16d65bda5a0309a5fa0e13f7e02ec0}\label{structvortex_1_1graphics_1_1GraphicsInternal_a4b16d65bda5a0309a5fa0e13f7e02ec0} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!PassBlit@{PassBlit}}
+\index{PassBlit@{PassBlit}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{PassBlit()}{PassBlit()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Graphics\+Internal\+::\+Pass\+Blit (\begin{DoxyParamCaption}\item[{Vk\+Command\+Buffer}]{cmd,  }\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \texorpdfstring{$\ast$}{*}}]{source }\end{DoxyParamCaption})}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_a11f01117dd8e3550ed856bd11c093867}\label{structvortex_1_1graphics_1_1GraphicsInternal_a11f01117dd8e3550ed856bd11c093867} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!PassGeometry@{PassGeometry}}
+\index{PassGeometry@{PassGeometry}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{PassGeometry()}{PassGeometry()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Graphics\+Internal\+::\+Pass\+Geometry (\begin{DoxyParamCaption}\item[{Vk\+Command\+Buffer}]{cmd,  }\item[{size\+\_\+t}]{visible\+Count }\end{DoxyParamCaption})}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_ad0a0ce7e7b68cbef3daa678001af980a}\label{structvortex_1_1graphics_1_1GraphicsInternal_ad0a0ce7e7b68cbef3daa678001af980a} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!PassUI@{PassUI}}
+\index{PassUI@{PassUI}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{PassUI()}{PassUI()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Graphics\+Internal\+::\+Pass\+UI (\begin{DoxyParamCaption}\item[{Vk\+Command\+Buffer}]{cmd }\end{DoxyParamCaption})}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_a9397f08de9592507ae493892c471ecf4}\label{structvortex_1_1graphics_1_1GraphicsInternal_a9397f08de9592507ae493892c471ecf4} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!TransitionLayout@{TransitionLayout}}
+\index{TransitionLayout@{TransitionLayout}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{TransitionLayout()}{TransitionLayout()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Graphics\+Internal\+::\+Transition\+Layout (\begin{DoxyParamCaption}\item[{Vk\+Command\+Buffer}]{cmd,  }\item[{Vk\+Image}]{img,  }\item[{Vk\+Image\+Layout}]{oldL,  }\item[{Vk\+Image\+Layout}]{newL }\end{DoxyParamCaption})}
+
+
+
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_a3ffd49c185704c2ac831615b632aaea6}\label{structvortex_1_1graphics_1_1GraphicsInternal_a3ffd49c185704c2ac831615b632aaea6} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!camera@{camera}}
+\index{camera@{camera}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{camera}{camera}}
+{\footnotesize\ttfamily \mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{Camera}} vortex\+::graphics\+::\+Graphics\+Internal\+::camera}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_af406bc29eee457c65b019a5e5b0b076f}\label{structvortex_1_1graphics_1_1GraphicsInternal_af406bc29eee457c65b019a5e5b0b076f} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!commandBuffers@{commandBuffers}}
+\index{commandBuffers@{commandBuffers}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{commandBuffers}{commandBuffers}}
+{\footnotesize\ttfamily std\+::vector$<$Vk\+Command\+Buffer$>$ vortex\+::graphics\+::\+Graphics\+Internal\+::command\+Buffers}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_ab93d6b10ccbc0e686be52b4806abd649}\label{structvortex_1_1graphics_1_1GraphicsInternal_ab93d6b10ccbc0e686be52b4806abd649} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!commandPool@{commandPool}}
+\index{commandPool@{commandPool}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{commandPool}{commandPool}}
+{\footnotesize\ttfamily Vk\+Command\+Pool vortex\+::graphics\+::\+Graphics\+Internal\+::command\+Pool \{VK\+\_\+\+NULL\+\_\+\+HANDLE\}}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_a24fc84564872dd6468e6ce4b01213004}\label{structvortex_1_1graphics_1_1GraphicsInternal_a24fc84564872dd6468e6ce4b01213004} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!context@{context}}
+\index{context@{context}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{context}{context}}
+{\footnotesize\ttfamily \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext}{Vulkan\+Context}} vortex\+::graphics\+::\+Graphics\+Internal\+::context}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_a48f19ae50359db3e09c8d4ff65732264}\label{structvortex_1_1graphics_1_1GraphicsInternal_a48f19ae50359db3e09c8d4ff65732264} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!currentAAMode@{currentAAMode}}
+\index{currentAAMode@{currentAAMode}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{currentAAMode}{currentAAMode}}
+{\footnotesize\ttfamily \mbox{\hyperlink{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895ee}{Anti\+Aliasing\+Mode}} vortex\+::graphics\+::\+Graphics\+Internal\+::current\+AAMode = \mbox{\hyperlink{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895eeaaa9ebfd80da9bf23f763a63c052a452a}{Anti\+Aliasing\+Mode\+::\+FXAA}}}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_ac9231148293b4989437e552b5133c00f}\label{structvortex_1_1graphics_1_1GraphicsInternal_ac9231148293b4989437e552b5133c00f} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!currentFinalImage@{currentFinalImage}}
+\index{currentFinalImage@{currentFinalImage}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{currentFinalImage}{currentFinalImage}}
+{\footnotesize\ttfamily \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}}\texorpdfstring{$\ast$}{*} vortex\+::graphics\+::\+Graphics\+Internal\+::current\+Final\+Image = nullptr}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_a34cdc9136233ccf356625dd453efbf90}\label{structvortex_1_1graphics_1_1GraphicsInternal_a34cdc9136233ccf356625dd453efbf90} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!currentFrame@{currentFrame}}
+\index{currentFrame@{currentFrame}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{currentFrame}{currentFrame}}
+{\footnotesize\ttfamily uint32\+\_\+t vortex\+::graphics\+::\+Graphics\+Internal\+::current\+Frame = 0}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_aba69ca3674ca99368d95ca85dcfa1ce4}\label{structvortex_1_1graphics_1_1GraphicsInternal_aba69ca3674ca99368d95ca85dcfa1ce4} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!defaultSampler@{defaultSampler}}
+\index{defaultSampler@{defaultSampler}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{defaultSampler}{defaultSampler}}
+{\footnotesize\ttfamily Vk\+Sampler vortex\+::graphics\+::\+Graphics\+Internal\+::default\+Sampler \{VK\+\_\+\+NULL\+\_\+\+HANDLE\}}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_a6e166f149cac8c42c82dd474359cc8d0}\label{structvortex_1_1graphics_1_1GraphicsInternal_a6e166f149cac8c42c82dd474359cc8d0} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!frameCounter@{frameCounter}}
+\index{frameCounter@{frameCounter}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{frameCounter}{frameCounter}}
+{\footnotesize\ttfamily uint64\+\_\+t vortex\+::graphics\+::\+Graphics\+Internal\+::frame\+Counter = 0}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_ac2a050ebee57ddfb64ca3c3c55ccf8c1}\label{structvortex_1_1graphics_1_1GraphicsInternal_ac2a050ebee57ddfb64ca3c3c55ccf8c1} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!fxaaPipeline@{fxaaPipeline}}
+\index{fxaaPipeline@{fxaaPipeline}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{fxaaPipeline}{fxaaPipeline}}
+{\footnotesize\ttfamily \mbox{\hyperlink{classvortex_1_1graphics_1_1FXAAPipeline}{FXAAPipeline}} vortex\+::graphics\+::\+Graphics\+Internal\+::fxaa\+Pipeline}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_ab38629a8e9093d8a00919403aa827d29}\label{structvortex_1_1graphics_1_1GraphicsInternal_ab38629a8e9093d8a00919403aa827d29} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!imageAvailableSemaphores@{imageAvailableSemaphores}}
+\index{imageAvailableSemaphores@{imageAvailableSemaphores}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{imageAvailableSemaphores}{imageAvailableSemaphores}}
+{\footnotesize\ttfamily std\+::vector$<$Vk\+Semaphore$>$ vortex\+::graphics\+::\+Graphics\+Internal\+::image\+Available\+Semaphores}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_a1cc574196f5b8eee1b38175d2bbedbc7}\label{structvortex_1_1graphics_1_1GraphicsInternal_a1cc574196f5b8eee1b38175d2bbedbc7} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!imageIndex@{imageIndex}}
+\index{imageIndex@{imageIndex}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{imageIndex}{imageIndex}}
+{\footnotesize\ttfamily uint32\+\_\+t vortex\+::graphics\+::\+Graphics\+Internal\+::image\+Index = 0}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_aaca897e94fb7527dbd24bda9d09a96a3}\label{structvortex_1_1graphics_1_1GraphicsInternal_aaca897e94fb7527dbd24bda9d09a96a3} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!inFlightFences@{inFlightFences}}
+\index{inFlightFences@{inFlightFences}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{inFlightFences}{inFlightFences}}
+{\footnotesize\ttfamily std\+::vector$<$Vk\+Fence$>$ vortex\+::graphics\+::\+Graphics\+Internal\+::in\+Flight\+Fences}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_a82c6766d36eaf75aa2c8ff9d266c1583}\label{structvortex_1_1graphics_1_1GraphicsInternal_a82c6766d36eaf75aa2c8ff9d266c1583} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!lastAATime@{lastAATime}}
+\index{lastAATime@{lastAATime}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{lastAATime}{lastAATime}}
+{\footnotesize\ttfamily float vortex\+::graphics\+::\+Graphics\+Internal\+::last\+AATime = 0.\+0f}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_a319d8f616e5a26b4fdb9542b48979eb1}\label{structvortex_1_1graphics_1_1GraphicsInternal_a319d8f616e5a26b4fdb9542b48979eb1} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!lastSceneTime@{lastSceneTime}}
+\index{lastSceneTime@{lastSceneTime}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{lastSceneTime}{lastSceneTime}}
+{\footnotesize\ttfamily float vortex\+::graphics\+::\+Graphics\+Internal\+::last\+Scene\+Time = 0.\+0f}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_a24340a6657811b90e992998837bb298c}\label{structvortex_1_1graphics_1_1GraphicsInternal_a24340a6657811b90e992998837bb298c} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!queryPools@{queryPools}}
+\index{queryPools@{queryPools}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{queryPools}{queryPools}}
+{\footnotesize\ttfamily Vk\+Query\+Pool vortex\+::graphics\+::\+Graphics\+Internal\+::query\+Pools\mbox{[}\mbox{\hyperlink{namespacevortex_1_1graphics_adf340c9caa94ef8c577bf6cc451fa727}{FRAMES\+\_\+\+IN\+\_\+\+FLIGHT}}\mbox{]}}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_a044611b9c75429689ce20d166e132d5c}\label{structvortex_1_1graphics_1_1GraphicsInternal_a044611b9c75429689ce20d166e132d5c} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!rasterPipeline@{rasterPipeline}}
+\index{rasterPipeline@{rasterPipeline}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{rasterPipeline}{rasterPipeline}}
+{\footnotesize\ttfamily \mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline}{Raster\+Pipeline}} vortex\+::graphics\+::\+Graphics\+Internal\+::raster\+Pipeline}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_a286069cb72f1163afd3eff63fb8841ae}\label{structvortex_1_1graphics_1_1GraphicsInternal_a286069cb72f1163afd3eff63fb8841ae} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!renderFinishedSemaphores@{renderFinishedSemaphores}}
+\index{renderFinishedSemaphores@{renderFinishedSemaphores}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{renderFinishedSemaphores}{renderFinishedSemaphores}}
+{\footnotesize\ttfamily std\+::vector$<$Vk\+Semaphore$>$ vortex\+::graphics\+::\+Graphics\+Internal\+::render\+Finished\+Semaphores}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_a532222a8de83b006c92f5cd336f43a31}\label{structvortex_1_1graphics_1_1GraphicsInternal_a532222a8de83b006c92f5cd336f43a31} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!renderScale@{renderScale}}
+\index{renderScale@{renderScale}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{renderScale}{renderScale}}
+{\footnotesize\ttfamily float vortex\+::graphics\+::\+Graphics\+Internal\+::render\+Scale = 0.\+6f}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_ab7513a9cd38fd06b1c5cb5d8c55d5956}\label{structvortex_1_1graphics_1_1GraphicsInternal_ab7513a9cd38fd06b1c5cb5d8c55d5956} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!resources@{resources}}
+\index{resources@{resources}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{resources}{resources}}
+{\footnotesize\ttfamily \mbox{\hyperlink{classvortex_1_1graphics_1_1RenderResources}{Render\+Resources}} vortex\+::graphics\+::\+Graphics\+Internal\+::resources}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_a274cdf40cbf8e4fd5fea7ec1e464c740}\label{structvortex_1_1graphics_1_1GraphicsInternal_a274cdf40cbf8e4fd5fea7ec1e464c740} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!sceneManager@{sceneManager}}
+\index{sceneManager@{sceneManager}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{sceneManager}{sceneManager}}
+{\footnotesize\ttfamily \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager}{Scene\+Manager}} vortex\+::graphics\+::\+Graphics\+Internal\+::scene\+Manager}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_aad04a76c658b41b9747f7eaf2f9d75de}\label{structvortex_1_1graphics_1_1GraphicsInternal_aad04a76c658b41b9747f7eaf2f9d75de} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!swapchain@{swapchain}}
+\index{swapchain@{swapchain}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{swapchain}{swapchain}}
+{\footnotesize\ttfamily \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain}{Swapchain}} vortex\+::graphics\+::\+Graphics\+Internal\+::swapchain}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_a351b6bd215c1f9b2a94aa15f69064337}\label{structvortex_1_1graphics_1_1GraphicsInternal_a351b6bd215c1f9b2a94aa15f69064337} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!taaPipeline@{taaPipeline}}
+\index{taaPipeline@{taaPipeline}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{taaPipeline}{taaPipeline}}
+{\footnotesize\ttfamily \mbox{\hyperlink{classvortex_1_1graphics_1_1TAAPipeline}{TAAPipeline}} vortex\+::graphics\+::\+Graphics\+Internal\+::taa\+Pipeline}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_aa86f807bde3d9f1537c6ce7050d81835}\label{structvortex_1_1graphics_1_1GraphicsInternal_aa86f807bde3d9f1537c6ce7050d81835} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!timestampPeriod@{timestampPeriod}}
+\index{timestampPeriod@{timestampPeriod}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{timestampPeriod}{timestampPeriod}}
+{\footnotesize\ttfamily float vortex\+::graphics\+::\+Graphics\+Internal\+::timestamp\+Period = 1.\+0f}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_a9d0ffa9df5ef40c527da30405520fe20}\label{structvortex_1_1graphics_1_1GraphicsInternal_a9d0ffa9df5ef40c527da30405520fe20} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!ui@{ui}}
+\index{ui@{ui}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{ui}{ui}}
+{\footnotesize\ttfamily \mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay}{UIOverlay}} vortex\+::graphics\+::\+Graphics\+Internal\+::ui}
+
+\Hypertarget{structvortex_1_1graphics_1_1GraphicsInternal_af9382809864c764ecbdb0bc281c13737}\label{structvortex_1_1graphics_1_1GraphicsInternal_af9382809864c764ecbdb0bc281c13737} 
+\index{vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}!window@{window}}
+\index{window@{window}!vortex::graphics::GraphicsInternal@{vortex::graphics::GraphicsInternal}}
+\doxysubsubsection{\texorpdfstring{window}{window}}
+{\footnotesize\ttfamily \mbox{\hyperlink{classvortex_1_1graphics_1_1Window}{Window}} vortex\+::graphics\+::\+Graphics\+Internal\+::window}
+
+
+
+The documentation for this struct was generated from the following file\+:\begin{DoxyCompactItemize}
+\item 
+src/graphics/internal/\mbox{\hyperlink{Graphics_8cpp}{Graphics.\+cpp}}\end{DoxyCompactItemize}

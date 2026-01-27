@@ -1,0 +1,65 @@
+\doxysection{vortex\+::graphics\+::Raster\+Pipeline Class Reference}
+\hypertarget{classvortex_1_1graphics_1_1RasterPipeline}{}\label{classvortex_1_1graphics_1_1RasterPipeline}\index{vortex::graphics::RasterPipeline@{vortex::graphics::RasterPipeline}}
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline_a3bcee315f878bbef495692431c39585c}{Raster\+Pipeline}} ()
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline_aec5aa8958a15fd34e61239ecbff3a79a}{\texorpdfstring{$\sim$}{\string~}\+Raster\+Pipeline}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline_a105d93ebbdbc0b3429dc637aed6c9243}{Initialize}} (Vk\+Device device, Vk\+Format color\+Format, Vk\+Format velocity\+Format, Vk\+Format depth\+Format, uint32\+\_\+t frames\+In\+Flight, const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \&camera\+Buffer, const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \&material\+Buffer, const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \&object\+Buffer, const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \&chunk\+Buffer)
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline_a10daf5467ff19bb9030980410248f0bc}{Shutdown}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline_a617e244708c49bd15d0962109f01e4ad}{Bind}} (Vk\+Command\+Buffer cmd, uint32\+\_\+t frame\+Index)
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline_a5994ce3d7a3ec48124c1b1b8d85fcf31}{Update\+Descriptors}} (uint32\+\_\+t frame\+Index)
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1RasterPipeline_a3bcee315f878bbef495692431c39585c}\label{classvortex_1_1graphics_1_1RasterPipeline_a3bcee315f878bbef495692431c39585c} 
+\index{vortex::graphics::RasterPipeline@{vortex::graphics::RasterPipeline}!RasterPipeline@{RasterPipeline}}
+\index{RasterPipeline@{RasterPipeline}!vortex::graphics::RasterPipeline@{vortex::graphics::RasterPipeline}}
+\doxysubsubsection{\texorpdfstring{RasterPipeline()}{RasterPipeline()}}
+{\footnotesize\ttfamily vortex\+::graphics\+::\+Raster\+Pipeline\+::\+Raster\+Pipeline (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1RasterPipeline_aec5aa8958a15fd34e61239ecbff3a79a}\label{classvortex_1_1graphics_1_1RasterPipeline_aec5aa8958a15fd34e61239ecbff3a79a} 
+\index{vortex::graphics::RasterPipeline@{vortex::graphics::RasterPipeline}!````~RasterPipeline@{\texorpdfstring{$\sim$}{\string~}RasterPipeline}}
+\index{````~RasterPipeline@{\texorpdfstring{$\sim$}{\string~}RasterPipeline}!vortex::graphics::RasterPipeline@{vortex::graphics::RasterPipeline}}
+\doxysubsubsection{\texorpdfstring{\texorpdfstring{$\sim$}{\string~}RasterPipeline()}{\string~RasterPipeline()}}
+{\footnotesize\ttfamily vortex\+::graphics\+::\+Raster\+Pipeline\+::\texorpdfstring{$\sim$}{\string~}\+Raster\+Pipeline (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1RasterPipeline_a617e244708c49bd15d0962109f01e4ad}\label{classvortex_1_1graphics_1_1RasterPipeline_a617e244708c49bd15d0962109f01e4ad} 
+\index{vortex::graphics::RasterPipeline@{vortex::graphics::RasterPipeline}!Bind@{Bind}}
+\index{Bind@{Bind}!vortex::graphics::RasterPipeline@{vortex::graphics::RasterPipeline}}
+\doxysubsubsection{\texorpdfstring{Bind()}{Bind()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Raster\+Pipeline\+::\+Bind (\begin{DoxyParamCaption}\item[{Vk\+Command\+Buffer}]{cmd,  }\item[{uint32\+\_\+t}]{frame\+Index }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1RasterPipeline_a105d93ebbdbc0b3429dc637aed6c9243}\label{classvortex_1_1graphics_1_1RasterPipeline_a105d93ebbdbc0b3429dc637aed6c9243} 
+\index{vortex::graphics::RasterPipeline@{vortex::graphics::RasterPipeline}!Initialize@{Initialize}}
+\index{Initialize@{Initialize}!vortex::graphics::RasterPipeline@{vortex::graphics::RasterPipeline}}
+\doxysubsubsection{\texorpdfstring{Initialize()}{Initialize()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Raster\+Pipeline\+::\+Initialize (\begin{DoxyParamCaption}\item[{Vk\+Device}]{device,  }\item[{Vk\+Format}]{color\+Format,  }\item[{Vk\+Format}]{velocity\+Format,  }\item[{Vk\+Format}]{depth\+Format,  }\item[{uint32\+\_\+t}]{frames\+In\+Flight,  }\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \&}]{camera\+Buffer,  }\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \&}]{material\+Buffer,  }\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \&}]{object\+Buffer,  }\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \&}]{chunk\+Buffer }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1RasterPipeline_a10daf5467ff19bb9030980410248f0bc}\label{classvortex_1_1graphics_1_1RasterPipeline_a10daf5467ff19bb9030980410248f0bc} 
+\index{vortex::graphics::RasterPipeline@{vortex::graphics::RasterPipeline}!Shutdown@{Shutdown}}
+\index{Shutdown@{Shutdown}!vortex::graphics::RasterPipeline@{vortex::graphics::RasterPipeline}}
+\doxysubsubsection{\texorpdfstring{Shutdown()}{Shutdown()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Raster\+Pipeline\+::\+Shutdown (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1RasterPipeline_a5994ce3d7a3ec48124c1b1b8d85fcf31}\label{classvortex_1_1graphics_1_1RasterPipeline_a5994ce3d7a3ec48124c1b1b8d85fcf31} 
+\index{vortex::graphics::RasterPipeline@{vortex::graphics::RasterPipeline}!UpdateDescriptors@{UpdateDescriptors}}
+\index{UpdateDescriptors@{UpdateDescriptors}!vortex::graphics::RasterPipeline@{vortex::graphics::RasterPipeline}}
+\doxysubsubsection{\texorpdfstring{UpdateDescriptors()}{UpdateDescriptors()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Raster\+Pipeline\+::\+Update\+Descriptors (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{frame\+Index }\end{DoxyParamCaption})}
+
+
+
+The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}
+\item 
+src/graphics/pipelines/\mbox{\hyperlink{RasterPipeline_8cppm}{Raster\+Pipeline.\+cppm}}\item 
+src/graphics/pipelines/internal/\mbox{\hyperlink{RasterPipeline_8cpp}{Raster\+Pipeline.\+cpp}}\end{DoxyCompactItemize}

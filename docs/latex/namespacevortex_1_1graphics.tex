@@ -1,0 +1,177 @@
+\doxysection{vortex\+::graphics Namespace Reference}
+\hypertarget{namespacevortex_1_1graphics}{}\label{namespacevortex_1_1graphics}\index{vortex::graphics@{vortex::graphics}}
+\doxysubsubsection*{Classes}
+\begin{DoxyCompactItemize}
+\item 
+struct \mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{Camera}}
+\item 
+struct \mbox{\hyperlink{structvortex_1_1graphics_1_1CameraUBO}{Camera\+UBO}}
+\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1FXAAPipeline}{FXAAPipeline}}
+\item 
+struct \mbox{\hyperlink{structvortex_1_1graphics_1_1GPUObject}{GPUObject}}
+\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext}{Graphics\+Context}}
+\item 
+struct \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal}{Graphics\+Internal}}
+\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline}{Raster\+Pipeline}}
+\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1RenderResources}{Render\+Resources}}
+\begin{DoxyCompactList}\small\item\em Manages offscreen render targets (Color, Depth, Velocity, TAA History). \end{DoxyCompactList}\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager}{Scene\+Manager}}
+\begin{DoxyCompactList}\small\item\em Handles scene data, culling, and GPU buffer updates. \end{DoxyCompactList}\item 
+struct \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneMaterial}{Scene\+Material}}
+\item 
+struct \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{Scene\+Object}}
+\begin{DoxyCompactList}\small\item\em High-\/level CPU representation of an object. \end{DoxyCompactList}\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1ShaderCompiler}{Shader\+Compiler}}
+\begin{DoxyCompactList}\small\item\em Compiles GLSL code to SPIR-\/V at runtime. \end{DoxyCompactList}\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain}{Swapchain}}
+\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1TAAPipeline}{TAAPipeline}}
+\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay}{UIOverlay}}
+\begin{DoxyCompactList}\small\item\em Handles Im\+Gui integration. \end{DoxyCompactList}\item 
+struct \mbox{\hyperlink{structvortex_1_1graphics_1_1ViewFrustum}{View\+Frustum}}
+\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext}{Vulkan\+Context}}
+\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1Window}{Window}}
+\begin{DoxyCompactList}\small\item\em Manages the GLFW window and Vulkan Surface creation. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Enumerations}
+\begin{DoxyCompactItemize}
+\item 
+enum class \mbox{\hyperlink{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895ee}{vortex\+::graphics\+::\+Anti\+Aliasing\+Mode}} \{ \newline
+\mbox{\hyperlink{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895eea6adf97f83acf6453d4a6a4b1070f3754}{None}}
+, \newline
+\mbox{\hyperlink{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895eeaaa9ebfd80da9bf23f763a63c052a452a}{FXAA}}
+, \newline
+\mbox{\hyperlink{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895eea88a337f4479ce258e968e00de1de7483}{TAA}}
+ \}
+\item 
+enum class \mbox{\hyperlink{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664}{Shader\+Stage}} \{ \newline
+\mbox{\hyperlink{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664ab22b929ba52471a02d18bb3a4e4472e6}{Vertex}}
+, \newline
+\mbox{\hyperlink{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664a37d01b98065725fe3a1d30acf3a0064a}{Fragment}}
+, \newline
+\mbox{\hyperlink{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664aa623a8d0366bf079411aa30be45b2d10}{Compute}}
+, \newline
+\mbox{\hyperlink{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664a4b2766e948a345bc42a34d6ae00b329a}{Ray\+Gen}}
+, \newline
+\mbox{\hyperlink{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664ae7ddb7cd777b59610b220bcfa80bd95f}{Miss}}
+, \newline
+\mbox{\hyperlink{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664ad4fcd21286c099405aff8d6b04c76575}{Closest\+Hit}}
+ \}
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Functions}
+\begin{DoxyCompactItemize}
+\item 
+float \mbox{\hyperlink{namespacevortex_1_1graphics_ad647b7ca0338b974b6e45e25479937e4}{Halton}} (int index, int base)
+\item 
+ESh\+Language \mbox{\hyperlink{namespacevortex_1_1graphics_a44eb455e79f98eca38964776a232e50d}{Map\+Stage}} (\mbox{\hyperlink{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664}{Shader\+Stage}} stage)
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Variables}
+\begin{DoxyCompactItemize}
+\item 
+constexpr int \mbox{\hyperlink{namespacevortex_1_1graphics_adf340c9caa94ef8c577bf6cc451fa727}{FRAMES\+\_\+\+IN\+\_\+\+FLIGHT}} = 2
+\item 
+constexpr int \mbox{\hyperlink{namespacevortex_1_1graphics_a6f466f037b2894e0d4508eb3205c0430}{QUERY\+\_\+\+COUNT}} = 4
+\item 
+const TBuilt\+In\+Resource \mbox{\hyperlink{namespacevortex_1_1graphics_a9514b4596a750df7d263c4e999ce7c91}{Default\+TBuilt\+In\+Resource}}
+\begin{DoxyCompactList}\small\item\em Define the default resource limits for Vulkan. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Enumeration Type Documentation}
+\Hypertarget{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895ee}\label{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895ee} 
+\index{vortex::graphics@{vortex::graphics}!AntiAliasingMode@{AntiAliasingMode}}
+\index{AntiAliasingMode@{AntiAliasingMode}!vortex::graphics@{vortex::graphics}}
+\doxysubsubsection{\texorpdfstring{AntiAliasingMode}{AntiAliasingMode}}
+{\footnotesize\ttfamily enum class \mbox{\hyperlink{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895ee}{vortex\+::graphics\+::\+Anti\+Aliasing\+Mode}}\hspace{0.3cm}{\ttfamily [export]}, {\ttfamily [strong]}}
+
+\begin{DoxyEnumFields}{Enumerator}
+\raisebox{\heightof{T}}[0pt][0pt]{\index{None@{None}!vortex::graphics@{vortex::graphics}}\index{vortex::graphics@{vortex::graphics}!None@{None}}}\Hypertarget{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895eea6adf97f83acf6453d4a6a4b1070f3754}\label{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895eea6adf97f83acf6453d4a6a4b1070f3754} 
+None&\\
+\hline
+
+\raisebox{\heightof{T}}[0pt][0pt]{\index{FXAA@{FXAA}!vortex::graphics@{vortex::graphics}}\index{vortex::graphics@{vortex::graphics}!FXAA@{FXAA}}}\Hypertarget{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895eeaaa9ebfd80da9bf23f763a63c052a452a}\label{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895eeaaa9ebfd80da9bf23f763a63c052a452a} 
+FXAA&\\
+\hline
+
+\raisebox{\heightof{T}}[0pt][0pt]{\index{TAA@{TAA}!vortex::graphics@{vortex::graphics}}\index{vortex::graphics@{vortex::graphics}!TAA@{TAA}}}\Hypertarget{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895eea88a337f4479ce258e968e00de1de7483}\label{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895eea88a337f4479ce258e968e00de1de7483} 
+TAA&\\
+\hline
+
+\end{DoxyEnumFields}
+\Hypertarget{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664}\label{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664} 
+\index{vortex::graphics@{vortex::graphics}!ShaderStage@{ShaderStage}}
+\index{ShaderStage@{ShaderStage}!vortex::graphics@{vortex::graphics}}
+\doxysubsubsection{\texorpdfstring{ShaderStage}{ShaderStage}}
+{\footnotesize\ttfamily enum class \mbox{\hyperlink{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664}{vortex\+::graphics\+::\+Shader\+Stage}}\hspace{0.3cm}{\ttfamily [strong]}}
+
+\begin{DoxyEnumFields}{Enumerator}
+\raisebox{\heightof{T}}[0pt][0pt]{\index{Vertex@{Vertex}!vortex::graphics@{vortex::graphics}}\index{vortex::graphics@{vortex::graphics}!Vertex@{Vertex}}}\Hypertarget{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664ab22b929ba52471a02d18bb3a4e4472e6}\label{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664ab22b929ba52471a02d18bb3a4e4472e6} 
+Vertex&\\
+\hline
+
+\raisebox{\heightof{T}}[0pt][0pt]{\index{Fragment@{Fragment}!vortex::graphics@{vortex::graphics}}\index{vortex::graphics@{vortex::graphics}!Fragment@{Fragment}}}\Hypertarget{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664a37d01b98065725fe3a1d30acf3a0064a}\label{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664a37d01b98065725fe3a1d30acf3a0064a} 
+Fragment&\\
+\hline
+
+\raisebox{\heightof{T}}[0pt][0pt]{\index{Compute@{Compute}!vortex::graphics@{vortex::graphics}}\index{vortex::graphics@{vortex::graphics}!Compute@{Compute}}}\Hypertarget{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664aa623a8d0366bf079411aa30be45b2d10}\label{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664aa623a8d0366bf079411aa30be45b2d10} 
+Compute&\\
+\hline
+
+\raisebox{\heightof{T}}[0pt][0pt]{\index{RayGen@{RayGen}!vortex::graphics@{vortex::graphics}}\index{vortex::graphics@{vortex::graphics}!RayGen@{RayGen}}}\Hypertarget{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664a4b2766e948a345bc42a34d6ae00b329a}\label{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664a4b2766e948a345bc42a34d6ae00b329a} 
+Ray\+Gen&\\
+\hline
+
+\raisebox{\heightof{T}}[0pt][0pt]{\index{Miss@{Miss}!vortex::graphics@{vortex::graphics}}\index{vortex::graphics@{vortex::graphics}!Miss@{Miss}}}\Hypertarget{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664ae7ddb7cd777b59610b220bcfa80bd95f}\label{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664ae7ddb7cd777b59610b220bcfa80bd95f} 
+Miss&\\
+\hline
+
+\raisebox{\heightof{T}}[0pt][0pt]{\index{ClosestHit@{ClosestHit}!vortex::graphics@{vortex::graphics}}\index{vortex::graphics@{vortex::graphics}!ClosestHit@{ClosestHit}}}\Hypertarget{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664ad4fcd21286c099405aff8d6b04c76575}\label{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664ad4fcd21286c099405aff8d6b04c76575} 
+Closest\+Hit&\\
+\hline
+
+\end{DoxyEnumFields}
+
+
+\doxysubsection{Function Documentation}
+\Hypertarget{namespacevortex_1_1graphics_ad647b7ca0338b974b6e45e25479937e4}\label{namespacevortex_1_1graphics_ad647b7ca0338b974b6e45e25479937e4} 
+\index{vortex::graphics@{vortex::graphics}!Halton@{Halton}}
+\index{Halton@{Halton}!vortex::graphics@{vortex::graphics}}
+\doxysubsubsection{\texorpdfstring{Halton()}{Halton()}}
+{\footnotesize\ttfamily float vortex\+::graphics\+::\+Halton (\begin{DoxyParamCaption}\item[{int}]{index,  }\item[{int}]{base }\end{DoxyParamCaption})}
+
+\Hypertarget{namespacevortex_1_1graphics_a44eb455e79f98eca38964776a232e50d}\label{namespacevortex_1_1graphics_a44eb455e79f98eca38964776a232e50d} 
+\index{vortex::graphics@{vortex::graphics}!MapStage@{MapStage}}
+\index{MapStage@{MapStage}!vortex::graphics@{vortex::graphics}}
+\doxysubsubsection{\texorpdfstring{MapStage()}{MapStage()}}
+{\footnotesize\ttfamily ESh\+Language vortex\+::graphics\+::\+Map\+Stage (\begin{DoxyParamCaption}\item[{\mbox{\hyperlink{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664}{Shader\+Stage}}}]{stage }\end{DoxyParamCaption})}
+
+
+
+\doxysubsection{Variable Documentation}
+\Hypertarget{namespacevortex_1_1graphics_a9514b4596a750df7d263c4e999ce7c91}\label{namespacevortex_1_1graphics_a9514b4596a750df7d263c4e999ce7c91} 
+\index{vortex::graphics@{vortex::graphics}!DefaultTBuiltInResource@{DefaultTBuiltInResource}}
+\index{DefaultTBuiltInResource@{DefaultTBuiltInResource}!vortex::graphics@{vortex::graphics}}
+\doxysubsubsection{\texorpdfstring{DefaultTBuiltInResource}{DefaultTBuiltInResource}}
+{\footnotesize\ttfamily const TBuilt\+In\+Resource vortex\+::graphics\+::\+Default\+TBuilt\+In\+Resource}
+
+
+
+Define the default resource limits for Vulkan. 
+
+This replaces the missing Get\+Default\+Resources() from glslang standalone. These values correspond to standard GLSL limits for Vulkan. \Hypertarget{namespacevortex_1_1graphics_adf340c9caa94ef8c577bf6cc451fa727}\label{namespacevortex_1_1graphics_adf340c9caa94ef8c577bf6cc451fa727} 
+\index{vortex::graphics@{vortex::graphics}!FRAMES\_IN\_FLIGHT@{FRAMES\_IN\_FLIGHT}}
+\index{FRAMES\_IN\_FLIGHT@{FRAMES\_IN\_FLIGHT}!vortex::graphics@{vortex::graphics}}
+\doxysubsubsection{\texorpdfstring{FRAMES\_IN\_FLIGHT}{FRAMES\_IN\_FLIGHT}}
+{\footnotesize\ttfamily constexpr int vortex\+::graphics\+::\+FRAMES\+\_\+\+IN\+\_\+\+FLIGHT = 2\hspace{0.3cm}{\ttfamily [constexpr]}}
+
+\Hypertarget{namespacevortex_1_1graphics_a6f466f037b2894e0d4508eb3205c0430}\label{namespacevortex_1_1graphics_a6f466f037b2894e0d4508eb3205c0430} 
+\index{vortex::graphics@{vortex::graphics}!QUERY\_COUNT@{QUERY\_COUNT}}
+\index{QUERY\_COUNT@{QUERY\_COUNT}!vortex::graphics@{vortex::graphics}}
+\doxysubsubsection{\texorpdfstring{QUERY\_COUNT}{QUERY\_COUNT}}
+{\footnotesize\ttfamily constexpr int vortex\+::graphics\+::\+QUERY\+\_\+\+COUNT = 4\hspace{0.3cm}{\ttfamily [constexpr]}}
+

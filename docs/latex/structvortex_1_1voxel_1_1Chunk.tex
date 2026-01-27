@@ -1,0 +1,110 @@
+\doxysection{vortex\+::voxel\+::Chunk Struct Reference}
+\hypertarget{structvortex_1_1voxel_1_1Chunk}{}\label{structvortex_1_1voxel_1_1Chunk}\index{vortex::voxel::Chunk@{vortex::voxel::Chunk}}
+
+
+A single 32x32x32 voxel chunk (SoA Layout).  
+
+
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk_ad9b335b3326c5c4badfb983763a6c5a7}{Chunk}} ()
+\item 
+void \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk_a090c1271a52d7308d36e802fa3591ba6}{Clear}} ()
+\item 
+void \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk_ae7d5bd238827c32bcc78c6125ad24781}{Set\+Voxel}} (int x, int y, int z, uint8\+\_\+t id, uint8\+\_\+t flags=0)
+\begin{DoxyCompactList}\small\item\em Sets a voxel\textquotesingle{}s material and flags. \end{DoxyCompactList}\item 
+uint8\+\_\+t \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk_af3f1b130fc2bb07208744187401b767d}{Get\+Voxel}} (int x, int y, int z) const
+\item 
+uint8\+\_\+t \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk_adcf20cb7f9ff240f6ba41566135c10f9}{Get\+Flags}} (int x, int y, int z) const
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+uint32\+\_\+t \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk_a46eadc6b6b3fe5e7776f28c6431fa280}{voxel\+IDs}} \mbox{[}8192\mbox{]}
+\item 
+uint32\+\_\+t \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk_acf44e3d69151bbbd6ca5c79731d26ad1}{voxel\+Flags}} \mbox{[}2048\mbox{]}
+\item 
+uint32\+\_\+t \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk_a3a476557974e5091643ea78d52dd6bae}{hierarchy}} \mbox{[}16\mbox{]}
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+A single 32x32x32 voxel chunk (SoA Layout). 
+
+
+\begin{DoxyItemize}
+\item voxel\+IDs\+: 8 bits per voxel (Material Index). 32KB.
+\item voxel\+Flags\+: 2 bits per voxel (State flags). 8KB.
+\item hierarchy\+: 1 bit per 4x4x4 block (Occupancy). 64 Bytes. Total Size\+: \texorpdfstring{$\sim$}{\string~}40\+KB per chunk. 
+\end{DoxyItemize}
+
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{structvortex_1_1voxel_1_1Chunk_ad9b335b3326c5c4badfb983763a6c5a7}\label{structvortex_1_1voxel_1_1Chunk_ad9b335b3326c5c4badfb983763a6c5a7} 
+\index{vortex::voxel::Chunk@{vortex::voxel::Chunk}!Chunk@{Chunk}}
+\index{Chunk@{Chunk}!vortex::voxel::Chunk@{vortex::voxel::Chunk}}
+\doxysubsubsection{\texorpdfstring{Chunk()}{Chunk()}}
+{\footnotesize\ttfamily vortex\+::voxel\+::\+Chunk\+::\+Chunk (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{structvortex_1_1voxel_1_1Chunk_a090c1271a52d7308d36e802fa3591ba6}\label{structvortex_1_1voxel_1_1Chunk_a090c1271a52d7308d36e802fa3591ba6} 
+\index{vortex::voxel::Chunk@{vortex::voxel::Chunk}!Clear@{Clear}}
+\index{Clear@{Clear}!vortex::voxel::Chunk@{vortex::voxel::Chunk}}
+\doxysubsubsection{\texorpdfstring{Clear()}{Clear()}}
+{\footnotesize\ttfamily void vortex\+::voxel\+::\+Chunk\+::\+Clear (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{structvortex_1_1voxel_1_1Chunk_adcf20cb7f9ff240f6ba41566135c10f9}\label{structvortex_1_1voxel_1_1Chunk_adcf20cb7f9ff240f6ba41566135c10f9} 
+\index{vortex::voxel::Chunk@{vortex::voxel::Chunk}!GetFlags@{GetFlags}}
+\index{GetFlags@{GetFlags}!vortex::voxel::Chunk@{vortex::voxel::Chunk}}
+\doxysubsubsection{\texorpdfstring{GetFlags()}{GetFlags()}}
+{\footnotesize\ttfamily uint8\+\_\+t vortex\+::voxel\+::\+Chunk\+::\+Get\+Flags (\begin{DoxyParamCaption}\item[{int}]{x,  }\item[{int}]{y,  }\item[{int}]{z }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{structvortex_1_1voxel_1_1Chunk_af3f1b130fc2bb07208744187401b767d}\label{structvortex_1_1voxel_1_1Chunk_af3f1b130fc2bb07208744187401b767d} 
+\index{vortex::voxel::Chunk@{vortex::voxel::Chunk}!GetVoxel@{GetVoxel}}
+\index{GetVoxel@{GetVoxel}!vortex::voxel::Chunk@{vortex::voxel::Chunk}}
+\doxysubsubsection{\texorpdfstring{GetVoxel()}{GetVoxel()}}
+{\footnotesize\ttfamily uint8\+\_\+t vortex\+::voxel\+::\+Chunk\+::\+Get\+Voxel (\begin{DoxyParamCaption}\item[{int}]{x,  }\item[{int}]{y,  }\item[{int}]{z }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{structvortex_1_1voxel_1_1Chunk_ae7d5bd238827c32bcc78c6125ad24781}\label{structvortex_1_1voxel_1_1Chunk_ae7d5bd238827c32bcc78c6125ad24781} 
+\index{vortex::voxel::Chunk@{vortex::voxel::Chunk}!SetVoxel@{SetVoxel}}
+\index{SetVoxel@{SetVoxel}!vortex::voxel::Chunk@{vortex::voxel::Chunk}}
+\doxysubsubsection{\texorpdfstring{SetVoxel()}{SetVoxel()}}
+{\footnotesize\ttfamily void vortex\+::voxel\+::\+Chunk\+::\+Set\+Voxel (\begin{DoxyParamCaption}\item[{int}]{x,  }\item[{int}]{y,  }\item[{int}]{z,  }\item[{uint8\+\_\+t}]{id,  }\item[{uint8\+\_\+t}]{flags = {\ttfamily 0} }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Sets a voxel\textquotesingle{}s material and flags. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em flags} & Optional 2-\/bit flag (0-\/3). \\
+\hline
+\end{DoxyParams}
+
+
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structvortex_1_1voxel_1_1Chunk_a3a476557974e5091643ea78d52dd6bae}\label{structvortex_1_1voxel_1_1Chunk_a3a476557974e5091643ea78d52dd6bae} 
+\index{vortex::voxel::Chunk@{vortex::voxel::Chunk}!hierarchy@{hierarchy}}
+\index{hierarchy@{hierarchy}!vortex::voxel::Chunk@{vortex::voxel::Chunk}}
+\doxysubsubsection{\texorpdfstring{hierarchy}{hierarchy}}
+{\footnotesize\ttfamily uint32\+\_\+t vortex\+::voxel\+::\+Chunk\+::hierarchy\mbox{[}16\mbox{]}}
+
+\Hypertarget{structvortex_1_1voxel_1_1Chunk_acf44e3d69151bbbd6ca5c79731d26ad1}\label{structvortex_1_1voxel_1_1Chunk_acf44e3d69151bbbd6ca5c79731d26ad1} 
+\index{vortex::voxel::Chunk@{vortex::voxel::Chunk}!voxelFlags@{voxelFlags}}
+\index{voxelFlags@{voxelFlags}!vortex::voxel::Chunk@{vortex::voxel::Chunk}}
+\doxysubsubsection{\texorpdfstring{voxelFlags}{voxelFlags}}
+{\footnotesize\ttfamily uint32\+\_\+t vortex\+::voxel\+::\+Chunk\+::voxel\+Flags\mbox{[}2048\mbox{]}}
+
+\Hypertarget{structvortex_1_1voxel_1_1Chunk_a46eadc6b6b3fe5e7776f28c6431fa280}\label{structvortex_1_1voxel_1_1Chunk_a46eadc6b6b3fe5e7776f28c6431fa280} 
+\index{vortex::voxel::Chunk@{vortex::voxel::Chunk}!voxelIDs@{voxelIDs}}
+\index{voxelIDs@{voxelIDs}!vortex::voxel::Chunk@{vortex::voxel::Chunk}}
+\doxysubsubsection{\texorpdfstring{voxelIDs}{voxelIDs}}
+{\footnotesize\ttfamily uint32\+\_\+t vortex\+::voxel\+::\+Chunk\+::voxel\+IDs\mbox{[}8192\mbox{]}}
+
+
+
+The documentation for this struct was generated from the following file\+:\begin{DoxyCompactItemize}
+\item 
+src/voxel/\mbox{\hyperlink{Chunk_8cppm}{Chunk.\+cppm}}\end{DoxyCompactItemize}

@@ -1,0 +1,60 @@
+\doxysection{vortex\+::graphics\+::Shader\+Compiler Class Reference}
+\hypertarget{classvortex_1_1graphics_1_1ShaderCompiler}{}\label{classvortex_1_1graphics_1_1ShaderCompiler}\index{vortex::graphics::ShaderCompiler@{vortex::graphics::ShaderCompiler}}
+
+
+Compiles GLSL code to SPIR-\/V at runtime.  
+
+
+\doxysubsubsection*{Static Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+static void \mbox{\hyperlink{classvortex_1_1graphics_1_1ShaderCompiler_af12e9e01eaf44e66f141680e235c9a8e}{Init}} ()
+\item 
+static void \mbox{\hyperlink{classvortex_1_1graphics_1_1ShaderCompiler_ac05c66259a31103ff8d34c8f2445a58b}{Shutdown}} ()
+\item 
+static std\+::vector$<$ uint32\+\_\+t $>$ \mbox{\hyperlink{classvortex_1_1graphics_1_1ShaderCompiler_a891d1cf5b79e27966eefa13a3cc478ea}{Compile}} (\mbox{\hyperlink{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664}{Shader\+Stage}} stage, const std\+::string \&source)
+\begin{DoxyCompactList}\small\item\em Compiles GLSL source code into SPIR-\/V binary. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Compiles GLSL code to SPIR-\/V at runtime. 
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1ShaderCompiler_a891d1cf5b79e27966eefa13a3cc478ea}\label{classvortex_1_1graphics_1_1ShaderCompiler_a891d1cf5b79e27966eefa13a3cc478ea} 
+\index{vortex::graphics::ShaderCompiler@{vortex::graphics::ShaderCompiler}!Compile@{Compile}}
+\index{Compile@{Compile}!vortex::graphics::ShaderCompiler@{vortex::graphics::ShaderCompiler}}
+\doxysubsubsection{\texorpdfstring{Compile()}{Compile()}}
+{\footnotesize\ttfamily std\+::vector$<$ uint32\+\_\+t $>$ vortex\+::graphics\+::\+Shader\+Compiler\+::\+Compile (\begin{DoxyParamCaption}\item[{\mbox{\hyperlink{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664}{Shader\+Stage}}}]{stage,  }\item[{const std\+::string \&}]{source }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [static]}}
+
+
+
+Compiles GLSL source code into SPIR-\/V binary. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em stage} & The shader stage (Compute, Vertex, etc.). \\
+\hline
+{\em source} & The GLSL source code string. \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+A vector of uint32\+\_\+t containing SPIR-\/V bytecode. 
+\end{DoxyReturn}
+\Hypertarget{classvortex_1_1graphics_1_1ShaderCompiler_af12e9e01eaf44e66f141680e235c9a8e}\label{classvortex_1_1graphics_1_1ShaderCompiler_af12e9e01eaf44e66f141680e235c9a8e} 
+\index{vortex::graphics::ShaderCompiler@{vortex::graphics::ShaderCompiler}!Init@{Init}}
+\index{Init@{Init}!vortex::graphics::ShaderCompiler@{vortex::graphics::ShaderCompiler}}
+\doxysubsubsection{\texorpdfstring{Init()}{Init()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Shader\+Compiler\+::\+Init (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [static]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1ShaderCompiler_ac05c66259a31103ff8d34c8f2445a58b}\label{classvortex_1_1graphics_1_1ShaderCompiler_ac05c66259a31103ff8d34c8f2445a58b} 
+\index{vortex::graphics::ShaderCompiler@{vortex::graphics::ShaderCompiler}!Shutdown@{Shutdown}}
+\index{Shutdown@{Shutdown}!vortex::graphics::ShaderCompiler@{vortex::graphics::ShaderCompiler}}
+\doxysubsubsection{\texorpdfstring{Shutdown()}{Shutdown()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Shader\+Compiler\+::\+Shutdown (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [static]}}
+
+
+
+The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}
+\item 
+src/graphics/\mbox{\hyperlink{Shader_8cppm}{Shader.\+cppm}}\item 
+src/graphics/internal/\mbox{\hyperlink{ShaderCompiler_8cpp}{Shader\+Compiler.\+cpp}}\end{DoxyCompactItemize}

@@ -1,0 +1,40 @@
+\doxysection{src/voxel/\+Material.cppm File Reference}
+\hypertarget{Material_8cppm}{}\label{Material_8cppm}\index{src/voxel/Material.cppm@{src/voxel/Material.cppm}}
+{\ttfamily \#include $<$glm/glm.\+hpp$>$}\newline
+{\ttfamily \#include $<$cstdint$>$}\newline
+Include dependency graph for Material.\+cppm\+:
+% FIG 0
+\doxysubsubsection*{Classes}
+\begin{DoxyCompactItemize}
+\item 
+struct \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{vortex\+::voxel\+::\+Physical\+Material}}
+\begin{DoxyCompactList}\small\item\em Represents a single material definition for SHRED physics and rendering. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Namespaces}
+\begin{DoxyCompactItemize}
+\item 
+namespace \mbox{\hyperlink{namespacevortex}{vortex}}
+\item 
+namespace \mbox{\hyperlink{namespacevortex_1_1voxel}{vortex\+::voxel}}
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Enumerations}
+\begin{DoxyCompactItemize}
+\item 
+enum class \mbox{\hyperlink{namespacevortex_1_1voxel_a88673e8a0c64aecd6a8eedc7e31f970a}{vortex\+::voxel\+::\+Material\+Flags}} \+: uint32\+\_\+t \{ \newline
+\mbox{\hyperlink{namespacevortex_1_1voxel_a88673e8a0c64aecd6a8eedc7e31f970aa6adf97f83acf6453d4a6a4b1070f3754}{vortex\+::voxel\+::\+None}} = 0
+, \newline
+\mbox{\hyperlink{namespacevortex_1_1voxel_a88673e8a0c64aecd6a8eedc7e31f970aa84a8921b25f505d0d2077aeb5db4bc16}{vortex\+::voxel\+::\+Static}} = 1 \texorpdfstring{$<$}{<}\texorpdfstring{$<$}{<} 0
+, \newline
+\mbox{\hyperlink{namespacevortex_1_1voxel_a88673e8a0c64aecd6a8eedc7e31f970aa092f20920cbb55b8f5679b2b1f99d2ea}{vortex\+::voxel\+::\+Flammable}} = 1 \texorpdfstring{$<$}{<}\texorpdfstring{$<$}{<} 1
+, \newline
+\mbox{\hyperlink{namespacevortex_1_1voxel_a88673e8a0c64aecd6a8eedc7e31f970aa8a1b257a56f9faecf0ee70004ab5c7d3}{vortex\+::voxel\+::\+Conductive}} = 1 \texorpdfstring{$<$}{<}\texorpdfstring{$<$}{<} 2
+, \newline
+\mbox{\hyperlink{namespacevortex_1_1voxel_a88673e8a0c64aecd6a8eedc7e31f970aa5635bf596d97c1c2e7afe481ed060774}{vortex\+::voxel\+::\+Liquid}} = 1 \texorpdfstring{$<$}{<}\texorpdfstring{$<$}{<} 3
+, \newline
+\mbox{\hyperlink{namespacevortex_1_1voxel_a88673e8a0c64aecd6a8eedc7e31f970aa49c0bca4593ff6e2e8a52d3cd726df59}{vortex\+::voxel\+::\+Glowing}} = 1 \texorpdfstring{$<$}{<}\texorpdfstring{$<$}{<} 4
+ \}
+\begin{DoxyCompactList}\small\item\em Bit flags defining material behavior. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Functions}
+\begin{DoxyCompactItemize}
+\item 
+constexpr uint32\+\_\+t \mbox{\hyperlink{namespacevortex_1_1voxel_ae40dbb4c8f787f57def4025d15ef2c1b}{vortex\+::voxel\+::operator\texorpdfstring{$\vert$}{|}}} (\mbox{\hyperlink{namespacevortex_1_1voxel_a88673e8a0c64aecd6a8eedc7e31f970a}{Material\+Flags}} a, \mbox{\hyperlink{namespacevortex_1_1voxel_a88673e8a0c64aecd6a8eedc7e31f970a}{Material\+Flags}} b)
+\begin{DoxyCompactList}\small\item\em Helper to combine flags. \end{DoxyCompactList}\end{DoxyCompactItemize}

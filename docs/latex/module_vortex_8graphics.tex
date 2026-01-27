@@ -1,0 +1,139 @@
+\doxysection{vortex.\+graphics Module Reference}
+\hypertarget{module_vortex_8graphics}{}\label{module_vortex_8graphics}\index{vortex.graphics Module Reference@{vortex.graphics Module Reference}}
+\doxysubsubsection*{Exported Modules}
+\begin{DoxyCompactItemize}
+\item 
+module \mbox{\hyperlink{module_vortex_8voxel}{vortex.\+voxel}}
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Classes}
+\begin{DoxyCompactItemize}
+\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext}{vortex\+::graphics\+::\+Graphics\+Context}}
+\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1Window}{vortex\+::graphics\+::\+Window}}
+\begin{DoxyCompactList}\small\item\em Manages the GLFW window and Vulkan Surface creation. \end{DoxyCompactList}\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1RenderResources}{vortex\+::graphics\+::\+Render\+Resources}}
+\begin{DoxyCompactList}\small\item\em Manages offscreen render targets (Color, Depth, Velocity, TAA History). \end{DoxyCompactList}\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain}{vortex\+::graphics\+::\+Swapchain}}
+\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay}{vortex\+::graphics\+::\+UIOverlay}}
+\begin{DoxyCompactList}\small\item\em Handles Im\+Gui integration. \end{DoxyCompactList}\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1TAAPipeline}{vortex\+::graphics\+::\+TAAPipeline}}
+\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1FXAAPipeline}{vortex\+::graphics\+::\+FXAAPipeline}}
+\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext}{vortex\+::graphics\+::\+Vulkan\+Context}}
+\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1ShaderCompiler}{vortex\+::graphics\+::\+Shader\+Compiler}}
+\begin{DoxyCompactList}\small\item\em Compiles GLSL code to SPIR-\/V at runtime. \end{DoxyCompactList}\item 
+struct \mbox{\hyperlink{structvortex_1_1graphics_1_1CameraUBO}{vortex\+::graphics\+::\+Camera\+UBO}}
+\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline}{vortex\+::graphics\+::\+Raster\+Pipeline}}
+\item 
+struct \mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{vortex\+::graphics\+::\+Camera}}
+\item 
+struct \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{vortex\+::graphics\+::\+Scene\+Object}}
+\begin{DoxyCompactList}\small\item\em High-\/level CPU representation of an object. \end{DoxyCompactList}\item 
+struct \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneMaterial}{vortex\+::graphics\+::\+Scene\+Material}}
+\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager}{vortex\+::graphics\+::\+Scene\+Manager}}
+\begin{DoxyCompactList}\small\item\em Handles scene data, culling, and GPU buffer updates. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Enumerations}
+\begin{DoxyCompactItemize}
+\item 
+enum class \mbox{\hyperlink{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895ee}{vortex\+::graphics\+::\+Anti\+Aliasing\+Mode}} \{ \newline
+\mbox{\hyperlink{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895eea6adf97f83acf6453d4a6a4b1070f3754}{None}}
+, \newline
+\mbox{\hyperlink{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895eeaaa9ebfd80da9bf23f763a63c052a452a}{FXAA}}
+, \newline
+\mbox{\hyperlink{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc88ff895eea88a337f4479ce258e968e00de1de7483}{TAA}}
+ \}
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Functions}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_aa9c5047126dfbe560fd8c2292c8cac15}{Graphics\+Context}} ()
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a7cf8573d5a3de42b64618bdf9cb4493b}{\texorpdfstring{$\sim$}{\string~}\+Graphics\+Context}} ()
+\item 
+bool \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a81fffc7c692b29db7ed68c78162a1141}{Initialize}} (const std\+::string \&title, uint32\+\_\+t width, uint32\+\_\+t height)
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a1d14ea5ce84150c7999fce6ca9caeab3}{Shutdown}} ()
+\item 
+bool \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_aba9f48112ca61e20c7e6540cb4aae21a}{Begin\+Frame}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a6e1484fcb4384d824fae4e525654c81e}{Begin\+Recording}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_aedd13eaed9f1a210b6a954304e388dc5}{Record\+Scene}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a467c3863c8f5f6af03ff4b4f56b4bd19}{Record\+AA}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_ab813e567d0f2ef58e2f93c1d0383205e}{End\+Frame}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_acc66a19ac90a8c0ba26c83810b582f02}{Upload\+Camera}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_aefa4bd98c389208c98543a511b39cab7}{Upload\+Scene}} (const std\+::vector$<$ Scene\+Object $>$ \&objects, const std\+::vector$<$ Scene\+Material $>$ \&materials, const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{vortex\+::voxel\+::\+Chunk}} $>$ \&chunks)
+\item 
+Scene\+Manager \& \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a31fc52b0df2b087d94e53bc6e2ba8fae}{Get\+Scene\+Manager}} ()
+\item 
+Camera \& \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a0f514549570dcec1f034aa80b923e09c}{Get\+Camera}} ()
+\item 
+GLFWwindow \texorpdfstring{$\ast$}{*} \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_ae05f4677697f57d72303b75775f819fa}{Get\+Window}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_af17abda7ed5b033a3c46d60dc4f4347d}{Set\+AAMode}} (Anti\+Aliasing\+Mode mode)
+\item 
+Anti\+Aliasing\+Mode \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_ab8ecfc71e1636bcd68cacd05c34a22bb}{Get\+AAMode}} () const
+\item 
+float \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a01e1aed6635800ed9367d3e2f527996c}{Get\+Scene\+GPUTime}} () const
+\begin{DoxyCompactList}\small\item\em Gets the GPU execution time for the Geometry pass in ms. \end{DoxyCompactList}\item 
+float \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_addd5311452e0c6a29b1d22874e73e76f}{Get\+AAGPUTime}} () const
+\begin{DoxyCompactList}\small\item\em Gets the GPU execution time for the AA pass in ms. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Files}
+\begin{DoxyCompactItemize}
+\item 
+file src/graphics/\mbox{\hyperlink{Graphics_8cppm}{Graphics.\+cppm}}
+\item 
+file src/graphics/\mbox{\hyperlink{CameraStruct_8cppm}{Camera\+Struct.\+cppm}}
+\item 
+file src/graphics/\mbox{\hyperlink{Context_8cppm}{Context.\+cppm}}
+\item 
+file src/graphics/pipelines/\mbox{\hyperlink{FXAAPipeline_8cppm}{FXAAPipeline.\+cppm}}
+\item 
+file src/graphics/pipelines/\mbox{\hyperlink{RasterPipeline_8cppm}{Raster\+Pipeline.\+cppm}}
+\item 
+file src/graphics/\mbox{\hyperlink{RenderResources_8cppm}{Render\+Resources.\+cppm}}
+\item 
+file src/graphics/\mbox{\hyperlink{SceneManager_8cppm}{Scene\+Manager.\+cppm}}
+\item 
+file src/graphics/\mbox{\hyperlink{Shader_8cppm}{Shader.\+cppm}}
+\item 
+file src/graphics/\mbox{\hyperlink{Swapchain_8cppm}{Swapchain.\+cppm}}
+\item 
+file src/graphics/pipelines/\mbox{\hyperlink{TAAPipeline_8cppm}{TAAPipeline.\+cppm}}
+\item 
+file src/graphics/\mbox{\hyperlink{UI_8cppm}{UI.\+cppm}}
+\item 
+file src/graphics/\mbox{\hyperlink{Window_8cppm}{Window.\+cppm}}
+\item 
+file src/graphics/internal/\mbox{\hyperlink{Context_8cpp}{Context.\+cpp}}
+\item 
+file src/graphics/pipelines/internal/\mbox{\hyperlink{FXAAPipeline_8cpp}{FXAAPipeline.\+cpp}}
+\item 
+file src/graphics/internal/\mbox{\hyperlink{Graphics_8cpp}{Graphics.\+cpp}}
+\item 
+file src/graphics/pipelines/internal/\mbox{\hyperlink{RasterPipeline_8cpp}{Raster\+Pipeline.\+cpp}}
+\item 
+file src/graphics/internal/\mbox{\hyperlink{RenderResources_8cpp}{Render\+Resources.\+cpp}}
+\item 
+file src/graphics/internal/\mbox{\hyperlink{SceneManager_8cpp}{Scene\+Manager.\+cpp}}
+\item 
+file src/graphics/internal/\mbox{\hyperlink{ShaderCompiler_8cpp}{Shader\+Compiler.\+cpp}}
+\item 
+file src/graphics/internal/\mbox{\hyperlink{Swapchain_8cpp}{Swapchain.\+cpp}}
+\item 
+file src/graphics/pipelines/internal/\mbox{\hyperlink{TAAPipeline_8cpp}{TAAPipeline.\+cpp}}
+\item 
+file src/graphics/internal/\mbox{\hyperlink{UI_8cpp}{UI.\+cpp}}
+\item 
+file src/graphics/internal/\mbox{\hyperlink{Window_8cpp}{Window.\+cpp}}
+\end{DoxyCompactItemize}

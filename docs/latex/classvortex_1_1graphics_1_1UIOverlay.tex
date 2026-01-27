@@ -1,0 +1,81 @@
+\doxysection{vortex\+::graphics\+::UIOverlay Class Reference}
+\hypertarget{classvortex_1_1graphics_1_1UIOverlay}{}\label{classvortex_1_1graphics_1_1UIOverlay}\index{vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}}
+
+
+Handles Im\+Gui integration.  
+
+
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay_a80418af558156ba53d64774d05de53bb}{UIOverlay}} ()=default
+\item 
+\mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay_a228a7c2f5b0ecbdf5971d87e3fb0a25f}{\texorpdfstring{$\sim$}{\string~}\+UIOverlay}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay_ad227f106bf5de33065ef894526e48ed9}{Initialize}} (\mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext}{Vulkan\+Context}} \&context, \mbox{\hyperlink{classvortex_1_1graphics_1_1Window}{Window}} \&window, Vk\+Format swapchain\+Format, Vk\+Extent2D extent, const std\+::vector$<$ Vk\+Image\+View $>$ \&views)
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay_aa4ba28d92ab7dd220fa05dd43ebc9e73}{Shutdown}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay_a05f3efc7020623aa4cc8f1ca82ae79ae}{On\+Resize}} (Vk\+Extent2D extent, const std\+::vector$<$ Vk\+Image\+View $>$ \&views)
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay_ae6663adf0fc4c1f16d6a200bc025d58d}{Begin\+Frame}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay_aff1606d13d25df27fb0f98237a0b7845}{Render}} (Vk\+Command\+Buffer cmd, uint32\+\_\+t image\+Index)
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Handles Im\+Gui integration. 
+
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1UIOverlay_a80418af558156ba53d64774d05de53bb}\label{classvortex_1_1graphics_1_1UIOverlay_a80418af558156ba53d64774d05de53bb} 
+\index{vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}!UIOverlay@{UIOverlay}}
+\index{UIOverlay@{UIOverlay}!vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}}
+\doxysubsubsection{\texorpdfstring{UIOverlay()}{UIOverlay()}}
+{\footnotesize\ttfamily vortex\+::graphics\+::\+UIOverlay\+::\+UIOverlay (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [default]}}
+
+\Hypertarget{classvortex_1_1graphics_1_1UIOverlay_a228a7c2f5b0ecbdf5971d87e3fb0a25f}\label{classvortex_1_1graphics_1_1UIOverlay_a228a7c2f5b0ecbdf5971d87e3fb0a25f} 
+\index{vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}!````~UIOverlay@{\texorpdfstring{$\sim$}{\string~}UIOverlay}}
+\index{````~UIOverlay@{\texorpdfstring{$\sim$}{\string~}UIOverlay}!vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}}
+\doxysubsubsection{\texorpdfstring{\texorpdfstring{$\sim$}{\string~}UIOverlay()}{\string~UIOverlay()}}
+{\footnotesize\ttfamily vortex\+::graphics\+::\+UIOverlay\+::\texorpdfstring{$\sim$}{\string~}\+UIOverlay (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1graphics_1_1UIOverlay_ae6663adf0fc4c1f16d6a200bc025d58d}\label{classvortex_1_1graphics_1_1UIOverlay_ae6663adf0fc4c1f16d6a200bc025d58d} 
+\index{vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}!BeginFrame@{BeginFrame}}
+\index{BeginFrame@{BeginFrame}!vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}}
+\doxysubsubsection{\texorpdfstring{BeginFrame()}{BeginFrame()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+UIOverlay\+::\+Begin\+Frame (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1UIOverlay_ad227f106bf5de33065ef894526e48ed9}\label{classvortex_1_1graphics_1_1UIOverlay_ad227f106bf5de33065ef894526e48ed9} 
+\index{vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}!Initialize@{Initialize}}
+\index{Initialize@{Initialize}!vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}}
+\doxysubsubsection{\texorpdfstring{Initialize()}{Initialize()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+UIOverlay\+::\+Initialize (\begin{DoxyParamCaption}\item[{\mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext}{Vulkan\+Context}} \&}]{context,  }\item[{\mbox{\hyperlink{classvortex_1_1graphics_1_1Window}{Window}} \&}]{window,  }\item[{Vk\+Format}]{swapchain\+Format,  }\item[{Vk\+Extent2D}]{extent,  }\item[{const std\+::vector$<$ Vk\+Image\+View $>$ \&}]{views }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1UIOverlay_a05f3efc7020623aa4cc8f1ca82ae79ae}\label{classvortex_1_1graphics_1_1UIOverlay_a05f3efc7020623aa4cc8f1ca82ae79ae} 
+\index{vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}!OnResize@{OnResize}}
+\index{OnResize@{OnResize}!vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}}
+\doxysubsubsection{\texorpdfstring{OnResize()}{OnResize()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+UIOverlay\+::\+On\+Resize (\begin{DoxyParamCaption}\item[{Vk\+Extent2D}]{extent,  }\item[{const std\+::vector$<$ Vk\+Image\+View $>$ \&}]{views }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1UIOverlay_aff1606d13d25df27fb0f98237a0b7845}\label{classvortex_1_1graphics_1_1UIOverlay_aff1606d13d25df27fb0f98237a0b7845} 
+\index{vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}!Render@{Render}}
+\index{Render@{Render}!vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}}
+\doxysubsubsection{\texorpdfstring{Render()}{Render()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+UIOverlay\+::\+Render (\begin{DoxyParamCaption}\item[{Vk\+Command\+Buffer}]{cmd,  }\item[{uint32\+\_\+t}]{image\+Index }\end{DoxyParamCaption})}
+
+\Hypertarget{classvortex_1_1graphics_1_1UIOverlay_aa4ba28d92ab7dd220fa05dd43ebc9e73}\label{classvortex_1_1graphics_1_1UIOverlay_aa4ba28d92ab7dd220fa05dd43ebc9e73} 
+\index{vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}!Shutdown@{Shutdown}}
+\index{Shutdown@{Shutdown}!vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}}
+\doxysubsubsection{\texorpdfstring{Shutdown()}{Shutdown()}}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+UIOverlay\+::\+Shutdown (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+
+
+The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}
+\item 
+src/graphics/\mbox{\hyperlink{UI_8cppm}{UI.\+cppm}}\item 
+src/graphics/internal/\mbox{\hyperlink{UI_8cpp}{UI.\+cpp}}\end{DoxyCompactItemize}

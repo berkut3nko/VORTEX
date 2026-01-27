@@ -1,0 +1,84 @@
+\doxysection{vortex\+::core\+::Camera\+Controller Class Reference}
+\hypertarget{classvortex_1_1core_1_1CameraController}{}\label{classvortex_1_1core_1_1CameraController}\index{vortex::core::CameraController@{vortex::core::CameraController}}
+
+
+Handles camera movement and rotation based on input.  
+
+
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{classvortex_1_1core_1_1CameraController_a615ae56d31e59b3327754cd744e9ff58}{Camera\+Controller}} ()=default
+\item 
+void \mbox{\hyperlink{classvortex_1_1core_1_1CameraController_a2190d273c5dfee1766bb40c6522fe4d3}{Update}} (GLFWwindow \texorpdfstring{$\ast$}{*}window, \mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{graphics\+::\+Camera}} \&camera, float delta\+Time)
+\begin{DoxyCompactList}\small\item\em Updates camera position and rotation. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+float \mbox{\hyperlink{classvortex_1_1core_1_1CameraController_a9e479d1849c660461e3b393f4e9a499e}{movement\+Speed}} = 5.\+0f
+\item 
+float \mbox{\hyperlink{classvortex_1_1core_1_1CameraController_af98557c4f8ead49f167e04015fc4943d}{mouse\+Sensitivity}} = 0.\+1f
+\item 
+float \mbox{\hyperlink{classvortex_1_1core_1_1CameraController_a237e9148ada7589e47044bc7c882782c}{sprint\+Multiplier}} = 4.\+0f
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Handles camera movement and rotation based on input. 
+
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{classvortex_1_1core_1_1CameraController_a615ae56d31e59b3327754cd744e9ff58}\label{classvortex_1_1core_1_1CameraController_a615ae56d31e59b3327754cd744e9ff58} 
+\index{vortex::core::CameraController@{vortex::core::CameraController}!CameraController@{CameraController}}
+\index{CameraController@{CameraController}!vortex::core::CameraController@{vortex::core::CameraController}}
+\doxysubsubsection{\texorpdfstring{CameraController()}{CameraController()}}
+{\footnotesize\ttfamily vortex\+::core\+::\+Camera\+Controller\+::\+Camera\+Controller (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [default]}}
+
+
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1core_1_1CameraController_a2190d273c5dfee1766bb40c6522fe4d3}\label{classvortex_1_1core_1_1CameraController_a2190d273c5dfee1766bb40c6522fe4d3} 
+\index{vortex::core::CameraController@{vortex::core::CameraController}!Update@{Update}}
+\index{Update@{Update}!vortex::core::CameraController@{vortex::core::CameraController}}
+\doxysubsubsection{\texorpdfstring{Update()}{Update()}}
+{\footnotesize\ttfamily void vortex\+::core\+::\+Camera\+Controller\+::\+Update (\begin{DoxyParamCaption}\item[{GLFWwindow \texorpdfstring{$\ast$}{*}}]{window,  }\item[{\mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{graphics\+::\+Camera}} \&}]{camera,  }\item[{float}]{delta\+Time }\end{DoxyParamCaption})}
+
+
+
+Updates camera position and rotation. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em window} & Raw GLFW window handle for input polling. \\
+\hline
+{\em camera} & Reference to the camera object to modify. \\
+\hline
+{\em delta\+Time} & Time elapsed since last frame. \\
+\hline
+\end{DoxyParams}
+
+
+\doxysubsection{Member Data Documentation}
+\Hypertarget{classvortex_1_1core_1_1CameraController_af98557c4f8ead49f167e04015fc4943d}\label{classvortex_1_1core_1_1CameraController_af98557c4f8ead49f167e04015fc4943d} 
+\index{vortex::core::CameraController@{vortex::core::CameraController}!mouseSensitivity@{mouseSensitivity}}
+\index{mouseSensitivity@{mouseSensitivity}!vortex::core::CameraController@{vortex::core::CameraController}}
+\doxysubsubsection{\texorpdfstring{mouseSensitivity}{mouseSensitivity}}
+{\footnotesize\ttfamily float vortex\+::core\+::\+Camera\+Controller\+::mouse\+Sensitivity = 0.\+1f}
+
+\Hypertarget{classvortex_1_1core_1_1CameraController_a9e479d1849c660461e3b393f4e9a499e}\label{classvortex_1_1core_1_1CameraController_a9e479d1849c660461e3b393f4e9a499e} 
+\index{vortex::core::CameraController@{vortex::core::CameraController}!movementSpeed@{movementSpeed}}
+\index{movementSpeed@{movementSpeed}!vortex::core::CameraController@{vortex::core::CameraController}}
+\doxysubsubsection{\texorpdfstring{movementSpeed}{movementSpeed}}
+{\footnotesize\ttfamily float vortex\+::core\+::\+Camera\+Controller\+::movement\+Speed = 5.\+0f}
+
+\Hypertarget{classvortex_1_1core_1_1CameraController_a237e9148ada7589e47044bc7c882782c}\label{classvortex_1_1core_1_1CameraController_a237e9148ada7589e47044bc7c882782c} 
+\index{vortex::core::CameraController@{vortex::core::CameraController}!sprintMultiplier@{sprintMultiplier}}
+\index{sprintMultiplier@{sprintMultiplier}!vortex::core::CameraController@{vortex::core::CameraController}}
+\doxysubsubsection{\texorpdfstring{sprintMultiplier}{sprintMultiplier}}
+{\footnotesize\ttfamily float vortex\+::core\+::\+Camera\+Controller\+::sprint\+Multiplier = 4.\+0f}
+
+
+
+The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}
+\item 
+src/core/\mbox{\hyperlink{CameraController_8cppm}{Camera\+Controller.\+cppm}}\item 
+src/core/internal/\mbox{\hyperlink{CameraController_8cpp}{Camera\+Controller.\+cpp}}\end{DoxyCompactItemize}
