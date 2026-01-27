@@ -8,7 +8,6 @@ module;
 export module vortex.core;
 
 export import vortex.graphics;
-// Explicitly import voxel module to ensure Chunk is visible in UploadScene signature
 import vortex.voxel; 
 
 export import :camera;    
@@ -27,10 +26,12 @@ namespace vortex {
         
         void Shutdown();
         
-        // Proxy methods
+        void AddEntity(std::shared_ptr<voxel::VoxelEntity> entity);
+
+        // Updated to use PhysicalMaterial to match GraphicsContext
         void UploadScene(
             const std::vector<graphics::SceneObject>& objects, 
-            const std::vector<graphics::SceneMaterial>& materials,
+            const std::vector<voxel::PhysicalMaterial>& materials,
             const std::vector<voxel::Chunk>& chunks);
             
         graphics::GraphicsContext& GetGraphics();
