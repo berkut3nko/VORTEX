@@ -12,22 +12,14 @@ import vortex.log;
 import vortex.memory;
 import vortex.voxel;
 import :render_resources;
-<<<<<<< Updated upstream
-import :scene_manager;
-=======
 import :scenemanager; // Correct partition name
->>>>>>> Stashed changes
 import :taapipeline; 
 import :fxaapipeline;
 
 namespace vortex::graphics {
 
     constexpr int FRAMES_IN_FLIGHT = 2;
-<<<<<<< Updated upstream
-    constexpr int QUERY_COUNT = 4; // 2 timestamps for Geometry, 2 for AA
-=======
     constexpr int QUERY_COUNT = 4;
->>>>>>> Stashed changes
 
     struct GraphicsInternal {
         Window window;
@@ -35,10 +27,6 @@ namespace vortex::graphics {
         Swapchain swapchain;
         UIOverlay ui;
         
-<<<<<<< Updated upstream
-        // Modules
-=======
->>>>>>> Stashed changes
         RenderResources resources;
         SceneManager sceneManager;
         
@@ -46,26 +34,17 @@ namespace vortex::graphics {
         TAAPipeline taaPipeline; 
         FXAAPipeline fxaaPipeline;
 
-        // Synchronization
         VkCommandPool commandPool{VK_NULL_HANDLE};
         std::vector<VkCommandBuffer> commandBuffers;
         std::vector<VkSemaphore> imageAvailableSemaphores;
         std::vector<VkSemaphore> renderFinishedSemaphores;
         std::vector<VkFence> inFlightFences;
 
-<<<<<<< Updated upstream
-        // Profiling
-=======
->>>>>>> Stashed changes
         VkQueryPool queryPools[FRAMES_IN_FLIGHT];
         float timestampPeriod = 1.0f;
         float lastSceneTime = 0.0f;
         float lastAATime = 0.0f;
 
-<<<<<<< Updated upstream
-        // State
-=======
->>>>>>> Stashed changes
         uint32_t currentFrame = 0;
         uint32_t imageIndex = 0;
         uint64_t frameCounter = 0;
@@ -75,30 +54,15 @@ namespace vortex::graphics {
         AntiAliasingMode currentAAMode = AntiAliasingMode::FXAA;
         
         VkSampler defaultSampler{VK_NULL_HANDLE};
-<<<<<<< Updated upstream
-
-        // Temporary storage for AA result to pass between RecordAA and EndFrame
-=======
->>>>>>> Stashed changes
         memory::AllocatedImage* currentFinalImage = nullptr; 
 
-        // --- Methods ---
         void InitSyncObjects();
         void InitQueries();
         
-<<<<<<< Updated upstream
-        // Render Passes
-=======
->>>>>>> Stashed changes
         void PassGeometry(VkCommandBuffer cmd, size_t visibleCount);
         void PassAA(VkCommandBuffer cmd, memory::AllocatedImage*& outImage);
         void PassBlit(VkCommandBuffer cmd, const memory::AllocatedImage* source);
         void PassUI(VkCommandBuffer cmd);
-<<<<<<< Updated upstream
-        
-        // Helpers
-=======
->>>>>>> Stashed changes
         void TransitionLayout(VkCommandBuffer cmd, VkImage img, VkImageLayout oldL, VkImageLayout newL);
     };
 
@@ -108,13 +72,11 @@ namespace vortex::graphics {
     bool GraphicsContext::Initialize(const std::string& title, uint32_t width, uint32_t height) {
         auto& i = *m_Internal;
         
-        // 1. Core Vulkan Init
         if (!i.window.Initialize(title, width, height)) return false;
         if (!i.context.InitInstance(title.c_str())) return false;
         if (!i.context.InitDevice(i.window.CreateSurface(i.context.GetInstance()))) return false;
         if (!i.swapchain.Initialize(i.context, i.window.CreateSurface(i.context.GetInstance()), width, height)) return false;
         
-        // 2. Command Pools
         VkCommandPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
         poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
         poolInfo.queueFamilyIndex = i.context.GetQueueFamily();
@@ -130,7 +92,6 @@ namespace vortex::graphics {
         i.InitSyncObjects();
         i.InitQueries();
 
-        // 3. Shared Resources
         VkSamplerCreateInfo samplerInfo{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
         samplerInfo.magFilter = VK_FILTER_LINEAR; samplerInfo.minFilter = VK_FILTER_LINEAR;
         samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
@@ -140,14 +101,8 @@ namespace vortex::graphics {
         vkCreateSampler(i.context.GetDevice(), &samplerInfo, nullptr, &i.defaultSampler);
 
         i.resources.Initialize(i.context.GetAllocator(), width, height);
-<<<<<<< Updated upstream
-        
-        // 4. Scene Management
-=======
->>>>>>> Stashed changes
         i.sceneManager.Initialize(i.context.GetAllocator());
 
-        // 5. Pipelines
         i.rasterPipeline.Initialize(i.context.GetDevice(), 
                                     VK_FORMAT_R8G8B8A8_UNORM,
                                     VK_FORMAT_R16G16_SFLOAT,
@@ -189,11 +144,7 @@ namespace vortex::graphics {
 
         for (int i = 0; i < FRAMES_IN_FLIGHT; i++) {
             if (vkCreateQueryPool(context.GetDevice(), &queryPoolInfo, nullptr, &queryPools[i]) != VK_SUCCESS) {
-<<<<<<< Updated upstream
-                Log::Error("Failed to create Query Pool for frame " + std::to_string(i));
-=======
                 Log::Error("Failed to create Query Pool " + std::to_string(i));
->>>>>>> Stashed changes
             }
         }
     }
@@ -217,28 +168,14 @@ namespace vortex::graphics {
 
         vkWaitForFences(i.context.GetDevice(), 1, &i.inFlightFences[i.currentFrame], VK_TRUE, UINT64_MAX);
 
-<<<<<<< Updated upstream
-        // --- Read Previous Frame Queries ---
-        // Guaranteed to be ready because Fence is signaled
-=======
->>>>>>> Stashed changes
         uint64_t buffer[QUERY_COUNT];
         VkResult res = vkGetQueryPoolResults(i.context.GetDevice(), i.queryPools[i.currentFrame], 0, QUERY_COUNT, 
                                              sizeof(buffer), buffer, sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
         
         if (res == VK_SUCCESS) {
-<<<<<<< Updated upstream
-            // Index 0: Start Scene, 1: End Scene
-            // Index 2: Start AA, 3: End AA
-            double sceneTicks = (double)(buffer[1] - buffer[0]);
-            double aaTicks = (double)(buffer[3] - buffer[2]);
-            
-            i.lastSceneTime = (float)(sceneTicks * i.timestampPeriod * 1e-6); // ns to ms
-=======
             double sceneTicks = (double)(buffer[1] - buffer[0]);
             double aaTicks = (double)(buffer[3] - buffer[2]);
             i.lastSceneTime = (float)(sceneTicks * i.timestampPeriod * 1e-6); 
->>>>>>> Stashed changes
             i.lastAATime = (float)(aaTicks * i.timestampPeriod * 1e-6);
         }
 
@@ -254,11 +191,6 @@ namespace vortex::graphics {
         auto& i = *m_Internal;
         VkCommandBuffer cmd = i.commandBuffers[i.currentFrame];
         vkResetCommandBuffer(cmd, 0);
-<<<<<<< Updated upstream
-        
-        // Reset Query Pool at start of recording
-=======
->>>>>>> Stashed changes
         vkCmdResetQueryPool(cmd, i.queryPools[i.currentFrame], 0, QUERY_COUNT);
 
         VkCommandBufferBeginInfo begin{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
@@ -269,48 +201,6 @@ namespace vortex::graphics {
         auto& i = *m_Internal;
         VkCommandBuffer cmd = i.commandBuffers[i.currentFrame];
 
-<<<<<<< Updated upstream
-        // 1. Scene Logic (Culling)
-        float aspect = (float)i.swapchain.GetExtent().width / (float)i.swapchain.GetExtent().height;
-        size_t visibleCount = i.sceneManager.CullAndUpload(i.camera, aspect);
-
-        // Record Timestamp START (Geometry)
-        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, i.queryPools[i.currentFrame], 0);
-
-        // 2. Geometry Pass
-        i.PassGeometry(cmd, visibleCount);
-
-        // Record Timestamp END (Geometry)
-        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, i.queryPools[i.currentFrame], 1);
-    }
-
-    void GraphicsContext::RecordAA() {
-        auto& i = *m_Internal;
-        VkCommandBuffer cmd = i.commandBuffers[i.currentFrame];
-        
-        // Record Timestamp START (AA)
-        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, i.queryPools[i.currentFrame], 2);
-
-        // 3. Anti-Aliasing Pass
-        i.currentFinalImage = nullptr; // Reset
-        i.PassAA(cmd, i.currentFinalImage);
-        
-        // Record Timestamp END (AA)
-        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, i.queryPools[i.currentFrame], 3);
-    }
-
-    void GraphicsContext::EndFrame() {
-        auto& i = *m_Internal;
-        VkCommandBuffer cmd = i.commandBuffers[i.currentFrame];
-
-        // 4. Blit to Swapchain
-        i.PassBlit(cmd, i.currentFinalImage);
-
-        // 5. UI Overlay
-        i.PassUI(cmd);
-
-        // 6. Transition for Present
-=======
         float aspect = (float)i.swapchain.GetExtent().width / (float)i.swapchain.GetExtent().height;
         size_t visibleCount = i.sceneManager.CullAndUpload(i.camera, aspect);
 
@@ -335,7 +225,6 @@ namespace vortex::graphics {
 
         i.PassBlit(cmd, i.currentFinalImage);
         i.PassUI(cmd);
->>>>>>> Stashed changes
         i.TransitionLayout(cmd, i.swapchain.GetImages()[i.imageIndex], VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
         vkEndCommandBuffer(cmd);
@@ -447,11 +336,7 @@ namespace vortex::graphics {
     }
 
     void GraphicsInternal::PassBlit(VkCommandBuffer cmd, const memory::AllocatedImage* source) {
-<<<<<<< Updated upstream
-        if (!source) source = &resources.GetColor(); // Fallback
-=======
         if (!source) source = &resources.GetColor(); 
->>>>>>> Stashed changes
 
         VkImageLayout srcLayout = (source == &resources.GetColor()) ? VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_GENERAL;
         if (currentAAMode == AntiAliasingMode::TAA) srcLayout = VK_IMAGE_LAYOUT_GENERAL; 
@@ -524,16 +409,10 @@ namespace vortex::graphics {
             useJitter); 
     }
 
-<<<<<<< Updated upstream
-    void GraphicsContext::UploadScene(const std::vector<SceneObject>& o, 
-                                      const std::vector<SceneMaterial>& m, 
-                                      const std::vector<voxel::Chunk>& c) { 
-=======
     // UPDATED to accept PhysicalMaterial as per interface
     void GraphicsContext::UploadScene(const std::vector<SceneObject>& o, 
                                       const std::vector<vortex::voxel::PhysicalMaterial>& m, 
                                       const std::vector<vortex::voxel::Chunk>& c) { 
->>>>>>> Stashed changes
         m_Internal->sceneManager.UploadSceneData(o, m, c); 
     }
 
@@ -552,20 +431,11 @@ namespace vortex::graphics {
     void GraphicsContext::Shutdown() { 
         if(m_Internal) { 
             vkDeviceWaitIdle(m_Internal->context.GetDevice()); 
-<<<<<<< Updated upstream
-            
-            // Destroy queries
-=======
->>>>>>> Stashed changes
             for(int i=0; i<FRAMES_IN_FLIGHT; i++) {
                 if (m_Internal->queryPools[i]) {
                     vkDestroyQueryPool(m_Internal->context.GetDevice(), m_Internal->queryPools[i], nullptr);
                 }
             }
-<<<<<<< Updated upstream
-            
-=======
->>>>>>> Stashed changes
             m_Internal.reset(); 
         } 
     }

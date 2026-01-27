@@ -2,13 +2,6 @@
 #extension GL_EXT_scalar_block_layout : enable
 
 /**
-<<<<<<< Updated upstream
- * @brief Voxel Raymarching Fragment Shader (Optimized Single-Level DDA + SoA).
- * @details 
- * 1. Uses Single-Level DDA for geometric stability (no artifacts on steps).
- * 2. Uses Structure of Arrays (SoA) memory layout for better cache efficiency.
- * 3. OPTIMIZATION: Uses Hierarchy Bitmask to skip Voxel Memory Fetch in empty areas.
-=======
  * @brief Voxel Raymarching Fragment Shader.
  * @details Performs DDA (Digital Differential Analyzer) traversal through the voxel grid.
  * Supports:
@@ -16,7 +9,6 @@
  * - Hierarchy-based skipping (Occupancy Map).
  * - Palette Offset for material mapping.
  * - Blinn-Phong Lighting Model.
->>>>>>> Stashed changes
  */
 
 layout (depth_greater) out float gl_FragDepth;
@@ -46,20 +38,11 @@ struct Object {
     uint _pad;
 };
 
-<<<<<<< Updated upstream
-// --- UPDATED Chunk Layout (SoA) ---
-// Matches src/voxel/Chunk.cppm
-struct Chunk {
-    uint voxelIDs[8192];   // Material Indices (8 bits/voxel). Packed 4 per uint.
-    uint voxelFlags[2048]; // Flags (2 bits/voxel). Packed 16 per uint.
-    uint hierarchy[16];    // 512-bit Hierarchy Mask.
-=======
 // SoA Layout for 32^3 Chunk
 struct Chunk {
     uint voxelIDs[8192];   // 8 bits per voxel (Packed 4 per uint)
     uint voxelFlags[2048]; // 2 bits per voxel (Packed 16 per uint)
     uint hierarchy[16];    // 512-bit Hierarchy Mask (1 bit per 4x4x4 block)
->>>>>>> Stashed changes
 };
 
 // --- Bindings ---
@@ -101,11 +84,7 @@ bool IsBlockOccupied(uint chunkIdx, ivec3 mapPos) {
  */
 uint GetVoxel(uint chunkIdx, ivec3 pos) {
     uint index = pos.x + pos.y * 32 + pos.z * 1024;
-<<<<<<< Updated upstream
-    // Access voxelIDs array (SoA layout)
-=======
     // Extract byte from packed uint array
->>>>>>> Stashed changes
     return (chunkBuffer.chunks[chunkIdx].voxelIDs[index >> 2] >> ((index & 3) << 3)) & 0xFF;
 }
 
@@ -136,12 +115,8 @@ void main() {
 
     // Transform camera position to Object Local Space
     vec3 localCamPos = (obj.invModel * vec4(cam.position.xyz, 1.0)).xyz;
-<<<<<<< Updated upstream
-    // Safe normalize (avoid NaN if pos == camPos, unlikely but safe)
-=======
     
     // Calculate Ray Direction in Local Space
->>>>>>> Stashed changes
     vec3 rawDir = v_LocalPos - localCamPos;
     if (dot(rawDir, rawDir) < 1e-6) discard;
     vec3 localDir = normalize(rawDir);
@@ -159,14 +134,9 @@ void main() {
     ivec3 mapPos = ivec3(floor(rayPos));
     mapPos = clamp(mapPos, ivec3(0), ivec3(31));
 
-<<<<<<< Updated upstream
-    // Avoid division by zero in deltaDist
-    vec3 safeDir = localDir;
-=======
     // 3. Prepare DDA
     vec3 safeDir = localDir;
     // Prevent division by zero
->>>>>>> Stashed changes
     if (abs(safeDir.x) < 1e-6) safeDir.x = 1e-6;
     if (abs(safeDir.y) < 1e-6) safeDir.y = 1e-6;
     if (abs(safeDir.z) < 1e-6) safeDir.z = 1e-6;
@@ -181,16 +151,10 @@ void main() {
 
     ivec3 mask = ivec3(0);
 
-<<<<<<< Updated upstream
-    // --- 2. Optimized Single-Level DDA Loop ---
-    for (int i = 0; i < 64; i++) {
-        // Bounds Check
-=======
     // 4. Raymarching Loop
     const int MAX_STEPS = 128; // Increased steps for safety
     for (int i = 0; i < MAX_STEPS; i++) {
         // Exit if outside chunk
->>>>>>> Stashed changes
         if (mapPos.x < 0 || mapPos.x >= 32 || mapPos.y < 0 || mapPos.y >= 32 || mapPos.z < 0 || mapPos.z >= 32) break;
 
         // Hierarchical Optimization
@@ -200,11 +164,6 @@ void main() {
             uint voxel = GetVoxel(obj.chunkIndex, mapPos);
             
             if (voxel != 0) {
-<<<<<<< Updated upstream
-                // --- HIT RESPONSE ---
-                vec4 color = matBuffer.materials[voxel].color;
-                if (color.a < 0.01) color = vec4(1.0, 0.0, 1.0, 1.0); // Debug pink for invisible materials
-=======
                 // --- Intersection Found ---
                 
                 // Calculate Global Material ID using Offset
@@ -215,7 +174,6 @@ void main() {
                 if (globalMatID < matBuffer.materials.length()) {
                     baseColor = matBuffer.materials[globalMatID].color;
                 }
->>>>>>> Stashed changes
 
                 // Calculate Normal
                 vec3 normal = vec3(0.0);
@@ -224,11 +182,6 @@ void main() {
                 else if (mask.z != 0) normal.z = -float(stepDir.z);
                 if (mask == ivec3(0)) normal = -localDir; // Fallback
 
-<<<<<<< Updated upstream
-                // Simple lighting
-                float diff = max(0.0, dot(normal, normalize(vec3(0.5, 1.0, 0.5))));
-                outColor = vec4(color.rgb * (0.3 + diff * 0.7), 1.0);
-=======
                 // --- Lighting (Blinn-Phong) ---
                 vec3 lightPos = vec3(50.0, 100.0, 50.0); // Virtual Light (Local Space)
                 vec3 lightDir = normalize(lightPos - rayPos);
@@ -242,7 +195,6 @@ void main() {
                 // Diffuse
                 float diff = max(dot(normal, lightDir), 0.0);
                 vec3 diffuse = diff * baseColor.rgb;
->>>>>>> Stashed changes
                 
                 // Specular
                 float specularStrength = 0.2;
@@ -272,13 +224,7 @@ void main() {
             }
         }
 
-<<<<<<< Updated upstream
-        // --- STEP (Single Level) ---
-        // Even if block is empty, we step one voxel at a time.
-        // This is slower than Hierarchical leaping but visually robust.
-=======
         // --- Step Forward ---
->>>>>>> Stashed changes
         if (sideDist.x < sideDist.y) {
             if (sideDist.x < sideDist.z) {
                 sideDist.x += deltaDist.x;
