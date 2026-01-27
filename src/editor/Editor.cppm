@@ -15,11 +15,27 @@ import vortex.voxel;
 
 namespace vortex::editor {
 
+    /**
+     * @brief The in-game editor system.
+     * @details Handles object selection, Gizmo manipulation, and the Importer UI.
+     */
     export class Editor {
     public:
         Editor() = default;
         
+        /**
+         * @brief Updates editor logic, input handling, and UI rendering.
+         * @param window Input window.
+         * @param camera Active camera.
+         * @param sceneManager Reference to the scene manager for raycasting/updates.
+         * @param width Viewport width.
+         * @param height Viewport height.
+         */
         void Update(GLFWwindow* window, graphics::Camera& camera, graphics::SceneManager& sceneManager, uint32_t width, uint32_t height);
+        
+        /**
+         * @brief Renders the 3D Gizmo for the selected entity.
+         */
         void RenderGizmo(graphics::Camera& camera, uint32_t width, uint32_t height);
 
         std::vector<std::shared_ptr<voxel::VoxelEntity>>& GetEntities() { return m_Entities; }
@@ -28,6 +44,9 @@ namespace vortex::editor {
         void ResetSceneDirty() { m_SceneDirty = false; }
         void MarkDirty() { m_SceneDirty = true; }
 
+        /**
+         * @brief Returns the currently selected entity, or nullptr if none.
+         */
         std::shared_ptr<voxel::VoxelEntity> GetSelectedEntity() const;
 
         /**

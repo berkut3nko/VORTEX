@@ -9,35 +9,35 @@ module \mbox{\hyperlink{module_vortex_8voxel}{vortex.\+voxel}}
 \begin{DoxyCompactItemize}
 \item 
 class \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext}{vortex\+::graphics\+::\+Graphics\+Context}}
-\item 
+\begin{DoxyCompactList}\small\item\em The main entry point for the Graphics subsystem. \end{DoxyCompactList}\item 
 class \mbox{\hyperlink{classvortex_1_1graphics_1_1Window}{vortex\+::graphics\+::\+Window}}
 \begin{DoxyCompactList}\small\item\em Manages the GLFW window and Vulkan Surface creation. \end{DoxyCompactList}\item 
 class \mbox{\hyperlink{classvortex_1_1graphics_1_1RenderResources}{vortex\+::graphics\+::\+Render\+Resources}}
 \begin{DoxyCompactList}\small\item\em Manages offscreen render targets (Color, Depth, Velocity, TAA History). \end{DoxyCompactList}\item 
 class \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain}{vortex\+::graphics\+::\+Swapchain}}
-\item 
-class \mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay}{vortex\+::graphics\+::\+UIOverlay}}
-\begin{DoxyCompactList}\small\item\em Handles Im\+Gui integration. \end{DoxyCompactList}\item 
-class \mbox{\hyperlink{classvortex_1_1graphics_1_1TAAPipeline}{vortex\+::graphics\+::\+TAAPipeline}}
-\item 
-class \mbox{\hyperlink{classvortex_1_1graphics_1_1FXAAPipeline}{vortex\+::graphics\+::\+FXAAPipeline}}
-\item 
-class \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext}{vortex\+::graphics\+::\+Vulkan\+Context}}
-\item 
-class \mbox{\hyperlink{classvortex_1_1graphics_1_1ShaderCompiler}{vortex\+::graphics\+::\+Shader\+Compiler}}
-\begin{DoxyCompactList}\small\item\em Compiles GLSL code to SPIR-\/V at runtime. \end{DoxyCompactList}\item 
-struct \mbox{\hyperlink{structvortex_1_1graphics_1_1CameraUBO}{vortex\+::graphics\+::\+Camera\+UBO}}
-\item 
-class \mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline}{vortex\+::graphics\+::\+Raster\+Pipeline}}
-\item 
-struct \mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{vortex\+::graphics\+::\+Camera}}
-\item 
-struct \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{vortex\+::graphics\+::\+Scene\+Object}}
-\begin{DoxyCompactList}\small\item\em High-\/level CPU representation of an object. \end{DoxyCompactList}\item 
+\begin{DoxyCompactList}\small\item\em Manages the Vulkan \doxylink{classvortex_1_1graphics_1_1Swapchain}{Swapchain} and presentation images. \end{DoxyCompactList}\item 
 struct \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneMaterial}{vortex\+::graphics\+::\+Scene\+Material}}
-\item 
+\begin{DoxyCompactList}\small\item\em Represents a material in the scene. \end{DoxyCompactList}\item 
+struct \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{vortex\+::graphics\+::\+Scene\+Object}}
+\begin{DoxyCompactList}\small\item\em CPU-\/side representation of an object in the scene. \end{DoxyCompactList}\item 
 class \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager}{vortex\+::graphics\+::\+Scene\+Manager}}
-\begin{DoxyCompactList}\small\item\em Handles scene data, culling, and GPU buffer updates. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\begin{DoxyCompactList}\small\item\em Manages scene data buffers (Objects, Materials, Chunks, \doxylink{structvortex_1_1graphics_1_1Camera}{Camera}). \end{DoxyCompactList}\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay}{vortex\+::graphics\+::\+UIOverlay}}
+\begin{DoxyCompactList}\small\item\em Handles Im\+Gui integration and UI rendering. \end{DoxyCompactList}\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1TAAPipeline}{vortex\+::graphics\+::\+TAAPipeline}}
+\begin{DoxyCompactList}\small\item\em Temporal Anti-\/\+Aliasing (TAA) Compute Pipeline. \end{DoxyCompactList}\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1FXAAPipeline}{vortex\+::graphics\+::\+FXAAPipeline}}
+\begin{DoxyCompactList}\small\item\em Fast Approximate Anti-\/\+Aliasing (FXAA) Compute Pipeline. \end{DoxyCompactList}\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext}{vortex\+::graphics\+::\+Vulkan\+Context}}
+\begin{DoxyCompactList}\small\item\em Core Vulkan wrapper managing the Instance, Physical Device, and Logical Device. \end{DoxyCompactList}\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1ShaderCompiler}{vortex\+::graphics\+::\+Shader\+Compiler}}
+\begin{DoxyCompactList}\small\item\em Helper class to compile GLSL code to SPIR-\/V at runtime using glslang. \end{DoxyCompactList}\item 
+class \mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline}{vortex\+::graphics\+::\+Raster\+Pipeline}}
+\begin{DoxyCompactList}\small\item\em Manages the main rasterization pipeline for Voxel Raymarching. \end{DoxyCompactList}\item 
+struct \mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{vortex\+::graphics\+::\+Camera}}
+\begin{DoxyCompactList}\small\item\em Represents the state of a 3D \doxylink{structvortex_1_1graphics_1_1Camera}{Camera}. \end{DoxyCompactList}\item 
+struct \mbox{\hyperlink{structvortex_1_1graphics_1_1CameraUBO}{vortex\+::graphics\+::\+Camera\+UBO}}
+\begin{DoxyCompactList}\small\item\em GPU \doxylink{structvortex_1_1graphics_1_1Camera}{Camera} Buffer (Uniform Buffer Object). \end{DoxyCompactList}\end{DoxyCompactItemize}
 \doxysubsubsection*{Enumerations}
 \begin{DoxyCompactItemize}
 \item 
@@ -57,23 +57,23 @@ enum class \mbox{\hyperlink{namespacevortex_1_1graphics_a6c15dfbf66fdb37b32ce2cc
 \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a7cf8573d5a3de42b64618bdf9cb4493b}{\texorpdfstring{$\sim$}{\string~}\+Graphics\+Context}} ()
 \item 
 bool \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a81fffc7c692b29db7ed68c78162a1141}{Initialize}} (const std\+::string \&title, uint32\+\_\+t width, uint32\+\_\+t height)
-\item 
+\begin{DoxyCompactList}\small\item\em Initializes the entire graphics stack (\doxylink{classvortex_1_1graphics_1_1Window}{Window}, Vulkan, Pipelines). \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a1d14ea5ce84150c7999fce6ca9caeab3}{Shutdown}} ()
-\item 
+\begin{DoxyCompactList}\small\item\em Shuts down all graphics subsystems and releases resources. \end{DoxyCompactList}\item 
 bool \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_aba9f48112ca61e20c7e6540cb4aae21a}{Begin\+Frame}} ()
-\item 
+\begin{DoxyCompactList}\small\item\em Starts a new frame. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a6e1484fcb4384d824fae4e525654c81e}{Begin\+Recording}} ()
-\item 
+\begin{DoxyCompactList}\small\item\em Begins command buffer recording for the current frame. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_aedd13eaed9f1a210b6a954304e388dc5}{Record\+Scene}} ()
-\item 
+\begin{DoxyCompactList}\small\item\em Records the main geometry pass. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a467c3863c8f5f6af03ff4b4f56b4bd19}{Record\+AA}} ()
-\item 
+\begin{DoxyCompactList}\small\item\em Records the post-\/processing AA pass. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_ab813e567d0f2ef58e2f93c1d0383205e}{End\+Frame}} ()
-\item 
+\begin{DoxyCompactList}\small\item\em Ends recording, submits command buffers, and presents the image. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_acc66a19ac90a8c0ba26c83810b582f02}{Upload\+Camera}} ()
-\item 
-void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_aefa4bd98c389208c98543a511b39cab7}{Upload\+Scene}} (const std\+::vector$<$ Scene\+Object $>$ \&objects, const std\+::vector$<$ Scene\+Material $>$ \&materials, const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{vortex\+::voxel\+::\+Chunk}} $>$ \&chunks)
-\item 
+\begin{DoxyCompactList}\small\item\em Uploads camera data to the GPU. \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a71c27baf5c09afb517b47d480ed78d91}{Upload\+Scene}} (const std\+::vector$<$ Scene\+Object $>$ \&objects, const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{vortex\+::voxel\+::\+Physical\+Material}} $>$ \&materials, const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{vortex\+::voxel\+::\+Chunk}} $>$ \&chunks)
+\begin{DoxyCompactList}\small\item\em Uploads scene data (objects, materials, chunks) to GPU buffers. \end{DoxyCompactList}\item 
 Scene\+Manager \& \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a31fc52b0df2b087d94e53bc6e2ba8fae}{Get\+Scene\+Manager}} ()
 \item 
 Camera \& \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a0f514549570dcec1f034aa80b923e09c}{Get\+Camera}} ()
@@ -85,9 +85,9 @@ void \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_af17abda7ed5b03
 Anti\+Aliasing\+Mode \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_ab8ecfc71e1636bcd68cacd05c34a22bb}{Get\+AAMode}} () const
 \item 
 float \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_a01e1aed6635800ed9367d3e2f527996c}{Get\+Scene\+GPUTime}} () const
-\begin{DoxyCompactList}\small\item\em Gets the GPU execution time for the Geometry pass in ms. \end{DoxyCompactList}\item 
+\begin{DoxyCompactList}\small\item\em Gets the GPU execution time for the scene geometry pass in milliseconds. \end{DoxyCompactList}\item 
 float \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext_addd5311452e0c6a29b1d22874e73e76f}{Get\+AAGPUTime}} () const
-\begin{DoxyCompactList}\small\item\em Gets the GPU execution time for the AA pass in ms. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\begin{DoxyCompactList}\small\item\em Gets the GPU execution time for the Anti-\/\+Aliasing pass in milliseconds. \end{DoxyCompactList}\end{DoxyCompactItemize}
 \doxysubsubsection*{Files}
 \begin{DoxyCompactItemize}
 \item 

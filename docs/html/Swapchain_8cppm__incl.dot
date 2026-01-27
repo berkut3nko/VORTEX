@@ -26,8 +26,8 @@ digraph "src/graphics/Swapchain.cppm"
   Node8 -> Node4 [id="edge11_Node000008_Node000004",color="steelblue1",style="solid",tooltip=" "];
   Node8 -> Node10 [id="edge12_Node000008_Node000010",color="steelblue1",style="solid",tooltip=" "];
   Node10 [id="Node000010",label="glm/glm.hpp",height=0.2,width=0.4,color="grey60", fillcolor="#E0E0E0", style="filled",tooltip=" "];
-  Node8 -> Node8 [id="edge13_Node000008_Node000008",color="steelblue1",style="solid",tooltip=" "];
-  Node8 -> Node11 [id="edge14_Node000008_Node000011",color="steelblue1",style="solid",tooltip=" "];
+  Node8 -> Node11 [id="edge13_Node000008_Node000011",color="steelblue1",style="solid",tooltip=" "];
   Node11 [id="Node000011",label="vortex.voxel",height=0.2,width=0.4,color="grey40", fillcolor="white", style="filled",URL="$Voxel_8cppm.html",tooltip=" "];
-  Node11 -> Node11 [id="edge15_Node000011_Node000011",color="steelblue1",style="solid",tooltip=" "];
+  Node11 -> Node11 [id="edge14_Node000011_Node000011",color="steelblue1",style="solid",tooltip=" "];
+  Node8 -> Node8 [id="edge15_Node000008_Node000008",color="steelblue1",style="solid",tooltip=" "];
 }

@@ -98,6 +98,9 @@ $(function(){initNavTree('structvortex_1_1graphics_1_1CameraUBO.html',''); initR
   <div class="headertitle"><div class="title">vortex::graphics::CameraUBO Struct Reference<span class="mlabels"><span class="mlabel">export</span></span><div class="ingroups">module <a class="el" href="module_vortex_8graphics.html">vortex.graphics</a></div></div></div>
 </div><!--header-->
 <div class="contents">
+
+<p>GPU <a class="el" href="structvortex_1_1graphics_1_1Camera.html" title="Represents the state of a 3D Camera.">Camera</a> Buffer (Uniform Buffer Object).  
+ <a href="#details">More...</a></p>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-attribs" name="pub-attribs"></a>
 Public Attributes</h2></td></tr>
@@ -111,24 +114,31 @@ Public Attributes</h2></td></tr>
 <tr class="separator:ad216c865f0ebe602ea53dcccaf7c6892"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:abfb9c87d147cf2a0ad0be6f3b79d0ccb" id="r_abfb9c87d147cf2a0ad0be6f3b79d0ccb"><td class="memItemLeft" align="right" valign="top">uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#abfb9c87d147cf2a0ad0be6f3b79d0ccb">objectCount</a></td></tr>
 <tr class="separator:abfb9c87d147cf2a0ad0be6f3b79d0ccb"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:abdae5965b0ef0965e0789fba4e6411f4" id="r_abdae5965b0ef0965e0789fba4e6411f4"><td class="memItemLeft" align="right" valign="top">float&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#abdae5965b0ef0965e0789fba4e6411f4">_pad</a> [3]</td></tr>
-<tr class="separator:abdae5965b0ef0965e0789fba4e6411f4"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a00c82102265dc95c4586e62f68fa3ac4" id="r_a00c82102265dc95c4586e62f68fa3ac4"><td class="memItemLeft" align="right" valign="top">float&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a00c82102265dc95c4586e62f68fa3ac4">_pad</a> [3]</td></tr>
+<tr class="separator:a00c82102265dc95c4586e62f68fa3ac4"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ae8800f166be0583a39526110a4993d54" id="r_ae8800f166be0583a39526110a4993d54"><td class="memItemLeft" align="right" valign="top">glm::mat4&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ae8800f166be0583a39526110a4993d54">viewProj</a></td></tr>
 <tr class="separator:ae8800f166be0583a39526110a4993d54"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a12a9e8879692155f2671ec1a41b507c5" id="r_a12a9e8879692155f2671ec1a41b507c5"><td class="memItemLeft" align="right" valign="top">glm::mat4&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a12a9e8879692155f2671ec1a41b507c5">prevViewProj</a></td></tr>
 <tr class="separator:a12a9e8879692155f2671ec1a41b507c5"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a738a07c65a8e6ff00437606f86d1d4b9" id="r_a738a07c65a8e6ff00437606f86d1d4b9"><td class="memItemLeft" align="right" valign="top">glm::mat4&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a738a07c65a8e6ff00437606f86d1d4b9">view</a></td></tr>
+<tr class="separator:a738a07c65a8e6ff00437606f86d1d4b9"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a4d99ab45432af9948895e4a2ac7f86a6" id="r_a4d99ab45432af9948895e4a2ac7f86a6"><td class="memItemLeft" align="right" valign="top">glm::mat4&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a4d99ab45432af9948895e4a2ac7f86a6">proj</a></td></tr>
+<tr class="separator:a4d99ab45432af9948895e4a2ac7f86a6"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a6c09541e798f8db889ea11e67cf36399" id="r_a6c09541e798f8db889ea11e67cf36399"><td class="memItemLeft" align="right" valign="top">glm::vec4&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a6c09541e798f8db889ea11e67cf36399">jitter</a></td></tr>
 <tr class="separator:a6c09541e798f8db889ea11e67cf36399"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
-<h2 class="groupheader">Member Data Documentation</h2>
-<a id="abdae5965b0ef0965e0789fba4e6411f4" name="abdae5965b0ef0965e0789fba4e6411f4"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#abdae5965b0ef0965e0789fba4e6411f4">&#9670;&#160;</a></span>_pad</h2>
+<a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
+<div class="textblock"><p>GPU <a class="el" href="structvortex_1_1graphics_1_1Camera.html" title="Represents the state of a 3D Camera.">Camera</a> Buffer (Uniform Buffer Object). </p>
+<dl class="section note"><dt>Note</dt><dd>Must MATCH the std140 layout in shaders/voxel.vert EXACTLY. </dd></dl>
+</div><h2 class="groupheader">Member Data Documentation</h2>
+<a id="a00c82102265dc95c4586e62f68fa3ac4" name="a00c82102265dc95c4586e62f68fa3ac4"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a00c82102265dc95c4586e62f68fa3ac4">&#9670;&#160;</a></span>_pad</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">float vortex::graphics::CameraUBO::_pad</td>
+          <td class="memname">float vortex::graphics::CameraUBO::_pad[3]</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -205,6 +215,20 @@ Public Attributes</h2></td></tr>
 
 </div>
 </div>
+<a id="a4d99ab45432af9948895e4a2ac7f86a6" name="a4d99ab45432af9948895e4a2ac7f86a6"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a4d99ab45432af9948895e4a2ac7f86a6">&#9670;&#160;</a></span>proj</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">glm::mat4 vortex::graphics::CameraUBO::proj</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="ae7ccc53051e895a2cd92c850a6ea936e" name="ae7ccc53051e895a2cd92c850a6ea936e"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#ae7ccc53051e895a2cd92c850a6ea936e">&#9670;&#160;</a></span>projInverse</h2>
 
@@ -213,6 +237,20 @@ Public Attributes</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">glm::mat4 vortex::graphics::CameraUBO::projInverse</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a738a07c65a8e6ff00437606f86d1d4b9" name="a738a07c65a8e6ff00437606f86d1d4b9"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a738a07c65a8e6ff00437606f86d1d4b9">&#9670;&#160;</a></span>view</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">glm::mat4 vortex::graphics::CameraUBO::view</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -247,9 +285,8 @@ Public Attributes</h2></td></tr>
 
 </div>
 </div>
-<hr/>The documentation for this struct was generated from the following files:<ul>
-<li>src/graphics/pipelines/<a class="el" href="RasterPipeline_8cppm.html">RasterPipeline.cppm</a></li>
-<li>src/graphics/<a class="el" href="SceneManager_8cppm.html">SceneManager.cppm</a></li>
+<hr/>The documentation for this struct was generated from the following file:<ul>
+<li>src/graphics/<a class="el" href="CameraStruct_8cppm.html">CameraStruct.cppm</a></li>
 </ul>
 </div><!-- contents -->
 </div><!-- doc-content -->

@@ -7,17 +7,22 @@ module;
 export module vortex.graphics:pipeline;
 
 import vortex.memory;
-import :camera_struct; // Import CameraUBO from here
+import :camera_struct;
 
 namespace vortex::graphics {
 
-    // REMOVED local CameraUBO definition to fix redefinition error
-
+    /**
+     * @brief Manages the main rasterization pipeline for Voxel Raymarching.
+     * @details Uses a full-screen triangle or cube bounding boxes to trigger the fragment shader raymarcher.
+     */
     export class RasterPipeline {
     public:
         RasterPipeline();
         ~RasterPipeline();
 
+        /**
+         * @brief Initializes the graphics pipeline, layout, and descriptors.
+         */
         void Initialize(VkDevice device, 
                         VkFormat colorFormat,
                         VkFormat velocityFormat, 
@@ -30,7 +35,14 @@ namespace vortex::graphics {
 
         void Shutdown();
         
+        /**
+         * @brief Binds the pipeline and descriptor sets for the current frame.
+         */
         void Bind(VkCommandBuffer cmd, uint32_t frameIndex);
+        
+        /**
+         * @brief Updates descriptor sets with current buffer handles.
+         */
         void UpdateDescriptors(uint32_t frameIndex);
 
     private:

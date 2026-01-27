@@ -38,8 +38,8 @@ digraph "src/graphics/internal/UI.cpp"
   Node15 -> Node9 [id="edge38_Node000015_Node000009",color="steelblue1",style="solid",tooltip=" "];
   Node15 -> Node16 [id="edge39_Node000015_Node000016",color="steelblue1",style="solid",tooltip=" "];
   Node16 [id="Node000016",label="glm/glm.hpp",height=0.2,width=0.4,color="grey60", fillcolor="#E0E0E0", style="filled",tooltip=" "];
-  Node15 -> Node15 [id="edge40_Node000015_Node000015",color="steelblue1",style="solid",tooltip=" "];
-  Node15 -> Node17 [id="edge41_Node000015_Node000017",color="steelblue1",style="solid",tooltip=" "];
+  Node15 -> Node17 [id="edge40_Node000015_Node000017",color="steelblue1",style="solid",tooltip=" "];
   Node17 [id="Node000017",label="vortex.voxel",height=0.2,width=0.4,color="grey40", fillcolor="white", style="filled",URL="$Voxel_8cppm.html",tooltip=" "];
-  Node17 -> Node17 [id="edge42_Node000017_Node000017",color="steelblue1",style="solid",tooltip=" "];
+  Node17 -> Node17 [id="edge41_Node000017_Node000017",color="steelblue1",style="solid",tooltip=" "];
+  Node15 -> Node15 [id="edge42_Node000015_Node000015",color="steelblue1",style="solid",tooltip=" "];
 }

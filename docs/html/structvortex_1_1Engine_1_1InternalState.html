@@ -98,9 +98,6 @@ $(function(){initNavTree('structvortex_1_1Engine_1_1InternalState.html',''); ini
   <div class="headertitle"><div class="title">vortex::Engine::InternalState Struct Reference<div class="ingroups">module <a class="el" href="module_vortex_8core.html">vortex.core</a></div></div></div>
 </div><!--header-->
 <div class="contents">
-
-<p>Internal Pimpl state for the <a class="el" href="classvortex_1_1Engine.html">Engine</a>.  
- <a href="#details">More...</a></p>
 <div class="dynheader">
 Collaboration diagram for vortex::Engine::InternalState:</div>
 <div class="dyncontent">
@@ -115,14 +112,20 @@ Public Attributes</h2></td></tr>
 <tr class="separator:aad9ad521c501565c70292cff283f1c6f"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a6eba1ce1b1e989274fd4bf7364c3c091" id="r_a6eba1ce1b1e989274fd4bf7364c3c091"><td class="memItemLeft" align="right" valign="top"><a class="el" href="classvortex_1_1editor_1_1Editor.html">editor::Editor</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a6eba1ce1b1e989274fd4bf7364c3c091">editor</a></td></tr>
 <tr class="separator:a6eba1ce1b1e989274fd4bf7364c3c091"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:aab5b7afd4182774fee80a42dd6cc9549" id="r_aab5b7afd4182774fee80a42dd6cc9549"><td class="memItemLeft" align="right" valign="top">entt::registry&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aab5b7afd4182774fee80a42dd6cc9549">registry</a></td></tr>
-<tr class="separator:aab5b7afd4182774fee80a42dd6cc9549"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:af55610396a39f359ff94c155bc921ab6" id="r_af55610396a39f359ff94c155bc921ab6"><td class="memItemLeft" align="right" valign="top"><a class="el" href="classvortex_1_1physics_1_1PhysicsSystem.html">physics::PhysicsSystem</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#af55610396a39f359ff94c155bc921ab6">physicsSystem</a></td></tr>
+<tr class="separator:af55610396a39f359ff94c155bc921ab6"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aa21859ebefdb39688159f60f5efb30d4" id="r_aa21859ebefdb39688159f60f5efb30d4"><td class="memItemLeft" align="right" valign="top">std::vector&lt; <a class="el" href="structvortex_1_1SimulationObject.html">SimulationObject</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aa21859ebefdb39688159f60f5efb30d4">simObjects</a></td></tr>
+<tr class="separator:aa21859ebefdb39688159f60f5efb30d4"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a3793c158122fdf45eb6b0a0682d63697" id="r_a3793c158122fdf45eb6b0a0682d63697"><td class="memItemLeft" align="right" valign="top">std::vector&lt; <a class="el" href="structvortex_1_1graphics_1_1SceneObject.html">graphics::SceneObject</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a3793c158122fdf45eb6b0a0682d63697">persistentObjects</a></td></tr>
+<tr class="separator:a3793c158122fdf45eb6b0a0682d63697"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aae7b5988e9b92ee601153b2cd2211820" id="r_aae7b5988e9b92ee601153b2cd2211820"><td class="memItemLeft" align="right" valign="top">std::vector&lt; <a class="el" href="structvortex_1_1voxel_1_1Chunk.html">voxel::Chunk</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aae7b5988e9b92ee601153b2cd2211820">persistentChunks</a></td></tr>
+<tr class="separator:aae7b5988e9b92ee601153b2cd2211820"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a5f664d421a1572de489622b900db9825" id="r_a5f664d421a1572de489622b900db9825"><td class="memItemLeft" align="right" valign="top">std::vector&lt; <a class="el" href="structvortex_1_1voxel_1_1PhysicalMaterial.html">voxel::PhysicalMaterial</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a5f664d421a1572de489622b900db9825">persistentMaterials</a></td></tr>
+<tr class="separator:a5f664d421a1572de489622b900db9825"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a84c3a45f6ac66175f39dd96f0edcb8f1" id="r_a84c3a45f6ac66175f39dd96f0edcb8f1"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a84c3a45f6ac66175f39dd96f0edcb8f1">isRunning</a> = false</td></tr>
 <tr class="separator:a84c3a45f6ac66175f39dd96f0edcb8f1"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
-<a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>Internal Pimpl state for the <a class="el" href="classvortex_1_1Engine.html">Engine</a>. </p>
-</div><h2 class="groupheader">Member Data Documentation</h2>
+<h2 class="groupheader">Member Data Documentation</h2>
 <a id="aad9ad521c501565c70292cff283f1c6f" name="aad9ad521c501565c70292cff283f1c6f"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#aad9ad521c501565c70292cff283f1c6f">&#9670;&#160;</a></span>cameraController</h2>
 
@@ -179,14 +182,70 @@ Public Attributes</h2></td></tr>
 
 </div>
 </div>
-<a id="aab5b7afd4182774fee80a42dd6cc9549" name="aab5b7afd4182774fee80a42dd6cc9549"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aab5b7afd4182774fee80a42dd6cc9549">&#9670;&#160;</a></span>registry</h2>
+<a id="aae7b5988e9b92ee601153b2cd2211820" name="aae7b5988e9b92ee601153b2cd2211820"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aae7b5988e9b92ee601153b2cd2211820">&#9670;&#160;</a></span>persistentChunks</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">entt::registry vortex::Engine::InternalState::registry</td>
+          <td class="memname">std::vector&lt;<a class="el" href="structvortex_1_1voxel_1_1Chunk.html">voxel::Chunk</a>&gt; vortex::Engine::InternalState::persistentChunks</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a5f664d421a1572de489622b900db9825" name="a5f664d421a1572de489622b900db9825"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a5f664d421a1572de489622b900db9825">&#9670;&#160;</a></span>persistentMaterials</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::vector&lt;<a class="el" href="structvortex_1_1voxel_1_1PhysicalMaterial.html">voxel::PhysicalMaterial</a>&gt; vortex::Engine::InternalState::persistentMaterials</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a3793c158122fdf45eb6b0a0682d63697" name="a3793c158122fdf45eb6b0a0682d63697"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a3793c158122fdf45eb6b0a0682d63697">&#9670;&#160;</a></span>persistentObjects</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::vector&lt;<a class="el" href="structvortex_1_1graphics_1_1SceneObject.html">graphics::SceneObject</a>&gt; vortex::Engine::InternalState::persistentObjects</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="af55610396a39f359ff94c155bc921ab6" name="af55610396a39f359ff94c155bc921ab6"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#af55610396a39f359ff94c155bc921ab6">&#9670;&#160;</a></span>physicsSystem</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname"><a class="el" href="classvortex_1_1physics_1_1PhysicsSystem.html">physics::PhysicsSystem</a> vortex::Engine::InternalState::physicsSystem</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="aa21859ebefdb39688159f60f5efb30d4" name="aa21859ebefdb39688159f60f5efb30d4"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aa21859ebefdb39688159f60f5efb30d4">&#9670;&#160;</a></span>simObjects</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::vector&lt;<a class="el" href="structvortex_1_1SimulationObject.html">SimulationObject</a>&gt; vortex::Engine::InternalState::simObjects</td>
         </tr>
       </table>
 </div><div class="memdoc">

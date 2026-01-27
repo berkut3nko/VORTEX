@@ -99,7 +99,7 @@ $(function(){initNavTree('classvortex_1_1graphics_1_1UIOverlay.html',''); initRe
 </div><!--header-->
 <div class="contents">
 
-<p>Handles ImGui integration.  
+<p>Handles ImGui integration and UI rendering.  
  <a href="#details">More...</a></p>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-methods" name="pub-methods"></a>
@@ -109,18 +109,23 @@ Public Member Functions</h2></td></tr>
 <tr class="memitem:a228a7c2f5b0ecbdf5971d87e3fb0a25f" id="r_a228a7c2f5b0ecbdf5971d87e3fb0a25f"><td class="memItemLeft" align="right" valign="top">&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a228a7c2f5b0ecbdf5971d87e3fb0a25f">~UIOverlay</a> ()</td></tr>
 <tr class="separator:a228a7c2f5b0ecbdf5971d87e3fb0a25f"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ad227f106bf5de33065ef894526e48ed9" id="r_ad227f106bf5de33065ef894526e48ed9"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ad227f106bf5de33065ef894526e48ed9">Initialize</a> (<a class="el" href="classvortex_1_1graphics_1_1VulkanContext.html">VulkanContext</a> &amp;context, <a class="el" href="classvortex_1_1graphics_1_1Window.html">Window</a> &amp;window, VkFormat swapchainFormat, VkExtent2D extent, const std::vector&lt; VkImageView &gt; &amp;views)</td></tr>
+<tr class="memdesc:ad227f106bf5de33065ef894526e48ed9"><td class="mdescLeft">&#160;</td><td class="mdescRight">Initializes ImGui context and Vulkan resources (RenderPass, Fonts, etc.).  <br /></td></tr>
 <tr class="separator:ad227f106bf5de33065ef894526e48ed9"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aa4ba28d92ab7dd220fa05dd43ebc9e73" id="r_aa4ba28d92ab7dd220fa05dd43ebc9e73"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aa4ba28d92ab7dd220fa05dd43ebc9e73">Shutdown</a> ()</td></tr>
+<tr class="memdesc:aa4ba28d92ab7dd220fa05dd43ebc9e73"><td class="mdescLeft">&#160;</td><td class="mdescRight">Shuts down ImGui and releases resources.  <br /></td></tr>
 <tr class="separator:aa4ba28d92ab7dd220fa05dd43ebc9e73"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a05f3efc7020623aa4cc8f1ca82ae79ae" id="r_a05f3efc7020623aa4cc8f1ca82ae79ae"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a05f3efc7020623aa4cc8f1ca82ae79ae">OnResize</a> (VkExtent2D extent, const std::vector&lt; VkImageView &gt; &amp;views)</td></tr>
+<tr class="memdesc:a05f3efc7020623aa4cc8f1ca82ae79ae"><td class="mdescLeft">&#160;</td><td class="mdescRight">Recreates framebuffers when swapchain resizes.  <br /></td></tr>
 <tr class="separator:a05f3efc7020623aa4cc8f1ca82ae79ae"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ae6663adf0fc4c1f16d6a200bc025d58d" id="r_ae6663adf0fc4c1f16d6a200bc025d58d"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ae6663adf0fc4c1f16d6a200bc025d58d">BeginFrame</a> ()</td></tr>
+<tr class="memdesc:ae6663adf0fc4c1f16d6a200bc025d58d"><td class="mdescLeft">&#160;</td><td class="mdescRight">Starts a new ImGui frame.  <br /></td></tr>
 <tr class="separator:ae6663adf0fc4c1f16d6a200bc025d58d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aff1606d13d25df27fb0f98237a0b7845" id="r_aff1606d13d25df27fb0f98237a0b7845"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aff1606d13d25df27fb0f98237a0b7845">Render</a> (VkCommandBuffer cmd, uint32_t imageIndex)</td></tr>
+<tr class="memdesc:aff1606d13d25df27fb0f98237a0b7845"><td class="mdescLeft">&#160;</td><td class="mdescRight">Renders the ImGui draw data into the command buffer.  <br /></td></tr>
 <tr class="separator:aff1606d13d25df27fb0f98237a0b7845"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>Handles ImGui integration. </p>
+<div class="textblock"><p>Handles ImGui integration and UI rendering. </p>
 </div><h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
 <a id="a80418af558156ba53d64774d05de53bb" name="a80418af558156ba53d64774d05de53bb"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a80418af558156ba53d64774d05de53bb">&#9670;&#160;</a></span>UIOverlay()</h2>
@@ -180,6 +185,8 @@ Public Member Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
+<p>Starts a new ImGui frame. </p>
+
 </div>
 </div>
 <a id="ad227f106bf5de33065ef894526e48ed9" name="ad227f106bf5de33065ef894526e48ed9"></a>
@@ -216,6 +223,8 @@ Public Member Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
+<p>Initializes ImGui context and Vulkan resources (RenderPass, Fonts, etc.). </p>
+
 </div>
 </div>
 <a id="a05f3efc7020623aa4cc8f1ca82ae79ae" name="a05f3efc7020623aa4cc8f1ca82ae79ae"></a>
@@ -236,6 +245,8 @@ Public Member Functions</h2></td></tr>
         </tr>
       </table>
 </div><div class="memdoc">
+
+<p>Recreates framebuffers when swapchain resizes. </p>
 
 </div>
 </div>
@@ -258,6 +269,8 @@ Public Member Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
+<p>Renders the ImGui draw data into the command buffer. </p>
+
 </div>
 </div>
 <a id="aa4ba28d92ab7dd220fa05dd43ebc9e73" name="aa4ba28d92ab7dd220fa05dd43ebc9e73"></a>
@@ -274,6 +287,8 @@ Public Member Functions</h2></td></tr>
         </tr>
       </table>
 </div><div class="memdoc">
+
+<p>Shuts down ImGui and releases resources. </p>
 
 </div>
 </div>

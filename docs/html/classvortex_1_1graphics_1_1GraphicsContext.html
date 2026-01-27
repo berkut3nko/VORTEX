@@ -98,6 +98,9 @@ $(function(){initNavTree('classvortex_1_1graphics_1_1GraphicsContext.html',''); 
   <div class="headertitle"><div class="title">vortex::graphics::GraphicsContext Class Reference<span class="mlabels"><span class="mlabel">export</span></span><div class="ingroups">module <a class="el" href="module_vortex_8graphics.html">vortex.graphics</a></div></div></div>
 </div><!--header-->
 <div class="contents">
+
+<p>The main entry point for the Graphics subsystem.  
+ <a href="#details">More...</a></p>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-methods" name="pub-methods"></a>
 Public Member Functions</h2></td></tr>
@@ -106,23 +109,32 @@ Public Member Functions</h2></td></tr>
 <tr class="memitem:a7cf8573d5a3de42b64618bdf9cb4493b" id="r_a7cf8573d5a3de42b64618bdf9cb4493b"><td class="memItemLeft" align="right" valign="top">&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a7cf8573d5a3de42b64618bdf9cb4493b">~GraphicsContext</a> ()</td></tr>
 <tr class="separator:a7cf8573d5a3de42b64618bdf9cb4493b"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a81fffc7c692b29db7ed68c78162a1141" id="r_a81fffc7c692b29db7ed68c78162a1141"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a81fffc7c692b29db7ed68c78162a1141">Initialize</a> (const std::string &amp;title, uint32_t width, uint32_t height)</td></tr>
+<tr class="memdesc:a81fffc7c692b29db7ed68c78162a1141"><td class="mdescLeft">&#160;</td><td class="mdescRight">Initializes the entire graphics stack (<a class="el" href="classvortex_1_1graphics_1_1Window.html" title="Manages the GLFW window and Vulkan Surface creation.">Window</a>, Vulkan, Pipelines).  <br /></td></tr>
 <tr class="separator:a81fffc7c692b29db7ed68c78162a1141"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a1d14ea5ce84150c7999fce6ca9caeab3" id="r_a1d14ea5ce84150c7999fce6ca9caeab3"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a1d14ea5ce84150c7999fce6ca9caeab3">Shutdown</a> ()</td></tr>
+<tr class="memdesc:a1d14ea5ce84150c7999fce6ca9caeab3"><td class="mdescLeft">&#160;</td><td class="mdescRight">Shuts down all graphics subsystems and releases resources.  <br /></td></tr>
 <tr class="separator:a1d14ea5ce84150c7999fce6ca9caeab3"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aba9f48112ca61e20c7e6540cb4aae21a" id="r_aba9f48112ca61e20c7e6540cb4aae21a"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aba9f48112ca61e20c7e6540cb4aae21a">BeginFrame</a> ()</td></tr>
+<tr class="memdesc:aba9f48112ca61e20c7e6540cb4aae21a"><td class="mdescLeft">&#160;</td><td class="mdescRight">Starts a new frame.  <br /></td></tr>
 <tr class="separator:aba9f48112ca61e20c7e6540cb4aae21a"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a6e1484fcb4384d824fae4e525654c81e" id="r_a6e1484fcb4384d824fae4e525654c81e"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a6e1484fcb4384d824fae4e525654c81e">BeginRecording</a> ()</td></tr>
+<tr class="memdesc:a6e1484fcb4384d824fae4e525654c81e"><td class="mdescLeft">&#160;</td><td class="mdescRight">Begins command buffer recording for the current frame.  <br /></td></tr>
 <tr class="separator:a6e1484fcb4384d824fae4e525654c81e"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aedd13eaed9f1a210b6a954304e388dc5" id="r_aedd13eaed9f1a210b6a954304e388dc5"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aedd13eaed9f1a210b6a954304e388dc5">RecordScene</a> ()</td></tr>
+<tr class="memdesc:aedd13eaed9f1a210b6a954304e388dc5"><td class="mdescLeft">&#160;</td><td class="mdescRight">Records the main geometry pass.  <br /></td></tr>
 <tr class="separator:aedd13eaed9f1a210b6a954304e388dc5"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a467c3863c8f5f6af03ff4b4f56b4bd19" id="r_a467c3863c8f5f6af03ff4b4f56b4bd19"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a467c3863c8f5f6af03ff4b4f56b4bd19">RecordAA</a> ()</td></tr>
+<tr class="memdesc:a467c3863c8f5f6af03ff4b4f56b4bd19"><td class="mdescLeft">&#160;</td><td class="mdescRight">Records the post-processing AA pass.  <br /></td></tr>
 <tr class="separator:a467c3863c8f5f6af03ff4b4f56b4bd19"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ab813e567d0f2ef58e2f93c1d0383205e" id="r_ab813e567d0f2ef58e2f93c1d0383205e"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ab813e567d0f2ef58e2f93c1d0383205e">EndFrame</a> ()</td></tr>
+<tr class="memdesc:ab813e567d0f2ef58e2f93c1d0383205e"><td class="mdescLeft">&#160;</td><td class="mdescRight">Ends recording, submits command buffers, and presents the image.  <br /></td></tr>
 <tr class="separator:ab813e567d0f2ef58e2f93c1d0383205e"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:acc66a19ac90a8c0ba26c83810b582f02" id="r_acc66a19ac90a8c0ba26c83810b582f02"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#acc66a19ac90a8c0ba26c83810b582f02">UploadCamera</a> ()</td></tr>
+<tr class="memdesc:acc66a19ac90a8c0ba26c83810b582f02"><td class="mdescLeft">&#160;</td><td class="mdescRight">Uploads camera data to the GPU.  <br /></td></tr>
 <tr class="separator:acc66a19ac90a8c0ba26c83810b582f02"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:aefa4bd98c389208c98543a511b39cab7" id="r_aefa4bd98c389208c98543a511b39cab7"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aefa4bd98c389208c98543a511b39cab7">UploadScene</a> (const std::vector&lt; <a class="el" href="structvortex_1_1graphics_1_1SceneObject.html">SceneObject</a> &gt; &amp;objects, const std::vector&lt; <a class="el" href="structvortex_1_1graphics_1_1SceneMaterial.html">SceneMaterial</a> &gt; &amp;materials, const std::vector&lt; <a class="el" href="structvortex_1_1voxel_1_1Chunk.html">vortex::voxel::Chunk</a> &gt; &amp;chunks)</td></tr>
-<tr class="separator:aefa4bd98c389208c98543a511b39cab7"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a71c27baf5c09afb517b47d480ed78d91" id="r_a71c27baf5c09afb517b47d480ed78d91"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a71c27baf5c09afb517b47d480ed78d91">UploadScene</a> (const std::vector&lt; <a class="el" href="structvortex_1_1graphics_1_1SceneObject.html">SceneObject</a> &gt; &amp;objects, const std::vector&lt; <a class="el" href="structvortex_1_1voxel_1_1PhysicalMaterial.html">vortex::voxel::PhysicalMaterial</a> &gt; &amp;materials, const std::vector&lt; <a class="el" href="structvortex_1_1voxel_1_1Chunk.html">vortex::voxel::Chunk</a> &gt; &amp;chunks)</td></tr>
+<tr class="memdesc:a71c27baf5c09afb517b47d480ed78d91"><td class="mdescLeft">&#160;</td><td class="mdescRight">Uploads scene data (objects, materials, chunks) to GPU buffers.  <br /></td></tr>
+<tr class="separator:a71c27baf5c09afb517b47d480ed78d91"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a31fc52b0df2b087d94e53bc6e2ba8fae" id="r_a31fc52b0df2b087d94e53bc6e2ba8fae"><td class="memItemLeft" align="right" valign="top"><a class="el" href="classvortex_1_1graphics_1_1SceneManager.html">SceneManager</a> &amp;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a31fc52b0df2b087d94e53bc6e2ba8fae">GetSceneManager</a> ()</td></tr>
 <tr class="separator:a31fc52b0df2b087d94e53bc6e2ba8fae"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a0f514549570dcec1f034aa80b923e09c" id="r_a0f514549570dcec1f034aa80b923e09c"><td class="memItemLeft" align="right" valign="top"><a class="el" href="structvortex_1_1graphics_1_1Camera.html">Camera</a> &amp;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a0f514549570dcec1f034aa80b923e09c">GetCamera</a> ()</td></tr>
@@ -134,13 +146,16 @@ Public Member Functions</h2></td></tr>
 <tr class="memitem:ab8ecfc71e1636bcd68cacd05c34a22bb" id="r_ab8ecfc71e1636bcd68cacd05c34a22bb"><td class="memItemLeft" align="right" valign="top"><a class="el" href="namespacevortex_1_1graphics.html#a6c15dfbf66fdb37b32ce2cc88ff895ee">AntiAliasingMode</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ab8ecfc71e1636bcd68cacd05c34a22bb">GetAAMode</a> () const</td></tr>
 <tr class="separator:ab8ecfc71e1636bcd68cacd05c34a22bb"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a01e1aed6635800ed9367d3e2f527996c" id="r_a01e1aed6635800ed9367d3e2f527996c"><td class="memItemLeft" align="right" valign="top">float&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a01e1aed6635800ed9367d3e2f527996c">GetSceneGPUTime</a> () const</td></tr>
-<tr class="memdesc:a01e1aed6635800ed9367d3e2f527996c"><td class="mdescLeft">&#160;</td><td class="mdescRight">Gets the GPU execution time for the Geometry pass in ms.  <br /></td></tr>
+<tr class="memdesc:a01e1aed6635800ed9367d3e2f527996c"><td class="mdescLeft">&#160;</td><td class="mdescRight">Gets the GPU execution time for the scene geometry pass in milliseconds.  <br /></td></tr>
 <tr class="separator:a01e1aed6635800ed9367d3e2f527996c"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:addd5311452e0c6a29b1d22874e73e76f" id="r_addd5311452e0c6a29b1d22874e73e76f"><td class="memItemLeft" align="right" valign="top">float&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#addd5311452e0c6a29b1d22874e73e76f">GetAAGPUTime</a> () const</td></tr>
-<tr class="memdesc:addd5311452e0c6a29b1d22874e73e76f"><td class="mdescLeft">&#160;</td><td class="mdescRight">Gets the GPU execution time for the AA pass in ms.  <br /></td></tr>
+<tr class="memdesc:addd5311452e0c6a29b1d22874e73e76f"><td class="mdescLeft">&#160;</td><td class="mdescRight">Gets the GPU execution time for the Anti-Aliasing pass in milliseconds.  <br /></td></tr>
 <tr class="separator:addd5311452e0c6a29b1d22874e73e76f"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
-<h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
+<a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
+<div class="textblock"><p>The main entry point for the Graphics subsystem. </p>
+<p>Orchestrates the <a class="el" href="classvortex_1_1graphics_1_1Window.html" title="Manages the GLFW window and Vulkan Surface creation.">Window</a>, Context, <a class="el" href="classvortex_1_1graphics_1_1Swapchain.html" title="Manages the Vulkan Swapchain and presentation images.">Swapchain</a>, Pipelines, and Rendering Loop. </p>
+</div><h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
 <a id="aa9c5047126dfbe560fd8c2292c8cac15" name="aa9c5047126dfbe560fd8c2292c8cac15"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#aa9c5047126dfbe560fd8c2292c8cac15">&#9670;&#160;</a></span>GraphicsContext()</h2>
 
@@ -215,6 +230,9 @@ Public Member Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
+<p>Starts a new frame. </p>
+<p>Polls window events, handles resizing, and acquires the next swapchain image. </p><dl class="section return"><dt>Returns</dt><dd>False if the window should close, true otherwise. </dd></dl>
+
 </div>
 </div>
 <a id="a6e1484fcb4384d824fae4e525654c81e" name="a6e1484fcb4384d824fae4e525654c81e"></a>
@@ -239,6 +257,8 @@ Public Member Functions</h2></td></tr>
   </tr>
 </table>
 </div><div class="memdoc">
+
+<p>Begins command buffer recording for the current frame. </p>
 
 </div>
 </div>
@@ -265,6 +285,8 @@ Public Member Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
+<p>Ends recording, submits command buffers, and presents the image. </p>
+
 </div>
 </div>
 <a id="addd5311452e0c6a29b1d22874e73e76f" name="addd5311452e0c6a29b1d22874e73e76f"></a>
@@ -290,7 +312,7 @@ Public Member Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p>Gets the GPU execution time for the AA pass in ms. </p>
+<p>Gets the GPU execution time for the Anti-Aliasing pass in milliseconds. </p>
 
 </div>
 </div>
@@ -367,7 +389,7 @@ Public Member Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p>Gets the GPU execution time for the Geometry pass in ms. </p>
+<p>Gets the GPU execution time for the scene geometry pass in milliseconds. </p>
 
 </div>
 </div>
@@ -453,6 +475,17 @@ Public Member Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
+<p>Initializes the entire graphics stack (<a class="el" href="classvortex_1_1graphics_1_1Window.html" title="Manages the GLFW window and Vulkan Surface creation.">Window</a>, Vulkan, Pipelines). </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">title</td><td><a class="el" href="classvortex_1_1graphics_1_1Window.html" title="Manages the GLFW window and Vulkan Surface creation.">Window</a> title. </td></tr>
+    <tr><td class="paramname">width</td><td><a class="el" href="classvortex_1_1graphics_1_1Window.html" title="Manages the GLFW window and Vulkan Surface creation.">Window</a> width. </td></tr>
+    <tr><td class="paramname">height</td><td><a class="el" href="classvortex_1_1graphics_1_1Window.html" title="Manages the GLFW window and Vulkan Surface creation.">Window</a> height. </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>Returns</dt><dd>True if initialization was successful. </dd></dl>
+
 </div>
 </div>
 <a id="a467c3863c8f5f6af03ff4b4f56b4bd19" name="a467c3863c8f5f6af03ff4b4f56b4bd19"></a>
@@ -478,6 +511,8 @@ Public Member Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
+<p>Records the post-processing AA pass. </p>
+
 </div>
 </div>
 <a id="aedd13eaed9f1a210b6a954304e388dc5" name="aedd13eaed9f1a210b6a954304e388dc5"></a>
@@ -502,6 +537,8 @@ Public Member Functions</h2></td></tr>
   </tr>
 </table>
 </div><div class="memdoc">
+
+<p>Records the main geometry pass. </p>
 
 </div>
 </div>
@@ -553,6 +590,8 @@ Public Member Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
+<p>Shuts down all graphics subsystems and releases resources. </p>
+
 </div>
 </div>
 <a id="acc66a19ac90a8c0ba26c83810b582f02" name="acc66a19ac90a8c0ba26c83810b582f02"></a>
@@ -578,10 +617,12 @@ Public Member Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
+<p>Uploads camera data to the GPU. </p>
+
 </div>
 </div>
-<a id="aefa4bd98c389208c98543a511b39cab7" name="aefa4bd98c389208c98543a511b39cab7"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aefa4bd98c389208c98543a511b39cab7">&#9670;&#160;</a></span>UploadScene()</h2>
+<a id="a71c27baf5c09afb517b47d480ed78d91" name="a71c27baf5c09afb517b47d480ed78d91"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a71c27baf5c09afb517b47d480ed78d91">&#9670;&#160;</a></span>UploadScene()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -597,7 +638,7 @@ Public Member Functions</h2></td></tr>
         <tr>
           <td class="paramkey"></td>
           <td></td>
-          <td class="paramtype">const std::vector&lt; <a class="el" href="structvortex_1_1graphics_1_1SceneMaterial.html">SceneMaterial</a> &gt; &amp;</td>          <td class="paramname"><span class="paramname"><em>materials</em>, </span></td>
+          <td class="paramtype">const std::vector&lt; <a class="el" href="structvortex_1_1voxel_1_1PhysicalMaterial.html">vortex::voxel::PhysicalMaterial</a> &gt; &amp;</td>          <td class="paramname"><span class="paramname"><em>materials</em>, </span></td>
         </tr>
         <tr>
           <td class="paramkey"></td>
@@ -611,6 +652,16 @@ Public Member Functions</h2></td></tr>
   </tr>
 </table>
 </div><div class="memdoc">
+
+<p>Uploads scene data (objects, materials, chunks) to GPU buffers. </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">objects</td><td>List of scene objects. </td></tr>
+    <tr><td class="paramname">materials</td><td>List of physical materials. </td></tr>
+    <tr><td class="paramname">chunks</td><td>List of voxel chunks. </td></tr>
+  </table>
+  </dd>
+</dl>
 
 </div>
 </div>

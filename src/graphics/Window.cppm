@@ -38,7 +38,7 @@ namespace vortex::graphics {
         VkSurfaceKHR CreateSurface(VkInstance instance);
 
         /**
-         * @brief Checks if the window should close.
+         * @brief Checks if the window should close (e.g. user clicked X).
          */
         bool ShouldClose() const;
 
@@ -53,10 +53,11 @@ namespace vortex::graphics {
         GLFWwindow* GetNativeHandle() const { return m_Window; }
 
         /**
-         * @brief Gets current framebuffer size.
+         * @brief Gets current framebuffer size (in pixels, handling DPI scaling).
          */
         void GetFramebufferSize(int& width, int& height) const;
 
+        /// @brief Flag indicating if the window was resized since last frame.
         bool wasResized = false;
 
     private:

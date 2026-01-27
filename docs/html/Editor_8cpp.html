@@ -94,9 +94,7 @@ $(function(){initNavTree('Editor_8cpp.html',''); initResizable(); });
 <div class="header">
   <div class="summary">
 <a href="#nested-classes">Classes</a> &#124;
-<a href="#namespaces">Namespaces</a> &#124;
-<a href="#define-members">Macros</a> &#124;
-<a href="#func-members">Functions</a>  </div>
+<a href="#namespaces">Namespaces</a>  </div>
   <div class="headertitle"><div class="title">Editor.cpp File Reference<div class="ingroups">module <a class="el" href="module_vortex_8editor.html">vortex.editor</a></div></div></div>
 </div><!--header-->
 <div class="contents">
@@ -109,6 +107,9 @@ $(function(){initNavTree('Editor_8cpp.html',''); initResizable(); });
 <code>#include &lt;vector&gt;</code><br />
 <code>#include &lt;string&gt;</code><br />
 <code>#include &lt;limits&gt;</code><br />
+<code>#include &lt;algorithm&gt;</code><br />
+<code>#include &lt;memory&gt;</code><br />
+<code>import <a class="el" href="Voxel_8cppm.html">vortex.voxel</a>;</code><br />
 <code>import <a class="el" href="Graphics_8cppm.html">vortex.graphics</a>;</code><br />
 <code>import <a class="el" href="Logger_8cppm.html">vortex.log</a>;</code><br />
 </div><div class="textblock"><div class="dynheader">
@@ -128,32 +129,7 @@ Namespaces</h2></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:namespacevortex_1_1editor" id="r_namespacevortex_1_1editor"><td class="memItemLeft" align="right" valign="top">namespace &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="namespacevortex_1_1editor.html">vortex::editor</a></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
-</table><table class="memberdecls">
-<tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="define-members" name="define-members"></a>
-Macros</h2></td></tr>
-<tr class="memitem:aa53e0967978ad7a8792f6961156ec968" id="r_aa53e0967978ad7a8792f6961156ec968"><td class="memItemLeft" align="right" valign="top">#define&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aa53e0967978ad7a8792f6961156ec968">GLM_FORCE_DEPTH_ZERO_TO_ONE</a></td></tr>
-<tr class="separator:aa53e0967978ad7a8792f6961156ec968"><td class="memSeparator" colspan="2">&#160;</td></tr>
-</table><table class="memberdecls">
-<tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="func-members" name="func-members"></a>
-Functions</h2></td></tr>
-<tr class="memitem:aeea89c897c3caccb3b0a3232521b0331" id="r_aeea89c897c3caccb3b0a3232521b0331"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="namespacevortex_1_1editor.html#aeea89c897c3caccb3b0a3232521b0331">vortex::editor::IntersectRayAABB</a> (const <a class="el" href="structvortex_1_1editor_1_1Ray.html">Ray</a> &amp;ray, const glm::vec3 &amp;min, const glm::vec3 &amp;max, float &amp;t)</td></tr>
-<tr class="separator:aeea89c897c3caccb3b0a3232521b0331"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
-<h2 class="groupheader">Macro Definition Documentation</h2>
-<a id="aa53e0967978ad7a8792f6961156ec968" name="aa53e0967978ad7a8792f6961156ec968"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aa53e0967978ad7a8792f6961156ec968">&#9670;&#160;</a></span>GLM_FORCE_DEPTH_ZERO_TO_ONE</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">#define GLM_FORCE_DEPTH_ZERO_TO_ONE</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
 </div><!-- contents -->
 </div><!-- doc-content -->
 <!-- start footer part -->

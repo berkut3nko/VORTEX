@@ -9,8 +9,10 @@ digraph "src/editor/internal"
     graph [ bgcolor="#edf0f7", pencolor="grey50", label="editor", fontname=Helvetica,fontsize=10 style="filled,dashed", URL="dir_a31afd56823c6335224242a3eb4525db.html",tooltip=""]
   dir_0dceea17ac1807b74e434994589ec568 [label="internal", fillcolor="#edf0f7", color="grey25", style="filled,bold", URL="dir_0dceea17ac1807b74e434994589ec568.html",tooltip=""];
   }
+  dir_3b34176ba99fd1dbf8af37e0aa0e80ab [label="voxel", fillcolor="#edf0f7", color="grey50", style="filled", URL="dir_3b34176ba99fd1dbf8af37e0aa0e80ab.html",tooltip=""];
   dir_560415a5d2bc4999842279f4fc1debef [label="graphics", fillcolor="#edf0f7", color="red", style="filled,dashed", URL="dir_560415a5d2bc4999842279f4fc1debef.html",tooltip=""];
   dir_aebb8dcc11953d78e620bbef0b9e2183 [label="core", fillcolor="#edf0f7", color="red", style="filled,dashed", URL="dir_aebb8dcc11953d78e620bbef0b9e2183.html",tooltip=""];
+  dir_0dceea17ac1807b74e434994589ec568->dir_3b34176ba99fd1dbf8af37e0aa0e80ab [headlabel="1", labeldistance=1.5 headhref="dir_000004_000016.html" href="dir_000004_000016.html" color="steelblue1" fontcolor="steelblue1"];
   dir_0dceea17ac1807b74e434994589ec568->dir_560415a5d2bc4999842279f4fc1debef [headlabel="1", labeldistance=1.5 headhref="dir_000004_000002.html" href="dir_000004_000002.html" color="steelblue1" fontcolor="steelblue1"];
   dir_0dceea17ac1807b74e434994589ec568->dir_aebb8dcc11953d78e620bbef0b9e2183 [headlabel="1", labeldistance=1.5 headhref="dir_000004_000000.html" href="dir_000004_000000.html" color="steelblue1" fontcolor="steelblue1"];
 }

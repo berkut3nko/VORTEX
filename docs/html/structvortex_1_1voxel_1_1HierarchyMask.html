@@ -100,14 +100,16 @@ $(function(){initNavTree('structvortex_1_1voxel_1_1HierarchyMask.html',''); init
 </div><!--header-->
 <div class="contents">
 
-<p>Acceleration structure for Ray Tracing (Grid Hierarchy).  
+<p>Acceleration structure for Voxel Ray Tracing (Grid Hierarchy).  
  <a href="#details">More...</a></p>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-methods" name="pub-methods"></a>
 Public Member Functions</h2></td></tr>
 <tr class="memitem:af01cc9e99a45f9f4777b19bddc6305bd" id="r_af01cc9e99a45f9f4777b19bddc6305bd"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#af01cc9e99a45f9f4777b19bddc6305bd">IsBlockEmpty</a> (int bx, int by, int bz) const</td></tr>
+<tr class="memdesc:af01cc9e99a45f9f4777b19bddc6305bd"><td class="mdescLeft">&#160;</td><td class="mdescRight">Checks if a specific 4x4x4 block is marked as empty.  <br /></td></tr>
 <tr class="separator:af01cc9e99a45f9f4777b19bddc6305bd"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ae25babd90da77513f7dee5e570c9428d" id="r_ae25babd90da77513f7dee5e570c9428d"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ae25babd90da77513f7dee5e570c9428d">SetBlockStatus</a> (int bx, int by, int bz, bool notEmpty)</td></tr>
+<tr class="memdesc:ae25babd90da77513f7dee5e570c9428d"><td class="mdescLeft">&#160;</td><td class="mdescRight">Updates the occupancy status of a block.  <br /></td></tr>
 <tr class="separator:ae25babd90da77513f7dee5e570c9428d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-attribs" name="pub-attribs"></a>
@@ -116,8 +118,8 @@ Public Attributes</h2></td></tr>
 <tr class="separator:a28671016c04737745a03d896a697c235"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>Acceleration structure for Ray Tracing (Grid Hierarchy). </p>
-<p>Represents a 32x32x32 chunk divided into 8x8x8 blocks (4x4x4 voxels each). Each bit corresponds to one 4x4x4 block. 512 bits total (64 bytes). </p>
+<div class="textblock"><p>Acceleration structure for Voxel Ray Tracing (Grid Hierarchy). </p>
+<p>Represents a 32x32x32 chunk divided into 8x8x8 blocks (4x4x4 voxels each). Each bit corresponds to one 4x4x4 block. If a bit is 0, the entire 4x4x4 block is empty, allow the raymarcher to skip it. Total size: 512 bits (64 bytes). </p>
 </div><h2 class="groupheader">Member Function Documentation</h2>
 <a id="af01cc9e99a45f9f4777b19bddc6305bd" name="af01cc9e99a45f9f4777b19bddc6305bd"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#af01cc9e99a45f9f4777b19bddc6305bd">&#9670;&#160;</a></span>IsBlockEmpty()</h2>
@@ -150,6 +152,17 @@ Public Attributes</h2></td></tr>
   </tr>
 </table>
 </div><div class="memdoc">
+
+<p>Checks if a specific 4x4x4 block is marked as empty. </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">bx</td><td>Block X (0-7). </td></tr>
+    <tr><td class="paramname">by</td><td>Block Y (0-7). </td></tr>
+    <tr><td class="paramname">bz</td><td>Block Z (0-7). </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>Returns</dt><dd>True if the block is empty. </dd></dl>
 
 </div>
 </div>
@@ -189,6 +202,17 @@ Public Attributes</h2></td></tr>
   </tr>
 </table>
 </div><div class="memdoc">
+
+<p>Updates the occupancy status of a block. </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">bx</td><td>Block X (0-7). </td></tr>
+    <tr><td class="paramname">by</td><td>Block Y (0-7). </td></tr>
+    <tr><td class="paramname">bz</td><td>Block Z (0-7). </td></tr>
+    <tr><td class="paramname">notEmpty</td><td>If true, marks the block as occupied. </td></tr>
+  </table>
+  </dd>
+</dl>
 
 </div>
 </div>

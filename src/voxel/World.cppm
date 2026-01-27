@@ -14,13 +14,18 @@ import :chunk;
 
 namespace vortex::voxel {
 
-    // Defined here to be visible for VoxelWorld public API
+    /**
+     * @brief Represents an instance of a voxel object in the world for rendering.
+     */
     export struct ObjectInstance {
         glm::mat4 transform;
         uint32_t chunkIndex;
         uint32_t materialOffset;
     };
 
+    /**
+     * @brief Simple linear pool for managing chunk storage.
+     */
     export struct ChunkPool {
         std::vector<Chunk> chunks;
 
@@ -34,10 +39,18 @@ namespace vortex::voxel {
         }
     };
 
+    /**
+     * @brief High-level container for the Voxel World state.
+     * @details Manages object instances, the chunk pool, and the material palette.
+     */
     export class VoxelWorld {
     public:
         VoxelWorld() = default;
 
+        /**
+         * @brief Adds a voxel object to the world and registers its chunk.
+         * @param obj The voxel object to add.
+         */
         void AddObject(const VoxelObject& obj) {
             if (obj.chunk) {
                 uint32_t index = m_Pool.AddChunk(*obj.chunk);
@@ -54,7 +67,9 @@ namespace vortex::voxel {
         const std::vector<ObjectInstance>& GetObjects() const { return m_Objects; }
         const std::vector<Chunk>& GetChunks() const { return m_Pool.chunks; }
         
-        // Use PhysicalMaterial instead of Material, and GetData() from Palette
+        /**
+         * @brief Returns the raw material data from the palette.
+         */
         const std::vector<PhysicalMaterial>& GetMaterials() const { return m_Palette.GetData(); }
 
         MaterialPalette& GetPalette() { return m_Palette; }

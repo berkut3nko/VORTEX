@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['log_0',['Log',['../classvortex_1_1Log.html',1,'vortex']]]
+  ['hierarchymask_0',['HierarchyMask',['../structvortex_1_1voxel_1_1HierarchyMask.html',1,'vortex::voxel']]]
 ];

@@ -99,24 +99,55 @@ $(function(){initNavTree('structvortex_1_1graphics_1_1SceneObject.html',''); ini
 </div><!--header-->
 <div class="contents">
 
-<p>High-level CPU representation of an object.  
+<p>CPU-side representation of an object in the scene.  
  <a href="#details">More...</a></p>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-attribs" name="pub-attribs"></a>
 Public Attributes</h2></td></tr>
-<tr class="memitem:a498a903b055e86bcc41af56c37458120" id="r_a498a903b055e86bcc41af56c37458120"><td class="memItemLeft" align="right" valign="top">glm::mat4&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a498a903b055e86bcc41af56c37458120">model</a></td></tr>
+<tr class="memitem:a498a903b055e86bcc41af56c37458120" id="r_a498a903b055e86bcc41af56c37458120"><td class="memItemLeft" align="right" valign="top">glm::mat4&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a498a903b055e86bcc41af56c37458120">model</a> {1.0f}</td></tr>
 <tr class="separator:a498a903b055e86bcc41af56c37458120"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a8dc6b48cab561cd4a741fa0360e521fb" id="r_a8dc6b48cab561cd4a741fa0360e521fb"><td class="memItemLeft" align="right" valign="top">uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a8dc6b48cab561cd4a741fa0360e521fb">materialIdx</a></td></tr>
-<tr class="separator:a8dc6b48cab561cd4a741fa0360e521fb"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a3938d107c0a1186bb21529e2eb8afe32" id="r_a3938d107c0a1186bb21529e2eb8afe32"><td class="memItemLeft" align="right" valign="top">glm::vec3&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a3938d107c0a1186bb21529e2eb8afe32">logicalCenter</a> {16.0f}</td></tr>
+<tr class="memitem:a3938d107c0a1186bb21529e2eb8afe32" id="r_a3938d107c0a1186bb21529e2eb8afe32"><td class="memItemLeft" align="right" valign="top">glm::vec3&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a3938d107c0a1186bb21529e2eb8afe32">logicalCenter</a> {0.0f}</td></tr>
 <tr class="separator:a3938d107c0a1186bb21529e2eb8afe32"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a0ee86a84ede03a0c08c9ffd730df815b" id="r_a0ee86a84ede03a0c08c9ffd730df815b"><td class="memItemLeft" align="right" valign="top">uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a0ee86a84ede03a0c08c9ffd730df815b">voxelCount</a> {0}</td></tr>
+<tr class="memitem:a0ee86a84ede03a0c08c9ffd730df815b" id="r_a0ee86a84ede03a0c08c9ffd730df815b"><td class="memItemLeft" align="right" valign="top">uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a0ee86a84ede03a0c08c9ffd730df815b">voxelCount</a> = 0</td></tr>
 <tr class="separator:a0ee86a84ede03a0c08c9ffd730df815b"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a1cacf4dc9c9f7f5ac8ff31006f3882e0" id="r_a1cacf4dc9c9f7f5ac8ff31006f3882e0"><td class="memItemLeft" align="right" valign="top">uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a1cacf4dc9c9f7f5ac8ff31006f3882e0">chunkIndex</a> = 0</td></tr>
+<tr class="separator:a1cacf4dc9c9f7f5ac8ff31006f3882e0"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a5ac324af3787b28ccc31963979a9f067" id="r_a5ac324af3787b28ccc31963979a9f067"><td class="memItemLeft" align="right" valign="top">uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a5ac324af3787b28ccc31963979a9f067">paletteOffset</a> = 0</td></tr>
+<tr class="separator:a5ac324af3787b28ccc31963979a9f067"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:adfae2b5b2236b99d7e66bbdd821ecc11" id="r_adfae2b5b2236b99d7e66bbdd821ecc11"><td class="memItemLeft" align="right" valign="top">uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#adfae2b5b2236b99d7e66bbdd821ecc11">flags</a> = 0</td></tr>
+<tr class="separator:adfae2b5b2236b99d7e66bbdd821ecc11"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>High-level CPU representation of an object. </p>
-<p>Contains transform and metadata used by the engine and editor. </p>
+<div class="textblock"><p>CPU-side representation of an object in the scene. </p>
 </div><h2 class="groupheader">Member Data Documentation</h2>
+<a id="a1cacf4dc9c9f7f5ac8ff31006f3882e0" name="a1cacf4dc9c9f7f5ac8ff31006f3882e0"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a1cacf4dc9c9f7f5ac8ff31006f3882e0">&#9670;&#160;</a></span>chunkIndex</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">uint32_t vortex::graphics::SceneObject::chunkIndex = 0</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="adfae2b5b2236b99d7e66bbdd821ecc11" name="adfae2b5b2236b99d7e66bbdd821ecc11"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#adfae2b5b2236b99d7e66bbdd821ecc11">&#9670;&#160;</a></span>flags</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">uint32_t vortex::graphics::SceneObject::flags = 0</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a3938d107c0a1186bb21529e2eb8afe32" name="a3938d107c0a1186bb21529e2eb8afe32"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a3938d107c0a1186bb21529e2eb8afe32">&#9670;&#160;</a></span>logicalCenter</h2>
 
@@ -124,21 +155,7 @@ Public Attributes</h2></td></tr>
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">glm::vec3 vortex::graphics::SceneObject::logicalCenter {16.0f}</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="a8dc6b48cab561cd4a741fa0360e521fb" name="a8dc6b48cab561cd4a741fa0360e521fb"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a8dc6b48cab561cd4a741fa0360e521fb">&#9670;&#160;</a></span>materialIdx</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">uint32_t vortex::graphics::SceneObject::materialIdx</td>
+          <td class="memname">glm::vec3 vortex::graphics::SceneObject::logicalCenter {0.0f}</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -152,7 +169,21 @@ Public Attributes</h2></td></tr>
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">glm::mat4 vortex::graphics::SceneObject::model</td>
+          <td class="memname">glm::mat4 vortex::graphics::SceneObject::model {1.0f}</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a5ac324af3787b28ccc31963979a9f067" name="a5ac324af3787b28ccc31963979a9f067"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a5ac324af3787b28ccc31963979a9f067">&#9670;&#160;</a></span>paletteOffset</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">uint32_t vortex::graphics::SceneObject::paletteOffset = 0</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -166,7 +197,7 @@ Public Attributes</h2></td></tr>
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">uint32_t vortex::graphics::SceneObject::voxelCount {0}</td>
+          <td class="memname">uint32_t vortex::graphics::SceneObject::voxelCount = 0</td>
         </tr>
       </table>
 </div><div class="memdoc">

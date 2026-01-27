@@ -15,7 +15,6 @@ var namespacevortex_1_1graphics =
     [ "Swapchain", "classvortex_1_1graphics_1_1Swapchain.html", "classvortex_1_1graphics_1_1Swapchain" ],
     [ "TAAPipeline", "classvortex_1_1graphics_1_1TAAPipeline.html", "classvortex_1_1graphics_1_1TAAPipeline" ],
     [ "UIOverlay", "classvortex_1_1graphics_1_1UIOverlay.html", "classvortex_1_1graphics_1_1UIOverlay" ],
-    [ "ViewFrustum", "structvortex_1_1graphics_1_1ViewFrustum.html", "structvortex_1_1graphics_1_1ViewFrustum" ],
     [ "VulkanContext", "classvortex_1_1graphics_1_1VulkanContext.html", "classvortex_1_1graphics_1_1VulkanContext" ],
     [ "Window", "classvortex_1_1graphics_1_1Window.html", "classvortex_1_1graphics_1_1Window" ],
     [ "AntiAliasingMode", "namespacevortex_1_1graphics.html#a6c15dfbf66fdb37b32ce2cc88ff895ee", [

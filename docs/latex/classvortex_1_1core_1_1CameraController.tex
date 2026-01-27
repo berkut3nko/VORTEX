@@ -2,7 +2,7 @@
 \hypertarget{classvortex_1_1core_1_1CameraController}{}\label{classvortex_1_1core_1_1CameraController}\index{vortex::core::CameraController@{vortex::core::CameraController}}
 
 
-Handles camera movement and rotation based on input.  
+Handles First-\/\+Person camera movement and rotation based on input.  
 
 
 \doxysubsubsection*{Public Member Functions}
@@ -11,20 +11,22 @@ Handles camera movement and rotation based on input.
 \mbox{\hyperlink{classvortex_1_1core_1_1CameraController_a615ae56d31e59b3327754cd744e9ff58}{Camera\+Controller}} ()=default
 \item 
 void \mbox{\hyperlink{classvortex_1_1core_1_1CameraController_a2190d273c5dfee1766bb40c6522fe4d3}{Update}} (GLFWwindow \texorpdfstring{$\ast$}{*}window, \mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{graphics\+::\+Camera}} \&camera, float delta\+Time)
-\begin{DoxyCompactList}\small\item\em Updates camera position and rotation. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\begin{DoxyCompactList}\small\item\em Updates camera position and rotation based on current input state. \end{DoxyCompactList}\end{DoxyCompactItemize}
 \doxysubsubsection*{Public Attributes}
 \begin{DoxyCompactItemize}
 \item 
 float \mbox{\hyperlink{classvortex_1_1core_1_1CameraController_a9e479d1849c660461e3b393f4e9a499e}{movement\+Speed}} = 5.\+0f
-\item 
+\begin{DoxyCompactList}\small\item\em Base movement speed in units per second. \end{DoxyCompactList}\item 
 float \mbox{\hyperlink{classvortex_1_1core_1_1CameraController_af98557c4f8ead49f167e04015fc4943d}{mouse\+Sensitivity}} = 0.\+1f
-\item 
+\begin{DoxyCompactList}\small\item\em Mouse look sensitivity. \end{DoxyCompactList}\item 
 float \mbox{\hyperlink{classvortex_1_1core_1_1CameraController_a237e9148ada7589e47044bc7c882782c}{sprint\+Multiplier}} = 4.\+0f
-\end{DoxyCompactItemize}
+\begin{DoxyCompactList}\small\item\em Speed multiplier when Shift is held. \end{DoxyCompactList}\end{DoxyCompactItemize}
 
 
 \doxysubsection{Detailed Description}
-Handles camera movement and rotation based on input. 
+Handles First-\/\+Person camera movement and rotation based on input. 
+
+Supports WASD movement, Space/\+Ctrl for elevation, and mouse look. 
 
 \doxysubsection{Constructor \& Destructor Documentation}
 \Hypertarget{classvortex_1_1core_1_1CameraController_a615ae56d31e59b3327754cd744e9ff58}\label{classvortex_1_1core_1_1CameraController_a615ae56d31e59b3327754cd744e9ff58} 
@@ -44,7 +46,7 @@ Handles camera movement and rotation based on input.
 
 
 
-Updates camera position and rotation. 
+Updates camera position and rotation based on current input state. 
 
 
 \begin{DoxyParams}{Parameters}
@@ -52,7 +54,7 @@ Updates camera position and rotation.
 \hline
 {\em camera} & Reference to the camera object to modify. \\
 \hline
-{\em delta\+Time} & Time elapsed since last frame. \\
+{\em delta\+Time} & Time elapsed since last frame (for frame-\/rate independent movement). \\
 \hline
 \end{DoxyParams}
 
@@ -64,17 +66,29 @@ Updates camera position and rotation.
 \doxysubsubsection{\texorpdfstring{mouseSensitivity}{mouseSensitivity}}
 {\footnotesize\ttfamily float vortex\+::core\+::\+Camera\+Controller\+::mouse\+Sensitivity = 0.\+1f}
 
+
+
+Mouse look sensitivity. 
+
 \Hypertarget{classvortex_1_1core_1_1CameraController_a9e479d1849c660461e3b393f4e9a499e}\label{classvortex_1_1core_1_1CameraController_a9e479d1849c660461e3b393f4e9a499e} 
 \index{vortex::core::CameraController@{vortex::core::CameraController}!movementSpeed@{movementSpeed}}
 \index{movementSpeed@{movementSpeed}!vortex::core::CameraController@{vortex::core::CameraController}}
 \doxysubsubsection{\texorpdfstring{movementSpeed}{movementSpeed}}
 {\footnotesize\ttfamily float vortex\+::core\+::\+Camera\+Controller\+::movement\+Speed = 5.\+0f}
 
+
+
+Base movement speed in units per second. 
+
 \Hypertarget{classvortex_1_1core_1_1CameraController_a237e9148ada7589e47044bc7c882782c}\label{classvortex_1_1core_1_1CameraController_a237e9148ada7589e47044bc7c882782c} 
 \index{vortex::core::CameraController@{vortex::core::CameraController}!sprintMultiplier@{sprintMultiplier}}
 \index{sprintMultiplier@{sprintMultiplier}!vortex::core::CameraController@{vortex::core::CameraController}}
 \doxysubsubsection{\texorpdfstring{sprintMultiplier}{sprintMultiplier}}
 {\footnotesize\ttfamily float vortex\+::core\+::\+Camera\+Controller\+::sprint\+Multiplier = 4.\+0f}
+
+
+
+Speed multiplier when Shift is held. 
 
 
 

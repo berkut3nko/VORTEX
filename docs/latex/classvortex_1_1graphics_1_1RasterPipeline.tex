@@ -1,5 +1,10 @@
 \doxysection{vortex\+::graphics\+::Raster\+Pipeline Class Reference}
 \hypertarget{classvortex_1_1graphics_1_1RasterPipeline}{}\label{classvortex_1_1graphics_1_1RasterPipeline}\index{vortex::graphics::RasterPipeline@{vortex::graphics::RasterPipeline}}
+
+
+Manages the main rasterization pipeline for Voxel Raymarching.  
+
+
 \doxysubsubsection*{Public Member Functions}
 \begin{DoxyCompactItemize}
 \item 
@@ -8,14 +13,19 @@
 \mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline_aec5aa8958a15fd34e61239ecbff3a79a}{\texorpdfstring{$\sim$}{\string~}\+Raster\+Pipeline}} ()
 \item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline_a105d93ebbdbc0b3429dc637aed6c9243}{Initialize}} (Vk\+Device device, Vk\+Format color\+Format, Vk\+Format velocity\+Format, Vk\+Format depth\+Format, uint32\+\_\+t frames\+In\+Flight, const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \&camera\+Buffer, const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \&material\+Buffer, const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \&object\+Buffer, const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \&chunk\+Buffer)
-\item 
+\begin{DoxyCompactList}\small\item\em Initializes the graphics pipeline, layout, and descriptors. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline_a10daf5467ff19bb9030980410248f0bc}{Shutdown}} ()
 \item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline_a617e244708c49bd15d0962109f01e4ad}{Bind}} (Vk\+Command\+Buffer cmd, uint32\+\_\+t frame\+Index)
-\item 
+\begin{DoxyCompactList}\small\item\em Binds the pipeline and descriptor sets for the current frame. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline_a5994ce3d7a3ec48124c1b1b8d85fcf31}{Update\+Descriptors}} (uint32\+\_\+t frame\+Index)
-\end{DoxyCompactItemize}
+\begin{DoxyCompactList}\small\item\em Updates descriptor sets with current buffer handles. \end{DoxyCompactList}\end{DoxyCompactItemize}
 
+
+\doxysubsection{Detailed Description}
+Manages the main rasterization pipeline for Voxel Raymarching. 
+
+Uses a full-\/screen triangle or cube bounding boxes to trigger the fragment shader raymarcher. 
 
 \doxysubsection{Constructor \& Destructor Documentation}
 \Hypertarget{classvortex_1_1graphics_1_1RasterPipeline_a3bcee315f878bbef495692431c39585c}\label{classvortex_1_1graphics_1_1RasterPipeline_a3bcee315f878bbef495692431c39585c} 
@@ -39,11 +49,19 @@ void \mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline_a5994ce3d7a3ec48
 \doxysubsubsection{\texorpdfstring{Bind()}{Bind()}}
 {\footnotesize\ttfamily void vortex\+::graphics\+::\+Raster\+Pipeline\+::\+Bind (\begin{DoxyParamCaption}\item[{Vk\+Command\+Buffer}]{cmd,  }\item[{uint32\+\_\+t}]{frame\+Index }\end{DoxyParamCaption})}
 
+
+
+Binds the pipeline and descriptor sets for the current frame. 
+
 \Hypertarget{classvortex_1_1graphics_1_1RasterPipeline_a105d93ebbdbc0b3429dc637aed6c9243}\label{classvortex_1_1graphics_1_1RasterPipeline_a105d93ebbdbc0b3429dc637aed6c9243} 
 \index{vortex::graphics::RasterPipeline@{vortex::graphics::RasterPipeline}!Initialize@{Initialize}}
 \index{Initialize@{Initialize}!vortex::graphics::RasterPipeline@{vortex::graphics::RasterPipeline}}
 \doxysubsubsection{\texorpdfstring{Initialize()}{Initialize()}}
 {\footnotesize\ttfamily void vortex\+::graphics\+::\+Raster\+Pipeline\+::\+Initialize (\begin{DoxyParamCaption}\item[{Vk\+Device}]{device,  }\item[{Vk\+Format}]{color\+Format,  }\item[{Vk\+Format}]{velocity\+Format,  }\item[{Vk\+Format}]{depth\+Format,  }\item[{uint32\+\_\+t}]{frames\+In\+Flight,  }\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \&}]{camera\+Buffer,  }\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \&}]{material\+Buffer,  }\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \&}]{object\+Buffer,  }\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \&}]{chunk\+Buffer }\end{DoxyParamCaption})}
+
+
+
+Initializes the graphics pipeline, layout, and descriptors. 
 
 \Hypertarget{classvortex_1_1graphics_1_1RasterPipeline_a10daf5467ff19bb9030980410248f0bc}\label{classvortex_1_1graphics_1_1RasterPipeline_a10daf5467ff19bb9030980410248f0bc} 
 \index{vortex::graphics::RasterPipeline@{vortex::graphics::RasterPipeline}!Shutdown@{Shutdown}}
@@ -56,6 +74,10 @@ void \mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline_a5994ce3d7a3ec48
 \index{UpdateDescriptors@{UpdateDescriptors}!vortex::graphics::RasterPipeline@{vortex::graphics::RasterPipeline}}
 \doxysubsubsection{\texorpdfstring{UpdateDescriptors()}{UpdateDescriptors()}}
 {\footnotesize\ttfamily void vortex\+::graphics\+::\+Raster\+Pipeline\+::\+Update\+Descriptors (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{frame\+Index }\end{DoxyParamCaption})}
+
+
+
+Updates descriptor sets with current buffer handles. 
 
 
 

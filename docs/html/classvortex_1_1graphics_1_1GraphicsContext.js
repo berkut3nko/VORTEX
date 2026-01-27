@@ -17,5 +17,5 @@ var classvortex_1_1graphics_1_1GraphicsContext =
     [ "SetAAMode", "classvortex_1_1graphics_1_1GraphicsContext.html#af17abda7ed5b033a3c46d60dc4f4347d", null ],
     [ "Shutdown", "classvortex_1_1graphics_1_1GraphicsContext.html#a1d14ea5ce84150c7999fce6ca9caeab3", null ],
     [ "UploadCamera", "classvortex_1_1graphics_1_1GraphicsContext.html#acc66a19ac90a8c0ba26c83810b582f02", null ],
-    [ "UploadScene", "classvortex_1_1graphics_1_1GraphicsContext.html#aefa4bd98c389208c98543a511b39cab7", null ]
+    [ "UploadScene", "classvortex_1_1graphics_1_1GraphicsContext.html#a71c27baf5c09afb517b47d480ed78d91", null ]
 ];

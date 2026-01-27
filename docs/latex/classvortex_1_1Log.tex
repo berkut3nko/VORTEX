@@ -1,19 +1,29 @@
 \doxysection{vortex\+::Log Class Reference}
 \hypertarget{classvortex_1_1Log}{}\label{classvortex_1_1Log}\index{vortex::Log@{vortex::Log}}
+
+
+Static logging utility wrapper around spdlog.  
+
+
 \doxysubsubsection*{Static Public Member Functions}
 \begin{DoxyCompactItemize}
 \item 
 static void \mbox{\hyperlink{classvortex_1_1Log_a0ebd926f014a2d28748ca783cb14f2cb}{Init}} ()
-\item 
+\begin{DoxyCompactList}\small\item\em Initializes the logging subsystem. \end{DoxyCompactList}\item 
 static void \mbox{\hyperlink{classvortex_1_1Log_a740e3c853acf1b0fe85e431c88587e86}{Info}} (const std\+::string \&msg)
-\item 
+\begin{DoxyCompactList}\small\item\em Logs an informational message (Green/\+White). \end{DoxyCompactList}\item 
 static void \mbox{\hyperlink{classvortex_1_1Log_a63f68d5d988903c0b0993f0cb4e2cfb8}{Warn}} (const std\+::string \&msg)
-\item 
+\begin{DoxyCompactList}\small\item\em Logs a warning message (Yellow). \end{DoxyCompactList}\item 
 static void \mbox{\hyperlink{classvortex_1_1Log_a0f164bb20680ee7de43fccd1b98a0696}{Error}} (const std\+::string \&msg)
-\item 
+\begin{DoxyCompactList}\small\item\em Logs an error message (Red). \end{DoxyCompactList}\item 
 static std\+::shared\+\_\+ptr$<$ spdlog\+::logger $>$ \& \mbox{\hyperlink{classvortex_1_1Log_afc18a81b6be63460a4dc6ddd0f9cbca9}{Get\+Core\+Logger}} ()
-\end{DoxyCompactItemize}
+\begin{DoxyCompactList}\small\item\em Access the underlying spdlog logger. \end{DoxyCompactList}\end{DoxyCompactItemize}
 
+
+\doxysubsection{Detailed Description}
+Static logging utility wrapper around spdlog. 
+
+Provides thread-\/safe, colored console output for various severity levels. 
 
 \doxysubsection{Member Function Documentation}
 \Hypertarget{classvortex_1_1Log_a0f164bb20680ee7de43fccd1b98a0696}\label{classvortex_1_1Log_a0f164bb20680ee7de43fccd1b98a0696} 
@@ -22,30 +32,68 @@ static std\+::shared\+\_\+ptr$<$ spdlog\+::logger $>$ \& \mbox{\hyperlink{classv
 \doxysubsubsection{\texorpdfstring{Error()}{Error()}}
 {\footnotesize\ttfamily static void vortex\+::\+Log\+::\+Error (\begin{DoxyParamCaption}\item[{const std\+::string \&}]{msg }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}, {\ttfamily [static]}}
 
+
+
+Logs an error message (Red). 
+
+
+\begin{DoxyParams}{Parameters}
+{\em msg} & The message string. \\
+\hline
+\end{DoxyParams}
 \Hypertarget{classvortex_1_1Log_afc18a81b6be63460a4dc6ddd0f9cbca9}\label{classvortex_1_1Log_afc18a81b6be63460a4dc6ddd0f9cbca9} 
 \index{vortex::Log@{vortex::Log}!GetCoreLogger@{GetCoreLogger}}
 \index{GetCoreLogger@{GetCoreLogger}!vortex::Log@{vortex::Log}}
 \doxysubsubsection{\texorpdfstring{GetCoreLogger()}{GetCoreLogger()}}
 {\footnotesize\ttfamily static std\+::shared\+\_\+ptr$<$ spdlog\+::logger $>$ \& vortex\+::\+Log\+::\+Get\+Core\+Logger (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}, {\ttfamily [static]}}
 
+
+
+Access the underlying spdlog logger. 
+
+\begin{DoxyReturn}{Returns}
+Reference to the shared pointer of the logger. 
+\end{DoxyReturn}
 \Hypertarget{classvortex_1_1Log_a740e3c853acf1b0fe85e431c88587e86}\label{classvortex_1_1Log_a740e3c853acf1b0fe85e431c88587e86} 
 \index{vortex::Log@{vortex::Log}!Info@{Info}}
 \index{Info@{Info}!vortex::Log@{vortex::Log}}
 \doxysubsubsection{\texorpdfstring{Info()}{Info()}}
 {\footnotesize\ttfamily static void vortex\+::\+Log\+::\+Info (\begin{DoxyParamCaption}\item[{const std\+::string \&}]{msg }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}, {\ttfamily [static]}}
 
+
+
+Logs an informational message (Green/\+White). 
+
+
+\begin{DoxyParams}{Parameters}
+{\em msg} & The message string. \\
+\hline
+\end{DoxyParams}
 \Hypertarget{classvortex_1_1Log_a0ebd926f014a2d28748ca783cb14f2cb}\label{classvortex_1_1Log_a0ebd926f014a2d28748ca783cb14f2cb} 
 \index{vortex::Log@{vortex::Log}!Init@{Init}}
 \index{Init@{Init}!vortex::Log@{vortex::Log}}
 \doxysubsubsection{\texorpdfstring{Init()}{Init()}}
 {\footnotesize\ttfamily static void vortex\+::\+Log\+::\+Init (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}, {\ttfamily [static]}}
 
-\Hypertarget{classvortex_1_1Log_a63f68d5d988903c0b0993f0cb4e2cfb8}\label{classvortex_1_1Log_a63f68d5d988903c0b0993f0cb4e2cfb8} 
+
+
+Initializes the logging subsystem. 
+
+Sets up the console sink and default formatting pattern. Pattern\+: "{}\mbox{[}\+Time\mbox{]} Logger\+Name\+: Message"{} \Hypertarget{classvortex_1_1Log_a63f68d5d988903c0b0993f0cb4e2cfb8}\label{classvortex_1_1Log_a63f68d5d988903c0b0993f0cb4e2cfb8} 
 \index{vortex::Log@{vortex::Log}!Warn@{Warn}}
 \index{Warn@{Warn}!vortex::Log@{vortex::Log}}
 \doxysubsubsection{\texorpdfstring{Warn()}{Warn()}}
 {\footnotesize\ttfamily static void vortex\+::\+Log\+::\+Warn (\begin{DoxyParamCaption}\item[{const std\+::string \&}]{msg }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}, {\ttfamily [static]}}
 
+
+
+Logs a warning message (Yellow). 
+
+
+\begin{DoxyParams}{Parameters}
+{\em msg} & The message string. \\
+\hline
+\end{DoxyParams}
 
 
 The documentation for this class was generated from the following file\+:\begin{DoxyCompactItemize}

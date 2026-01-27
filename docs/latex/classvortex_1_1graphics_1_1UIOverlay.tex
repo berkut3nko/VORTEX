@@ -2,7 +2,7 @@
 \hypertarget{classvortex_1_1graphics_1_1UIOverlay}{}\label{classvortex_1_1graphics_1_1UIOverlay}\index{vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}}
 
 
-Handles Im\+Gui integration.  
+Handles Im\+Gui integration and UI rendering.  
 
 
 \doxysubsubsection*{Public Member Functions}
@@ -13,19 +13,19 @@ Handles Im\+Gui integration.
 \mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay_a228a7c2f5b0ecbdf5971d87e3fb0a25f}{\texorpdfstring{$\sim$}{\string~}\+UIOverlay}} ()
 \item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay_ad227f106bf5de33065ef894526e48ed9}{Initialize}} (\mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext}{Vulkan\+Context}} \&context, \mbox{\hyperlink{classvortex_1_1graphics_1_1Window}{Window}} \&window, Vk\+Format swapchain\+Format, Vk\+Extent2D extent, const std\+::vector$<$ Vk\+Image\+View $>$ \&views)
-\item 
+\begin{DoxyCompactList}\small\item\em Initializes Im\+Gui context and Vulkan resources (Render\+Pass, Fonts, etc.). \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay_aa4ba28d92ab7dd220fa05dd43ebc9e73}{Shutdown}} ()
-\item 
+\begin{DoxyCompactList}\small\item\em Shuts down Im\+Gui and releases resources. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay_a05f3efc7020623aa4cc8f1ca82ae79ae}{On\+Resize}} (Vk\+Extent2D extent, const std\+::vector$<$ Vk\+Image\+View $>$ \&views)
-\item 
+\begin{DoxyCompactList}\small\item\em Recreates framebuffers when swapchain resizes. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay_ae6663adf0fc4c1f16d6a200bc025d58d}{Begin\+Frame}} ()
-\item 
+\begin{DoxyCompactList}\small\item\em Starts a new Im\+Gui frame. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay_aff1606d13d25df27fb0f98237a0b7845}{Render}} (Vk\+Command\+Buffer cmd, uint32\+\_\+t image\+Index)
-\end{DoxyCompactItemize}
+\begin{DoxyCompactList}\small\item\em Renders the Im\+Gui draw data into the command buffer. \end{DoxyCompactList}\end{DoxyCompactItemize}
 
 
 \doxysubsection{Detailed Description}
-Handles Im\+Gui integration. 
+Handles Im\+Gui integration and UI rendering. 
 
 \doxysubsection{Constructor \& Destructor Documentation}
 \Hypertarget{classvortex_1_1graphics_1_1UIOverlay_a80418af558156ba53d64774d05de53bb}\label{classvortex_1_1graphics_1_1UIOverlay_a80418af558156ba53d64774d05de53bb} 
@@ -49,11 +49,19 @@ Handles Im\+Gui integration.
 \doxysubsubsection{\texorpdfstring{BeginFrame()}{BeginFrame()}}
 {\footnotesize\ttfamily void vortex\+::graphics\+::\+UIOverlay\+::\+Begin\+Frame (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
 
+
+
+Starts a new Im\+Gui frame. 
+
 \Hypertarget{classvortex_1_1graphics_1_1UIOverlay_ad227f106bf5de33065ef894526e48ed9}\label{classvortex_1_1graphics_1_1UIOverlay_ad227f106bf5de33065ef894526e48ed9} 
 \index{vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}!Initialize@{Initialize}}
 \index{Initialize@{Initialize}!vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}}
 \doxysubsubsection{\texorpdfstring{Initialize()}{Initialize()}}
 {\footnotesize\ttfamily void vortex\+::graphics\+::\+UIOverlay\+::\+Initialize (\begin{DoxyParamCaption}\item[{\mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext}{Vulkan\+Context}} \&}]{context,  }\item[{\mbox{\hyperlink{classvortex_1_1graphics_1_1Window}{Window}} \&}]{window,  }\item[{Vk\+Format}]{swapchain\+Format,  }\item[{Vk\+Extent2D}]{extent,  }\item[{const std\+::vector$<$ Vk\+Image\+View $>$ \&}]{views }\end{DoxyParamCaption})}
+
+
+
+Initializes Im\+Gui context and Vulkan resources (Render\+Pass, Fonts, etc.). 
 
 \Hypertarget{classvortex_1_1graphics_1_1UIOverlay_a05f3efc7020623aa4cc8f1ca82ae79ae}\label{classvortex_1_1graphics_1_1UIOverlay_a05f3efc7020623aa4cc8f1ca82ae79ae} 
 \index{vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}!OnResize@{OnResize}}
@@ -61,17 +69,29 @@ Handles Im\+Gui integration.
 \doxysubsubsection{\texorpdfstring{OnResize()}{OnResize()}}
 {\footnotesize\ttfamily void vortex\+::graphics\+::\+UIOverlay\+::\+On\+Resize (\begin{DoxyParamCaption}\item[{Vk\+Extent2D}]{extent,  }\item[{const std\+::vector$<$ Vk\+Image\+View $>$ \&}]{views }\end{DoxyParamCaption})}
 
+
+
+Recreates framebuffers when swapchain resizes. 
+
 \Hypertarget{classvortex_1_1graphics_1_1UIOverlay_aff1606d13d25df27fb0f98237a0b7845}\label{classvortex_1_1graphics_1_1UIOverlay_aff1606d13d25df27fb0f98237a0b7845} 
 \index{vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}!Render@{Render}}
 \index{Render@{Render}!vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}}
 \doxysubsubsection{\texorpdfstring{Render()}{Render()}}
 {\footnotesize\ttfamily void vortex\+::graphics\+::\+UIOverlay\+::\+Render (\begin{DoxyParamCaption}\item[{Vk\+Command\+Buffer}]{cmd,  }\item[{uint32\+\_\+t}]{image\+Index }\end{DoxyParamCaption})}
 
+
+
+Renders the Im\+Gui draw data into the command buffer. 
+
 \Hypertarget{classvortex_1_1graphics_1_1UIOverlay_aa4ba28d92ab7dd220fa05dd43ebc9e73}\label{classvortex_1_1graphics_1_1UIOverlay_aa4ba28d92ab7dd220fa05dd43ebc9e73} 
 \index{vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}!Shutdown@{Shutdown}}
 \index{Shutdown@{Shutdown}!vortex::graphics::UIOverlay@{vortex::graphics::UIOverlay}}
 \doxysubsubsection{\texorpdfstring{Shutdown()}{Shutdown()}}
 {\footnotesize\ttfamily void vortex\+::graphics\+::\+UIOverlay\+::\+Shutdown (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+
+
+Shuts down Im\+Gui and releases resources. 
 
 
 

@@ -15,7 +15,7 @@ static void \mbox{\hyperlink{classvortex_1_1core_1_1Profiler_a074bbd3b73fc05d478
 static void \mbox{\hyperlink{classvortex_1_1core_1_1Profiler_a769b665942ef2aab77f1307a969df544}{End}} (const std\+::string \&name)
 \begin{DoxyCompactList}\small\item\em Stops measuring time for the named section (CPU). \end{DoxyCompactList}\item 
 static void \mbox{\hyperlink{classvortex_1_1core_1_1Profiler_a4f18708ce19989afd5403d607a576d77}{Add\+Sample}} (const std\+::string \&name, float time\+Ms)
-\begin{DoxyCompactList}\small\item\em Adds a manual time sample (e.\+g. for GPU timers). \end{DoxyCompactList}\item 
+\begin{DoxyCompactList}\small\item\em Adds a manual time sample (e.\+g., for GPU timers queries). \end{DoxyCompactList}\item 
 static void \mbox{\hyperlink{classvortex_1_1core_1_1Profiler_aaa52845419e36398eb2429a92c95b0b8}{Render}} ()
 \begin{DoxyCompactList}\small\item\em Renders the profiling data as Im\+Gui graphs. \end{DoxyCompactList}\end{DoxyCompactItemize}
 
@@ -23,7 +23,7 @@ static void \mbox{\hyperlink{classvortex_1_1core_1_1Profiler_aaa52845419e36398eb
 \doxysubsection{Detailed Description}
 Static class for performance profiling and timing. 
 
-Collects execution times of named sections and renders them using Im\+Gui. 
+Collects execution times of named sections and renders them using Im\+Gui. Stores history for real-\/time graphing. 
 
 \doxysubsection{Member Function Documentation}
 \Hypertarget{classvortex_1_1core_1_1Profiler_a4f18708ce19989afd5403d607a576d77}\label{classvortex_1_1core_1_1Profiler_a4f18708ce19989afd5403d607a576d77} 
@@ -34,7 +34,7 @@ Collects execution times of named sections and renders them using Im\+Gui.
 
 
 
-Adds a manual time sample (e.\+g. for GPU timers). 
+Adds a manual time sample (e.\+g., for GPU timers queries). 
 
 
 \begin{DoxyParams}{Parameters}
@@ -78,7 +78,7 @@ Should be called at the very beginning of the frame. \Hypertarget{classvortex_1_
 
 Stops measuring time for the named section (CPU). 
 
-
+Calculates duration and adds it to the history. 
 \begin{DoxyParams}{Parameters}
 {\em name} & Name of the section to stop. \\
 \hline

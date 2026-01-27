@@ -1,10 +1,15 @@
 \doxysection{vortex\+::Engine Class Reference}
 \hypertarget{classvortex_1_1Engine}{}\label{classvortex_1_1Engine}\index{vortex::Engine@{vortex::Engine}}
+
+
+The main engine class coordinating all subsystems.  
+
+
 \doxysubsubsection*{Classes}
 \begin{DoxyCompactItemize}
 \item 
 struct \mbox{\hyperlink{structvortex_1_1Engine_1_1InternalState}{Internal\+State}}
-\begin{DoxyCompactList}\small\item\em Internal Pimpl state for the \doxylink{classvortex_1_1Engine}{Engine}. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\end{DoxyCompactItemize}
 \doxysubsubsection*{Public Member Functions}
 \begin{DoxyCompactItemize}
 \item 
@@ -13,16 +18,21 @@ struct \mbox{\hyperlink{structvortex_1_1Engine_1_1InternalState}{Internal\+State
 \mbox{\hyperlink{classvortex_1_1Engine_a17f11ae849064413ae99708d3353c5f3}{\texorpdfstring{$\sim$}{\string~}\+Engine}} ()
 \item 
 bool \mbox{\hyperlink{classvortex_1_1Engine_af779661626cb8c76e21620a145a42d7d}{Initialize}} (const std\+::string \&title, uint32\+\_\+t width, uint32\+\_\+t height)
-\item 
+\begin{DoxyCompactList}\small\item\em Initializes the engine, window, and subsystems. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1Engine_a15118a0752b685fa091e071d98504fb8}{Run}} (std\+::function$<$ void()$>$ on\+Gui\+Render=nullptr)
-\item 
+\begin{DoxyCompactList}\small\item\em Starts the main application loop. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1Engine_a565795d41f752558181ae73107ea8232}{Shutdown}} ()
-\item 
-void \mbox{\hyperlink{classvortex_1_1Engine_a000df94e7b44a36343fab7a0485a1ceb}{Upload\+Scene}} (const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{graphics\+::\+Scene\+Object}} $>$ \&objects, const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneMaterial}{graphics\+::\+Scene\+Material}} $>$ \&materials, const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{voxel\+::\+Chunk}} $>$ \&chunks)
-\item 
+\begin{DoxyCompactList}\small\item\em Shuts down the engine. \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1Engine_a873df698cfbea9cd0cf456677bc0def1}{Add\+Entity}} (std\+::shared\+\_\+ptr$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity}{voxel\+::\+Voxel\+Entity}} $>$ entity, bool is\+Static=false)
+\begin{DoxyCompactList}\small\item\em Adds an entity to the world and registers it with the physics engine. \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1Engine_af9027a4f34eff204fd9f0b135ab60c5b}{Upload\+Scene}} (const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{graphics\+::\+Scene\+Object}} $>$ \&objects, const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{voxel\+::\+Physical\+Material}} $>$ \&materials, const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{voxel\+::\+Chunk}} $>$ \&chunks)
+\begin{DoxyCompactList}\small\item\em Advanced\+: Manually uploads a scene configuration to the GPU. \end{DoxyCompactList}\item 
 \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext}{graphics\+::\+Graphics\+Context}} \& \mbox{\hyperlink{classvortex_1_1Engine_a88460bf47cc1dc1a7c4ea7219a23af76}{Get\+Graphics}} ()
 \end{DoxyCompactItemize}
 
+
+\doxysubsection{Detailed Description}
+The main engine class coordinating all subsystems. 
 
 \doxysubsection{Constructor \& Destructor Documentation}
 \Hypertarget{classvortex_1_1Engine_af7bb0d497dafbe828ff21a29e34ff34a}\label{classvortex_1_1Engine_af7bb0d497dafbe828ff21a29e34ff34a} 
@@ -40,6 +50,23 @@ void \mbox{\hyperlink{classvortex_1_1Engine_a000df94e7b44a36343fab7a0485a1ceb}{U
 
 
 \doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1Engine_a873df698cfbea9cd0cf456677bc0def1}\label{classvortex_1_1Engine_a873df698cfbea9cd0cf456677bc0def1} 
+\index{vortex::Engine@{vortex::Engine}!AddEntity@{AddEntity}}
+\index{AddEntity@{AddEntity}!vortex::Engine@{vortex::Engine}}
+\doxysubsubsection{\texorpdfstring{AddEntity()}{AddEntity()}}
+{\footnotesize\ttfamily void vortex\+::\+Engine\+::\+Add\+Entity (\begin{DoxyParamCaption}\item[{std\+::shared\+\_\+ptr$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity}{voxel\+::\+Voxel\+Entity}} $>$}]{entity,  }\item[{bool}]{is\+Static = {\ttfamily false} }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+
+
+Adds an entity to the world and registers it with the physics engine. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em entity} & The voxel entity to add. \\
+\hline
+{\em is\+Static} & If true, the object will be an immovable static collider (e.\+g., floor). \\
+\hline
+\end{DoxyParams}
 \Hypertarget{classvortex_1_1Engine_a88460bf47cc1dc1a7c4ea7219a23af76}\label{classvortex_1_1Engine_a88460bf47cc1dc1a7c4ea7219a23af76} 
 \index{vortex::Engine@{vortex::Engine}!GetGraphics@{GetGraphics}}
 \index{GetGraphics@{GetGraphics}!vortex::Engine@{vortex::Engine}}
@@ -52,24 +79,66 @@ void \mbox{\hyperlink{classvortex_1_1Engine_a000df94e7b44a36343fab7a0485a1ceb}{U
 \doxysubsubsection{\texorpdfstring{Initialize()}{Initialize()}}
 {\footnotesize\ttfamily bool vortex\+::\+Engine\+::\+Initialize (\begin{DoxyParamCaption}\item[{const std\+::string \&}]{title,  }\item[{uint32\+\_\+t}]{width,  }\item[{uint32\+\_\+t}]{height }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
 
+
+
+Initializes the engine, window, and subsystems. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em title} & Application title. \\
+\hline
+{\em width} & Window width. \\
+\hline
+{\em height} & Window height. \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+True on success. 
+\end{DoxyReturn}
 \Hypertarget{classvortex_1_1Engine_a15118a0752b685fa091e071d98504fb8}\label{classvortex_1_1Engine_a15118a0752b685fa091e071d98504fb8} 
 \index{vortex::Engine@{vortex::Engine}!Run@{Run}}
 \index{Run@{Run}!vortex::Engine@{vortex::Engine}}
 \doxysubsubsection{\texorpdfstring{Run()}{Run()}}
 {\footnotesize\ttfamily void vortex\+::\+Engine\+::\+Run (\begin{DoxyParamCaption}\item[{std\+::function$<$ void()$>$}]{on\+Gui\+Render = {\ttfamily nullptr} }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
 
+
+
+Starts the main application loop. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em on\+Gui\+Render} & Optional callback for rendering custom Im\+Gui elements. \\
+\hline
+\end{DoxyParams}
 \Hypertarget{classvortex_1_1Engine_a565795d41f752558181ae73107ea8232}\label{classvortex_1_1Engine_a565795d41f752558181ae73107ea8232} 
 \index{vortex::Engine@{vortex::Engine}!Shutdown@{Shutdown}}
 \index{Shutdown@{Shutdown}!vortex::Engine@{vortex::Engine}}
 \doxysubsubsection{\texorpdfstring{Shutdown()}{Shutdown()}}
 {\footnotesize\ttfamily void vortex\+::\+Engine\+::\+Shutdown (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
 
-\Hypertarget{classvortex_1_1Engine_a000df94e7b44a36343fab7a0485a1ceb}\label{classvortex_1_1Engine_a000df94e7b44a36343fab7a0485a1ceb} 
+
+
+Shuts down the engine. 
+
+\Hypertarget{classvortex_1_1Engine_af9027a4f34eff204fd9f0b135ab60c5b}\label{classvortex_1_1Engine_af9027a4f34eff204fd9f0b135ab60c5b} 
 \index{vortex::Engine@{vortex::Engine}!UploadScene@{UploadScene}}
 \index{UploadScene@{UploadScene}!vortex::Engine@{vortex::Engine}}
 \doxysubsubsection{\texorpdfstring{UploadScene()}{UploadScene()}}
-{\footnotesize\ttfamily void vortex\+::\+Engine\+::\+Upload\+Scene (\begin{DoxyParamCaption}\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{graphics\+::\+Scene\+Object}} $>$ \&}]{objects,  }\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneMaterial}{graphics\+::\+Scene\+Material}} $>$ \&}]{materials,  }\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{voxel\+::\+Chunk}} $>$ \&}]{chunks }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+{\footnotesize\ttfamily void vortex\+::\+Engine\+::\+Upload\+Scene (\begin{DoxyParamCaption}\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{graphics\+::\+Scene\+Object}} $>$ \&}]{objects,  }\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{voxel\+::\+Physical\+Material}} $>$ \&}]{materials,  }\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{voxel\+::\+Chunk}} $>$ \&}]{chunks }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
 
+
+
+Advanced\+: Manually uploads a scene configuration to the GPU. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em objects} & List of graphic objects. \\
+\hline
+{\em materials} & List of materials. \\
+\hline
+{\em chunks} & List of chunks. \\
+\hline
+\end{DoxyParams}
 
 
 The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}

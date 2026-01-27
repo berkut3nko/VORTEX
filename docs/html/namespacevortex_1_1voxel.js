@@ -2,11 +2,17 @@ var namespacevortex_1_1voxel =
 [
     [ "Chunk", "structvortex_1_1voxel_1_1Chunk.html", "structvortex_1_1voxel_1_1Chunk" ],
     [ "ChunkPool", "structvortex_1_1voxel_1_1ChunkPool.html", "structvortex_1_1voxel_1_1ChunkPool" ],
+    [ "DynamicMeshObject", "structvortex_1_1voxel_1_1DynamicMeshObject.html", "structvortex_1_1voxel_1_1DynamicMeshObject" ],
     [ "HierarchyMask", "structvortex_1_1voxel_1_1HierarchyMask.html", "structvortex_1_1voxel_1_1HierarchyMask" ],
     [ "MaterialPalette", "classvortex_1_1voxel_1_1MaterialPalette.html", "classvortex_1_1voxel_1_1MaterialPalette" ],
+    [ "MeshConverter", "classvortex_1_1voxel_1_1MeshConverter.html", null ],
+    [ "MeshImportResult", "structvortex_1_1voxel_1_1MeshImportResult.html", "structvortex_1_1voxel_1_1MeshImportResult" ],
+    [ "MeshImportSettings", "structvortex_1_1voxel_1_1MeshImportSettings.html", "structvortex_1_1voxel_1_1MeshImportSettings" ],
     [ "ObjectInstance", "structvortex_1_1voxel_1_1ObjectInstance.html", "structvortex_1_1voxel_1_1ObjectInstance" ],
     [ "PhysicalMaterial", "structvortex_1_1voxel_1_1PhysicalMaterial.html", "structvortex_1_1voxel_1_1PhysicalMaterial" ],
     [ "ShapeBuilder", "classvortex_1_1voxel_1_1ShapeBuilder.html", null ],
+    [ "Triangle", "structvortex_1_1voxel_1_1Triangle.html", "structvortex_1_1voxel_1_1Triangle" ],
+    [ "VoxelEntity", "structvortex_1_1voxel_1_1VoxelEntity.html", "structvortex_1_1voxel_1_1VoxelEntity" ],
     [ "VoxelObject", "structvortex_1_1voxel_1_1VoxelObject.html", "structvortex_1_1voxel_1_1VoxelObject" ],
     [ "VoxelWorld", "classvortex_1_1voxel_1_1VoxelWorld.html", "classvortex_1_1voxel_1_1VoxelWorld" ],
     [ "MaterialFlags", "namespacevortex_1_1voxel.html#a88673e8a0c64aecd6a8eedc7e31f970a", [

@@ -99,10 +99,12 @@ $(function(){initNavTree('module_vortex_8core.html',''); initResizable(); });
   <div class="headertitle"><div class="title">vortex.core Module Reference</div></div>
 </div><!--header-->
 <div class="contents">
-<table class="memberdecls">
+</table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="exports" name="exports"></a>
 Exported Modules</h2></td></tr>
 <tr class="memitem:vortex.graphics" id="r_vortex.graphics"><td class="memItemLeft" align="right" valign="top">module &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="module_vortex_8graphics.html">vortex.graphics</a></td></tr>
+<tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:vortex.physics" id="r_vortex.physics"><td class="memItemLeft" align="right" valign="top">module &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="module_vortex_8physics.html">vortex.physics</a></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:vortex.voxel" id="r_vortex.voxel"><td class="memItemLeft" align="right" valign="top">module &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="module_vortex_8voxel.html">vortex.voxel</a></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -110,6 +112,7 @@ Exported Modules</h2></td></tr>
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="nested-classes" name="nested-classes"></a>
 Classes</h2></td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classvortex_1_1Engine.html">vortex::Engine</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">The main engine class coordinating all subsystems.  <a href="classvortex_1_1Engine.html#details">More...</a><br /></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classvortex_1_1core_1_1Profiler.html">vortex::core::Profiler</a></td></tr>
 <tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Static class for performance profiling and timing.  <a href="classvortex_1_1core_1_1Profiler.html#details">More...</a><br /></td></tr>
@@ -118,7 +121,7 @@ Classes</h2></td></tr>
 <tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">RAII wrapper for automatic profiling scopes.  <a href="structvortex_1_1core_1_1ProfileScope.html#details">More...</a><br /></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classvortex_1_1core_1_1CameraController.html">vortex::core::CameraController</a></td></tr>
-<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handles camera movement and rotation based on input.  <a href="classvortex_1_1core_1_1CameraController.html#details">More...</a><br /></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handles First-Person camera movement and rotation based on input.  <a href="classvortex_1_1core_1_1CameraController.html#details">More...</a><br /></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="func-members" name="func-members"></a>
@@ -128,13 +131,20 @@ Functions</h2></td></tr>
 <tr class="memitem:a17f11ae849064413ae99708d3353c5f3" id="r_a17f11ae849064413ae99708d3353c5f3"><td class="memItemLeft" align="right" valign="top">&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classvortex_1_1Engine.html#a17f11ae849064413ae99708d3353c5f3">~Engine</a> ()</td></tr>
 <tr class="separator:a17f11ae849064413ae99708d3353c5f3"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:af779661626cb8c76e21620a145a42d7d" id="r_af779661626cb8c76e21620a145a42d7d"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classvortex_1_1Engine.html#af779661626cb8c76e21620a145a42d7d">Initialize</a> (const std::string &amp;title, uint32_t width, uint32_t height)</td></tr>
+<tr class="memdesc:af779661626cb8c76e21620a145a42d7d"><td class="mdescLeft">&#160;</td><td class="mdescRight">Initializes the engine, window, and subsystems.  <br /></td></tr>
 <tr class="separator:af779661626cb8c76e21620a145a42d7d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a15118a0752b685fa091e071d98504fb8" id="r_a15118a0752b685fa091e071d98504fb8"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classvortex_1_1Engine.html#a15118a0752b685fa091e071d98504fb8">Run</a> (std::function&lt; void()&gt; onGuiRender=nullptr)</td></tr>
+<tr class="memdesc:a15118a0752b685fa091e071d98504fb8"><td class="mdescLeft">&#160;</td><td class="mdescRight">Starts the main application loop.  <br /></td></tr>
 <tr class="separator:a15118a0752b685fa091e071d98504fb8"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a565795d41f752558181ae73107ea8232" id="r_a565795d41f752558181ae73107ea8232"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classvortex_1_1Engine.html#a565795d41f752558181ae73107ea8232">Shutdown</a> ()</td></tr>
+<tr class="memdesc:a565795d41f752558181ae73107ea8232"><td class="mdescLeft">&#160;</td><td class="mdescRight">Shuts down the engine.  <br /></td></tr>
 <tr class="separator:a565795d41f752558181ae73107ea8232"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a000df94e7b44a36343fab7a0485a1ceb" id="r_a000df94e7b44a36343fab7a0485a1ceb"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classvortex_1_1Engine.html#a000df94e7b44a36343fab7a0485a1ceb">UploadScene</a> (const std::vector&lt; graphics::SceneObject &gt; &amp;objects, const std::vector&lt; graphics::SceneMaterial &gt; &amp;materials, const std::vector&lt; voxel::Chunk &gt; &amp;chunks)</td></tr>
-<tr class="separator:a000df94e7b44a36343fab7a0485a1ceb"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a873df698cfbea9cd0cf456677bc0def1" id="r_a873df698cfbea9cd0cf456677bc0def1"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classvortex_1_1Engine.html#a873df698cfbea9cd0cf456677bc0def1">AddEntity</a> (std::shared_ptr&lt; voxel::VoxelEntity &gt; entity, bool isStatic=false)</td></tr>
+<tr class="memdesc:a873df698cfbea9cd0cf456677bc0def1"><td class="mdescLeft">&#160;</td><td class="mdescRight">Adds an entity to the world and registers it with the physics engine.  <br /></td></tr>
+<tr class="separator:a873df698cfbea9cd0cf456677bc0def1"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:af9027a4f34eff204fd9f0b135ab60c5b" id="r_af9027a4f34eff204fd9f0b135ab60c5b"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classvortex_1_1Engine.html#af9027a4f34eff204fd9f0b135ab60c5b">UploadScene</a> (const std::vector&lt; graphics::SceneObject &gt; &amp;objects, const std::vector&lt; voxel::PhysicalMaterial &gt; &amp;materials, const std::vector&lt; voxel::Chunk &gt; &amp;chunks)</td></tr>
+<tr class="memdesc:af9027a4f34eff204fd9f0b135ab60c5b"><td class="mdescLeft">&#160;</td><td class="mdescRight">Advanced: Manually uploads a scene configuration to the GPU.  <br /></td></tr>
+<tr class="separator:af9027a4f34eff204fd9f0b135ab60c5b"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a88460bf47cc1dc1a7c4ea7219a23af76" id="r_a88460bf47cc1dc1a7c4ea7219a23af76"><td class="memItemLeft" align="right" valign="top">graphics::GraphicsContext &amp;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classvortex_1_1Engine.html#a88460bf47cc1dc1a7c4ea7219a23af76">GetGraphics</a> ()</td></tr>
 <tr class="separator:a88460bf47cc1dc1a7c4ea7219a23af76"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>

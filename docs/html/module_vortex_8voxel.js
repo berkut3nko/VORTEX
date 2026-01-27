@@ -1,14 +1,19 @@
 var module_vortex_8voxel =
 [
-    [ "MaterialPalette", "classvortex_1_1voxel_1_1MaterialPalette.html", "classvortex_1_1voxel_1_1MaterialPalette" ],
     [ "HierarchyMask", "structvortex_1_1voxel_1_1HierarchyMask.html", "structvortex_1_1voxel_1_1HierarchyMask" ],
     [ "PhysicalMaterial", "structvortex_1_1voxel_1_1PhysicalMaterial.html", "structvortex_1_1voxel_1_1PhysicalMaterial" ],
     [ "VoxelObject", "structvortex_1_1voxel_1_1VoxelObject.html", "structvortex_1_1voxel_1_1VoxelObject" ],
+    [ "MaterialPalette", "classvortex_1_1voxel_1_1MaterialPalette.html", "classvortex_1_1voxel_1_1MaterialPalette" ],
+    [ "MeshImportSettings", "structvortex_1_1voxel_1_1MeshImportSettings.html", "structvortex_1_1voxel_1_1MeshImportSettings" ],
+    [ "MeshImportResult", "structvortex_1_1voxel_1_1MeshImportResult.html", "structvortex_1_1voxel_1_1MeshImportResult" ],
+    [ "MeshConverter", "classvortex_1_1voxel_1_1MeshConverter.html", null ],
+    [ "Chunk", "structvortex_1_1voxel_1_1Chunk.html", "structvortex_1_1voxel_1_1Chunk" ],
     [ "ShapeBuilder", "classvortex_1_1voxel_1_1ShapeBuilder.html", null ],
+    [ "VoxelEntity", "structvortex_1_1voxel_1_1VoxelEntity.html", "structvortex_1_1voxel_1_1VoxelEntity" ],
     [ "ObjectInstance", "structvortex_1_1voxel_1_1ObjectInstance.html", "structvortex_1_1voxel_1_1ObjectInstance" ],
     [ "ChunkPool", "structvortex_1_1voxel_1_1ChunkPool.html", "structvortex_1_1voxel_1_1ChunkPool" ],
     [ "VoxelWorld", "classvortex_1_1voxel_1_1VoxelWorld.html", "classvortex_1_1voxel_1_1VoxelWorld" ],
-    [ "Chunk", "structvortex_1_1voxel_1_1Chunk.html", "structvortex_1_1voxel_1_1Chunk" ],
+    [ "DynamicMeshObject", "structvortex_1_1voxel_1_1DynamicMeshObject.html", "structvortex_1_1voxel_1_1DynamicMeshObject" ],
     [ "vortex::voxel::MaterialFlags", "module_vortex_8voxel.html#a88673e8a0c64aecd6a8eedc7e31f970a", [
       [ "None", "module_vortex_8voxel.html#a88673e8a0c64aecd6a8eedc7e31f970aa6adf97f83acf6453d4a6a4b1070f3754", null ],
       [ "Static", "module_vortex_8voxel.html#a88673e8a0c64aecd6a8eedc7e31f970aa84a8921b25f505d0d2077aeb5db4bc16", null ],

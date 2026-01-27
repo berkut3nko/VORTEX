@@ -1,6 +1,5 @@
 var searchData=
 [
-  ['gpuobject_0',['GPUObject',['../structvortex_1_1graphics_1_1GPUObject.html',1,'vortex::graphics']]],
-  ['graphicscontext_1',['GraphicsContext',['../classvortex_1_1graphics_1_1GraphicsContext.html',1,'vortex::graphics']]],
-  ['graphicsinternal_2',['GraphicsInternal',['../structvortex_1_1graphics_1_1GraphicsInternal.html',1,'vortex::graphics']]]
+  ['editor_0',['Editor',['../classvortex_1_1editor_1_1Editor.html',1,'vortex::editor']]],
+  ['engine_1',['Engine',['../classvortex_1_1Engine.html',1,'vortex']]]
 ];

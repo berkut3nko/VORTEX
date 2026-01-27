@@ -38,11 +38,18 @@ digraph "src/core/internal/CameraController.cpp"
   Node15 [id="Node000015",label="vortex.voxel",height=0.2,width=0.4,color="grey40", fillcolor="white", style="filled",URL="$Voxel_8cppm.html",tooltip=" "];
   Node15 -> Node15 [id="edge18_Node000015_Node000015",color="steelblue1",style="solid",tooltip=" "];
   Node12 -> Node16 [id="edge19_Node000012_Node000016",color="steelblue1",style="solid",tooltip=" "];
-  Node16 [id="Node000016",label="vortex.graphics",height=0.2,width=0.4,color="grey40", fillcolor="white", style="filled",URL="$Graphics_8cppm.html",tooltip=" "];
+  Node16 [id="Node000016",label="vortex.physics",height=0.2,width=0.4,color="grey40", fillcolor="white", style="filled",URL="$Physics_8cppm.html",tooltip=" "];
   Node16 -> Node10 [id="edge20_Node000016_Node000010",color="steelblue1",style="solid",tooltip=" "];
-  Node16 -> Node11 [id="edge21_Node000016_Node000011",color="steelblue1",style="solid",tooltip=" "];
-  Node16 -> Node13 [id="edge22_Node000016_Node000013",color="steelblue1",style="solid",tooltip=" "];
-  Node16 -> Node4 [id="edge23_Node000016_Node000004",color="steelblue1",style="solid",tooltip=" "];
+  Node16 -> Node13 [id="edge21_Node000016_Node000013",color="steelblue1",style="solid",tooltip=" "];
+  Node16 -> Node4 [id="edge22_Node000016_Node000004",color="steelblue1",style="solid",tooltip=" "];
+  Node16 -> Node15 [id="edge23_Node000016_Node000015",color="steelblue1",style="solid",tooltip=" "];
   Node16 -> Node16 [id="edge24_Node000016_Node000016",color="steelblue1",style="solid",tooltip=" "];
-  Node16 -> Node15 [id="edge25_Node000016_Node000015",color="steelblue1",style="solid",tooltip=" "];
+  Node12 -> Node17 [id="edge25_Node000012_Node000017",color="steelblue1",style="solid",tooltip=" "];
+  Node17 [id="Node000017",label="vortex.graphics",height=0.2,width=0.4,color="grey40", fillcolor="white", style="filled",URL="$Graphics_8cppm.html",tooltip=" "];
+  Node17 -> Node10 [id="edge26_Node000017_Node000010",color="steelblue1",style="solid",tooltip=" "];
+  Node17 -> Node11 [id="edge27_Node000017_Node000011",color="steelblue1",style="solid",tooltip=" "];
+  Node17 -> Node13 [id="edge28_Node000017_Node000013",color="steelblue1",style="solid",tooltip=" "];
+  Node17 -> Node4 [id="edge29_Node000017_Node000004",color="steelblue1",style="solid",tooltip=" "];
+  Node17 -> Node15 [id="edge30_Node000017_Node000015",color="steelblue1",style="solid",tooltip=" "];
+  Node17 -> Node17 [id="edge31_Node000017_Node000017",color="steelblue1",style="solid",tooltip=" "];
 }

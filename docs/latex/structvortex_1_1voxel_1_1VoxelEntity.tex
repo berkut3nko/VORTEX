@@ -1,0 +1,188 @@
+\doxysection{vortex\+::voxel\+::Voxel\+Entity Struct Reference}
+\hypertarget{structvortex_1_1voxel_1_1VoxelEntity}{}\label{structvortex_1_1voxel_1_1VoxelEntity}\index{vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}}
+
+
+Represents a generic entity in the voxel world.  
+
+
+
+
+Inheritance diagram for vortex\+::voxel\+::Voxel\+Entity\+:
+% FIG 0
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+virtual \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_adcd406e8b5f0eaea7e21ee5229a22139}{\texorpdfstring{$\sim$}{\string~}\+Voxel\+Entity}} ()=default
+\item 
+void \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a45f7dfdd09f4de8284e84a22acac566a}{Recalculate\+Stats}} ()
+\begin{DoxyCompactList}\small\item\em Recalculates the center of mass and bounding box based on constituent parts. \end{DoxyCompactList}\item 
+glm\+::vec3 \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a326b8cec29e46e1c136527b8b44cd09e}{Get\+Local\+Center}} () const
+\begin{DoxyCompactList}\small\item\em Gets the calculated local center (center of mass). \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+std\+::string \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a9e5de6ddf412facd4a164ed88a47bfcb}{name}} = "{}Entity"{}
+\begin{DoxyCompactList}\small\item\em Display name of the entity. \end{DoxyCompactList}\item 
+glm\+::mat4 \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a92a6640da59770cf0a66881d75923978}{transform}} \{1.\+0f\}
+\begin{DoxyCompactList}\small\item\em Root transformation matrix (Position, Rotation, Scale). \end{DoxyCompactList}\item 
+std\+::vector$<$ std\+::shared\+\_\+ptr$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelObject}{Voxel\+Object}} $>$ $>$ \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a6a7f267fd2018295de77620ec03ec768}{parts}}
+\begin{DoxyCompactList}\small\item\em Constituent voxel parts (Chunks) relative to the root. \end{DoxyCompactList}\item 
+glm\+::vec3 \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_ad79f4fd84d1bd772eeec7fbec6c53e3a}{local\+Bounds\+Min}} \{0.\+0f\}
+\begin{DoxyCompactList}\small\item\em Local AABB minimum bound for raycasting/selection. \end{DoxyCompactList}\item 
+glm\+::vec3 \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_aa2b31ecc981d243a310ef5e857ab6e14}{local\+Bounds\+Max}} \{0.\+0f\}
+\begin{DoxyCompactList}\small\item\em Local AABB maximum bound for raycasting/selection. \end{DoxyCompactList}\item 
+glm\+::vec3 \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a40d4d4f8e747eaafafc47cb9063dcdf4}{logical\+Center}} \{0.\+0f\}
+\begin{DoxyCompactList}\small\item\em Center of mass used as the Gizmo pivot point. \end{DoxyCompactList}\item 
+uint32\+\_\+t \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a94299aa72b50e1e4a8583615033122d9}{total\+Voxel\+Count}} \{0\}
+\begin{DoxyCompactList}\small\item\em Total number of solid voxels across all parts. \end{DoxyCompactList}\item 
+bool \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a135f73db46684e9f2d6f27c29f7c5f42}{is\+Static}} = false
+\begin{DoxyCompactList}\small\item\em If true, object is immovable (Bedrock) and ignores forces. \end{DoxyCompactList}\item 
+bool \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a36e2125ff4e18c43f1b8b401b8461765}{is\+Trigger}} = false
+\begin{DoxyCompactList}\small\item\em If true, object detects overlaps but has no collision response (Ghost/\+Sensor). \end{DoxyCompactList}\item 
+bool \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a211af65cb31fbaf9f281b89dbb1e2d66}{should\+Rebuild\+Physics}} = false
+\begin{DoxyCompactList}\small\item\em Flag to signal the physics system to regenerate the body (e.\+g., after re-\/meshing). \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Represents a generic entity in the voxel world. 
+
+Can be a procedural object or a base for imported meshes. Acts as the root container for multiple Voxel\+Objects (parts). 
+
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{structvortex_1_1voxel_1_1VoxelEntity_adcd406e8b5f0eaea7e21ee5229a22139}\label{structvortex_1_1voxel_1_1VoxelEntity_adcd406e8b5f0eaea7e21ee5229a22139} 
+\index{vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}!````~VoxelEntity@{\texorpdfstring{$\sim$}{\string~}VoxelEntity}}
+\index{````~VoxelEntity@{\texorpdfstring{$\sim$}{\string~}VoxelEntity}!vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}}
+\doxysubsubsection{\texorpdfstring{\texorpdfstring{$\sim$}{\string~}VoxelEntity()}{\string~VoxelEntity()}}
+{\footnotesize\ttfamily virtual vortex\+::voxel\+::\+Voxel\+Entity\+::\texorpdfstring{$\sim$}{\string~}\+Voxel\+Entity (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [virtual]}, {\ttfamily [default]}}
+
+
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{structvortex_1_1voxel_1_1VoxelEntity_a326b8cec29e46e1c136527b8b44cd09e}\label{structvortex_1_1voxel_1_1VoxelEntity_a326b8cec29e46e1c136527b8b44cd09e} 
+\index{vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}!GetLocalCenter@{GetLocalCenter}}
+\index{GetLocalCenter@{GetLocalCenter}!vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}}
+\doxysubsubsection{\texorpdfstring{GetLocalCenter()}{GetLocalCenter()}}
+{\footnotesize\ttfamily glm\+::vec3 vortex\+::voxel\+::\+Voxel\+Entity\+::\+Get\+Local\+Center (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Gets the calculated local center (center of mass). 
+
+\Hypertarget{structvortex_1_1voxel_1_1VoxelEntity_a45f7dfdd09f4de8284e84a22acac566a}\label{structvortex_1_1voxel_1_1VoxelEntity_a45f7dfdd09f4de8284e84a22acac566a} 
+\index{vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}!RecalculateStats@{RecalculateStats}}
+\index{RecalculateStats@{RecalculateStats}!vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}}
+\doxysubsubsection{\texorpdfstring{RecalculateStats()}{RecalculateStats()}}
+{\footnotesize\ttfamily void vortex\+::voxel\+::\+Voxel\+Entity\+::\+Recalculate\+Stats (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Recalculates the center of mass and bounding box based on constituent parts. 
+
+Should be called after modifying parts or their chunks. 
+
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structvortex_1_1voxel_1_1VoxelEntity_a135f73db46684e9f2d6f27c29f7c5f42}\label{structvortex_1_1voxel_1_1VoxelEntity_a135f73db46684e9f2d6f27c29f7c5f42} 
+\index{vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}!isStatic@{isStatic}}
+\index{isStatic@{isStatic}!vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}}
+\doxysubsubsection{\texorpdfstring{isStatic}{isStatic}}
+{\footnotesize\ttfamily bool vortex\+::voxel\+::\+Voxel\+Entity\+::is\+Static = false}
+
+
+
+If true, object is immovable (Bedrock) and ignores forces. 
+
+\Hypertarget{structvortex_1_1voxel_1_1VoxelEntity_a36e2125ff4e18c43f1b8b401b8461765}\label{structvortex_1_1voxel_1_1VoxelEntity_a36e2125ff4e18c43f1b8b401b8461765} 
+\index{vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}!isTrigger@{isTrigger}}
+\index{isTrigger@{isTrigger}!vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}}
+\doxysubsubsection{\texorpdfstring{isTrigger}{isTrigger}}
+{\footnotesize\ttfamily bool vortex\+::voxel\+::\+Voxel\+Entity\+::is\+Trigger = false}
+
+
+
+If true, object detects overlaps but has no collision response (Ghost/\+Sensor). 
+
+\Hypertarget{structvortex_1_1voxel_1_1VoxelEntity_aa2b31ecc981d243a310ef5e857ab6e14}\label{structvortex_1_1voxel_1_1VoxelEntity_aa2b31ecc981d243a310ef5e857ab6e14} 
+\index{vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}!localBoundsMax@{localBoundsMax}}
+\index{localBoundsMax@{localBoundsMax}!vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}}
+\doxysubsubsection{\texorpdfstring{localBoundsMax}{localBoundsMax}}
+{\footnotesize\ttfamily glm\+::vec3 vortex\+::voxel\+::\+Voxel\+Entity\+::local\+Bounds\+Max \{0.\+0f\}}
+
+
+
+Local AABB maximum bound for raycasting/selection. 
+
+\Hypertarget{structvortex_1_1voxel_1_1VoxelEntity_ad79f4fd84d1bd772eeec7fbec6c53e3a}\label{structvortex_1_1voxel_1_1VoxelEntity_ad79f4fd84d1bd772eeec7fbec6c53e3a} 
+\index{vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}!localBoundsMin@{localBoundsMin}}
+\index{localBoundsMin@{localBoundsMin}!vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}}
+\doxysubsubsection{\texorpdfstring{localBoundsMin}{localBoundsMin}}
+{\footnotesize\ttfamily glm\+::vec3 vortex\+::voxel\+::\+Voxel\+Entity\+::local\+Bounds\+Min \{0.\+0f\}}
+
+
+
+Local AABB minimum bound for raycasting/selection. 
+
+\Hypertarget{structvortex_1_1voxel_1_1VoxelEntity_a40d4d4f8e747eaafafc47cb9063dcdf4}\label{structvortex_1_1voxel_1_1VoxelEntity_a40d4d4f8e747eaafafc47cb9063dcdf4} 
+\index{vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}!logicalCenter@{logicalCenter}}
+\index{logicalCenter@{logicalCenter}!vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}}
+\doxysubsubsection{\texorpdfstring{logicalCenter}{logicalCenter}}
+{\footnotesize\ttfamily glm\+::vec3 vortex\+::voxel\+::\+Voxel\+Entity\+::logical\+Center \{0.\+0f\}}
+
+
+
+Center of mass used as the Gizmo pivot point. 
+
+\Hypertarget{structvortex_1_1voxel_1_1VoxelEntity_a9e5de6ddf412facd4a164ed88a47bfcb}\label{structvortex_1_1voxel_1_1VoxelEntity_a9e5de6ddf412facd4a164ed88a47bfcb} 
+\index{vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}!name@{name}}
+\index{name@{name}!vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}}
+\doxysubsubsection{\texorpdfstring{name}{name}}
+{\footnotesize\ttfamily std\+::string vortex\+::voxel\+::\+Voxel\+Entity\+::name = "{}Entity"{}}
+
+
+
+Display name of the entity. 
+
+\Hypertarget{structvortex_1_1voxel_1_1VoxelEntity_a6a7f267fd2018295de77620ec03ec768}\label{structvortex_1_1voxel_1_1VoxelEntity_a6a7f267fd2018295de77620ec03ec768} 
+\index{vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}!parts@{parts}}
+\index{parts@{parts}!vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}}
+\doxysubsubsection{\texorpdfstring{parts}{parts}}
+{\footnotesize\ttfamily std\+::vector$<$std\+::shared\+\_\+ptr$<$\mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelObject}{Voxel\+Object}}$>$ $>$ vortex\+::voxel\+::\+Voxel\+Entity\+::parts}
+
+
+
+Constituent voxel parts (Chunks) relative to the root. 
+
+\Hypertarget{structvortex_1_1voxel_1_1VoxelEntity_a211af65cb31fbaf9f281b89dbb1e2d66}\label{structvortex_1_1voxel_1_1VoxelEntity_a211af65cb31fbaf9f281b89dbb1e2d66} 
+\index{vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}!shouldRebuildPhysics@{shouldRebuildPhysics}}
+\index{shouldRebuildPhysics@{shouldRebuildPhysics}!vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}}
+\doxysubsubsection{\texorpdfstring{shouldRebuildPhysics}{shouldRebuildPhysics}}
+{\footnotesize\ttfamily bool vortex\+::voxel\+::\+Voxel\+Entity\+::should\+Rebuild\+Physics = false}
+
+
+
+Flag to signal the physics system to regenerate the body (e.\+g., after re-\/meshing). 
+
+\Hypertarget{structvortex_1_1voxel_1_1VoxelEntity_a94299aa72b50e1e4a8583615033122d9}\label{structvortex_1_1voxel_1_1VoxelEntity_a94299aa72b50e1e4a8583615033122d9} 
+\index{vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}!totalVoxelCount@{totalVoxelCount}}
+\index{totalVoxelCount@{totalVoxelCount}!vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}}
+\doxysubsubsection{\texorpdfstring{totalVoxelCount}{totalVoxelCount}}
+{\footnotesize\ttfamily uint32\+\_\+t vortex\+::voxel\+::\+Voxel\+Entity\+::total\+Voxel\+Count \{0\}}
+
+
+
+Total number of solid voxels across all parts. 
+
+\Hypertarget{structvortex_1_1voxel_1_1VoxelEntity_a92a6640da59770cf0a66881d75923978}\label{structvortex_1_1voxel_1_1VoxelEntity_a92a6640da59770cf0a66881d75923978} 
+\index{vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}!transform@{transform}}
+\index{transform@{transform}!vortex::voxel::VoxelEntity@{vortex::voxel::VoxelEntity}}
+\doxysubsubsection{\texorpdfstring{transform}{transform}}
+{\footnotesize\ttfamily glm\+::mat4 vortex\+::voxel\+::\+Voxel\+Entity\+::transform \{1.\+0f\}}
+
+
+
+Root transformation matrix (Position, Rotation, Scale). 
+
+
+
+The documentation for this struct was generated from the following file\+:\begin{DoxyCompactItemize}
+\item 
+src/voxel/\mbox{\hyperlink{Entity_8cppm}{Entity.\+cppm}}\end{DoxyCompactItemize}

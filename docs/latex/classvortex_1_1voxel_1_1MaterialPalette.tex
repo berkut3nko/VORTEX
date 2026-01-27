@@ -13,15 +13,15 @@ Manages a collection of materials indexed by voxel IDs.
 uint8\+\_\+t \mbox{\hyperlink{classvortex_1_1voxel_1_1MaterialPalette_aea6e3499d3060055ad4adf049ad3724a}{Add\+Material}} (const \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{Physical\+Material}} \&mat)
 \begin{DoxyCompactList}\small\item\em Adds a new material to the palette. \end{DoxyCompactList}\item 
 const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{Physical\+Material}} $>$ \& \mbox{\hyperlink{classvortex_1_1voxel_1_1MaterialPalette_a93c9a23eef2bb12a2860da1ed0ccc924}{Get\+Data}} () const
-\begin{DoxyCompactList}\small\item\em Retrieves the raw data for GPU upload. \end{DoxyCompactList}\item 
+\begin{DoxyCompactList}\small\item\em Retrieves the raw material list for GPU upload. \end{DoxyCompactList}\item 
 const \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{Physical\+Material}} \& \mbox{\hyperlink{classvortex_1_1voxel_1_1MaterialPalette_a97f11895aa516022d95d989ef9df3635}{Get}} (uint8\+\_\+t index) const
-\begin{DoxyCompactList}\small\item\em Returns material by index (CPU side lookup). \end{DoxyCompactList}\end{DoxyCompactItemize}
+\begin{DoxyCompactList}\small\item\em Looks up a material by its index (CPU side). \end{DoxyCompactList}\end{DoxyCompactItemize}
 
 
 \doxysubsection{Detailed Description}
 Manages a collection of materials indexed by voxel IDs. 
 
-Maximum 256 materials per palette (since Voxels are uint8\+\_\+t). Index 0 is reserved for "{}\+Empty/\+Air"{}. 
+Maximum 256 materials per palette (since Voxels use uint8\+\_\+t). Index 0 is strictly reserved for "{}\+Empty/\+Air"{}. 
 
 \doxysubsection{Constructor \& Destructor Documentation}
 \Hypertarget{classvortex_1_1voxel_1_1MaterialPalette_a2c1ac406a4e1003e8bf9eb1b2f948279}\label{classvortex_1_1voxel_1_1MaterialPalette_a2c1ac406a4e1003e8bf9eb1b2f948279} 
@@ -53,10 +53,10 @@ Adds a new material to the palette.
 \hline
 \end{DoxyParams}
 \begin{DoxyReturn}{Returns}
-The index of the added material. 
+The index assigned to the new material. 
 \end{DoxyReturn}
 \begin{DoxyWarning}{Warning}
-Throws if palette size exceeds 255. 
+Throws std\+::overflow\+\_\+error if the palette size exceeds 255. 
 \end{DoxyWarning}
 \Hypertarget{classvortex_1_1voxel_1_1MaterialPalette_a97f11895aa516022d95d989ef9df3635}\label{classvortex_1_1voxel_1_1MaterialPalette_a97f11895aa516022d95d989ef9df3635} 
 \index{vortex::voxel::MaterialPalette@{vortex::voxel::MaterialPalette}!Get@{Get}}
@@ -66,8 +66,16 @@ Throws if palette size exceeds 255.
 
 
 
-Returns material by index (CPU side lookup). 
+Looks up a material by its index (CPU side). 
 
+
+\begin{DoxyParams}{Parameters}
+{\em index} & The material index (0-\/255). \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+The material definition, or an error material if index is invalid. 
+\end{DoxyReturn}
 \Hypertarget{classvortex_1_1voxel_1_1MaterialPalette_a93c9a23eef2bb12a2860da1ed0ccc924}\label{classvortex_1_1voxel_1_1MaterialPalette_a93c9a23eef2bb12a2860da1ed0ccc924} 
 \index{vortex::voxel::MaterialPalette@{vortex::voxel::MaterialPalette}!GetData@{GetData}}
 \index{GetData@{GetData}!vortex::voxel::MaterialPalette@{vortex::voxel::MaterialPalette}}
@@ -76,8 +84,11 @@ Returns material by index (CPU side lookup).
 
 
 
-Retrieves the raw data for GPU upload. 
+Retrieves the raw material list for GPU upload. 
 
+\begin{DoxyReturn}{Returns}
+Reference to the vector of Physical\+Materials. 
+\end{DoxyReturn}
 
 
 The documentation for this class was generated from the following file\+:\begin{DoxyCompactItemize}

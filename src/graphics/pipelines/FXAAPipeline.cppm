@@ -9,19 +9,31 @@ import vortex.memory;
 
 namespace vortex::graphics {
 
+    /**
+     * @brief Fast Approximate Anti-Aliasing (FXAA) Compute Pipeline.
+     * @details A post-process effect that smooths edges based on contrast. Cheaper than TAA but less temporal stability.
+     */
     export class FXAAPipeline {
     public:
         FXAAPipeline();
         ~FXAAPipeline();
 
-        // Initialize compute pipeline
         void Initialize(VkDevice device, uint32_t framesInFlight);
         void Shutdown();
         
-        // Compute Dispatch
+        /**
+         * @brief Dispatches the FXAA compute shader.
+         * @param cmd Command Buffer.
+         * @param frameIndex Frame index.
+         * @param sampler Sampler for input texture.
+         * @param input Source color image.
+         * @param output Target storage image.
+         * @param width Image width.
+         * @param height Image height.
+         */
         void Dispatch(VkCommandBuffer cmd, 
                       uint32_t frameIndex,
-                      VkSampler sampler, // <--- ADDED
+                      VkSampler sampler, 
                       const memory::AllocatedImage& input,
                       const memory::AllocatedImage& output,
                       uint32_t width, uint32_t height);

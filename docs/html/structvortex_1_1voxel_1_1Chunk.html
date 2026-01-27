@@ -108,13 +108,16 @@ Public Member Functions</h2></td></tr>
 <tr class="memitem:ad9b335b3326c5c4badfb983763a6c5a7" id="r_ad9b335b3326c5c4badfb983763a6c5a7"><td class="memItemLeft" align="right" valign="top">&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ad9b335b3326c5c4badfb983763a6c5a7">Chunk</a> ()</td></tr>
 <tr class="separator:ad9b335b3326c5c4badfb983763a6c5a7"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a090c1271a52d7308d36e802fa3591ba6" id="r_a090c1271a52d7308d36e802fa3591ba6"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a090c1271a52d7308d36e802fa3591ba6">Clear</a> ()</td></tr>
+<tr class="memdesc:a090c1271a52d7308d36e802fa3591ba6"><td class="mdescLeft">&#160;</td><td class="mdescRight">Resets the chunk to an empty state (all zeros).  <br /></td></tr>
 <tr class="separator:a090c1271a52d7308d36e802fa3591ba6"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ae7d5bd238827c32bcc78c6125ad24781" id="r_ae7d5bd238827c32bcc78c6125ad24781"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ae7d5bd238827c32bcc78c6125ad24781">SetVoxel</a> (int x, int y, int z, uint8_t id, uint8_t flags=0)</td></tr>
 <tr class="memdesc:ae7d5bd238827c32bcc78c6125ad24781"><td class="mdescLeft">&#160;</td><td class="mdescRight">Sets a voxel's material and flags.  <br /></td></tr>
 <tr class="separator:ae7d5bd238827c32bcc78c6125ad24781"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:af3f1b130fc2bb07208744187401b767d" id="r_af3f1b130fc2bb07208744187401b767d"><td class="memItemLeft" align="right" valign="top">uint8_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#af3f1b130fc2bb07208744187401b767d">GetVoxel</a> (int x, int y, int z) const</td></tr>
+<tr class="memdesc:af3f1b130fc2bb07208744187401b767d"><td class="mdescLeft">&#160;</td><td class="mdescRight">Gets the material ID of a voxel.  <br /></td></tr>
 <tr class="separator:af3f1b130fc2bb07208744187401b767d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:adcf20cb7f9ff240f6ba41566135c10f9" id="r_adcf20cb7f9ff240f6ba41566135c10f9"><td class="memItemLeft" align="right" valign="top">uint8_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#adcf20cb7f9ff240f6ba41566135c10f9">GetFlags</a> (int x, int y, int z) const</td></tr>
+<tr class="memdesc:adcf20cb7f9ff240f6ba41566135c10f9"><td class="mdescLeft">&#160;</td><td class="mdescRight">Gets the flags of a voxel.  <br /></td></tr>
 <tr class="separator:adcf20cb7f9ff240f6ba41566135c10f9"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-attribs" name="pub-attribs"></a>
@@ -183,6 +186,8 @@ Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
+<p>Resets the chunk to an empty state (all zeros). </p>
+
 </div>
 </div>
 <a id="adcf20cb7f9ff240f6ba41566135c10f9" name="adcf20cb7f9ff240f6ba41566135c10f9"></a>
@@ -217,6 +222,9 @@ Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
+<p>Gets the flags of a voxel. </p>
+<dl class="section return"><dt>Returns</dt><dd>Flags (0-3). </dd></dl>
+
 </div>
 </div>
 <a id="af3f1b130fc2bb07208744187401b767d" name="af3f1b130fc2bb07208744187401b767d"></a>
@@ -250,6 +258,9 @@ Public Attributes</h2></td></tr>
   </tr>
 </table>
 </div><div class="memdoc">
+
+<p>Gets the material ID of a voxel. </p>
+<dl class="section return"><dt>Returns</dt><dd>Material ID (0 if empty or out of bounds). </dd></dl>
 
 </div>
 </div>
@@ -298,6 +309,10 @@ Public Attributes</h2></td></tr>
 <p>Sets a voxel's material and flags. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
+    <tr><td class="paramname">x</td><td>X coordinate (0-31). </td></tr>
+    <tr><td class="paramname">y</td><td>Y coordinate (0-31). </td></tr>
+    <tr><td class="paramname">z</td><td>Z coordinate (0-31). </td></tr>
+    <tr><td class="paramname">id</td><td>Material ID (0-255). </td></tr>
     <tr><td class="paramname">flags</td><td>Optional 2-bit flag (0-3). </td></tr>
   </table>
   </dd>

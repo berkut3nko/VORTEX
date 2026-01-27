@@ -9,6 +9,7 @@ var module_vortex_8core =
     [ "vortex::Engine::Initialize", "module_vortex_8core.html#af779661626cb8c76e21620a145a42d7d", null ],
     [ "vortex::Engine::Run", "module_vortex_8core.html#a15118a0752b685fa091e071d98504fb8", null ],
     [ "vortex::Engine::Shutdown", "module_vortex_8core.html#a565795d41f752558181ae73107ea8232", null ],
-    [ "vortex::Engine::UploadScene", "module_vortex_8core.html#a000df94e7b44a36343fab7a0485a1ceb", null ],
+    [ "vortex::Engine::AddEntity", "module_vortex_8core.html#a873df698cfbea9cd0cf456677bc0def1", null ],
+    [ "vortex::Engine::UploadScene", "module_vortex_8core.html#af9027a4f34eff204fd9f0b135ab60c5b", null ],
     [ "vortex::Engine::GetGraphics", "module_vortex_8core.html#a88460bf47cc1dc1a7c4ea7219a23af76", null ]
 ];

@@ -24,8 +24,8 @@ digraph "src/graphics/internal/RenderResources.cpp"
   Node8 [id="Node000008",label="vector",height=0.2,width=0.4,color="grey60", fillcolor="#E0E0E0", style="filled",tooltip=" "];
   Node6 -> Node9 [id="edge11_Node000006_Node000009",color="steelblue1",style="solid",tooltip=" "];
   Node9 [id="Node000009",label="glm/glm.hpp",height=0.2,width=0.4,color="grey60", fillcolor="#E0E0E0", style="filled",tooltip=" "];
-  Node6 -> Node6 [id="edge12_Node000006_Node000006",color="steelblue1",style="solid",tooltip=" "];
-  Node6 -> Node10 [id="edge13_Node000006_Node000010",color="steelblue1",style="solid",tooltip=" "];
+  Node6 -> Node10 [id="edge12_Node000006_Node000010",color="steelblue1",style="solid",tooltip=" "];
   Node10 [id="Node000010",label="vortex.voxel",height=0.2,width=0.4,color="grey40", fillcolor="white", style="filled",URL="$Voxel_8cppm.html",tooltip=" "];
-  Node10 -> Node10 [id="edge14_Node000010_Node000010",color="steelblue1",style="solid",tooltip=" "];
+  Node10 -> Node10 [id="edge13_Node000010_Node000010",color="steelblue1",style="solid",tooltip=" "];
+  Node6 -> Node6 [id="edge14_Node000006_Node000006",color="steelblue1",style="solid",tooltip=" "];
 }

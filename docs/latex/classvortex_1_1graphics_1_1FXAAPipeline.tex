@@ -1,5 +1,10 @@
 \doxysection{vortex\+::graphics\+::FXAAPipeline Class Reference}
 \hypertarget{classvortex_1_1graphics_1_1FXAAPipeline}{}\label{classvortex_1_1graphics_1_1FXAAPipeline}\index{vortex::graphics::FXAAPipeline@{vortex::graphics::FXAAPipeline}}
+
+
+Fast Approximate Anti-\/\+Aliasing (FXAA) Compute Pipeline.  
+
+
 \doxysubsubsection*{Public Member Functions}
 \begin{DoxyCompactItemize}
 \item 
@@ -12,10 +17,15 @@ void \mbox{\hyperlink{classvortex_1_1graphics_1_1FXAAPipeline_add43c6823a3947eac
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1FXAAPipeline_a99695cbeb3ac397428e598ef48e4d459}{Shutdown}} ()
 \item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1FXAAPipeline_a77402bb001fbb77d90e462966acf4434}{Dispatch}} (Vk\+Command\+Buffer cmd, uint32\+\_\+t frame\+Index, Vk\+Sampler sampler, const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \&input, const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \&output, uint32\+\_\+t width, uint32\+\_\+t height)
-\item 
+\begin{DoxyCompactList}\small\item\em Dispatches the FXAA compute shader. \end{DoxyCompactList}\item 
 bool \mbox{\hyperlink{classvortex_1_1graphics_1_1FXAAPipeline_a59dd2fe337b7307e56f4400c59532a09}{Is\+Initialized}} () const
 \end{DoxyCompactItemize}
 
+
+\doxysubsection{Detailed Description}
+Fast Approximate Anti-\/\+Aliasing (FXAA) Compute Pipeline. 
+
+A post-\/process effect that smooths edges based on contrast. Cheaper than TAA but less temporal stability. 
 
 \doxysubsection{Constructor \& Destructor Documentation}
 \Hypertarget{classvortex_1_1graphics_1_1FXAAPipeline_abc86cb12dfb4988978ab5b2e8facddca}\label{classvortex_1_1graphics_1_1FXAAPipeline_abc86cb12dfb4988978ab5b2e8facddca} 
@@ -39,6 +49,27 @@ bool \mbox{\hyperlink{classvortex_1_1graphics_1_1FXAAPipeline_a59dd2fe337b7307e5
 \doxysubsubsection{\texorpdfstring{Dispatch()}{Dispatch()}}
 {\footnotesize\ttfamily void vortex\+::graphics\+::\+FXAAPipeline\+::\+Dispatch (\begin{DoxyParamCaption}\item[{Vk\+Command\+Buffer}]{cmd,  }\item[{uint32\+\_\+t}]{frame\+Index,  }\item[{Vk\+Sampler}]{sampler,  }\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \&}]{input,  }\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \&}]{output,  }\item[{uint32\+\_\+t}]{width,  }\item[{uint32\+\_\+t}]{height }\end{DoxyParamCaption})}
 
+
+
+Dispatches the FXAA compute shader. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em cmd} & Command Buffer. \\
+\hline
+{\em frame\+Index} & Frame index. \\
+\hline
+{\em sampler} & Sampler for input texture. \\
+\hline
+{\em input} & Source color image. \\
+\hline
+{\em output} & Target storage image. \\
+\hline
+{\em width} & Image width. \\
+\hline
+{\em height} & Image height. \\
+\hline
+\end{DoxyParams}
 \Hypertarget{classvortex_1_1graphics_1_1FXAAPipeline_add43c6823a3947eacf6f6ca218e00d06}\label{classvortex_1_1graphics_1_1FXAAPipeline_add43c6823a3947eacf6f6ca218e00d06} 
 \index{vortex::graphics::FXAAPipeline@{vortex::graphics::FXAAPipeline}!Initialize@{Initialize}}
 \index{Initialize@{Initialize}!vortex::graphics::FXAAPipeline@{vortex::graphics::FXAAPipeline}}

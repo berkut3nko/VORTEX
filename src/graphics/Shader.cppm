@@ -8,6 +8,9 @@ export module vortex.graphics:shader;
 
 namespace vortex::graphics {
 
+    /**
+     * @brief Enum representing the programmable shader stage.
+     */
     enum class ShaderStage {
         Vertex,
         Fragment,
@@ -18,11 +21,18 @@ namespace vortex::graphics {
     };
 
     /**
-     * @brief Compiles GLSL code to SPIR-V at runtime.
+     * @brief Helper class to compile GLSL code to SPIR-V at runtime using glslang.
      */
     export class ShaderCompiler {
     public:
+        /**
+         * @brief Initializes the glslang library.
+         */
         static void Init();
+        
+        /**
+         * @brief Finalizes the glslang library.
+         */
         static void Shutdown();
 
         /**
@@ -30,6 +40,7 @@ namespace vortex::graphics {
          * @param stage The shader stage (Compute, Vertex, etc.).
          * @param source The GLSL source code string.
          * @return A vector of uint32_t containing SPIR-V bytecode.
+         * @warning Throws std::runtime_error if compilation or linking fails.
          */
         static std::vector<uint32_t> Compile(ShaderStage stage, const std::string& source);
     };

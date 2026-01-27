@@ -14,18 +14,18 @@ namespace vortex::voxel {
 
     /**
      * @brief Helper class to procedurally generate voxel shapes into Chunks.
-     * @details Updates logical center and voxel count incrementally.
+     * @details Handles voxel setting and updates the object's center of mass and voxel count incrementally.
      */
     export class ShapeBuilder {
     public:
         /**
          * @brief Fills a chunk region with a solid box and updates object stats.
-         * @param chunk Target chunk.
+         * @param chunk Target chunk to modify.
          * @param logicalCenter Reference to the object's logical center (will be updated).
          * @param voxelCount Reference to the object's voxel count (will be updated).
-         * @param min Minimum corner coordinates (inclusive).
-         * @param max Maximum corner coordinates (exclusive).
-         * @param materialId Voxel material ID (0 to remove).
+         * @param min Minimum corner coordinates (inclusive) within the chunk (0-31).
+         * @param max Maximum corner coordinates (exclusive) within the chunk (0-31).
+         * @param materialId Voxel material ID (0 to remove/carve).
          */
         static void CreateBox(Chunk& chunk, glm::vec3& logicalCenter, uint32_t& voxelCount, const glm::ivec3& min, const glm::ivec3& max, uint8_t materialId) {
             glm::vec3 deltaPosSum(0.0f);
@@ -65,6 +65,12 @@ namespace vortex::voxel {
 
         /**
          * @brief Fills a chunk region with a sphere and updates object stats.
+         * @param chunk Target chunk.
+         * @param logicalCenter Stats: Logical Center.
+         * @param voxelCount Stats: Voxel Count.
+         * @param center Center of the sphere in chunk-local coordinates.
+         * @param radius Radius of the sphere.
+         * @param materialId Material ID.
          */
         static void CreateSphere(Chunk& chunk, glm::vec3& logicalCenter, uint32_t& voxelCount, const glm::vec3& center, float radius, uint8_t materialId) {
             int minX = std::max(0, (int)std::floor(center.x - radius));

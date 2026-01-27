@@ -2,22 +2,22 @@
 \hypertarget{classvortex_1_1graphics_1_1ShaderCompiler}{}\label{classvortex_1_1graphics_1_1ShaderCompiler}\index{vortex::graphics::ShaderCompiler@{vortex::graphics::ShaderCompiler}}
 
 
-Compiles GLSL code to SPIR-\/V at runtime.  
+Helper class to compile GLSL code to SPIR-\/V at runtime using glslang.  
 
 
 \doxysubsubsection*{Static Public Member Functions}
 \begin{DoxyCompactItemize}
 \item 
 static void \mbox{\hyperlink{classvortex_1_1graphics_1_1ShaderCompiler_af12e9e01eaf44e66f141680e235c9a8e}{Init}} ()
-\item 
+\begin{DoxyCompactList}\small\item\em Initializes the glslang library. \end{DoxyCompactList}\item 
 static void \mbox{\hyperlink{classvortex_1_1graphics_1_1ShaderCompiler_ac05c66259a31103ff8d34c8f2445a58b}{Shutdown}} ()
-\item 
+\begin{DoxyCompactList}\small\item\em Finalizes the glslang library. \end{DoxyCompactList}\item 
 static std\+::vector$<$ uint32\+\_\+t $>$ \mbox{\hyperlink{classvortex_1_1graphics_1_1ShaderCompiler_a891d1cf5b79e27966eefa13a3cc478ea}{Compile}} (\mbox{\hyperlink{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664}{Shader\+Stage}} stage, const std\+::string \&source)
 \begin{DoxyCompactList}\small\item\em Compiles GLSL source code into SPIR-\/V binary. \end{DoxyCompactList}\end{DoxyCompactItemize}
 
 
 \doxysubsection{Detailed Description}
-Compiles GLSL code to SPIR-\/V at runtime. 
+Helper class to compile GLSL code to SPIR-\/V at runtime using glslang. 
 
 \doxysubsection{Member Function Documentation}
 \Hypertarget{classvortex_1_1graphics_1_1ShaderCompiler_a891d1cf5b79e27966eefa13a3cc478ea}\label{classvortex_1_1graphics_1_1ShaderCompiler_a891d1cf5b79e27966eefa13a3cc478ea} 
@@ -40,17 +40,28 @@ Compiles GLSL source code into SPIR-\/V binary.
 \begin{DoxyReturn}{Returns}
 A vector of uint32\+\_\+t containing SPIR-\/V bytecode. 
 \end{DoxyReturn}
+\begin{DoxyWarning}{Warning}
+Throws std\+::runtime\+\_\+error if compilation or linking fails. 
+\end{DoxyWarning}
 \Hypertarget{classvortex_1_1graphics_1_1ShaderCompiler_af12e9e01eaf44e66f141680e235c9a8e}\label{classvortex_1_1graphics_1_1ShaderCompiler_af12e9e01eaf44e66f141680e235c9a8e} 
 \index{vortex::graphics::ShaderCompiler@{vortex::graphics::ShaderCompiler}!Init@{Init}}
 \index{Init@{Init}!vortex::graphics::ShaderCompiler@{vortex::graphics::ShaderCompiler}}
 \doxysubsubsection{\texorpdfstring{Init()}{Init()}}
 {\footnotesize\ttfamily void vortex\+::graphics\+::\+Shader\+Compiler\+::\+Init (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [static]}}
 
+
+
+Initializes the glslang library. 
+
 \Hypertarget{classvortex_1_1graphics_1_1ShaderCompiler_ac05c66259a31103ff8d34c8f2445a58b}\label{classvortex_1_1graphics_1_1ShaderCompiler_ac05c66259a31103ff8d34c8f2445a58b} 
 \index{vortex::graphics::ShaderCompiler@{vortex::graphics::ShaderCompiler}!Shutdown@{Shutdown}}
 \index{Shutdown@{Shutdown}!vortex::graphics::ShaderCompiler@{vortex::graphics::ShaderCompiler}}
 \doxysubsubsection{\texorpdfstring{Shutdown()}{Shutdown()}}
 {\footnotesize\ttfamily void vortex\+::graphics\+::\+Shader\+Compiler\+::\+Shutdown (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [static]}}
+
+
+
+Finalizes the glslang library. 
 
 
 

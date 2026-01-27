@@ -99,7 +99,7 @@ $(function(){initNavTree('classvortex_1_1editor_1_1Editor.html',''); initResizab
 </div><!--header-->
 <div class="contents">
 
-<p><a class="el" href="classvortex_1_1editor_1_1Editor.html" title="Editor module for object manipulation and selection.">Editor</a> module for object manipulation and selection.  
+<p>The in-game editor system.  
  <a href="#details">More...</a></p>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-methods" name="pub-methods"></a>
@@ -107,14 +107,29 @@ Public Member Functions</h2></td></tr>
 <tr class="memitem:a5172c5417457fbdfdd7e7c8b99e0a9e7" id="r_a5172c5417457fbdfdd7e7c8b99e0a9e7"><td class="memItemLeft" align="right" valign="top">&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a5172c5417457fbdfdd7e7c8b99e0a9e7">Editor</a> ()=default</td></tr>
 <tr class="separator:a5172c5417457fbdfdd7e7c8b99e0a9e7"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ac84cb7a48f128a3eda71dd8ca49edf81" id="r_ac84cb7a48f128a3eda71dd8ca49edf81"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ac84cb7a48f128a3eda71dd8ca49edf81">Update</a> (GLFWwindow *window, <a class="el" href="structvortex_1_1graphics_1_1Camera.html">graphics::Camera</a> &amp;camera, <a class="el" href="classvortex_1_1graphics_1_1SceneManager.html">graphics::SceneManager</a> &amp;sceneManager, uint32_t width, uint32_t height)</td></tr>
-<tr class="memdesc:ac84cb7a48f128a3eda71dd8ca49edf81"><td class="mdescLeft">&#160;</td><td class="mdescRight">Updates editor state (input handling, shortcuts).  <br /></td></tr>
+<tr class="memdesc:ac84cb7a48f128a3eda71dd8ca49edf81"><td class="mdescLeft">&#160;</td><td class="mdescRight">Updates editor logic, input handling, and UI rendering.  <br /></td></tr>
 <tr class="separator:ac84cb7a48f128a3eda71dd8ca49edf81"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:adcb6c0576863e79f29a94ac06bc44f4a" id="r_adcb6c0576863e79f29a94ac06bc44f4a"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#adcb6c0576863e79f29a94ac06bc44f4a">RenderGizmo</a> (<a class="el" href="structvortex_1_1graphics_1_1Camera.html">graphics::Camera</a> &amp;camera, uint32_t width, uint32_t height)</td></tr>
-<tr class="memdesc:adcb6c0576863e79f29a94ac06bc44f4a"><td class="mdescLeft">&#160;</td><td class="mdescRight">Renders Gizmos. Must be called inside ImGui frame.  <br /></td></tr>
+<tr class="memdesc:adcb6c0576863e79f29a94ac06bc44f4a"><td class="mdescLeft">&#160;</td><td class="mdescRight">Renders the 3D Gizmo for the selected entity.  <br /></td></tr>
 <tr class="separator:adcb6c0576863e79f29a94ac06bc44f4a"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a0e719044eaa2b17815f193371a3ef91b" id="r_a0e719044eaa2b17815f193371a3ef91b"><td class="memItemLeft" align="right" valign="top">std::vector&lt; std::shared_ptr&lt; <a class="el" href="structvortex_1_1voxel_1_1VoxelEntity.html">voxel::VoxelEntity</a> &gt; &gt; &amp;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a0e719044eaa2b17815f193371a3ef91b">GetEntities</a> ()</td></tr>
+<tr class="separator:a0e719044eaa2b17815f193371a3ef91b"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a9a0e8d585a8a3d056a51d164b63bfacd" id="r_a9a0e8d585a8a3d056a51d164b63bfacd"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a9a0e8d585a8a3d056a51d164b63bfacd">IsSceneDirty</a> () const</td></tr>
+<tr class="separator:a9a0e8d585a8a3d056a51d164b63bfacd"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a6d7a9200539cb4cb7ad80b8a527056d1" id="r_a6d7a9200539cb4cb7ad80b8a527056d1"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a6d7a9200539cb4cb7ad80b8a527056d1">ResetSceneDirty</a> ()</td></tr>
+<tr class="separator:a6d7a9200539cb4cb7ad80b8a527056d1"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a74988a866e36e655b2524eba3680f9ba" id="r_a74988a866e36e655b2524eba3680f9ba"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a74988a866e36e655b2524eba3680f9ba">MarkDirty</a> ()</td></tr>
+<tr class="separator:a74988a866e36e655b2524eba3680f9ba"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ab99727fd375bbe223c09a2976a27fb38" id="r_ab99727fd375bbe223c09a2976a27fb38"><td class="memItemLeft" align="right" valign="top">std::shared_ptr&lt; <a class="el" href="structvortex_1_1voxel_1_1VoxelEntity.html">voxel::VoxelEntity</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ab99727fd375bbe223c09a2976a27fb38">GetSelectedEntity</a> () const</td></tr>
+<tr class="memdesc:ab99727fd375bbe223c09a2976a27fb38"><td class="mdescLeft">&#160;</td><td class="mdescRight">Returns the currently selected entity, or nullptr if none.  <br /></td></tr>
+<tr class="separator:ab99727fd375bbe223c09a2976a27fb38"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a5ef5546bf52c19eb36d40b182a5302a8" id="r_a5ef5546bf52c19eb36d40b182a5302a8"><td class="memItemLeft" align="right" valign="top">std::vector&lt; std::shared_ptr&lt; <a class="el" href="structvortex_1_1voxel_1_1VoxelEntity.html">voxel::VoxelEntity</a> &gt; &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a5ef5546bf52c19eb36d40b182a5302a8">ConsumeCreatedEntities</a> ()</td></tr>
+<tr class="memdesc:a5ef5546bf52c19eb36d40b182a5302a8"><td class="mdescLeft">&#160;</td><td class="mdescRight">Returns and clears the list of entities created by the <a class="el" href="classvortex_1_1editor_1_1Editor.html" title="The in-game editor system.">Editor</a> (e.g. Importer).  <br /></td></tr>
+<tr class="separator:a5ef5546bf52c19eb36d40b182a5302a8"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
-<div class="textblock"><p><a class="el" href="classvortex_1_1editor_1_1Editor.html" title="Editor module for object manipulation and selection.">Editor</a> module for object manipulation and selection. </p>
+<div class="textblock"><p>The in-game editor system. </p>
+<p>Handles object selection, Gizmo manipulation, and the Importer UI. </p>
 </div><h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
 <a id="a5172c5417457fbdfdd7e7c8b99e0a9e7" name="a5172c5417457fbdfdd7e7c8b99e0a9e7"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a5172c5417457fbdfdd7e7c8b99e0a9e7">&#9670;&#160;</a></span>Editor()</h2>
@@ -142,6 +157,128 @@ Public Member Functions</h2></td></tr>
 </div>
 </div>
 <h2 class="groupheader">Member Function Documentation</h2>
+<a id="a5ef5546bf52c19eb36d40b182a5302a8" name="a5ef5546bf52c19eb36d40b182a5302a8"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a5ef5546bf52c19eb36d40b182a5302a8">&#9670;&#160;</a></span>ConsumeCreatedEntities()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::vector&lt; std::shared_ptr&lt; <a class="el" href="structvortex_1_1voxel_1_1VoxelEntity.html">voxel::VoxelEntity</a> &gt; &gt; vortex::editor::Editor::ConsumeCreatedEntities </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>Returns and clears the list of entities created by the <a class="el" href="classvortex_1_1editor_1_1Editor.html" title="The in-game editor system.">Editor</a> (e.g. Importer). </p>
+<p>These entities need to be officially registered with the <a class="el" href="classvortex_1_1Engine.html" title="The main engine class coordinating all subsystems.">Engine</a> to have physics. </p>
+
+</div>
+</div>
+<a id="a0e719044eaa2b17815f193371a3ef91b" name="a0e719044eaa2b17815f193371a3ef91b"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a0e719044eaa2b17815f193371a3ef91b">&#9670;&#160;</a></span>GetEntities()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::vector&lt; std::shared_ptr&lt; <a class="el" href="structvortex_1_1voxel_1_1VoxelEntity.html">voxel::VoxelEntity</a> &gt; &gt; &amp; vortex::editor::Editor::GetEntities </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="ab99727fd375bbe223c09a2976a27fb38" name="ab99727fd375bbe223c09a2976a27fb38"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ab99727fd375bbe223c09a2976a27fb38">&#9670;&#160;</a></span>GetSelectedEntity()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">std::shared_ptr&lt; <a class="el" href="structvortex_1_1voxel_1_1VoxelEntity.html">voxel::VoxelEntity</a> &gt; vortex::editor::Editor::GetSelectedEntity </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"></span></td><td>)</td>
+          <td> const</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Returns the currently selected entity, or nullptr if none. </p>
+
+</div>
+</div>
+<a id="a9a0e8d585a8a3d056a51d164b63bfacd" name="a9a0e8d585a8a3d056a51d164b63bfacd"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a9a0e8d585a8a3d056a51d164b63bfacd">&#9670;&#160;</a></span>IsSceneDirty()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool vortex::editor::Editor::IsSceneDirty </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"></span></td><td>)</td>
+          <td> const</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a74988a866e36e655b2524eba3680f9ba" name="a74988a866e36e655b2524eba3680f9ba"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a74988a866e36e655b2524eba3680f9ba">&#9670;&#160;</a></span>MarkDirty()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void vortex::editor::Editor::MarkDirty </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="adcb6c0576863e79f29a94ac06bc44f4a" name="adcb6c0576863e79f29a94ac06bc44f4a"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#adcb6c0576863e79f29a94ac06bc44f4a">&#9670;&#160;</a></span>RenderGizmo()</h2>
 
@@ -166,15 +303,32 @@ Public Member Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Renders Gizmos. Must be called inside ImGui frame. </p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">camera</td><td>Main camera. </td></tr>
-    <tr><td class="paramname">width</td><td>Screen width. </td></tr>
-    <tr><td class="paramname">height</td><td>Screen height. </td></tr>
-  </table>
-  </dd>
-</dl>
+<p>Renders the 3D Gizmo for the selected entity. </p>
+
+</div>
+</div>
+<a id="a6d7a9200539cb4cb7ad80b8a527056d1" name="a6d7a9200539cb4cb7ad80b8a527056d1"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a6d7a9200539cb4cb7ad80b8a527056d1">&#9670;&#160;</a></span>ResetSceneDirty()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void vortex::editor::Editor::ResetSceneDirty </td>
+          <td>(</td>
+          <td class="paramname"><span class="paramname"></span></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">inline</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
 
 </div>
 </div>
@@ -212,14 +366,14 @@ Public Member Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Updates editor state (input handling, shortcuts). </p>
+<p>Updates editor logic, input handling, and UI rendering. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
-    <tr><td class="paramname">window</td><td>Raw GLFW window. </td></tr>
-    <tr><td class="paramname">camera</td><td>Main camera. </td></tr>
-    <tr><td class="paramname">sceneManager</td><td>Scene manager for object access. </td></tr>
-    <tr><td class="paramname">width</td><td>Screen width. </td></tr>
-    <tr><td class="paramname">height</td><td>Screen height. </td></tr>
+    <tr><td class="paramname">window</td><td>Input window. </td></tr>
+    <tr><td class="paramname">camera</td><td>Active camera. </td></tr>
+    <tr><td class="paramname">sceneManager</td><td>Reference to the scene manager for raycasting/updates. </td></tr>
+    <tr><td class="paramname">width</td><td>Viewport width. </td></tr>
+    <tr><td class="paramname">height</td><td>Viewport height. </td></tr>
   </table>
   </dd>
 </dl>

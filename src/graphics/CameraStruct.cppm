@@ -5,6 +5,9 @@ module;
 export module vortex.graphics:camera_struct;
 
 namespace vortex::graphics {
+    /**
+     * @brief Represents the state of a 3D Camera.
+     */
     export struct Camera {
         glm::vec3 position{0.0f, 0.0f, 5.0f};
         glm::vec3 front{0.0f, 0.0f, -1.0f};
@@ -15,7 +18,7 @@ namespace vortex::graphics {
     };
 
     /**
-     * @brief GPU Camera Buffer.
+     * @brief GPU Camera Buffer (Uniform Buffer Object).
      * @note Must MATCH the std140 layout in shaders/voxel.vert EXACTLY.
      */
     export struct CameraUBO {

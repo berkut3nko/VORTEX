@@ -2,7 +2,7 @@
 \hypertarget{classvortex_1_1graphics_1_1SceneManager}{}\label{classvortex_1_1graphics_1_1SceneManager}\index{vortex::graphics::SceneManager@{vortex::graphics::SceneManager}}
 
 
-Handles scene data, culling, and GPU buffer updates.  
+Manages scene data buffers (Objects, Materials, Chunks, \doxylink{structvortex_1_1graphics_1_1Camera}{Camera}).  
 
 
 \doxysubsubsection*{Public Member Functions}
@@ -13,19 +13,19 @@ Handles scene data, culling, and GPU buffer updates.
 \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_a0b06245149892396a94d57a706a25da3}{\texorpdfstring{$\sim$}{\string~}\+Scene\+Manager}} ()
 \item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_a45eb9cc9c68f19d022a0896f417d3524}{Initialize}} (\mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator}{memory\+::\+Memory\+Allocator}} \texorpdfstring{$\ast$}{*}allocator)
-\item 
+\begin{DoxyCompactList}\small\item\em Initializes storage buffers. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_ab9dc59b4e9c3dafeb624498882d6abc2}{Shutdown}} ()
 \item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_a2fbdd6f53b9b1ef67552695d45f1d64e}{Upload\+Scene\+Data}} (const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{Scene\+Object}} $>$ \&objects, const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{vortex\+::voxel\+::\+Physical\+Material}} $>$ \&materials, const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{vortex\+::voxel\+::\+Chunk}} $>$ \&chunks)
+\begin{DoxyCompactList}\small\item\em Uploads all scene data to the GPU. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_af40b1e02541daecbd82f522af2b3b6fd}{Upload\+Camera\+Buffer}} (const \mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{Camera}} \&camera, uint32\+\_\+t width, uint32\+\_\+t height, uint64\+\_\+t frame\+Count, bool use\+Jitter)
-\begin{DoxyCompactList}\small\item\em Updates camera UBO with new view/proj matrices and TAA jitter. \end{DoxyCompactList}\item 
-void \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_a1be3dc5048b0b2778a0432b2176efb38}{Upload\+Scene\+Data}} (const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{Scene\+Object}} $>$ \&objects, const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneMaterial}{Scene\+Material}} $>$ \&materials, const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{vortex\+::voxel\+::\+Chunk}} $>$ \&chunks)
-\begin{DoxyCompactList}\small\item\em Uploads raw scene data (CPU side cache). \end{DoxyCompactList}\item 
+\begin{DoxyCompactList}\small\item\em Updates the camera uniform buffer. \end{DoxyCompactList}\item 
 size\+\_\+t \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_a2c5949a72621ab85e874c53f1d88bfc5}{Cull\+And\+Upload}} (const \mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{Camera}} \&camera, float aspect\+Ratio)
-\begin{DoxyCompactList}\small\item\em Performs frustum culling and updates the GPU Object Buffer. \end{DoxyCompactList}\item 
-void \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_aea7e535be119e59ba5b49a7a9223f209}{Set\+Object\+Transform}} (uint32\+\_\+t index, const glm\+::mat4 \&new\+Model)
-\begin{DoxyCompactList}\small\item\em Updates a specific object\textquotesingle{}s transform directly in the cached list. \end{DoxyCompactList}\item 
+\begin{DoxyCompactList}\small\item\em Culls objects against the frustum and updates the visible object buffer. \end{DoxyCompactList}\item 
 std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{Scene\+Object}} $>$ \& \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_a4975f53dd5f78ea2d944cc66f3f7f0de}{Get\+Objects}} ()
-\begin{DoxyCompactList}\small\item\em Accessor for cached scene objects (Editable). \end{DoxyCompactList}\item 
+\item 
+void \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_a65d7be993eb43e485d986535b30c677e}{Set\+Object\+Transform}} (int index, const glm\+::mat4 \&transform)
+\begin{DoxyCompactList}\small\item\em Updates the transform of a specific object in the local cache. \end{DoxyCompactList}\item 
 const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \& \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_a42137e04785e4a2bf6cab533e6ce7639}{Get\+Camera\+Buffer}} () const
 \item 
 const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Allocated\+Buffer}} \& \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager_a060e152f2886c886f2ed322ae3c47014}{Get\+Material\+Buffer}} () const
@@ -37,7 +37,7 @@ const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{memory\+::\+Al
 
 
 \doxysubsection{Detailed Description}
-Handles scene data, culling, and GPU buffer updates. 
+Manages scene data buffers (Objects, Materials, Chunks, \doxylink{structvortex_1_1graphics_1_1Camera}{Camera}). 
 
 \doxysubsection{Constructor \& Destructor Documentation}
 \Hypertarget{classvortex_1_1graphics_1_1SceneManager_a7d3bed53ae50cb0297e6430eb9107d8c}\label{classvortex_1_1graphics_1_1SceneManager_a7d3bed53ae50cb0297e6430eb9107d8c} 
@@ -63,8 +63,15 @@ Handles scene data, culling, and GPU buffer updates.
 
 
 
-Performs frustum culling and updates the GPU Object Buffer. 
+Culls objects against the frustum and updates the visible object buffer. 
 
+
+\begin{DoxyParams}{Parameters}
+{\em camera} & The camera to cull against. \\
+\hline
+{\em aspect\+Ratio} & Aspect ratio of the viewport. \\
+\hline
+\end{DoxyParams}
 \begin{DoxyReturn}{Returns}
 Number of visible objects. 
 \end{DoxyReturn}
@@ -98,36 +105,31 @@ Number of visible objects.
 \doxysubsubsection{\texorpdfstring{GetObjects()}{GetObjects()}}
 {\footnotesize\ttfamily std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{Scene\+Object}} $>$ \& vortex\+::graphics\+::\+Scene\+Manager\+::\+Get\+Objects (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
 
-
-
-Accessor for cached scene objects (Editable). 
-
 \Hypertarget{classvortex_1_1graphics_1_1SceneManager_a45eb9cc9c68f19d022a0896f417d3524}\label{classvortex_1_1graphics_1_1SceneManager_a45eb9cc9c68f19d022a0896f417d3524} 
 \index{vortex::graphics::SceneManager@{vortex::graphics::SceneManager}!Initialize@{Initialize}}
 \index{Initialize@{Initialize}!vortex::graphics::SceneManager@{vortex::graphics::SceneManager}}
 \doxysubsubsection{\texorpdfstring{Initialize()}{Initialize()}}
 {\footnotesize\ttfamily void vortex\+::graphics\+::\+Scene\+Manager\+::\+Initialize (\begin{DoxyParamCaption}\item[{\mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator}{memory\+::\+Memory\+Allocator}} \texorpdfstring{$\ast$}{*}}]{allocator }\end{DoxyParamCaption})}
 
-\Hypertarget{classvortex_1_1graphics_1_1SceneManager_aea7e535be119e59ba5b49a7a9223f209}\label{classvortex_1_1graphics_1_1SceneManager_aea7e535be119e59ba5b49a7a9223f209} 
+
+
+Initializes storage buffers. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em allocator} & Memory allocator for buffer creation. \\
+\hline
+\end{DoxyParams}
+\Hypertarget{classvortex_1_1graphics_1_1SceneManager_a65d7be993eb43e485d986535b30c677e}\label{classvortex_1_1graphics_1_1SceneManager_a65d7be993eb43e485d986535b30c677e} 
 \index{vortex::graphics::SceneManager@{vortex::graphics::SceneManager}!SetObjectTransform@{SetObjectTransform}}
 \index{SetObjectTransform@{SetObjectTransform}!vortex::graphics::SceneManager@{vortex::graphics::SceneManager}}
 \doxysubsubsection{\texorpdfstring{SetObjectTransform()}{SetObjectTransform()}}
-{\footnotesize\ttfamily void vortex\+::graphics\+::\+Scene\+Manager\+::\+Set\+Object\+Transform (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{index,  }\item[{const glm\+::mat4 \&}]{new\+Model }\end{DoxyParamCaption})}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Scene\+Manager\+::\+Set\+Object\+Transform (\begin{DoxyParamCaption}\item[{int}]{index,  }\item[{const glm\+::mat4 \&}]{transform }\end{DoxyParamCaption})}
 
 
 
-Updates a specific object\textquotesingle{}s transform directly in the cached list. 
+Updates the transform of a specific object in the local cache. 
 
-\begin{DoxyNote}{Note}
-Requires next Cull\+And\+Upload call to sync with GPU. 
-\end{DoxyNote}
-
-\begin{DoxyParams}{Parameters}
-{\em index} & Index of the object in the scene list. \\
-\hline
-{\em new\+Model} & New model matrix. \\
-\hline
-\end{DoxyParams}
 \Hypertarget{classvortex_1_1graphics_1_1SceneManager_ab9dc59b4e9c3dafeb624498882d6abc2}\label{classvortex_1_1graphics_1_1SceneManager_ab9dc59b4e9c3dafeb624498882d6abc2} 
 \index{vortex::graphics::SceneManager@{vortex::graphics::SceneManager}!Shutdown@{Shutdown}}
 \index{Shutdown@{Shutdown}!vortex::graphics::SceneManager@{vortex::graphics::SceneManager}}
@@ -142,18 +144,40 @@ Requires next Cull\+And\+Upload call to sync with GPU.
 
 
 
-Updates camera UBO with new view/proj matrices and TAA jitter. 
+Updates the camera uniform buffer. 
 
-\Hypertarget{classvortex_1_1graphics_1_1SceneManager_a1be3dc5048b0b2778a0432b2176efb38}\label{classvortex_1_1graphics_1_1SceneManager_a1be3dc5048b0b2778a0432b2176efb38} 
+
+\begin{DoxyParams}{Parameters}
+{\em camera} & The camera state. \\
+\hline
+{\em width} & Viewport width. \\
+\hline
+{\em height} & Viewport height. \\
+\hline
+{\em frame\+Count} & Current frame counter (for jitter). \\
+\hline
+{\em use\+Jitter} & Whether to apply TAA jitter. \\
+\hline
+\end{DoxyParams}
+\Hypertarget{classvortex_1_1graphics_1_1SceneManager_a2fbdd6f53b9b1ef67552695d45f1d64e}\label{classvortex_1_1graphics_1_1SceneManager_a2fbdd6f53b9b1ef67552695d45f1d64e} 
 \index{vortex::graphics::SceneManager@{vortex::graphics::SceneManager}!UploadSceneData@{UploadSceneData}}
 \index{UploadSceneData@{UploadSceneData}!vortex::graphics::SceneManager@{vortex::graphics::SceneManager}}
 \doxysubsubsection{\texorpdfstring{UploadSceneData()}{UploadSceneData()}}
-{\footnotesize\ttfamily void vortex\+::graphics\+::\+Scene\+Manager\+::\+Upload\+Scene\+Data (\begin{DoxyParamCaption}\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{Scene\+Object}} $>$ \&}]{objects,  }\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneMaterial}{Scene\+Material}} $>$ \&}]{materials,  }\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{vortex\+::voxel\+::\+Chunk}} $>$ \&}]{chunks }\end{DoxyParamCaption})}
+{\footnotesize\ttfamily void vortex\+::graphics\+::\+Scene\+Manager\+::\+Upload\+Scene\+Data (\begin{DoxyParamCaption}\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{Scene\+Object}} $>$ \&}]{objects,  }\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{vortex\+::voxel\+::\+Physical\+Material}} $>$ \&}]{materials,  }\item[{const std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{vortex\+::voxel\+::\+Chunk}} $>$ \&}]{chunks }\end{DoxyParamCaption})}
 
 
 
-Uploads raw scene data (CPU side cache). 
+Uploads all scene data to the GPU. 
 
+
+\begin{DoxyParams}{Parameters}
+{\em objects} & List of objects. \\
+\hline
+{\em materials} & List of materials (using binary compatible Physical\+Material). \\
+\hline
+{\em chunks} & List of chunks. \\
+\hline
+\end{DoxyParams}
 
 
 The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}

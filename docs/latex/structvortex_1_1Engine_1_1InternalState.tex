@@ -2,11 +2,6 @@
 \hypertarget{structvortex_1_1Engine_1_1InternalState}{}\label{structvortex_1_1Engine_1_1InternalState}\index{vortex::Engine::InternalState@{vortex::Engine::InternalState}}
 
 
-Internal Pimpl state for the \doxylink{classvortex_1_1Engine}{Engine}.  
-
-
-
-
 Collaboration diagram for vortex\+::Engine\+::Internal\+State\+:
 % FIG 0
 \doxysubsubsection*{Public Attributes}
@@ -18,14 +13,19 @@ std\+::unique\+\_\+ptr$<$ \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsCo
 \item 
 \mbox{\hyperlink{classvortex_1_1editor_1_1Editor}{editor\+::\+Editor}} \mbox{\hyperlink{structvortex_1_1Engine_1_1InternalState_a6eba1ce1b1e989274fd4bf7364c3c091}{editor}}
 \item 
-entt\+::registry \mbox{\hyperlink{structvortex_1_1Engine_1_1InternalState_aab5b7afd4182774fee80a42dd6cc9549}{registry}}
+\mbox{\hyperlink{classvortex_1_1physics_1_1PhysicsSystem}{physics\+::\+Physics\+System}} \mbox{\hyperlink{structvortex_1_1Engine_1_1InternalState_af55610396a39f359ff94c155bc921ab6}{physics\+System}}
+\item 
+std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1SimulationObject}{Simulation\+Object}} $>$ \mbox{\hyperlink{structvortex_1_1Engine_1_1InternalState_aa21859ebefdb39688159f60f5efb30d4}{sim\+Objects}}
+\item 
+std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{graphics\+::\+Scene\+Object}} $>$ \mbox{\hyperlink{structvortex_1_1Engine_1_1InternalState_a3793c158122fdf45eb6b0a0682d63697}{persistent\+Objects}}
+\item 
+std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{voxel\+::\+Chunk}} $>$ \mbox{\hyperlink{structvortex_1_1Engine_1_1InternalState_aae7b5988e9b92ee601153b2cd2211820}{persistent\+Chunks}}
+\item 
+std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{voxel\+::\+Physical\+Material}} $>$ \mbox{\hyperlink{structvortex_1_1Engine_1_1InternalState_a5f664d421a1572de489622b900db9825}{persistent\+Materials}}
 \item 
 bool \mbox{\hyperlink{structvortex_1_1Engine_1_1InternalState_a84c3a45f6ac66175f39dd96f0edcb8f1}{is\+Running}} = false
 \end{DoxyCompactItemize}
 
-
-\doxysubsection{Detailed Description}
-Internal Pimpl state for the \doxylink{classvortex_1_1Engine}{Engine}. 
 
 \doxysubsection{Member Data Documentation}
 \Hypertarget{structvortex_1_1Engine_1_1InternalState_aad9ad521c501565c70292cff283f1c6f}\label{structvortex_1_1Engine_1_1InternalState_aad9ad521c501565c70292cff283f1c6f} 
@@ -52,11 +52,35 @@ Internal Pimpl state for the \doxylink{classvortex_1_1Engine}{Engine}.
 \doxysubsubsection{\texorpdfstring{isRunning}{isRunning}}
 {\footnotesize\ttfamily bool vortex\+::\+Engine\+::\+Internal\+State\+::is\+Running = false}
 
-\Hypertarget{structvortex_1_1Engine_1_1InternalState_aab5b7afd4182774fee80a42dd6cc9549}\label{structvortex_1_1Engine_1_1InternalState_aab5b7afd4182774fee80a42dd6cc9549} 
-\index{vortex::Engine::InternalState@{vortex::Engine::InternalState}!registry@{registry}}
-\index{registry@{registry}!vortex::Engine::InternalState@{vortex::Engine::InternalState}}
-\doxysubsubsection{\texorpdfstring{registry}{registry}}
-{\footnotesize\ttfamily entt\+::registry vortex\+::\+Engine\+::\+Internal\+State\+::registry}
+\Hypertarget{structvortex_1_1Engine_1_1InternalState_aae7b5988e9b92ee601153b2cd2211820}\label{structvortex_1_1Engine_1_1InternalState_aae7b5988e9b92ee601153b2cd2211820} 
+\index{vortex::Engine::InternalState@{vortex::Engine::InternalState}!persistentChunks@{persistentChunks}}
+\index{persistentChunks@{persistentChunks}!vortex::Engine::InternalState@{vortex::Engine::InternalState}}
+\doxysubsubsection{\texorpdfstring{persistentChunks}{persistentChunks}}
+{\footnotesize\ttfamily std\+::vector$<$\mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{voxel\+::\+Chunk}}$>$ vortex\+::\+Engine\+::\+Internal\+State\+::persistent\+Chunks}
+
+\Hypertarget{structvortex_1_1Engine_1_1InternalState_a5f664d421a1572de489622b900db9825}\label{structvortex_1_1Engine_1_1InternalState_a5f664d421a1572de489622b900db9825} 
+\index{vortex::Engine::InternalState@{vortex::Engine::InternalState}!persistentMaterials@{persistentMaterials}}
+\index{persistentMaterials@{persistentMaterials}!vortex::Engine::InternalState@{vortex::Engine::InternalState}}
+\doxysubsubsection{\texorpdfstring{persistentMaterials}{persistentMaterials}}
+{\footnotesize\ttfamily std\+::vector$<$\mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{voxel\+::\+Physical\+Material}}$>$ vortex\+::\+Engine\+::\+Internal\+State\+::persistent\+Materials}
+
+\Hypertarget{structvortex_1_1Engine_1_1InternalState_a3793c158122fdf45eb6b0a0682d63697}\label{structvortex_1_1Engine_1_1InternalState_a3793c158122fdf45eb6b0a0682d63697} 
+\index{vortex::Engine::InternalState@{vortex::Engine::InternalState}!persistentObjects@{persistentObjects}}
+\index{persistentObjects@{persistentObjects}!vortex::Engine::InternalState@{vortex::Engine::InternalState}}
+\doxysubsubsection{\texorpdfstring{persistentObjects}{persistentObjects}}
+{\footnotesize\ttfamily std\+::vector$<$\mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{graphics\+::\+Scene\+Object}}$>$ vortex\+::\+Engine\+::\+Internal\+State\+::persistent\+Objects}
+
+\Hypertarget{structvortex_1_1Engine_1_1InternalState_af55610396a39f359ff94c155bc921ab6}\label{structvortex_1_1Engine_1_1InternalState_af55610396a39f359ff94c155bc921ab6} 
+\index{vortex::Engine::InternalState@{vortex::Engine::InternalState}!physicsSystem@{physicsSystem}}
+\index{physicsSystem@{physicsSystem}!vortex::Engine::InternalState@{vortex::Engine::InternalState}}
+\doxysubsubsection{\texorpdfstring{physicsSystem}{physicsSystem}}
+{\footnotesize\ttfamily \mbox{\hyperlink{classvortex_1_1physics_1_1PhysicsSystem}{physics\+::\+Physics\+System}} vortex\+::\+Engine\+::\+Internal\+State\+::physics\+System}
+
+\Hypertarget{structvortex_1_1Engine_1_1InternalState_aa21859ebefdb39688159f60f5efb30d4}\label{structvortex_1_1Engine_1_1InternalState_aa21859ebefdb39688159f60f5efb30d4} 
+\index{vortex::Engine::InternalState@{vortex::Engine::InternalState}!simObjects@{simObjects}}
+\index{simObjects@{simObjects}!vortex::Engine::InternalState@{vortex::Engine::InternalState}}
+\doxysubsubsection{\texorpdfstring{simObjects}{simObjects}}
+{\footnotesize\ttfamily std\+::vector$<$\mbox{\hyperlink{structvortex_1_1SimulationObject}{Simulation\+Object}}$>$ vortex\+::\+Engine\+::\+Internal\+State\+::sim\+Objects}
 
 
 

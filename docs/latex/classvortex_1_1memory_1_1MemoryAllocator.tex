@@ -13,13 +13,13 @@ Abstraction for VMA allocator operations.
 \mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator_a797cef454c6f234072f1bab8b4660a88}{\texorpdfstring{$\sim$}{\string~}\+Memory\+Allocator}} ()=default
 \item 
 \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{Allocated\+Buffer}} \mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator_a692ecdc24a82baff91f6b4d1e6daf53d}{Create\+Buffer}} (size\+\_\+t size, Vk\+Buffer\+Usage\+Flags usage, Vma\+Memory\+Usage memory\+Usage)
-\item 
+\begin{DoxyCompactList}\small\item\em Allocates a Vulkan Buffer. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator_a7b43f7fb060b7180430e4459c5283fa2}{Destroy\+Buffer}} (const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{Allocated\+Buffer}} \&buffer)
-\item 
+\begin{DoxyCompactList}\small\item\em Destroys a buffer and frees its memory. \end{DoxyCompactList}\item 
 \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{Allocated\+Image}} \mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator_ab446f11a33ff910b4ca0ff65bebcc1c6}{Create\+Image}} (uint32\+\_\+t width, uint32\+\_\+t height, Vk\+Format format, Vk\+Image\+Usage\+Flags usage, Vma\+Memory\+Usage memory\+Usage)
-\item 
+\begin{DoxyCompactList}\small\item\em Allocates a Vulkan Image. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator_aa7e8fe3acdb13ef07063b9e93117a86b}{Destroy\+Image}} (const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{Allocated\+Image}} \&image)
-\item 
+\begin{DoxyCompactList}\small\item\em Destroys an image and frees its memory. \end{DoxyCompactList}\item 
 Vma\+Allocator \mbox{\hyperlink{classvortex_1_1memory_1_1MemoryAllocator_a3f400eab8ff97d77f6028042b9d2bc6e}{Get\+Vma\+Allocator}} () const
 \begin{DoxyCompactList}\small\item\em Returns the raw VMA allocator handle. \end{DoxyCompactList}\end{DoxyCompactItemize}
 
@@ -49,23 +49,67 @@ Abstraction for VMA allocator operations.
 \doxysubsubsection{\texorpdfstring{CreateBuffer()}{CreateBuffer()}}
 {\footnotesize\ttfamily \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{Allocated\+Buffer}} vortex\+::memory\+::\+Memory\+Allocator\+::\+Create\+Buffer (\begin{DoxyParamCaption}\item[{size\+\_\+t}]{size,  }\item[{Vk\+Buffer\+Usage\+Flags}]{usage,  }\item[{Vma\+Memory\+Usage}]{memory\+Usage }\end{DoxyParamCaption})}
 
+
+
+Allocates a Vulkan Buffer. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em size} & Size in bytes. \\
+\hline
+{\em usage} & Vulkan buffer usage flags. \\
+\hline
+{\em memory\+Usage} & VMA memory usage hint (e.\+g., GPU\+\_\+\+ONLY). \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+The allocated buffer struct. 
+\end{DoxyReturn}
 \Hypertarget{classvortex_1_1memory_1_1MemoryAllocator_ab446f11a33ff910b4ca0ff65bebcc1c6}\label{classvortex_1_1memory_1_1MemoryAllocator_ab446f11a33ff910b4ca0ff65bebcc1c6} 
 \index{vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}!CreateImage@{CreateImage}}
 \index{CreateImage@{CreateImage}!vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}}
 \doxysubsubsection{\texorpdfstring{CreateImage()}{CreateImage()}}
 {\footnotesize\ttfamily \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{Allocated\+Image}} vortex\+::memory\+::\+Memory\+Allocator\+::\+Create\+Image (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{width,  }\item[{uint32\+\_\+t}]{height,  }\item[{Vk\+Format}]{format,  }\item[{Vk\+Image\+Usage\+Flags}]{usage,  }\item[{Vma\+Memory\+Usage}]{memory\+Usage }\end{DoxyParamCaption})}
 
+
+
+Allocates a Vulkan Image. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em width} & Image width. \\
+\hline
+{\em height} & Image height. \\
+\hline
+{\em format} & Vulkan format. \\
+\hline
+{\em usage} & Image usage flags. \\
+\hline
+{\em memory\+Usage} & VMA memory usage hint. \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+The allocated image struct. 
+\end{DoxyReturn}
 \Hypertarget{classvortex_1_1memory_1_1MemoryAllocator_a7b43f7fb060b7180430e4459c5283fa2}\label{classvortex_1_1memory_1_1MemoryAllocator_a7b43f7fb060b7180430e4459c5283fa2} 
 \index{vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}!DestroyBuffer@{DestroyBuffer}}
 \index{DestroyBuffer@{DestroyBuffer}!vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}}
 \doxysubsubsection{\texorpdfstring{DestroyBuffer()}{DestroyBuffer()}}
 {\footnotesize\ttfamily void vortex\+::memory\+::\+Memory\+Allocator\+::\+Destroy\+Buffer (\begin{DoxyParamCaption}\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedBuffer}{Allocated\+Buffer}} \&}]{buffer }\end{DoxyParamCaption})}
 
+
+
+Destroys a buffer and frees its memory. 
+
 \Hypertarget{classvortex_1_1memory_1_1MemoryAllocator_aa7e8fe3acdb13ef07063b9e93117a86b}\label{classvortex_1_1memory_1_1MemoryAllocator_aa7e8fe3acdb13ef07063b9e93117a86b} 
 \index{vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}!DestroyImage@{DestroyImage}}
 \index{DestroyImage@{DestroyImage}!vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}}
 \doxysubsubsection{\texorpdfstring{DestroyImage()}{DestroyImage()}}
 {\footnotesize\ttfamily void vortex\+::memory\+::\+Memory\+Allocator\+::\+Destroy\+Image (\begin{DoxyParamCaption}\item[{const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{Allocated\+Image}} \&}]{image }\end{DoxyParamCaption})}
+
+
+
+Destroys an image and frees its memory. 
 
 \Hypertarget{classvortex_1_1memory_1_1MemoryAllocator_a3f400eab8ff97d77f6028042b9d2bc6e}\label{classvortex_1_1memory_1_1MemoryAllocator_a3f400eab8ff97d77f6028042b9d2bc6e} 
 \index{vortex::memory::MemoryAllocator@{vortex::memory::MemoryAllocator}!GetVmaAllocator@{GetVmaAllocator}}

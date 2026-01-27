@@ -99,33 +99,46 @@ $(function(){initNavTree('structvortex_1_1voxel_1_1VoxelObject.html',''); initRe
   <div class="headertitle"><div class="title">vortex::voxel::VoxelObject Struct Reference<span class="mlabels"><span class="mlabel">export</span></span><div class="ingroups">module <a class="el" href="module_vortex_8voxel.html">vortex.voxel</a></div></div></div>
 </div><!--header-->
 <div class="contents">
+
+<p>Represents a single Voxel Object (typically one chunk) within an Entity.  
+ <a href="#details">More...</a></p>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-methods" name="pub-methods"></a>
 Public Member Functions</h2></td></tr>
 <tr class="memitem:a5fe0b72e6004ba5d860d6e002caa0899" id="r_a5fe0b72e6004ba5d860d6e002caa0899"><td class="memItemLeft" align="right" valign="top">glm::mat4&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a5fe0b72e6004ba5d860d6e002caa0899">GetTransformMatrix</a> () const</td></tr>
+<tr class="memdesc:a5fe0b72e6004ba5d860d6e002caa0899"><td class="mdescLeft">&#160;</td><td class="mdescRight">Computes the local transformation matrix for this part.  <br /></td></tr>
 <tr class="separator:a5fe0b72e6004ba5d860d6e002caa0899"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a7bb175c840d0fd5c680c2d401d9378ba" id="r_a7bb175c840d0fd5c680c2d401d9378ba"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a7bb175c840d0fd5c680c2d401d9378ba">RecalculateCenter</a> ()</td></tr>
-<tr class="memdesc:a7bb175c840d0fd5c680c2d401d9378ba"><td class="mdescLeft">&#160;</td><td class="mdescRight">Recalculates the logical center based on voxel positions.  <br /></td></tr>
+<tr class="memdesc:a7bb175c840d0fd5c680c2d401d9378ba"><td class="mdescLeft">&#160;</td><td class="mdescRight">Recalculates the logical center based on voxel positions within the chunk.  <br /></td></tr>
 <tr class="separator:a7bb175c840d0fd5c680c2d401d9378ba"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-attribs" name="pub-attribs"></a>
 Public Attributes</h2></td></tr>
 <tr class="memitem:a2d83cdb10a0bbdf069ac25353c73f833" id="r_a2d83cdb10a0bbdf069ac25353c73f833"><td class="memItemLeft" align="right" valign="top">glm::vec3&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a2d83cdb10a0bbdf069ac25353c73f833">position</a> {0.0f}</td></tr>
+<tr class="memdesc:a2d83cdb10a0bbdf069ac25353c73f833"><td class="mdescLeft">&#160;</td><td class="mdescRight">Position relative to the Entity root.  <br /></td></tr>
 <tr class="separator:a2d83cdb10a0bbdf069ac25353c73f833"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a0303196d75d352f52fae99a018aaa935" id="r_a0303196d75d352f52fae99a018aaa935"><td class="memItemLeft" align="right" valign="top">glm::quat&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a0303196d75d352f52fae99a018aaa935">rotation</a> {1.0f, 0.0f, 0.0f, 0.0f}</td></tr>
+<tr class="memdesc:a0303196d75d352f52fae99a018aaa935"><td class="mdescLeft">&#160;</td><td class="mdescRight">Rotation relative to the Entity root.  <br /></td></tr>
 <tr class="separator:a0303196d75d352f52fae99a018aaa935"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a47181c1699d25e4b4ba01cebfcf3ed3a" id="r_a47181c1699d25e4b4ba01cebfcf3ed3a"><td class="memItemLeft" align="right" valign="top">glm::vec3&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a47181c1699d25e4b4ba01cebfcf3ed3a">scale</a> {1.0f}</td></tr>
+<tr class="memdesc:a47181c1699d25e4b4ba01cebfcf3ed3a"><td class="mdescLeft">&#160;</td><td class="mdescRight">Scale relative to the Entity root.  <br /></td></tr>
 <tr class="separator:a47181c1699d25e4b4ba01cebfcf3ed3a"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ad13dea51d3df1309cf5b58c6fc6e2585" id="r_ad13dea51d3df1309cf5b58c6fc6e2585"><td class="memItemLeft" align="right" valign="top">glm::vec3&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ad13dea51d3df1309cf5b58c6fc6e2585">logicalCenter</a> {16.0f}</td></tr>
+<tr class="memdesc:ad13dea51d3df1309cf5b58c6fc6e2585"><td class="mdescLeft">&#160;</td><td class="mdescRight">Logical Center (Center of Mass) relative to <a class="el" href="structvortex_1_1voxel_1_1Chunk.html" title="A single 32x32x32 voxel chunk (SoA Layout).">Chunk</a> Origin (0,0,0).  <br /></td></tr>
 <tr class="separator:ad13dea51d3df1309cf5b58c6fc6e2585"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a4d1d999fb715063bb3a5de90e08a9514" id="r_a4d1d999fb715063bb3a5de90e08a9514"><td class="memItemLeft" align="right" valign="top">uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a4d1d999fb715063bb3a5de90e08a9514">voxelCount</a> {0}</td></tr>
+<tr class="memdesc:a4d1d999fb715063bb3a5de90e08a9514"><td class="mdescLeft">&#160;</td><td class="mdescRight">Number of solid voxels in this object.  <br /></td></tr>
 <tr class="separator:a4d1d999fb715063bb3a5de90e08a9514"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a5439dc3c4149a3a314039c7dc4ebdca8" id="r_a5439dc3c4149a3a314039c7dc4ebdca8"><td class="memItemLeft" align="right" valign="top">std::shared_ptr&lt; <a class="el" href="structvortex_1_1voxel_1_1Chunk.html">Chunk</a> &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a5439dc3c4149a3a314039c7dc4ebdca8">chunk</a></td></tr>
+<tr class="memdesc:a5439dc3c4149a3a314039c7dc4ebdca8"><td class="mdescLeft">&#160;</td><td class="mdescRight">The actual voxel data container.  <br /></td></tr>
 <tr class="separator:a5439dc3c4149a3a314039c7dc4ebdca8"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ababf21901dac46d2f0d3a021962b4603" id="r_ababf21901dac46d2f0d3a021962b4603"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ababf21901dac46d2f0d3a021962b4603">isStatic</a> = false</td></tr>
+<tr class="memdesc:ababf21901dac46d2f0d3a021962b4603"><td class="mdescLeft">&#160;</td><td class="mdescRight">Per-object static flag (often overridden by Entity).  <br /></td></tr>
 <tr class="separator:ababf21901dac46d2f0d3a021962b4603"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
-<h2 class="groupheader">Member Function Documentation</h2>
+<a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
+<div class="textblock"><p>Represents a single Voxel Object (typically one chunk) within an Entity. </p>
+</div><h2 class="groupheader">Member Function Documentation</h2>
 <a id="a5fe0b72e6004ba5d860d6e002caa0899" name="a5fe0b72e6004ba5d860d6e002caa0899"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a5fe0b72e6004ba5d860d6e002caa0899">&#9670;&#160;</a></span>GetTransformMatrix()</h2>
 
@@ -148,6 +161,9 @@ Public Attributes</h2></td></tr>
   </tr>
 </table>
 </div><div class="memdoc">
+
+<p>Computes the local transformation matrix for this part. </p>
+<dl class="section return"><dt>Returns</dt><dd>Model matrix (Translation * Rotation * Scale). </dd></dl>
 
 </div>
 </div>
@@ -174,8 +190,8 @@ Public Attributes</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p>Recalculates the logical center based on voxel positions. </p>
-<p>Should be called after modifying the chunk. </p>
+<p>Recalculates the logical center based on voxel positions within the chunk. </p>
+<p>Should be called after modifying the chunk content. </p>
 
 </div>
 </div>
@@ -192,6 +208,8 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
+<p>The actual voxel data container. </p>
+
 </div>
 </div>
 <a id="ababf21901dac46d2f0d3a021962b4603" name="ababf21901dac46d2f0d3a021962b4603"></a>
@@ -205,6 +223,8 @@ Public Attributes</h2></td></tr>
         </tr>
       </table>
 </div><div class="memdoc">
+
+<p>Per-object static flag (often overridden by Entity). </p>
 
 </div>
 </div>
@@ -220,6 +240,8 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
+<p>Logical Center (Center of Mass) relative to <a class="el" href="structvortex_1_1voxel_1_1Chunk.html" title="A single 32x32x32 voxel chunk (SoA Layout).">Chunk</a> Origin (0,0,0). </p>
+
 </div>
 </div>
 <a id="a2d83cdb10a0bbdf069ac25353c73f833" name="a2d83cdb10a0bbdf069ac25353c73f833"></a>
@@ -233,6 +255,8 @@ Public Attributes</h2></td></tr>
         </tr>
       </table>
 </div><div class="memdoc">
+
+<p>Position relative to the Entity root. </p>
 
 </div>
 </div>
@@ -248,6 +272,8 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
+<p>Rotation relative to the Entity root. </p>
+
 </div>
 </div>
 <a id="a47181c1699d25e4b4ba01cebfcf3ed3a" name="a47181c1699d25e4b4ba01cebfcf3ed3a"></a>
@@ -262,6 +288,8 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
+<p>Scale relative to the Entity root. </p>
+
 </div>
 </div>
 <a id="a4d1d999fb715063bb3a5de90e08a9514" name="a4d1d999fb715063bb3a5de90e08a9514"></a>
@@ -275,6 +303,8 @@ Public Attributes</h2></td></tr>
         </tr>
       </table>
 </div><div class="memdoc">
+
+<p>Number of solid voxels in this object. </p>
 
 </div>
 </div>

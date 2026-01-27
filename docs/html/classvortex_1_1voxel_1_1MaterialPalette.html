@@ -111,15 +111,15 @@ Public Member Functions</h2></td></tr>
 <tr class="memdesc:aea6e3499d3060055ad4adf049ad3724a"><td class="mdescLeft">&#160;</td><td class="mdescRight">Adds a new material to the palette.  <br /></td></tr>
 <tr class="separator:aea6e3499d3060055ad4adf049ad3724a"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a93c9a23eef2bb12a2860da1ed0ccc924" id="r_a93c9a23eef2bb12a2860da1ed0ccc924"><td class="memItemLeft" align="right" valign="top">const std::vector&lt; <a class="el" href="structvortex_1_1voxel_1_1PhysicalMaterial.html">PhysicalMaterial</a> &gt; &amp;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a93c9a23eef2bb12a2860da1ed0ccc924">GetData</a> () const</td></tr>
-<tr class="memdesc:a93c9a23eef2bb12a2860da1ed0ccc924"><td class="mdescLeft">&#160;</td><td class="mdescRight">Retrieves the raw data for GPU upload.  <br /></td></tr>
+<tr class="memdesc:a93c9a23eef2bb12a2860da1ed0ccc924"><td class="mdescLeft">&#160;</td><td class="mdescRight">Retrieves the raw material list for GPU upload.  <br /></td></tr>
 <tr class="separator:a93c9a23eef2bb12a2860da1ed0ccc924"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a97f11895aa516022d95d989ef9df3635" id="r_a97f11895aa516022d95d989ef9df3635"><td class="memItemLeft" align="right" valign="top">const <a class="el" href="structvortex_1_1voxel_1_1PhysicalMaterial.html">PhysicalMaterial</a> &amp;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a97f11895aa516022d95d989ef9df3635">Get</a> (uint8_t index) const</td></tr>
-<tr class="memdesc:a97f11895aa516022d95d989ef9df3635"><td class="mdescLeft">&#160;</td><td class="mdescRight">Returns material by index (CPU side lookup).  <br /></td></tr>
+<tr class="memdesc:a97f11895aa516022d95d989ef9df3635"><td class="mdescLeft">&#160;</td><td class="mdescRight">Looks up a material by its index (CPU side).  <br /></td></tr>
 <tr class="separator:a97f11895aa516022d95d989ef9df3635"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
 <div class="textblock"><p>Manages a collection of materials indexed by voxel IDs. </p>
-<p>Maximum 256 materials per palette (since Voxels are uint8_t). Index 0 is reserved for "Empty/Air". </p>
+<p>Maximum 256 materials per palette (since Voxels use uint8_t). Index 0 is strictly reserved for "Empty/Air". </p>
 </div><h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
 <a id="a2c1ac406a4e1003e8bf9eb1b2f948279" name="a2c1ac406a4e1003e8bf9eb1b2f948279"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a2c1ac406a4e1003e8bf9eb1b2f948279">&#9670;&#160;</a></span>MaterialPalette()</h2>
@@ -179,8 +179,8 @@ Public Member Functions</h2></td></tr>
   </table>
   </dd>
 </dl>
-<dl class="section return"><dt>Returns</dt><dd>The index of the added material. </dd></dl>
-<dl class="section warning"><dt>Warning</dt><dd>Throws if palette size exceeds 255. </dd></dl>
+<dl class="section return"><dt>Returns</dt><dd>The index assigned to the new material. </dd></dl>
+<dl class="section warning"><dt>Warning</dt><dd>Throws std::overflow_error if the palette size exceeds 255. </dd></dl>
 
 </div>
 </div>
@@ -207,7 +207,14 @@ Public Member Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p>Returns material by index (CPU side lookup). </p>
+<p>Looks up a material by its index (CPU side). </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">index</td><td>The material index (0-255). </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>Returns</dt><dd>The material definition, or an error material if index is invalid. </dd></dl>
 
 </div>
 </div>
@@ -234,7 +241,8 @@ Public Member Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
-<p>Retrieves the raw data for GPU upload. </p>
+<p>Retrieves the raw material list for GPU upload. </p>
+<dl class="section return"><dt>Returns</dt><dd>Reference to the vector of PhysicalMaterials. </dd></dl>
 
 </div>
 </div>

@@ -98,6 +98,9 @@ $(function(){initNavTree('classvortex_1_1graphics_1_1TAAPipeline.html',''); init
   <div class="headertitle"><div class="title">vortex::graphics::TAAPipeline Class Reference<span class="mlabels"><span class="mlabel">export</span></span><div class="ingroups">module <a class="el" href="module_vortex_8graphics.html">vortex.graphics</a></div></div></div>
 </div><!--header-->
 <div class="contents">
+
+<p>Temporal Anti-Aliasing (TAA) Compute Pipeline.  
+ <a href="#details">More...</a></p>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-methods" name="pub-methods"></a>
 Public Member Functions</h2></td></tr>
@@ -110,11 +113,15 @@ Public Member Functions</h2></td></tr>
 <tr class="memitem:abe826e76948f87b21262c6310096384b" id="r_abe826e76948f87b21262c6310096384b"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#abe826e76948f87b21262c6310096384b">Shutdown</a> ()</td></tr>
 <tr class="separator:abe826e76948f87b21262c6310096384b"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a929611217a9638d438d39783adf49b18" id="r_a929611217a9638d438d39783adf49b18"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a929611217a9638d438d39783adf49b18">Dispatch</a> (VkCommandBuffer cmd, uint32_t frameIndex, VkSampler sampler, const <a class="el" href="structvortex_1_1memory_1_1AllocatedImage.html">memory::AllocatedImage</a> &amp;colorInput, const <a class="el" href="structvortex_1_1memory_1_1AllocatedImage.html">memory::AllocatedImage</a> &amp;historyInput, const <a class="el" href="structvortex_1_1memory_1_1AllocatedImage.html">memory::AllocatedImage</a> &amp;velocityInput, const <a class="el" href="structvortex_1_1memory_1_1AllocatedImage.html">memory::AllocatedImage</a> &amp;depthInput, const <a class="el" href="structvortex_1_1memory_1_1AllocatedImage.html">memory::AllocatedImage</a> &amp;output, uint32_t width, uint32_t height)</td></tr>
+<tr class="memdesc:a929611217a9638d438d39783adf49b18"><td class="mdescLeft">&#160;</td><td class="mdescRight">Dispatches the TAA compute shader.  <br /></td></tr>
 <tr class="separator:a929611217a9638d438d39783adf49b18"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a792af4a115829d4db9570a3f0a8af770" id="r_a792af4a115829d4db9570a3f0a8af770"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a792af4a115829d4db9570a3f0a8af770">IsInitialized</a> () const</td></tr>
 <tr class="separator:a792af4a115829d4db9570a3f0a8af770"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
-<h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
+<a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
+<div class="textblock"><p>Temporal Anti-Aliasing (TAA) Compute Pipeline. </p>
+<p>Resolves the current frame using history and velocity vectors to smooth edges and reduce noise. </p>
+</div><h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
 <a id="a6e5f039d29f94286a8db76299ce4e0be" name="a6e5f039d29f94286a8db76299ce4e0be"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a6e5f039d29f94286a8db76299ce4e0be">&#9670;&#160;</a></span>TAAPipeline()</h2>
 
@@ -208,6 +215,23 @@ Public Member Functions</h2></td></tr>
         </tr>
       </table>
 </div><div class="memdoc">
+
+<p>Dispatches the TAA compute shader. </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">cmd</td><td>Command Buffer. </td></tr>
+    <tr><td class="paramname">frameIndex</td><td>Frame index for descriptors. </td></tr>
+    <tr><td class="paramname">sampler</td><td>Sampler to use for textures. </td></tr>
+    <tr><td class="paramname">colorInput</td><td>Current raw frame color. </td></tr>
+    <tr><td class="paramname">historyInput</td><td>Previous frame's resolved color. </td></tr>
+    <tr><td class="paramname">velocityInput</td><td>Motion vectors. </td></tr>
+    <tr><td class="paramname">depthInput</td><td>Depth buffer. </td></tr>
+    <tr><td class="paramname">output</td><td>Target image for resolved color. </td></tr>
+    <tr><td class="paramname">width</td><td>Output width. </td></tr>
+    <tr><td class="paramname">height</td><td>Output height. </td></tr>
+  </table>
+  </dd>
+</dl>
 
 </div>
 </div>

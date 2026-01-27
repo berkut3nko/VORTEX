@@ -1,5 +1,4 @@
 var searchData=
 [
-  ['materialpalette_0',['MaterialPalette',['../classvortex_1_1voxel_1_1MaterialPalette.html',1,'vortex::voxel']]],
-  ['memoryallocator_1',['MemoryAllocator',['../classvortex_1_1memory_1_1MemoryAllocator.html',1,'vortex::memory']]]
+  ['internalstate_0',['InternalState',['../structvortex_1_1Engine_1_1InternalState.html',1,'vortex::Engine::InternalState'],['../structvortex_1_1physics_1_1PhysicsSystem_1_1InternalState.html',1,'vortex::physics::PhysicsSystem::InternalState']]]
 ];

@@ -9,17 +9,27 @@ export module vortex.voxel:dynamic_mesh;
 
 import :entity;
 import :mesh_converter;
-import :material; // Use internal PhysicalMaterial
+import :material; 
 
 namespace vortex::voxel {
 
+    /**
+     * @brief Specialization of VoxelEntity representing an imported 3D mesh.
+     * @details Stores import settings to allow re-meshing at runtime.
+     */
     export struct DynamicMeshObject : public VoxelEntity {
+        /// @brief Configuration used to import this mesh.
         MeshImportSettings importSettings;
 
-        // Materials specific to this mesh
-        // These will be appended to the global palette during Scene Upload
+        /// @brief Materials specific to this mesh instance.
+        /// @details These will be appended to the global palette during Scene Upload.
         std::vector<PhysicalMaterial> materials;
 
+        /**
+         * @brief Re-runs the voxelization process using the current settings.
+         * @details Updates `parts` and `materials`, then recalculates statistics.
+         * Can be slow for large meshes.
+         */
         void Remesh() {
             MeshImportResult result = MeshConverter::Import(importSettings);
             

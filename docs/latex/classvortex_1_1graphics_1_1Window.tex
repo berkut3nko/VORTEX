@@ -19,18 +19,18 @@ void \mbox{\hyperlink{classvortex_1_1graphics_1_1Window_a901da149a4eebcfa6a9e98b
 Vk\+Surface\+KHR \mbox{\hyperlink{classvortex_1_1graphics_1_1Window_a0f802ae5707e4128c12ed4226e5fe3e5}{Create\+Surface}} (Vk\+Instance instance)
 \begin{DoxyCompactList}\small\item\em Creates a Vulkan surface for this window. \end{DoxyCompactList}\item 
 bool \mbox{\hyperlink{classvortex_1_1graphics_1_1Window_ac57131aa5dae847762415aad5d4e0e39}{Should\+Close}} () const
-\begin{DoxyCompactList}\small\item\em Checks if the window should close. \end{DoxyCompactList}\item 
+\begin{DoxyCompactList}\small\item\em Checks if the window should close (e.\+g. user clicked X). \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1Window_ad62ec0b030faf783c2d88796bf74e39a}{Poll\+Events}} ()
 \begin{DoxyCompactList}\small\item\em Polls input events. \end{DoxyCompactList}\item 
 GLFWwindow \texorpdfstring{$\ast$}{*} \mbox{\hyperlink{classvortex_1_1graphics_1_1Window_ae86b43456caf1421b8e331b538cdedcb}{Get\+Native\+Handle}} () const
 \begin{DoxyCompactList}\small\item\em Gets the raw GLFW window handle. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1Window_affd015bc318047054701d28a0bbec431}{Get\+Framebuffer\+Size}} (int \&width, int \&height) const
-\begin{DoxyCompactList}\small\item\em Gets current framebuffer size. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\begin{DoxyCompactList}\small\item\em Gets current framebuffer size (in pixels, handling DPI scaling). \end{DoxyCompactList}\end{DoxyCompactItemize}
 \doxysubsubsection*{Public Attributes}
 \begin{DoxyCompactItemize}
 \item 
 bool \mbox{\hyperlink{classvortex_1_1graphics_1_1Window_a51eff50332bc61ce511d1526efeea2d3}{was\+Resized}} = false
-\end{DoxyCompactItemize}
+\begin{DoxyCompactList}\small\item\em Flag indicating if the window was resized since last frame. \end{DoxyCompactList}\end{DoxyCompactItemize}
 
 
 \doxysubsection{Detailed Description}
@@ -78,7 +78,7 @@ The created surface handle.
 
 
 
-Gets current framebuffer size. 
+Gets current framebuffer size (in pixels, handling DPI scaling). 
 
 \Hypertarget{classvortex_1_1graphics_1_1Window_ae86b43456caf1421b8e331b538cdedcb}\label{classvortex_1_1graphics_1_1Window_ae86b43456caf1421b8e331b538cdedcb} 
 \index{vortex::graphics::Window@{vortex::graphics::Window}!GetNativeHandle@{GetNativeHandle}}
@@ -130,7 +130,7 @@ Polls input events.
 
 
 
-Checks if the window should close. 
+Checks if the window should close (e.\+g. user clicked X). 
 
 \Hypertarget{classvortex_1_1graphics_1_1Window_a901da149a4eebcfa6a9e98bc2e94e179}\label{classvortex_1_1graphics_1_1Window_a901da149a4eebcfa6a9e98bc2e94e179} 
 \index{vortex::graphics::Window@{vortex::graphics::Window}!Shutdown@{Shutdown}}
@@ -150,6 +150,10 @@ Destroys the window and terminates GLFW.
 \index{wasResized@{wasResized}!vortex::graphics::Window@{vortex::graphics::Window}}
 \doxysubsubsection{\texorpdfstring{wasResized}{wasResized}}
 {\footnotesize\ttfamily bool vortex\+::graphics\+::\+Window\+::was\+Resized = false}
+
+
+
+Flag indicating if the window was resized since last frame. 
 
 
 

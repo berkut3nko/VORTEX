@@ -1,0 +1,105 @@
+\doxysection{vortex\+::voxel\+::Dynamic\+Mesh\+Object Struct Reference}
+\hypertarget{structvortex_1_1voxel_1_1DynamicMeshObject}{}\label{structvortex_1_1voxel_1_1DynamicMeshObject}\index{vortex::voxel::DynamicMeshObject@{vortex::voxel::DynamicMeshObject}}
+
+
+Specialization of \doxylink{structvortex_1_1voxel_1_1VoxelEntity}{Voxel\+Entity} representing an imported 3D mesh.  
+
+
+
+
+Inheritance diagram for vortex\+::voxel\+::Dynamic\+Mesh\+Object\+:
+% FIG 0
+
+
+Collaboration diagram for vortex\+::voxel\+::Dynamic\+Mesh\+Object\+:
+% FIG 1
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+void \mbox{\hyperlink{structvortex_1_1voxel_1_1DynamicMeshObject_ac98b9099ac87c3faaa0ae7c37f45e5bb}{Remesh}} ()
+\begin{DoxyCompactList}\small\item\em Re-\/runs the voxelization process using the current settings. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsection*{Public Member Functions inherited from \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity}{vortex\+::voxel\+::\+Voxel\+Entity}}}
+\begin{DoxyCompactItemize}
+\item 
+virtual \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_adcd406e8b5f0eaea7e21ee5229a22139}{\texorpdfstring{$\sim$}{\string~}\+Voxel\+Entity}} ()=default
+\item 
+void \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a45f7dfdd09f4de8284e84a22acac566a}{Recalculate\+Stats}} ()
+\begin{DoxyCompactList}\small\item\em Recalculates the center of mass and bounding box based on constituent parts. \end{DoxyCompactList}\item 
+glm\+::vec3 \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a326b8cec29e46e1c136527b8b44cd09e}{Get\+Local\+Center}} () const
+\begin{DoxyCompactList}\small\item\em Gets the calculated local center (center of mass). \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{structvortex_1_1voxel_1_1MeshImportSettings}{Mesh\+Import\+Settings}} \mbox{\hyperlink{structvortex_1_1voxel_1_1DynamicMeshObject_a4e00304840e119c0503e67c7ea9861ab}{import\+Settings}}
+\begin{DoxyCompactList}\small\item\em Configuration used to import this mesh. \end{DoxyCompactList}\item 
+std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{Physical\+Material}} $>$ \mbox{\hyperlink{structvortex_1_1voxel_1_1DynamicMeshObject_af6ec01ae9a49199172f4a606bd657b89}{materials}}
+\begin{DoxyCompactList}\small\item\em Materials specific to this mesh instance. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\doxysubsection*{Public Attributes inherited from \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity}{vortex\+::voxel\+::\+Voxel\+Entity}}}
+\begin{DoxyCompactItemize}
+\item 
+std\+::string \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a9e5de6ddf412facd4a164ed88a47bfcb}{name}} = "{}Entity"{}
+\begin{DoxyCompactList}\small\item\em Display name of the entity. \end{DoxyCompactList}\item 
+glm\+::mat4 \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a92a6640da59770cf0a66881d75923978}{transform}} \{1.\+0f\}
+\begin{DoxyCompactList}\small\item\em Root transformation matrix (Position, Rotation, Scale). \end{DoxyCompactList}\item 
+std\+::vector$<$ std\+::shared\+\_\+ptr$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelObject}{Voxel\+Object}} $>$ $>$ \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a6a7f267fd2018295de77620ec03ec768}{parts}}
+\begin{DoxyCompactList}\small\item\em Constituent voxel parts (Chunks) relative to the root. \end{DoxyCompactList}\item 
+glm\+::vec3 \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_ad79f4fd84d1bd772eeec7fbec6c53e3a}{local\+Bounds\+Min}} \{0.\+0f\}
+\begin{DoxyCompactList}\small\item\em Local AABB minimum bound for raycasting/selection. \end{DoxyCompactList}\item 
+glm\+::vec3 \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_aa2b31ecc981d243a310ef5e857ab6e14}{local\+Bounds\+Max}} \{0.\+0f\}
+\begin{DoxyCompactList}\small\item\em Local AABB maximum bound for raycasting/selection. \end{DoxyCompactList}\item 
+glm\+::vec3 \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a40d4d4f8e747eaafafc47cb9063dcdf4}{logical\+Center}} \{0.\+0f\}
+\begin{DoxyCompactList}\small\item\em Center of mass used as the Gizmo pivot point. \end{DoxyCompactList}\item 
+uint32\+\_\+t \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a94299aa72b50e1e4a8583615033122d9}{total\+Voxel\+Count}} \{0\}
+\begin{DoxyCompactList}\small\item\em Total number of solid voxels across all parts. \end{DoxyCompactList}\item 
+bool \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a135f73db46684e9f2d6f27c29f7c5f42}{is\+Static}} = false
+\begin{DoxyCompactList}\small\item\em If true, object is immovable (Bedrock) and ignores forces. \end{DoxyCompactList}\item 
+bool \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a36e2125ff4e18c43f1b8b401b8461765}{is\+Trigger}} = false
+\begin{DoxyCompactList}\small\item\em If true, object detects overlaps but has no collision response (Ghost/\+Sensor). \end{DoxyCompactList}\item 
+bool \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity_a211af65cb31fbaf9f281b89dbb1e2d66}{should\+Rebuild\+Physics}} = false
+\begin{DoxyCompactList}\small\item\em Flag to signal the physics system to regenerate the body (e.\+g., after re-\/meshing). \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Specialization of \doxylink{structvortex_1_1voxel_1_1VoxelEntity}{Voxel\+Entity} representing an imported 3D mesh. 
+
+Stores import settings to allow re-\/meshing at runtime. 
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{structvortex_1_1voxel_1_1DynamicMeshObject_ac98b9099ac87c3faaa0ae7c37f45e5bb}\label{structvortex_1_1voxel_1_1DynamicMeshObject_ac98b9099ac87c3faaa0ae7c37f45e5bb} 
+\index{vortex::voxel::DynamicMeshObject@{vortex::voxel::DynamicMeshObject}!Remesh@{Remesh}}
+\index{Remesh@{Remesh}!vortex::voxel::DynamicMeshObject@{vortex::voxel::DynamicMeshObject}}
+\doxysubsubsection{\texorpdfstring{Remesh()}{Remesh()}}
+{\footnotesize\ttfamily void vortex\+::voxel\+::\+Dynamic\+Mesh\+Object\+::\+Remesh (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Re-\/runs the voxelization process using the current settings. 
+
+Updates {\ttfamily parts} and {\ttfamily materials}, then recalculates statistics. Can be slow for large meshes. 
+
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structvortex_1_1voxel_1_1DynamicMeshObject_a4e00304840e119c0503e67c7ea9861ab}\label{structvortex_1_1voxel_1_1DynamicMeshObject_a4e00304840e119c0503e67c7ea9861ab} 
+\index{vortex::voxel::DynamicMeshObject@{vortex::voxel::DynamicMeshObject}!importSettings@{importSettings}}
+\index{importSettings@{importSettings}!vortex::voxel::DynamicMeshObject@{vortex::voxel::DynamicMeshObject}}
+\doxysubsubsection{\texorpdfstring{importSettings}{importSettings}}
+{\footnotesize\ttfamily \mbox{\hyperlink{structvortex_1_1voxel_1_1MeshImportSettings}{Mesh\+Import\+Settings}} vortex\+::voxel\+::\+Dynamic\+Mesh\+Object\+::import\+Settings}
+
+
+
+Configuration used to import this mesh. 
+
+\Hypertarget{structvortex_1_1voxel_1_1DynamicMeshObject_af6ec01ae9a49199172f4a606bd657b89}\label{structvortex_1_1voxel_1_1DynamicMeshObject_af6ec01ae9a49199172f4a606bd657b89} 
+\index{vortex::voxel::DynamicMeshObject@{vortex::voxel::DynamicMeshObject}!materials@{materials}}
+\index{materials@{materials}!vortex::voxel::DynamicMeshObject@{vortex::voxel::DynamicMeshObject}}
+\doxysubsubsection{\texorpdfstring{materials}{materials}}
+{\footnotesize\ttfamily std\+::vector$<$\mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{Physical\+Material}}$>$ vortex\+::voxel\+::\+Dynamic\+Mesh\+Object\+::materials}
+
+
+
+Materials specific to this mesh instance. 
+
+These will be appended to the global palette during Scene Upload. 
+
+The documentation for this struct was generated from the following file\+:\begin{DoxyCompactItemize}
+\item 
+src/mesh/\mbox{\hyperlink{MeshObject_8cppm}{Mesh\+Object.\+cppm}}\end{DoxyCompactItemize}

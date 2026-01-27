@@ -103,28 +103,47 @@ $(function(){initNavTree('module_vortex_8voxel.html',''); initResizable(); });
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="nested-classes" name="nested-classes"></a>
 Classes</h2></td></tr>
-<tr class="memitem:"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classvortex_1_1voxel_1_1MaterialPalette.html">vortex::voxel::MaterialPalette</a></td></tr>
-<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Manages a collection of materials indexed by voxel IDs.  <a href="classvortex_1_1voxel_1_1MaterialPalette.html#details">More...</a><br /></td></tr>
-<tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structvortex_1_1voxel_1_1HierarchyMask.html">vortex::voxel::HierarchyMask</a></td></tr>
-<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Acceleration structure for Ray Tracing (Grid Hierarchy).  <a href="structvortex_1_1voxel_1_1HierarchyMask.html#details">More...</a><br /></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Acceleration structure for Voxel Ray Tracing (Grid Hierarchy).  <a href="structvortex_1_1voxel_1_1HierarchyMask.html#details">More...</a><br /></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structvortex_1_1voxel_1_1PhysicalMaterial.html">vortex::voxel::PhysicalMaterial</a></td></tr>
 <tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Represents a single material definition for SHRED physics and rendering.  <a href="structvortex_1_1voxel_1_1PhysicalMaterial.html#details">More...</a><br /></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structvortex_1_1voxel_1_1VoxelObject.html">vortex::voxel::VoxelObject</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Represents a single Voxel Object (typically one chunk) within an Entity.  <a href="structvortex_1_1voxel_1_1VoxelObject.html#details">More...</a><br /></td></tr>
+<tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classvortex_1_1voxel_1_1MaterialPalette.html">vortex::voxel::MaterialPalette</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Manages a collection of materials indexed by voxel IDs.  <a href="classvortex_1_1voxel_1_1MaterialPalette.html#details">More...</a><br /></td></tr>
+<tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structvortex_1_1voxel_1_1MeshImportSettings.html">vortex::voxel::MeshImportSettings</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Settings for importing a 3D mesh.  <a href="structvortex_1_1voxel_1_1MeshImportSettings.html#details">More...</a><br /></td></tr>
+<tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structvortex_1_1voxel_1_1MeshImportResult.html">vortex::voxel::MeshImportResult</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Result of a mesh import operation.  <a href="structvortex_1_1voxel_1_1MeshImportResult.html#details">More...</a><br /></td></tr>
+<tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classvortex_1_1voxel_1_1MeshConverter.html">vortex::voxel::MeshConverter</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Utility class to convert standard 3D meshes into Voxel Entities.  <a href="classvortex_1_1voxel_1_1MeshConverter.html#details">More...</a><br /></td></tr>
+<tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structvortex_1_1voxel_1_1Chunk.html">vortex::voxel::Chunk</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">A single 32x32x32 voxel chunk (SoA Layout).  <a href="structvortex_1_1voxel_1_1Chunk.html#details">More...</a><br /></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classvortex_1_1voxel_1_1ShapeBuilder.html">vortex::voxel::ShapeBuilder</a></td></tr>
 <tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Helper class to procedurally generate voxel shapes into Chunks.  <a href="classvortex_1_1voxel_1_1ShapeBuilder.html#details">More...</a><br /></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structvortex_1_1voxel_1_1VoxelEntity.html">vortex::voxel::VoxelEntity</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Represents a generic entity in the voxel world.  <a href="structvortex_1_1voxel_1_1VoxelEntity.html#details">More...</a><br /></td></tr>
+<tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structvortex_1_1voxel_1_1ObjectInstance.html">vortex::voxel::ObjectInstance</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Represents an instance of a voxel object in the world for rendering.  <a href="structvortex_1_1voxel_1_1ObjectInstance.html#details">More...</a><br /></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structvortex_1_1voxel_1_1ChunkPool.html">vortex::voxel::ChunkPool</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Simple linear pool for managing chunk storage.  <a href="structvortex_1_1voxel_1_1ChunkPool.html#details">More...</a><br /></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classvortex_1_1voxel_1_1VoxelWorld.html">vortex::voxel::VoxelWorld</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">High-level container for the Voxel World state.  <a href="classvortex_1_1voxel_1_1VoxelWorld.html#details">More...</a><br /></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structvortex_1_1voxel_1_1Chunk.html">vortex::voxel::Chunk</a></td></tr>
-<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">A single 32x32x32 voxel chunk (SoA Layout).  <a href="structvortex_1_1voxel_1_1Chunk.html#details">More...</a><br /></td></tr>
+<tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structvortex_1_1voxel_1_1DynamicMeshObject.html">vortex::voxel::DynamicMeshObject</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Specialization of <a class="el" href="structvortex_1_1voxel_1_1VoxelEntity.html" title="Represents a generic entity in the voxel world.">VoxelEntity</a> representing an imported 3D mesh.  <a href="structvortex_1_1voxel_1_1DynamicMeshObject.html#details">More...</a><br /></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="enum-members" name="enum-members"></a>
@@ -149,7 +168,7 @@ Enumerations</h2></td></tr>
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="func-members" name="func-members"></a>
 Functions</h2></td></tr>
 <tr class="memitem:ae40dbb4c8f787f57def4025d15ef2c1b" id="r_ae40dbb4c8f787f57def4025d15ef2c1b"><td class="memItemLeft" align="right" valign="top">constexpr uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="namespacevortex_1_1voxel.html#ae40dbb4c8f787f57def4025d15ef2c1b">vortex::voxel::operator|</a> (MaterialFlags a, MaterialFlags b)</td></tr>
-<tr class="memdesc:ae40dbb4c8f787f57def4025d15ef2c1b"><td class="mdescLeft">&#160;</td><td class="mdescRight">Helper to combine flags.  <br /></td></tr>
+<tr class="memdesc:ae40dbb4c8f787f57def4025d15ef2c1b"><td class="mdescLeft">&#160;</td><td class="mdescRight">Helper to combine flags bitwise.  <br /></td></tr>
 <tr class="separator:ae40dbb4c8f787f57def4025d15ef2c1b"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <table class="memberdecls">
@@ -159,9 +178,15 @@ Files</h2></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:Chunk_8cppm" id="r_Chunk_8cppm"><td class="memItemLeft" align="right" valign="top">file &#160;</td><td class="memItemRight" valign="bottom">src/voxel/<a class="el" href="Chunk_8cppm.html">Chunk.cppm</a></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:Entity_8cppm" id="r_Entity_8cppm"><td class="memItemLeft" align="right" valign="top">file &#160;</td><td class="memItemRight" valign="bottom">src/voxel/<a class="el" href="Entity_8cppm.html">Entity.cppm</a></td></tr>
+<tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:Hierarchy_8cppm" id="r_Hierarchy_8cppm"><td class="memItemLeft" align="right" valign="top">file &#160;</td><td class="memItemRight" valign="bottom">src/voxel/<a class="el" href="Hierarchy_8cppm.html">Hierarchy.cppm</a></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:Material_8cppm" id="r_Material_8cppm"><td class="memItemLeft" align="right" valign="top">file &#160;</td><td class="memItemRight" valign="bottom">src/voxel/<a class="el" href="Material_8cppm.html">Material.cppm</a></td></tr>
+<tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:MeshConverter_8cppm" id="r_MeshConverter_8cppm"><td class="memItemLeft" align="right" valign="top">file &#160;</td><td class="memItemRight" valign="bottom">src/mesh/<a class="el" href="MeshConverter_8cppm.html">MeshConverter.cppm</a></td></tr>
+<tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:MeshObject_8cppm" id="r_MeshObject_8cppm"><td class="memItemLeft" align="right" valign="top">file &#160;</td><td class="memItemRight" valign="bottom">src/mesh/<a class="el" href="MeshObject_8cppm.html">MeshObject.cppm</a></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:Object_8cppm" id="r_Object_8cppm"><td class="memItemLeft" align="right" valign="top">file &#160;</td><td class="memItemRight" valign="bottom">src/voxel/<a class="el" href="Object_8cppm.html">Object.cppm</a></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -170,6 +195,8 @@ Files</h2></td></tr>
 <tr class="memitem:ShapeBuilder_8cppm" id="r_ShapeBuilder_8cppm"><td class="memItemLeft" align="right" valign="top">file &#160;</td><td class="memItemRight" valign="bottom">src/voxel/<a class="el" href="ShapeBuilder_8cppm.html">ShapeBuilder.cppm</a></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:World_8cppm" id="r_World_8cppm"><td class="memItemLeft" align="right" valign="top">file &#160;</td><td class="memItemRight" valign="bottom">src/voxel/<a class="el" href="World_8cppm.html">World.cppm</a></td></tr>
+<tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:MeshConverter_8cpp" id="r_MeshConverter_8cpp"><td class="memItemLeft" align="right" valign="top">file &#160;</td><td class="memItemRight" valign="bottom">src/mesh/internal/<a class="el" href="MeshConverter_8cpp.html">MeshConverter.cpp</a></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 </div><!-- contents -->

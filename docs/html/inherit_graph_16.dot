@@ -1,0 +1,9 @@
+digraph "Graphical Class Hierarchy"
+{
+ // LATEX_PDF_SIZE
+  bgcolor="transparent";
+  edge [fontname=Helvetica,fontsize=10,labelfontname=Helvetica,labelfontsize=10];
+  node [fontname=Helvetica,fontsize=10,shape=box,height=0.2,width=0.4];
+  rankdir="LR";
+  Node0 [id="Node000000",label="vortex::graphics::Graphics\lContext",height=0.2,width=0.4,color="grey40", fillcolor="white", style="filled",URL="$classvortex_1_1graphics_1_1GraphicsContext.html",tooltip="The main entry point for the Graphics subsystem."];
+}

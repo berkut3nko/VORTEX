@@ -9,6 +9,7 @@ namespace vortex::core {
     /**
      * @brief Static class for performance profiling and timing.
      * @details Collects execution times of named sections and renders them using ImGui.
+     * Stores history for real-time graphing.
      */
     export class Profiler {
     public:
@@ -26,12 +27,13 @@ namespace vortex::core {
 
         /**
          * @brief Stops measuring time for the named section (CPU).
+         * @details Calculates duration and adds it to the history.
          * @param name Name of the section to stop.
          */
         static void End(const std::string& name);
 
         /**
-         * @brief Adds a manual time sample (e.g. for GPU timers).
+         * @brief Adds a manual time sample (e.g., for GPU timers queries).
          * @param name Name of the metric.
          * @param timeMs Time in milliseconds.
          */
@@ -47,6 +49,7 @@ namespace vortex::core {
     /**
      * @brief RAII wrapper for automatic profiling scopes.
      * @details Automatically calls Profiler::Begin in constructor and Profiler::End in destructor.
+     * Usage: `ProfileScope scope("MyFunction");`
      */
     export struct ProfileScope {
         std::string name;

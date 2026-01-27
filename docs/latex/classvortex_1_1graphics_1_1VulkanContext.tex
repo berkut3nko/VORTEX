@@ -1,5 +1,10 @@
 \doxysection{vortex\+::graphics\+::Vulkan\+Context Class Reference}
 \hypertarget{classvortex_1_1graphics_1_1VulkanContext}{}\label{classvortex_1_1graphics_1_1VulkanContext}\index{vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}}
+
+
+Core Vulkan wrapper managing the Instance, Physical Device, and Logical Device.  
+
+
 \doxysubsubsection*{Public Member Functions}
 \begin{DoxyCompactItemize}
 \item 
@@ -8,11 +13,11 @@
 \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_a9dda4e9f44fa69de3d3206cb01e9eb69}{\texorpdfstring{$\sim$}{\string~}\+Vulkan\+Context}} ()
 \item 
 bool \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_a2737506afff4ac93451e2114643bead1}{Init\+Instance}} (const char \texorpdfstring{$\ast$}{*}title)
-\item 
+\begin{DoxyCompactList}\small\item\em Creates the Vulkan Instance. \end{DoxyCompactList}\item 
 bool \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_a63efa3b6af08582ae4f5e06f14fccf42}{Init\+Device}} (Vk\+Surface\+KHR surface)
-\item 
+\begin{DoxyCompactList}\small\item\em Selects a Physical Device and creates the Logical Device. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_ac060bbf03cb9edf9705756ec86139287}{Shutdown}} ()
-\item 
+\begin{DoxyCompactList}\small\item\em Destroys the Logical Device, Instance, and Allocator. \end{DoxyCompactList}\item 
 Vk\+Instance \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_adb3906181e66744af5bda865cde18fa9}{Get\+Instance}} () const
 \item 
 Vk\+Device \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_a4a7330dee69c3ef344a37ce7de253154}{Get\+Device}} () const
@@ -32,6 +37,9 @@ vkb\+::\+Device \& \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_a2d
 Vma\+Allocator \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_adda0de347d2f1db9936d8d5327c78fbd}{Get\+Vma\+Allocator}} ()
 \end{DoxyCompactItemize}
 
+
+\doxysubsection{Detailed Description}
+Core Vulkan wrapper managing the Instance, Physical Device, and Logical Device. 
 
 \doxysubsection{Constructor \& Destructor Documentation}
 \Hypertarget{classvortex_1_1graphics_1_1VulkanContext_a8249a3ba828015d09b6f4cd36bb394d3}\label{classvortex_1_1graphics_1_1VulkanContext_a8249a3ba828015d09b6f4cd36bb394d3} 
@@ -109,17 +117,45 @@ Vma\+Allocator \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext_adda0de
 \doxysubsubsection{\texorpdfstring{InitDevice()}{InitDevice()}}
 {\footnotesize\ttfamily bool vortex\+::graphics\+::\+Vulkan\+Context\+::\+Init\+Device (\begin{DoxyParamCaption}\item[{Vk\+Surface\+KHR}]{surface }\end{DoxyParamCaption})}
 
+
+
+Selects a Physical Device and creates the Logical Device. 
+
+Requires a valid surface to ensure the device supports presentation. 
+\begin{DoxyParams}{Parameters}
+{\em surface} & The window surface used for compatibility checks. \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+True on success. 
+\end{DoxyReturn}
 \Hypertarget{classvortex_1_1graphics_1_1VulkanContext_a2737506afff4ac93451e2114643bead1}\label{classvortex_1_1graphics_1_1VulkanContext_a2737506afff4ac93451e2114643bead1} 
 \index{vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}!InitInstance@{InitInstance}}
 \index{InitInstance@{InitInstance}!vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}}
 \doxysubsubsection{\texorpdfstring{InitInstance()}{InitInstance()}}
 {\footnotesize\ttfamily bool vortex\+::graphics\+::\+Vulkan\+Context\+::\+Init\+Instance (\begin{DoxyParamCaption}\item[{const char \texorpdfstring{$\ast$}{*}}]{title }\end{DoxyParamCaption})}
 
+
+
+Creates the Vulkan Instance. 
+
+This is the first step of initialization. 
+\begin{DoxyParams}{Parameters}
+{\em title} & The application name used for the instance. \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+True on success. 
+\end{DoxyReturn}
 \Hypertarget{classvortex_1_1graphics_1_1VulkanContext_ac060bbf03cb9edf9705756ec86139287}\label{classvortex_1_1graphics_1_1VulkanContext_ac060bbf03cb9edf9705756ec86139287} 
 \index{vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}!Shutdown@{Shutdown}}
 \index{Shutdown@{Shutdown}!vortex::graphics::VulkanContext@{vortex::graphics::VulkanContext}}
 \doxysubsubsection{\texorpdfstring{Shutdown()}{Shutdown()}}
 {\footnotesize\ttfamily void vortex\+::graphics\+::\+Vulkan\+Context\+::\+Shutdown (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+
+
+Destroys the Logical Device, Instance, and Allocator. 
 
 
 

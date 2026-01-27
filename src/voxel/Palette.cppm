@@ -9,14 +9,14 @@ module;
 export module vortex.voxel:palette;
 
 import :material;
-import vortex.log; // For logging
+import vortex.log; 
 
 namespace vortex::voxel {
 
     /**
      * @brief Manages a collection of materials indexed by voxel IDs.
-     * @details Maximum 256 materials per palette (since Voxels are uint8_t).
-     * Index 0 is reserved for "Empty/Air".
+     * @details Maximum 256 materials per palette (since Voxels use uint8_t).
+     * Index 0 is strictly reserved for "Empty/Air".
      */
     export class MaterialPalette {
     public:
@@ -35,8 +35,8 @@ namespace vortex::voxel {
         /**
          * @brief Adds a new material to the palette.
          * @param mat The material definition.
-         * @return The index of the added material.
-         * @warning Throws if palette size exceeds 255.
+         * @return The index assigned to the new material.
+         * @warning Throws std::overflow_error if the palette size exceeds 255.
          */
         uint8_t AddMaterial(const PhysicalMaterial& mat) {
             if (m_Materials.size() >= 256) {
@@ -48,14 +48,17 @@ namespace vortex::voxel {
         }
 
         /**
-         * @brief Retrieves the raw data for GPU upload.
+         * @brief Retrieves the raw material list for GPU upload.
+         * @return Reference to the vector of PhysicalMaterials.
          */
         const std::vector<PhysicalMaterial>& GetData() const {
             return m_Materials;
         }
 
         /**
-         * @brief Returns material by index (CPU side lookup).
+         * @brief Looks up a material by its index (CPU side).
+         * @param index The material index (0-255).
+         * @return The material definition, or an error material if index is invalid.
          */
         const PhysicalMaterial& Get(uint8_t index) const {
             if (index >= m_Materials.size()) {

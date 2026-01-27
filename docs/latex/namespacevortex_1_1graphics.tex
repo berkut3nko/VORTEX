@@ -4,39 +4,37 @@
 \begin{DoxyCompactItemize}
 \item 
 struct \mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{Camera}}
-\item 
+\begin{DoxyCompactList}\small\item\em Represents the state of a 3D \doxylink{structvortex_1_1graphics_1_1Camera}{Camera}. \end{DoxyCompactList}\item 
 struct \mbox{\hyperlink{structvortex_1_1graphics_1_1CameraUBO}{Camera\+UBO}}
-\item 
+\begin{DoxyCompactList}\small\item\em GPU \doxylink{structvortex_1_1graphics_1_1Camera}{Camera} Buffer (Uniform Buffer Object). \end{DoxyCompactList}\item 
 class \mbox{\hyperlink{classvortex_1_1graphics_1_1FXAAPipeline}{FXAAPipeline}}
-\item 
+\begin{DoxyCompactList}\small\item\em Fast Approximate Anti-\/\+Aliasing (FXAA) Compute Pipeline. \end{DoxyCompactList}\item 
 struct \mbox{\hyperlink{structvortex_1_1graphics_1_1GPUObject}{GPUObject}}
 \item 
 class \mbox{\hyperlink{classvortex_1_1graphics_1_1GraphicsContext}{Graphics\+Context}}
-\item 
+\begin{DoxyCompactList}\small\item\em The main entry point for the Graphics subsystem. \end{DoxyCompactList}\item 
 struct \mbox{\hyperlink{structvortex_1_1graphics_1_1GraphicsInternal}{Graphics\+Internal}}
 \item 
 class \mbox{\hyperlink{classvortex_1_1graphics_1_1RasterPipeline}{Raster\+Pipeline}}
-\item 
+\begin{DoxyCompactList}\small\item\em Manages the main rasterization pipeline for Voxel Raymarching. \end{DoxyCompactList}\item 
 class \mbox{\hyperlink{classvortex_1_1graphics_1_1RenderResources}{Render\+Resources}}
 \begin{DoxyCompactList}\small\item\em Manages offscreen render targets (Color, Depth, Velocity, TAA History). \end{DoxyCompactList}\item 
 class \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager}{Scene\+Manager}}
-\begin{DoxyCompactList}\small\item\em Handles scene data, culling, and GPU buffer updates. \end{DoxyCompactList}\item 
+\begin{DoxyCompactList}\small\item\em Manages scene data buffers (Objects, Materials, Chunks, \doxylink{structvortex_1_1graphics_1_1Camera}{Camera}). \end{DoxyCompactList}\item 
 struct \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneMaterial}{Scene\+Material}}
-\item 
+\begin{DoxyCompactList}\small\item\em Represents a material in the scene. \end{DoxyCompactList}\item 
 struct \mbox{\hyperlink{structvortex_1_1graphics_1_1SceneObject}{Scene\+Object}}
-\begin{DoxyCompactList}\small\item\em High-\/level CPU representation of an object. \end{DoxyCompactList}\item 
+\begin{DoxyCompactList}\small\item\em CPU-\/side representation of an object in the scene. \end{DoxyCompactList}\item 
 class \mbox{\hyperlink{classvortex_1_1graphics_1_1ShaderCompiler}{Shader\+Compiler}}
-\begin{DoxyCompactList}\small\item\em Compiles GLSL code to SPIR-\/V at runtime. \end{DoxyCompactList}\item 
+\begin{DoxyCompactList}\small\item\em Helper class to compile GLSL code to SPIR-\/V at runtime using glslang. \end{DoxyCompactList}\item 
 class \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain}{Swapchain}}
-\item 
+\begin{DoxyCompactList}\small\item\em Manages the Vulkan \doxylink{classvortex_1_1graphics_1_1Swapchain}{Swapchain} and presentation images. \end{DoxyCompactList}\item 
 class \mbox{\hyperlink{classvortex_1_1graphics_1_1TAAPipeline}{TAAPipeline}}
-\item 
+\begin{DoxyCompactList}\small\item\em Temporal Anti-\/\+Aliasing (TAA) Compute Pipeline. \end{DoxyCompactList}\item 
 class \mbox{\hyperlink{classvortex_1_1graphics_1_1UIOverlay}{UIOverlay}}
-\begin{DoxyCompactList}\small\item\em Handles Im\+Gui integration. \end{DoxyCompactList}\item 
-struct \mbox{\hyperlink{structvortex_1_1graphics_1_1ViewFrustum}{View\+Frustum}}
-\item 
+\begin{DoxyCompactList}\small\item\em Handles Im\+Gui integration and UI rendering. \end{DoxyCompactList}\item 
 class \mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext}{Vulkan\+Context}}
-\item 
+\begin{DoxyCompactList}\small\item\em Core Vulkan wrapper managing the Instance, Physical Device, and Logical Device. \end{DoxyCompactList}\item 
 class \mbox{\hyperlink{classvortex_1_1graphics_1_1Window}{Window}}
 \begin{DoxyCompactList}\small\item\em Manages the GLFW window and Vulkan Surface creation. \end{DoxyCompactList}\end{DoxyCompactItemize}
 \doxysubsubsection*{Enumerations}
@@ -63,7 +61,7 @@ enum class \mbox{\hyperlink{namespacevortex_1_1graphics_ad192ced9733e603683ec126
 , \newline
 \mbox{\hyperlink{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664ad4fcd21286c099405aff8d6b04c76575}{Closest\+Hit}}
  \}
-\end{DoxyCompactItemize}
+\begin{DoxyCompactList}\small\item\em Enum representing the programmable shader stage. \end{DoxyCompactList}\end{DoxyCompactItemize}
 \doxysubsubsection*{Functions}
 \begin{DoxyCompactItemize}
 \item 
@@ -108,6 +106,10 @@ TAA&\\
 \index{ShaderStage@{ShaderStage}!vortex::graphics@{vortex::graphics}}
 \doxysubsubsection{\texorpdfstring{ShaderStage}{ShaderStage}}
 {\footnotesize\ttfamily enum class \mbox{\hyperlink{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664}{vortex\+::graphics\+::\+Shader\+Stage}}\hspace{0.3cm}{\ttfamily [strong]}}
+
+
+
+Enum representing the programmable shader stage. 
 
 \begin{DoxyEnumFields}{Enumerator}
 \raisebox{\heightof{T}}[0pt][0pt]{\index{Vertex@{Vertex}!vortex::graphics@{vortex::graphics}}\index{vortex::graphics@{vortex::graphics}!Vertex@{Vertex}}}\Hypertarget{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664ab22b929ba52471a02d18bb3a4e4472e6}\label{namespacevortex_1_1graphics_ad192ced9733e603683ec1267075bd664ab22b929ba52471a02d18bb3a4e4472e6} 

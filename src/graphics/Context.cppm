@@ -11,17 +11,33 @@ import vortex.memory;
 
 namespace vortex::graphics {
 
+    /**
+     * @brief Core Vulkan wrapper managing the Instance, Physical Device, and Logical Device.
+     */
     export class VulkanContext {
     public:
         VulkanContext() = default;
         ~VulkanContext();
 
-        // Етап 1: Створення Instance (не потребує Surface)
+        /**
+         * @brief Creates the Vulkan Instance.
+         * @details This is the first step of initialization.
+         * @param title The application name used for the instance.
+         * @return True on success.
+         */
         bool InitInstance(const char* title);
         
-        // Етап 2: Вибір GPU та створення Device (потребує Surface)
+        /**
+         * @brief Selects a Physical Device and creates the Logical Device.
+         * @details Requires a valid surface to ensure the device supports presentation.
+         * @param surface The window surface used for compatibility checks.
+         * @return True on success.
+         */
         bool InitDevice(VkSurfaceKHR surface);
 
+        /**
+         * @brief Destroys the Logical Device, Instance, and Allocator.
+         */
         void Shutdown();
 
         VkInstance GetInstance() const { return m_Instance.instance; }

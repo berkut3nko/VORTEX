@@ -39,8 +39,8 @@ digraph "src/graphics/pipelines/internal/RasterPipeline.cpp"
   Node14 -> Node3 [id="edge42_Node000014_Node000003",color="steelblue1",style="solid",tooltip=" "];
   Node14 -> Node15 [id="edge43_Node000014_Node000015",color="steelblue1",style="solid",tooltip=" "];
   Node15 [id="Node000015",label="glm/glm.hpp",height=0.2,width=0.4,color="grey60", fillcolor="#E0E0E0", style="filled",tooltip=" "];
-  Node14 -> Node14 [id="edge44_Node000014_Node000014",color="steelblue1",style="solid",tooltip=" "];
-  Node14 -> Node16 [id="edge45_Node000014_Node000016",color="steelblue1",style="solid",tooltip=" "];
+  Node14 -> Node16 [id="edge44_Node000014_Node000016",color="steelblue1",style="solid",tooltip=" "];
   Node16 [id="Node000016",label="vortex.voxel",height=0.2,width=0.4,color="grey40", fillcolor="white", style="filled",URL="$Voxel_8cppm.html",tooltip=" "];
-  Node16 -> Node16 [id="edge46_Node000016_Node000016",color="steelblue1",style="solid",tooltip=" "];
+  Node16 -> Node16 [id="edge45_Node000016_Node000016",color="steelblue1",style="solid",tooltip=" "];
+  Node14 -> Node14 [id="edge46_Node000014_Node000014",color="steelblue1",style="solid",tooltip=" "];
 }

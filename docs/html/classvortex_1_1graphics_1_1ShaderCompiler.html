@@ -99,21 +99,23 @@ $(function(){initNavTree('classvortex_1_1graphics_1_1ShaderCompiler.html',''); i
 </div><!--header-->
 <div class="contents">
 
-<p>Compiles GLSL code to SPIR-V at runtime.  
+<p>Helper class to compile GLSL code to SPIR-V at runtime using glslang.  
  <a href="#details">More...</a></p>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-static-methods" name="pub-static-methods"></a>
 Static Public Member Functions</h2></td></tr>
 <tr class="memitem:af12e9e01eaf44e66f141680e235c9a8e" id="r_af12e9e01eaf44e66f141680e235c9a8e"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#af12e9e01eaf44e66f141680e235c9a8e">Init</a> ()</td></tr>
+<tr class="memdesc:af12e9e01eaf44e66f141680e235c9a8e"><td class="mdescLeft">&#160;</td><td class="mdescRight">Initializes the glslang library.  <br /></td></tr>
 <tr class="separator:af12e9e01eaf44e66f141680e235c9a8e"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ac05c66259a31103ff8d34c8f2445a58b" id="r_ac05c66259a31103ff8d34c8f2445a58b"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ac05c66259a31103ff8d34c8f2445a58b">Shutdown</a> ()</td></tr>
+<tr class="memdesc:ac05c66259a31103ff8d34c8f2445a58b"><td class="mdescLeft">&#160;</td><td class="mdescRight">Finalizes the glslang library.  <br /></td></tr>
 <tr class="separator:ac05c66259a31103ff8d34c8f2445a58b"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a891d1cf5b79e27966eefa13a3cc478ea" id="r_a891d1cf5b79e27966eefa13a3cc478ea"><td class="memItemLeft" align="right" valign="top">static std::vector&lt; uint32_t &gt;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a891d1cf5b79e27966eefa13a3cc478ea">Compile</a> (<a class="el" href="namespacevortex_1_1graphics.html#ad192ced9733e603683ec1267075bd664">ShaderStage</a> stage, const std::string &amp;source)</td></tr>
 <tr class="memdesc:a891d1cf5b79e27966eefa13a3cc478ea"><td class="mdescLeft">&#160;</td><td class="mdescRight">Compiles GLSL source code into SPIR-V binary.  <br /></td></tr>
 <tr class="separator:a891d1cf5b79e27966eefa13a3cc478ea"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>Compiles GLSL code to SPIR-V at runtime. </p>
+<div class="textblock"><p>Helper class to compile GLSL code to SPIR-V at runtime using glslang. </p>
 </div><h2 class="groupheader">Member Function Documentation</h2>
 <a id="a891d1cf5b79e27966eefa13a3cc478ea" name="a891d1cf5b79e27966eefa13a3cc478ea"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a891d1cf5b79e27966eefa13a3cc478ea">&#9670;&#160;</a></span>Compile()</h2>
@@ -151,6 +153,7 @@ Static Public Member Functions</h2></td></tr>
   </dd>
 </dl>
 <dl class="section return"><dt>Returns</dt><dd>A vector of uint32_t containing SPIR-V bytecode. </dd></dl>
+<dl class="section warning"><dt>Warning</dt><dd>Throws std::runtime_error if compilation or linking fails. </dd></dl>
 
 </div>
 </div>
@@ -177,6 +180,8 @@ Static Public Member Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
+<p>Initializes the glslang library. </p>
+
 </div>
 </div>
 <a id="ac05c66259a31103ff8d34c8f2445a58b" name="ac05c66259a31103ff8d34c8f2445a58b"></a>
@@ -201,6 +206,8 @@ Static Public Member Functions</h2></td></tr>
   </tr>
 </table>
 </div><div class="memdoc">
+
+<p>Finalizes the glslang library. </p>
 
 </div>
 </div>

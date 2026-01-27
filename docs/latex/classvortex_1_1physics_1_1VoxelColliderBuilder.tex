@@ -1,0 +1,44 @@
+\doxysection{vortex\+::physics\+::Voxel\+Collider\+Builder Class Reference}
+\hypertarget{classvortex_1_1physics_1_1VoxelColliderBuilder}{}\label{classvortex_1_1physics_1_1VoxelColliderBuilder}\index{vortex::physics::VoxelColliderBuilder@{vortex::physics::VoxelColliderBuilder}}
+
+
+Responsible for converting Voxel Chunks into optimized physics shapes.  
+
+
+\doxysubsubsection*{Static Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+static std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1physics_1_1ColliderBox}{Collider\+Box}} $>$ \mbox{\hyperlink{classvortex_1_1physics_1_1VoxelColliderBuilder_a8453f5d81a08bbf177804033c14240d6}{Build}} (const \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{vortex\+::voxel\+::\+Chunk}} \&chunk)
+\begin{DoxyCompactList}\small\item\em Generates a list of optimized boxes from a voxel chunk. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Responsible for converting Voxel Chunks into optimized physics shapes. 
+
+Uses a Greedy Meshing algorithm tailored for physics boxes (merging voxels into larger boxes). This significantly reduces the number of child shapes in a Jolt Compound\+Shape. 
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1physics_1_1VoxelColliderBuilder_a8453f5d81a08bbf177804033c14240d6}\label{classvortex_1_1physics_1_1VoxelColliderBuilder_a8453f5d81a08bbf177804033c14240d6} 
+\index{vortex::physics::VoxelColliderBuilder@{vortex::physics::VoxelColliderBuilder}!Build@{Build}}
+\index{Build@{Build}!vortex::physics::VoxelColliderBuilder@{vortex::physics::VoxelColliderBuilder}}
+\doxysubsubsection{\texorpdfstring{Build()}{Build()}}
+{\footnotesize\ttfamily std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1physics_1_1ColliderBox}{Collider\+Box}} $>$ vortex\+::physics\+::\+Voxel\+Collider\+Builder\+::\+Build (\begin{DoxyParamCaption}\item[{const \mbox{\hyperlink{structvortex_1_1voxel_1_1Chunk}{vortex\+::voxel\+::\+Chunk}} \&}]{chunk }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [static]}}
+
+
+
+Generates a list of optimized boxes from a voxel chunk. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em chunk} & The source voxel data. \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+A vector of boxes representing the solid volume. 
+\end{DoxyReturn}
+
+
+The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}
+\item 
+src/physics/\mbox{\hyperlink{ColliderBuilder_8cppm}{Collider\+Builder.\+cppm}}\item 
+src/physics/internal/\mbox{\hyperlink{ColliderBuilder_8cpp}{Collider\+Builder.\+cpp}}\end{DoxyCompactItemize}

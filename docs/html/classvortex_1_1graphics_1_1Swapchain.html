@@ -98,6 +98,9 @@ $(function(){initNavTree('classvortex_1_1graphics_1_1Swapchain.html',''); initRe
   <div class="headertitle"><div class="title">vortex::graphics::Swapchain Class Reference<span class="mlabels"><span class="mlabel">export</span></span><div class="ingroups">module <a class="el" href="module_vortex_8graphics.html">vortex.graphics</a></div></div></div>
 </div><!--header-->
 <div class="contents">
+
+<p>Manages the Vulkan <a class="el" href="classvortex_1_1graphics_1_1Swapchain.html" title="Manages the Vulkan Swapchain and presentation images.">Swapchain</a> and presentation images.  
+ <a href="#details">More...</a></p>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-methods" name="pub-methods"></a>
 Public Member Functions</h2></td></tr>
@@ -106,14 +109,19 @@ Public Member Functions</h2></td></tr>
 <tr class="memitem:a164763d62091557993aed469d665a1df" id="r_a164763d62091557993aed469d665a1df"><td class="memItemLeft" align="right" valign="top">&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a164763d62091557993aed469d665a1df">~Swapchain</a> ()</td></tr>
 <tr class="separator:a164763d62091557993aed469d665a1df"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aaa85f760ac4e64187a4afc88baba2332" id="r_aaa85f760ac4e64187a4afc88baba2332"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aaa85f760ac4e64187a4afc88baba2332">Initialize</a> (<a class="el" href="classvortex_1_1graphics_1_1VulkanContext.html">VulkanContext</a> &amp;context, VkSurfaceKHR surface, uint32_t width, uint32_t height)</td></tr>
+<tr class="memdesc:aaa85f760ac4e64187a4afc88baba2332"><td class="mdescLeft">&#160;</td><td class="mdescRight">Initializes the swapchain for a specific window surface.  <br /></td></tr>
 <tr class="separator:aaa85f760ac4e64187a4afc88baba2332"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a086d2f21c35993fc6e37a3f9e10aa3e4" id="r_a086d2f21c35993fc6e37a3f9e10aa3e4"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a086d2f21c35993fc6e37a3f9e10aa3e4">Recreate</a> (uint32_t width, uint32_t height)</td></tr>
+<tr class="memdesc:a086d2f21c35993fc6e37a3f9e10aa3e4"><td class="mdescLeft">&#160;</td><td class="mdescRight">Recreates the swapchain (e.g., on window resize).  <br /></td></tr>
 <tr class="separator:a086d2f21c35993fc6e37a3f9e10aa3e4"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:addc0020def18d9aa595b927a3c3faa8f" id="r_addc0020def18d9aa595b927a3c3faa8f"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#addc0020def18d9aa595b927a3c3faa8f">Shutdown</a> ()</td></tr>
+<tr class="memdesc:addc0020def18d9aa595b927a3c3faa8f"><td class="mdescLeft">&#160;</td><td class="mdescRight">Destroys the swapchain and its resources.  <br /></td></tr>
 <tr class="separator:addc0020def18d9aa595b927a3c3faa8f"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a32ca338a1cc4c5a961c90a01420a7fdf" id="r_a32ca338a1cc4c5a961c90a01420a7fdf"><td class="memItemLeft" align="right" valign="top">uint32_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a32ca338a1cc4c5a961c90a01420a7fdf">AcquireNextImage</a> (VkSemaphore semaphore)</td></tr>
+<tr class="memdesc:a32ca338a1cc4c5a961c90a01420a7fdf"><td class="mdescLeft">&#160;</td><td class="mdescRight">Requests the index of the next available image from the swapchain.  <br /></td></tr>
 <tr class="separator:a32ca338a1cc4c5a961c90a01420a7fdf"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a59ade8df3129fdc3ab3e6684fd226b5c" id="r_a59ade8df3129fdc3ab3e6684fd226b5c"><td class="memItemLeft" align="right" valign="top">VkResult&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a59ade8df3129fdc3ab3e6684fd226b5c">Present</a> (VkQueue queue, uint32_t imageIndex, VkSemaphore renderFinishedSemaphore)</td></tr>
+<tr class="memdesc:a59ade8df3129fdc3ab3e6684fd226b5c"><td class="mdescLeft">&#160;</td><td class="mdescRight">Presents a rendered image to the presentation queue.  <br /></td></tr>
 <tr class="separator:a59ade8df3129fdc3ab3e6684fd226b5c"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aed75604ca9df5907323689ea4dc4f66f" id="r_aed75604ca9df5907323689ea4dc4f66f"><td class="memItemLeft" align="right" valign="top">VkFormat&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aed75604ca9df5907323689ea4dc4f66f">GetFormat</a> () const</td></tr>
 <tr class="separator:aed75604ca9df5907323689ea4dc4f66f"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -126,9 +134,13 @@ Public Member Functions</h2></td></tr>
 <tr class="memitem:a764e61870ee095b3eadd53aa6c129d33" id="r_a764e61870ee095b3eadd53aa6c129d33"><td class="memItemLeft" align="right" valign="top">const std::vector&lt; VkImageView &gt; &amp;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a764e61870ee095b3eadd53aa6c129d33">GetImageViews</a> () const</td></tr>
 <tr class="separator:a764e61870ee095b3eadd53aa6c129d33"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aaab11fcafb984ec0c0c83f8b8ad6db50" id="r_aaab11fcafb984ec0c0c83f8b8ad6db50"><td class="memItemLeft" align="right" valign="top">const <a class="el" href="structvortex_1_1memory_1_1AllocatedImage.html">memory::AllocatedImage</a> &amp;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aaab11fcafb984ec0c0c83f8b8ad6db50">GetDepthImage</a> () const</td></tr>
+<tr class="memdesc:aaab11fcafb984ec0c0c83f8b8ad6db50"><td class="mdescLeft">&#160;</td><td class="mdescRight">Returns the depth image associated with the swapchain resolution.  <br /></td></tr>
 <tr class="separator:aaab11fcafb984ec0c0c83f8b8ad6db50"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
-<h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
+<a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
+<div class="textblock"><p>Manages the Vulkan <a class="el" href="classvortex_1_1graphics_1_1Swapchain.html" title="Manages the Vulkan Swapchain and presentation images.">Swapchain</a> and presentation images. </p>
+<p>Handles double/triple buffering, image acquisition, and presentation to the surface. </p>
+</div><h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
 <a id="a795c1943caaf65a4962fd44340e15ae6" name="a795c1943caaf65a4962fd44340e15ae6"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a795c1943caaf65a4962fd44340e15ae6">&#9670;&#160;</a></span>Swapchain()</h2>
 
@@ -187,6 +199,15 @@ Public Member Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
+<p>Requests the index of the next available image from the swapchain. </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">semaphore</td><td>A semaphore to signal when the image is available. </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>Returns</dt><dd>The index of the next image, or UINT32_MAX on error/out-of-date. </dd></dl>
+
 </div>
 </div>
 <a id="a19fe6bb3a4035177937b41161f5e9415" name="a19fe6bb3a4035177937b41161f5e9415"></a>
@@ -236,6 +257,8 @@ Public Member Functions</h2></td></tr>
   </tr>
 </table>
 </div><div class="memdoc">
+
+<p>Returns the depth image associated with the swapchain resolution. </p>
 
 </div>
 </div>
@@ -368,6 +391,18 @@ Public Member Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
+<p>Initializes the swapchain for a specific window surface. </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">context</td><td>The active Vulkan context. </td></tr>
+    <tr><td class="paramname">surface</td><td>The window surface to present to. </td></tr>
+    <tr><td class="paramname">width</td><td>Initial width of the swapchain. </td></tr>
+    <tr><td class="paramname">height</td><td>Initial height of the swapchain. </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>Returns</dt><dd>True if initialization succeeded, false otherwise. </dd></dl>
+
 </div>
 </div>
 <a id="a59ade8df3129fdc3ab3e6684fd226b5c" name="a59ade8df3129fdc3ab3e6684fd226b5c"></a>
@@ -394,6 +429,17 @@ Public Member Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
+<p>Presents a rendered image to the presentation queue. </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">queue</td><td>The queue to submit the presentation request to. </td></tr>
+    <tr><td class="paramname">imageIndex</td><td>The index of the image to present. </td></tr>
+    <tr><td class="paramname">renderFinishedSemaphore</td><td>A semaphore to wait on (signaling render completion). </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>Returns</dt><dd>VK_SUCCESS or an error code (e.g., VK_ERROR_OUT_OF_DATE_KHR). </dd></dl>
+
 </div>
 </div>
 <a id="a086d2f21c35993fc6e37a3f9e10aa3e4" name="a086d2f21c35993fc6e37a3f9e10aa3e4"></a>
@@ -415,6 +461,16 @@ Public Member Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
+<p>Recreates the swapchain (e.g., on window resize). </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">width</td><td>New width. </td></tr>
+    <tr><td class="paramname">height</td><td>New height. </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section warning"><dt>Warning</dt><dd>This waits for the device to be idle before recreation. </dd></dl>
+
 </div>
 </div>
 <a id="addc0020def18d9aa595b927a3c3faa8f" name="addc0020def18d9aa595b927a3c3faa8f"></a>
@@ -431,6 +487,8 @@ Public Member Functions</h2></td></tr>
         </tr>
       </table>
 </div><div class="memdoc">
+
+<p>Destroys the swapchain and its resources. </p>
 
 </div>
 </div>

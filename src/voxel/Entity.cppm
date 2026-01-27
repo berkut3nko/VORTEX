@@ -4,6 +4,7 @@ module;
 #include <vector>
 #include <memory>
 #include <glm/glm.hpp>
+#include <limits>
 
 export module vortex.voxel:entity;
 
@@ -14,33 +15,45 @@ namespace vortex::voxel {
     /**
      * @brief Represents a generic entity in the voxel world.
      * @details Can be a procedural object or a base for imported meshes.
+     * Acts as the root container for multiple VoxelObjects (parts).
      */
     export struct VoxelEntity {
+        /// @brief Display name of the entity.
         std::string name = "Entity";
         
-        // Root transformation matrix (Position, Rotation, Scale)
+        /// @brief Root transformation matrix (Position, Rotation, Scale).
         glm::mat4 transform{1.0f};
 
-        // Constituent voxel parts (Chunks) relative to the root
+        /// @brief Constituent voxel parts (Chunks) relative to the root.
         std::vector<std::shared_ptr<VoxelObject>> parts;
 
-        // Local AABB bounds for raycasting/selection
+        /// @brief Local AABB minimum bound for raycasting/selection.
         glm::vec3 localBoundsMin{0.0f};
+        /// @brief Local AABB maximum bound for raycasting/selection.
         glm::vec3 localBoundsMax{0.0f};
 
-        // Center of mass for Gizmo pivot
+        /// @brief Center of mass used as the Gizmo pivot point.
         glm::vec3 logicalCenter{0.0f};
+        
+        /// @brief Total number of solid voxels across all parts.
         uint32_t totalVoxelCount{0};
 
         // --- Physics Properties ---
-        bool isStatic = false;       ///< If true, object is immovable (Bedrock).
-        bool isTrigger = false;      ///< If true, object detects overlaps but has no collision response.
-        bool shouldRebuildPhysics = false; ///< Set to true to force physics body regeneration (e.g. after Re-mesh).
+        
+        /// @brief If true, object is immovable (Bedrock) and ignores forces.
+        bool isStatic = false;
+        
+        /// @brief If true, object detects overlaps but has no collision response (Ghost/Sensor).
+        bool isTrigger = false;
+        
+        /// @brief Flag to signal the physics system to regenerate the body (e.g., after re-meshing).
+        bool shouldRebuildPhysics = false;
 
         virtual ~VoxelEntity() = default;
 
         /**
-         * @brief Recalculates center of mass and bounds based on parts.
+         * @brief Recalculates the center of mass and bounding box based on constituent parts.
+         * @details Should be called after modifying parts or their chunks.
          */
         void RecalculateStats() {
             totalVoxelCount = 0;
@@ -82,6 +95,9 @@ namespace vortex::voxel {
             }
         }
         
+        /**
+         * @brief Gets the calculated local center (center of mass).
+         */
         glm::vec3 GetLocalCenter() const { return logicalCenter; }
     };
 }

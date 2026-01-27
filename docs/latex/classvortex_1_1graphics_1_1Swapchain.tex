@@ -1,5 +1,10 @@
 \doxysection{vortex\+::graphics\+::Swapchain Class Reference}
 \hypertarget{classvortex_1_1graphics_1_1Swapchain}{}\label{classvortex_1_1graphics_1_1Swapchain}\index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
+
+
+Manages the Vulkan \doxylink{classvortex_1_1graphics_1_1Swapchain}{Swapchain} and presentation images.  
+
+
 \doxysubsubsection*{Public Member Functions}
 \begin{DoxyCompactItemize}
 \item 
@@ -8,15 +13,15 @@
 \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_a164763d62091557993aed469d665a1df}{\texorpdfstring{$\sim$}{\string~}\+Swapchain}} ()
 \item 
 bool \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_aaa85f760ac4e64187a4afc88baba2332}{Initialize}} (\mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext}{Vulkan\+Context}} \&context, Vk\+Surface\+KHR surface, uint32\+\_\+t width, uint32\+\_\+t height)
-\item 
+\begin{DoxyCompactList}\small\item\em Initializes the swapchain for a specific window surface. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_a086d2f21c35993fc6e37a3f9e10aa3e4}{Recreate}} (uint32\+\_\+t width, uint32\+\_\+t height)
-\item 
+\begin{DoxyCompactList}\small\item\em Recreates the swapchain (e.\+g., on window resize). \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_addc0020def18d9aa595b927a3c3faa8f}{Shutdown}} ()
-\item 
+\begin{DoxyCompactList}\small\item\em Destroys the swapchain and its resources. \end{DoxyCompactList}\item 
 uint32\+\_\+t \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_a32ca338a1cc4c5a961c90a01420a7fdf}{Acquire\+Next\+Image}} (Vk\+Semaphore semaphore)
-\item 
+\begin{DoxyCompactList}\small\item\em Requests the index of the next available image from the swapchain. \end{DoxyCompactList}\item 
 Vk\+Result \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_a59ade8df3129fdc3ab3e6684fd226b5c}{Present}} (Vk\+Queue queue, uint32\+\_\+t image\+Index, Vk\+Semaphore render\+Finished\+Semaphore)
-\item 
+\begin{DoxyCompactList}\small\item\em Presents a rendered image to the presentation queue. \end{DoxyCompactList}\item 
 Vk\+Format \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_aed75604ca9df5907323689ea4dc4f66f}{Get\+Format}} () const
 \item 
 Vk\+Format \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_a19fe6bb3a4035177937b41161f5e9415}{Get\+Depth\+Format}} () const
@@ -28,8 +33,13 @@ const std\+::vector$<$ Vk\+Image $>$ \& \mbox{\hyperlink{classvortex_1_1graphics
 const std\+::vector$<$ Vk\+Image\+View $>$ \& \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_a764e61870ee095b3eadd53aa6c129d33}{Get\+Image\+Views}} () const
 \item 
 const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \& \mbox{\hyperlink{classvortex_1_1graphics_1_1Swapchain_aaab11fcafb984ec0c0c83f8b8ad6db50}{Get\+Depth\+Image}} () const
-\end{DoxyCompactItemize}
+\begin{DoxyCompactList}\small\item\em Returns the depth image associated with the swapchain resolution. \end{DoxyCompactList}\end{DoxyCompactItemize}
 
+
+\doxysubsection{Detailed Description}
+Manages the Vulkan \doxylink{classvortex_1_1graphics_1_1Swapchain}{Swapchain} and presentation images. 
+
+Handles double/triple buffering, image acquisition, and presentation to the surface. 
 
 \doxysubsection{Constructor \& Destructor Documentation}
 \Hypertarget{classvortex_1_1graphics_1_1Swapchain_a795c1943caaf65a4962fd44340e15ae6}\label{classvortex_1_1graphics_1_1Swapchain_a795c1943caaf65a4962fd44340e15ae6} 
@@ -53,6 +63,18 @@ const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+All
 \doxysubsubsection{\texorpdfstring{AcquireNextImage()}{AcquireNextImage()}}
 {\footnotesize\ttfamily uint32\+\_\+t vortex\+::graphics\+::\+Swapchain\+::\+Acquire\+Next\+Image (\begin{DoxyParamCaption}\item[{Vk\+Semaphore}]{semaphore }\end{DoxyParamCaption})}
 
+
+
+Requests the index of the next available image from the swapchain. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em semaphore} & A semaphore to signal when the image is available. \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+The index of the next image, or UINT32\+\_\+\+MAX on error/out-\/of-\/date. 
+\end{DoxyReturn}
 \Hypertarget{classvortex_1_1graphics_1_1Swapchain_a19fe6bb3a4035177937b41161f5e9415}\label{classvortex_1_1graphics_1_1Swapchain_a19fe6bb3a4035177937b41161f5e9415} 
 \index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}!GetDepthFormat@{GetDepthFormat}}
 \index{GetDepthFormat@{GetDepthFormat}!vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
@@ -64,6 +86,10 @@ const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+All
 \index{GetDepthImage@{GetDepthImage}!vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
 \doxysubsubsection{\texorpdfstring{GetDepthImage()}{GetDepthImage()}}
 {\footnotesize\ttfamily const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+Allocated\+Image}} \& vortex\+::graphics\+::\+Swapchain\+::\+Get\+Depth\+Image (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Returns the depth image associated with the swapchain resolution. 
 
 \Hypertarget{classvortex_1_1graphics_1_1Swapchain_ada1a48697ce31063d98a261938415f9d}\label{classvortex_1_1graphics_1_1Swapchain_ada1a48697ce31063d98a261938415f9d} 
 \index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}!GetExtent@{GetExtent}}
@@ -95,23 +121,75 @@ const \mbox{\hyperlink{structvortex_1_1memory_1_1AllocatedImage}{memory\+::\+All
 \doxysubsubsection{\texorpdfstring{Initialize()}{Initialize()}}
 {\footnotesize\ttfamily bool vortex\+::graphics\+::\+Swapchain\+::\+Initialize (\begin{DoxyParamCaption}\item[{\mbox{\hyperlink{classvortex_1_1graphics_1_1VulkanContext}{Vulkan\+Context}} \&}]{context,  }\item[{Vk\+Surface\+KHR}]{surface,  }\item[{uint32\+\_\+t}]{width,  }\item[{uint32\+\_\+t}]{height }\end{DoxyParamCaption})}
 
+
+
+Initializes the swapchain for a specific window surface. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em context} & The active Vulkan context. \\
+\hline
+{\em surface} & The window surface to present to. \\
+\hline
+{\em width} & Initial width of the swapchain. \\
+\hline
+{\em height} & Initial height of the swapchain. \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+True if initialization succeeded, false otherwise. 
+\end{DoxyReturn}
 \Hypertarget{classvortex_1_1graphics_1_1Swapchain_a59ade8df3129fdc3ab3e6684fd226b5c}\label{classvortex_1_1graphics_1_1Swapchain_a59ade8df3129fdc3ab3e6684fd226b5c} 
 \index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}!Present@{Present}}
 \index{Present@{Present}!vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
 \doxysubsubsection{\texorpdfstring{Present()}{Present()}}
 {\footnotesize\ttfamily Vk\+Result vortex\+::graphics\+::\+Swapchain\+::\+Present (\begin{DoxyParamCaption}\item[{Vk\+Queue}]{queue,  }\item[{uint32\+\_\+t}]{image\+Index,  }\item[{Vk\+Semaphore}]{render\+Finished\+Semaphore }\end{DoxyParamCaption})}
 
+
+
+Presents a rendered image to the presentation queue. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em queue} & The queue to submit the presentation request to. \\
+\hline
+{\em image\+Index} & The index of the image to present. \\
+\hline
+{\em render\+Finished\+Semaphore} & A semaphore to wait on (signaling render completion). \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+VK\+\_\+\+SUCCESS or an error code (e.\+g., VK\+\_\+\+ERROR\+\_\+\+OUT\+\_\+\+OF\+\_\+\+DATE\+\_\+\+KHR). 
+\end{DoxyReturn}
 \Hypertarget{classvortex_1_1graphics_1_1Swapchain_a086d2f21c35993fc6e37a3f9e10aa3e4}\label{classvortex_1_1graphics_1_1Swapchain_a086d2f21c35993fc6e37a3f9e10aa3e4} 
 \index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}!Recreate@{Recreate}}
 \index{Recreate@{Recreate}!vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
 \doxysubsubsection{\texorpdfstring{Recreate()}{Recreate()}}
 {\footnotesize\ttfamily void vortex\+::graphics\+::\+Swapchain\+::\+Recreate (\begin{DoxyParamCaption}\item[{uint32\+\_\+t}]{width,  }\item[{uint32\+\_\+t}]{height }\end{DoxyParamCaption})}
 
+
+
+Recreates the swapchain (e.\+g., on window resize). 
+
+
+\begin{DoxyParams}{Parameters}
+{\em width} & New width. \\
+\hline
+{\em height} & New height. \\
+\hline
+\end{DoxyParams}
+\begin{DoxyWarning}{Warning}
+This waits for the device to be idle before recreation. 
+\end{DoxyWarning}
 \Hypertarget{classvortex_1_1graphics_1_1Swapchain_addc0020def18d9aa595b927a3c3faa8f}\label{classvortex_1_1graphics_1_1Swapchain_addc0020def18d9aa595b927a3c3faa8f} 
 \index{vortex::graphics::Swapchain@{vortex::graphics::Swapchain}!Shutdown@{Shutdown}}
 \index{Shutdown@{Shutdown}!vortex::graphics::Swapchain@{vortex::graphics::Swapchain}}
 \doxysubsubsection{\texorpdfstring{Shutdown()}{Shutdown()}}
 {\footnotesize\ttfamily void vortex\+::graphics\+::\+Swapchain\+::\+Shutdown (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})}
+
+
+
+Destroys the swapchain and its resources. 
 
 
 

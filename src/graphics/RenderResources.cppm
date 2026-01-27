@@ -46,6 +46,7 @@ namespace vortex::graphics {
         
         /** @brief Invalidates history (e.g. on teleport or camera cut). */
         void InvalidateHistory() { m_HistoryValid = false; }
+        
         bool IsHistoryValid() const { return m_HistoryValid; }
 
     private:

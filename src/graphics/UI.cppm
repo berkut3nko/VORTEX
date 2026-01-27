@@ -11,20 +11,36 @@ import :window;
 namespace vortex::graphics {
 
     /**
-     * @brief Handles ImGui integration.
+     * @brief Handles ImGui integration and UI rendering.
      */
     export class UIOverlay {
     public:
         UIOverlay() = default;
         ~UIOverlay();
 
+        /**
+         * @brief Initializes ImGui context and Vulkan resources (RenderPass, Fonts, etc.).
+         */
         void Initialize(VulkanContext& context, Window& window, VkFormat swapchainFormat, VkExtent2D extent, const std::vector<VkImageView>& views);
+        
+        /**
+         * @brief Shuts down ImGui and releases resources.
+         */
         void Shutdown();
         
-        // Call when swapchain resizes
+        /**
+         * @brief Recreates framebuffers when swapchain resizes.
+         */
         void OnResize(VkExtent2D extent, const std::vector<VkImageView>& views);
 
+        /**
+         * @brief Starts a new ImGui frame.
+         */
         void BeginFrame();
+        
+        /**
+         * @brief Renders the ImGui draw data into the command buffer.
+         */
         void Render(VkCommandBuffer cmd, uint32_t imageIndex);
 
     private:

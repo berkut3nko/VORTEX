@@ -99,11 +99,13 @@ $(function(){initNavTree('classvortex_1_1Engine.html',''); initResizable(); });
   <div class="headertitle"><div class="title">vortex::Engine Class Reference<span class="mlabels"><span class="mlabel">export</span></span><div class="ingroups">module <a class="el" href="module_vortex_8core.html">vortex.core</a></div></div></div>
 </div><!--header-->
 <div class="contents">
+
+<p>The main engine class coordinating all subsystems.  
+ <a href="#details">More...</a></p>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="nested-classes" name="nested-classes"></a>
 Classes</h2></td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structvortex_1_1Engine_1_1InternalState.html">InternalState</a></td></tr>
-<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Internal Pimpl state for the <a class="el" href="classvortex_1_1Engine.html">Engine</a>.  <a href="structvortex_1_1Engine_1_1InternalState.html#details">More...</a><br /></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-methods" name="pub-methods"></a>
@@ -113,17 +115,26 @@ Public Member Functions</h2></td></tr>
 <tr class="memitem:a17f11ae849064413ae99708d3353c5f3" id="r_a17f11ae849064413ae99708d3353c5f3"><td class="memItemLeft" align="right" valign="top">&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a17f11ae849064413ae99708d3353c5f3">~Engine</a> ()</td></tr>
 <tr class="separator:a17f11ae849064413ae99708d3353c5f3"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:af779661626cb8c76e21620a145a42d7d" id="r_af779661626cb8c76e21620a145a42d7d"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#af779661626cb8c76e21620a145a42d7d">Initialize</a> (const std::string &amp;title, uint32_t width, uint32_t height)</td></tr>
+<tr class="memdesc:af779661626cb8c76e21620a145a42d7d"><td class="mdescLeft">&#160;</td><td class="mdescRight">Initializes the engine, window, and subsystems.  <br /></td></tr>
 <tr class="separator:af779661626cb8c76e21620a145a42d7d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a15118a0752b685fa091e071d98504fb8" id="r_a15118a0752b685fa091e071d98504fb8"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a15118a0752b685fa091e071d98504fb8">Run</a> (std::function&lt; void()&gt; onGuiRender=nullptr)</td></tr>
+<tr class="memdesc:a15118a0752b685fa091e071d98504fb8"><td class="mdescLeft">&#160;</td><td class="mdescRight">Starts the main application loop.  <br /></td></tr>
 <tr class="separator:a15118a0752b685fa091e071d98504fb8"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a565795d41f752558181ae73107ea8232" id="r_a565795d41f752558181ae73107ea8232"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a565795d41f752558181ae73107ea8232">Shutdown</a> ()</td></tr>
+<tr class="memdesc:a565795d41f752558181ae73107ea8232"><td class="mdescLeft">&#160;</td><td class="mdescRight">Shuts down the engine.  <br /></td></tr>
 <tr class="separator:a565795d41f752558181ae73107ea8232"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a000df94e7b44a36343fab7a0485a1ceb" id="r_a000df94e7b44a36343fab7a0485a1ceb"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a000df94e7b44a36343fab7a0485a1ceb">UploadScene</a> (const std::vector&lt; <a class="el" href="structvortex_1_1graphics_1_1SceneObject.html">graphics::SceneObject</a> &gt; &amp;objects, const std::vector&lt; <a class="el" href="structvortex_1_1graphics_1_1SceneMaterial.html">graphics::SceneMaterial</a> &gt; &amp;materials, const std::vector&lt; <a class="el" href="structvortex_1_1voxel_1_1Chunk.html">voxel::Chunk</a> &gt; &amp;chunks)</td></tr>
-<tr class="separator:a000df94e7b44a36343fab7a0485a1ceb"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a873df698cfbea9cd0cf456677bc0def1" id="r_a873df698cfbea9cd0cf456677bc0def1"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a873df698cfbea9cd0cf456677bc0def1">AddEntity</a> (std::shared_ptr&lt; <a class="el" href="structvortex_1_1voxel_1_1VoxelEntity.html">voxel::VoxelEntity</a> &gt; entity, bool isStatic=false)</td></tr>
+<tr class="memdesc:a873df698cfbea9cd0cf456677bc0def1"><td class="mdescLeft">&#160;</td><td class="mdescRight">Adds an entity to the world and registers it with the physics engine.  <br /></td></tr>
+<tr class="separator:a873df698cfbea9cd0cf456677bc0def1"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:af9027a4f34eff204fd9f0b135ab60c5b" id="r_af9027a4f34eff204fd9f0b135ab60c5b"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#af9027a4f34eff204fd9f0b135ab60c5b">UploadScene</a> (const std::vector&lt; <a class="el" href="structvortex_1_1graphics_1_1SceneObject.html">graphics::SceneObject</a> &gt; &amp;objects, const std::vector&lt; <a class="el" href="structvortex_1_1voxel_1_1PhysicalMaterial.html">voxel::PhysicalMaterial</a> &gt; &amp;materials, const std::vector&lt; <a class="el" href="structvortex_1_1voxel_1_1Chunk.html">voxel::Chunk</a> &gt; &amp;chunks)</td></tr>
+<tr class="memdesc:af9027a4f34eff204fd9f0b135ab60c5b"><td class="mdescLeft">&#160;</td><td class="mdescRight">Advanced: Manually uploads a scene configuration to the GPU.  <br /></td></tr>
+<tr class="separator:af9027a4f34eff204fd9f0b135ab60c5b"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a88460bf47cc1dc1a7c4ea7219a23af76" id="r_a88460bf47cc1dc1a7c4ea7219a23af76"><td class="memItemLeft" align="right" valign="top"><a class="el" href="classvortex_1_1graphics_1_1GraphicsContext.html">graphics::GraphicsContext</a> &amp;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a88460bf47cc1dc1a7c4ea7219a23af76">GetGraphics</a> ()</td></tr>
 <tr class="separator:a88460bf47cc1dc1a7c4ea7219a23af76"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
-<h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
+<a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
+<div class="textblock"><p>The main engine class coordinating all subsystems. </p>
+</div><h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
 <a id="af7bb0d497dafbe828ff21a29e34ff34a" name="af7bb0d497dafbe828ff21a29e34ff34a"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#af7bb0d497dafbe828ff21a29e34ff34a">&#9670;&#160;</a></span>Engine()</h2>
 
@@ -175,6 +186,44 @@ Public Member Functions</h2></td></tr>
 </div>
 </div>
 <h2 class="groupheader">Member Function Documentation</h2>
+<a id="a873df698cfbea9cd0cf456677bc0def1" name="a873df698cfbea9cd0cf456677bc0def1"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a873df698cfbea9cd0cf456677bc0def1">&#9670;&#160;</a></span>AddEntity()</h2>
+
+<div class="memitem">
+<div class="memproto">
+<table class="mlabels">
+  <tr>
+  <td class="mlabels-left">
+      <table class="memname">
+        <tr>
+          <td class="memname">void vortex::Engine::AddEntity </td>
+          <td>(</td>
+          <td class="paramtype">std::shared_ptr&lt; <a class="el" href="structvortex_1_1voxel_1_1VoxelEntity.html">voxel::VoxelEntity</a> &gt;</td>          <td class="paramname"><span class="paramname"><em>entity</em>, </span></td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">bool</td>          <td class="paramname"><span class="paramname"><em>isStatic</em><span class="paramdefsep"> = </span><span class="paramdefval">false</span></span>&#160;)</td>
+        </tr>
+      </table>
+  </td>
+  <td class="mlabels-right">
+<span class="mlabels"><span class="mlabel">export</span></span>  </td>
+  </tr>
+</table>
+</div><div class="memdoc">
+
+<p>Adds an entity to the world and registers it with the physics engine. </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">entity</td><td>The voxel entity to add. </td></tr>
+    <tr><td class="paramname">isStatic</td><td>If true, the object will be an immovable static collider (e.g., floor). </td></tr>
+  </table>
+  </dd>
+</dl>
+
+</div>
+</div>
 <a id="a88460bf47cc1dc1a7c4ea7219a23af76" name="a88460bf47cc1dc1a7c4ea7219a23af76"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a88460bf47cc1dc1a7c4ea7219a23af76">&#9670;&#160;</a></span>GetGraphics()</h2>
 
@@ -232,6 +281,17 @@ Public Member Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
+<p>Initializes the engine, window, and subsystems. </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">title</td><td>Application title. </td></tr>
+    <tr><td class="paramname">width</td><td>Window width. </td></tr>
+    <tr><td class="paramname">height</td><td>Window height. </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>Returns</dt><dd>True on success. </dd></dl>
+
 </div>
 </div>
 <a id="a15118a0752b685fa091e071d98504fb8" name="a15118a0752b685fa091e071d98504fb8"></a>
@@ -256,6 +316,14 @@ Public Member Functions</h2></td></tr>
   </tr>
 </table>
 </div><div class="memdoc">
+
+<p>Starts the main application loop. </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">onGuiRender</td><td>Optional callback for rendering custom ImGui elements. </td></tr>
+  </table>
+  </dd>
+</dl>
 
 </div>
 </div>
@@ -282,10 +350,12 @@ Public Member Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
+<p>Shuts down the engine. </p>
+
 </div>
 </div>
-<a id="a000df94e7b44a36343fab7a0485a1ceb" name="a000df94e7b44a36343fab7a0485a1ceb"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a000df94e7b44a36343fab7a0485a1ceb">&#9670;&#160;</a></span>UploadScene()</h2>
+<a id="af9027a4f34eff204fd9f0b135ab60c5b" name="af9027a4f34eff204fd9f0b135ab60c5b"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#af9027a4f34eff204fd9f0b135ab60c5b">&#9670;&#160;</a></span>UploadScene()</h2>
 
 <div class="memitem">
 <div class="memproto">
@@ -301,7 +371,7 @@ Public Member Functions</h2></td></tr>
         <tr>
           <td class="paramkey"></td>
           <td></td>
-          <td class="paramtype">const std::vector&lt; <a class="el" href="structvortex_1_1graphics_1_1SceneMaterial.html">graphics::SceneMaterial</a> &gt; &amp;</td>          <td class="paramname"><span class="paramname"><em>materials</em>, </span></td>
+          <td class="paramtype">const std::vector&lt; <a class="el" href="structvortex_1_1voxel_1_1PhysicalMaterial.html">voxel::PhysicalMaterial</a> &gt; &amp;</td>          <td class="paramname"><span class="paramname"><em>materials</em>, </span></td>
         </tr>
         <tr>
           <td class="paramkey"></td>
@@ -315,6 +385,16 @@ Public Member Functions</h2></td></tr>
   </tr>
 </table>
 </div><div class="memdoc">
+
+<p>Advanced: Manually uploads a scene configuration to the GPU. </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">objects</td><td>List of graphic objects. </td></tr>
+    <tr><td class="paramname">materials</td><td>List of materials. </td></tr>
+    <tr><td class="paramname">chunks</td><td>List of chunks. </td></tr>
+  </table>
+  </dd>
+</dl>
 
 </div>
 </div>

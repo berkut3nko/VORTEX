@@ -1,0 +1,57 @@
+\doxysection{src/mesh/internal/\+Mesh\+Converter.cpp File Reference}
+\hypertarget{MeshConverter_8cpp}{}\label{MeshConverter_8cpp}\index{src/mesh/internal/MeshConverter.cpp@{src/mesh/internal/MeshConverter.cpp}}
+{\ttfamily \#include "{}tiny\+\_\+gltf.\+h"{}}\newline
+{\ttfamily \#include $<$glm/glm.\+hpp$>$}\newline
+{\ttfamily \#include $<$glm/gtc/type\+\_\+ptr.\+hpp$>$}\newline
+{\ttfamily \#include $<$vector$>$}\newline
+{\ttfamily \#include $<$string$>$}\newline
+{\ttfamily \#include $<$algorithm$>$}\newline
+{\ttfamily \#include $<$cmath$>$}\newline
+{\ttfamily \#include $<$iostream$>$}\newline
+{\ttfamily \#include $<$limits$>$}\newline
+{\ttfamily import vortex.\+log;}\newline
+{\ttfamily import vortex.\+voxel\+:material;}\newline
+Include dependency graph for Mesh\+Converter.\+cpp\+:
+% FIG 0
+\doxysubsubsection*{Classes}
+\begin{DoxyCompactItemize}
+\item 
+struct \mbox{\hyperlink{structvortex_1_1voxel_1_1Triangle}{vortex\+::voxel\+::\+Triangle}}
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Namespaces}
+\begin{DoxyCompactItemize}
+\item 
+namespace \mbox{\hyperlink{namespacevortex}{vortex}}
+\item 
+namespace \mbox{\hyperlink{namespacevortex_1_1voxel}{vortex\+::voxel}}
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Macros}
+\begin{DoxyCompactItemize}
+\item 
+\#define \mbox{\hyperlink{MeshConverter_8cpp_ac203b64c0edef3702d707aed38ab024a}{TINYGLTF\+\_\+\+IMPLEMENTATION}}
+\item 
+\#define \mbox{\hyperlink{MeshConverter_8cpp_a18372412ad2fc3ce1e3240b3cf0efe78}{STB\+\_\+\+IMAGE\+\_\+\+IMPLEMENTATION}}
+\item 
+\#define \mbox{\hyperlink{MeshConverter_8cpp_aefe397a94e8feddc652f92ef40ce9597}{STB\+\_\+\+IMAGE\+\_\+\+WRITE\+\_\+\+IMPLEMENTATION}}
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Macro Definition Documentation}
+\Hypertarget{MeshConverter_8cpp_a18372412ad2fc3ce1e3240b3cf0efe78}\label{MeshConverter_8cpp_a18372412ad2fc3ce1e3240b3cf0efe78} 
+\index{MeshConverter.cpp@{MeshConverter.cpp}!STB\_IMAGE\_IMPLEMENTATION@{STB\_IMAGE\_IMPLEMENTATION}}
+\index{STB\_IMAGE\_IMPLEMENTATION@{STB\_IMAGE\_IMPLEMENTATION}!MeshConverter.cpp@{MeshConverter.cpp}}
+\doxysubsubsection{\texorpdfstring{STB\_IMAGE\_IMPLEMENTATION}{STB\_IMAGE\_IMPLEMENTATION}}
+{\footnotesize\ttfamily \#define STB\+\_\+\+IMAGE\+\_\+\+IMPLEMENTATION}
+
+\Hypertarget{MeshConverter_8cpp_aefe397a94e8feddc652f92ef40ce9597}\label{MeshConverter_8cpp_aefe397a94e8feddc652f92ef40ce9597} 
+\index{MeshConverter.cpp@{MeshConverter.cpp}!STB\_IMAGE\_WRITE\_IMPLEMENTATION@{STB\_IMAGE\_WRITE\_IMPLEMENTATION}}
+\index{STB\_IMAGE\_WRITE\_IMPLEMENTATION@{STB\_IMAGE\_WRITE\_IMPLEMENTATION}!MeshConverter.cpp@{MeshConverter.cpp}}
+\doxysubsubsection{\texorpdfstring{STB\_IMAGE\_WRITE\_IMPLEMENTATION}{STB\_IMAGE\_WRITE\_IMPLEMENTATION}}
+{\footnotesize\ttfamily \#define STB\+\_\+\+IMAGE\+\_\+\+WRITE\+\_\+\+IMPLEMENTATION}
+
+\Hypertarget{MeshConverter_8cpp_ac203b64c0edef3702d707aed38ab024a}\label{MeshConverter_8cpp_ac203b64c0edef3702d707aed38ab024a} 
+\index{MeshConverter.cpp@{MeshConverter.cpp}!TINYGLTF\_IMPLEMENTATION@{TINYGLTF\_IMPLEMENTATION}}
+\index{TINYGLTF\_IMPLEMENTATION@{TINYGLTF\_IMPLEMENTATION}!MeshConverter.cpp@{MeshConverter.cpp}}
+\doxysubsubsection{\texorpdfstring{TINYGLTF\_IMPLEMENTATION}{TINYGLTF\_IMPLEMENTATION}}
+{\footnotesize\ttfamily \#define TINYGLTF\+\_\+\+IMPLEMENTATION}
+

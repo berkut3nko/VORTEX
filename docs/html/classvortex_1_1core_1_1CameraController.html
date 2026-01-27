@@ -100,7 +100,7 @@ $(function(){initNavTree('classvortex_1_1core_1_1CameraController.html',''); ini
 </div><!--header-->
 <div class="contents">
 
-<p>Handles camera movement and rotation based on input.  
+<p>Handles First-Person camera movement and rotation based on input.  
  <a href="#details">More...</a></p>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-methods" name="pub-methods"></a>
@@ -108,20 +108,24 @@ Public Member Functions</h2></td></tr>
 <tr class="memitem:a615ae56d31e59b3327754cd744e9ff58" id="r_a615ae56d31e59b3327754cd744e9ff58"><td class="memItemLeft" align="right" valign="top">&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a615ae56d31e59b3327754cd744e9ff58">CameraController</a> ()=default</td></tr>
 <tr class="separator:a615ae56d31e59b3327754cd744e9ff58"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a2190d273c5dfee1766bb40c6522fe4d3" id="r_a2190d273c5dfee1766bb40c6522fe4d3"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a2190d273c5dfee1766bb40c6522fe4d3">Update</a> (GLFWwindow *window, <a class="el" href="structvortex_1_1graphics_1_1Camera.html">graphics::Camera</a> &amp;camera, float deltaTime)</td></tr>
-<tr class="memdesc:a2190d273c5dfee1766bb40c6522fe4d3"><td class="mdescLeft">&#160;</td><td class="mdescRight">Updates camera position and rotation.  <br /></td></tr>
+<tr class="memdesc:a2190d273c5dfee1766bb40c6522fe4d3"><td class="mdescLeft">&#160;</td><td class="mdescRight">Updates camera position and rotation based on current input state.  <br /></td></tr>
 <tr class="separator:a2190d273c5dfee1766bb40c6522fe4d3"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-attribs" name="pub-attribs"></a>
 Public Attributes</h2></td></tr>
 <tr class="memitem:a9e479d1849c660461e3b393f4e9a499e" id="r_a9e479d1849c660461e3b393f4e9a499e"><td class="memItemLeft" align="right" valign="top">float&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a9e479d1849c660461e3b393f4e9a499e">movementSpeed</a> = 5.0f</td></tr>
+<tr class="memdesc:a9e479d1849c660461e3b393f4e9a499e"><td class="mdescLeft">&#160;</td><td class="mdescRight">Base movement speed in units per second.  <br /></td></tr>
 <tr class="separator:a9e479d1849c660461e3b393f4e9a499e"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:af98557c4f8ead49f167e04015fc4943d" id="r_af98557c4f8ead49f167e04015fc4943d"><td class="memItemLeft" align="right" valign="top">float&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#af98557c4f8ead49f167e04015fc4943d">mouseSensitivity</a> = 0.1f</td></tr>
+<tr class="memdesc:af98557c4f8ead49f167e04015fc4943d"><td class="mdescLeft">&#160;</td><td class="mdescRight">Mouse look sensitivity.  <br /></td></tr>
 <tr class="separator:af98557c4f8ead49f167e04015fc4943d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a237e9148ada7589e47044bc7c882782c" id="r_a237e9148ada7589e47044bc7c882782c"><td class="memItemLeft" align="right" valign="top">float&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a237e9148ada7589e47044bc7c882782c">sprintMultiplier</a> = 4.0f</td></tr>
+<tr class="memdesc:a237e9148ada7589e47044bc7c882782c"><td class="mdescLeft">&#160;</td><td class="mdescRight">Speed multiplier when Shift is held.  <br /></td></tr>
 <tr class="separator:a237e9148ada7589e47044bc7c882782c"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
-<div class="textblock"><p>Handles camera movement and rotation based on input. </p>
+<div class="textblock"><p>Handles First-Person camera movement and rotation based on input. </p>
+<p>Supports WASD movement, Space/Ctrl for elevation, and mouse look. </p>
 </div><h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
 <a id="a615ae56d31e59b3327754cd744e9ff58" name="a615ae56d31e59b3327754cd744e9ff58"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a615ae56d31e59b3327754cd744e9ff58">&#9670;&#160;</a></span>CameraController()</h2>
@@ -173,12 +177,12 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Updates camera position and rotation. </p>
+<p>Updates camera position and rotation based on current input state. </p>
 <dl class="params"><dt>Parameters</dt><dd>
   <table class="params">
     <tr><td class="paramname">window</td><td>Raw GLFW window handle for input polling. </td></tr>
     <tr><td class="paramname">camera</td><td>Reference to the camera object to modify. </td></tr>
-    <tr><td class="paramname">deltaTime</td><td>Time elapsed since last frame. </td></tr>
+    <tr><td class="paramname">deltaTime</td><td>Time elapsed since last frame (for frame-rate independent movement). </td></tr>
   </table>
   </dd>
 </dl>
@@ -198,6 +202,8 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
+<p>Mouse look sensitivity. </p>
+
 </div>
 </div>
 <a id="a9e479d1849c660461e3b393f4e9a499e" name="a9e479d1849c660461e3b393f4e9a499e"></a>
@@ -212,6 +218,8 @@ Public Attributes</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
+<p>Base movement speed in units per second. </p>
+
 </div>
 </div>
 <a id="a237e9148ada7589e47044bc7c882782c" name="a237e9148ada7589e47044bc7c882782c"></a>
@@ -225,6 +233,8 @@ Public Attributes</h2></td></tr>
         </tr>
       </table>
 </div><div class="memdoc">
+
+<p>Speed multiplier when Shift is held. </p>
 
 </div>
 </div>

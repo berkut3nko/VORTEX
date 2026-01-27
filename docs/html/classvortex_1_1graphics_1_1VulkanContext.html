@@ -98,6 +98,9 @@ $(function(){initNavTree('classvortex_1_1graphics_1_1VulkanContext.html',''); in
   <div class="headertitle"><div class="title">vortex::graphics::VulkanContext Class Reference<span class="mlabels"><span class="mlabel">export</span></span><div class="ingroups">module <a class="el" href="module_vortex_8graphics.html">vortex.graphics</a></div></div></div>
 </div><!--header-->
 <div class="contents">
+
+<p>Core Vulkan wrapper managing the Instance, Physical Device, and Logical Device.  
+ <a href="#details">More...</a></p>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-methods" name="pub-methods"></a>
 Public Member Functions</h2></td></tr>
@@ -106,10 +109,13 @@ Public Member Functions</h2></td></tr>
 <tr class="memitem:a9dda4e9f44fa69de3d3206cb01e9eb69" id="r_a9dda4e9f44fa69de3d3206cb01e9eb69"><td class="memItemLeft" align="right" valign="top">&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a9dda4e9f44fa69de3d3206cb01e9eb69">~VulkanContext</a> ()</td></tr>
 <tr class="separator:a9dda4e9f44fa69de3d3206cb01e9eb69"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a2737506afff4ac93451e2114643bead1" id="r_a2737506afff4ac93451e2114643bead1"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a2737506afff4ac93451e2114643bead1">InitInstance</a> (const char *title)</td></tr>
+<tr class="memdesc:a2737506afff4ac93451e2114643bead1"><td class="mdescLeft">&#160;</td><td class="mdescRight">Creates the Vulkan Instance.  <br /></td></tr>
 <tr class="separator:a2737506afff4ac93451e2114643bead1"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a63efa3b6af08582ae4f5e06f14fccf42" id="r_a63efa3b6af08582ae4f5e06f14fccf42"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a63efa3b6af08582ae4f5e06f14fccf42">InitDevice</a> (VkSurfaceKHR surface)</td></tr>
+<tr class="memdesc:a63efa3b6af08582ae4f5e06f14fccf42"><td class="mdescLeft">&#160;</td><td class="mdescRight">Selects a Physical Device and creates the Logical Device.  <br /></td></tr>
 <tr class="separator:a63efa3b6af08582ae4f5e06f14fccf42"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ac060bbf03cb9edf9705756ec86139287" id="r_ac060bbf03cb9edf9705756ec86139287"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ac060bbf03cb9edf9705756ec86139287">Shutdown</a> ()</td></tr>
+<tr class="memdesc:ac060bbf03cb9edf9705756ec86139287"><td class="mdescLeft">&#160;</td><td class="mdescRight">Destroys the Logical Device, Instance, and Allocator.  <br /></td></tr>
 <tr class="separator:ac060bbf03cb9edf9705756ec86139287"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:adb3906181e66744af5bda865cde18fa9" id="r_adb3906181e66744af5bda865cde18fa9"><td class="memItemLeft" align="right" valign="top">VkInstance&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#adb3906181e66744af5bda865cde18fa9">GetInstance</a> () const</td></tr>
 <tr class="separator:adb3906181e66744af5bda865cde18fa9"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -130,7 +136,9 @@ Public Member Functions</h2></td></tr>
 <tr class="memitem:adda0de347d2f1db9936d8d5327c78fbd" id="r_adda0de347d2f1db9936d8d5327c78fbd"><td class="memItemLeft" align="right" valign="top">VmaAllocator&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#adda0de347d2f1db9936d8d5327c78fbd">GetVmaAllocator</a> ()</td></tr>
 <tr class="separator:adda0de347d2f1db9936d8d5327c78fbd"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
-<h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
+<a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
+<div class="textblock"><p>Core Vulkan wrapper managing the Instance, Physical Device, and Logical Device. </p>
+</div><h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
 <a id="a8249a3ba828015d09b6f4cd36bb394d3" name="a8249a3ba828015d09b6f4cd36bb394d3"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a8249a3ba828015d09b6f4cd36bb394d3">&#9670;&#160;</a></span>VulkanContext()</h2>
 
@@ -414,6 +422,15 @@ Public Member Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
+<p>Selects a Physical Device and creates the Logical Device. </p>
+<p>Requires a valid surface to ensure the device supports presentation. </p><dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">surface</td><td>The window surface used for compatibility checks. </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>Returns</dt><dd>True on success. </dd></dl>
+
 </div>
 </div>
 <a id="a2737506afff4ac93451e2114643bead1" name="a2737506afff4ac93451e2114643bead1"></a>
@@ -431,6 +448,15 @@ Public Member Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
+<p>Creates the Vulkan Instance. </p>
+<p>This is the first step of initialization. </p><dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">title</td><td>The application name used for the instance. </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>Returns</dt><dd>True on success. </dd></dl>
+
 </div>
 </div>
 <a id="ac060bbf03cb9edf9705756ec86139287" name="ac060bbf03cb9edf9705756ec86139287"></a>
@@ -447,6 +473,8 @@ Public Member Functions</h2></td></tr>
         </tr>
       </table>
 </div><div class="memdoc">
+
+<p>Destroys the Logical Device, Instance, and Allocator. </p>
 
 </div>
 </div>

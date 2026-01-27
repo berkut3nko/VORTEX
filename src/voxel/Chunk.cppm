@@ -5,9 +5,6 @@ module;
 
 export module vortex.voxel:chunk;
 
-// Hierarchy logic is now inlined for SoA layout
-// import :hierarchy; 
-
 namespace vortex::voxel {
 
     constexpr int CHUNK_SIZE = 32;
@@ -37,6 +34,9 @@ namespace vortex::voxel {
             Clear();
         }
 
+        /**
+         * @brief Resets the chunk to an empty state (all zeros).
+         */
         void Clear() {
             std::memset(voxelIDs, 0, sizeof(voxelIDs));
             std::memset(voxelFlags, 0, sizeof(voxelFlags));
@@ -45,6 +45,10 @@ namespace vortex::voxel {
 
         /**
          * @brief Sets a voxel's material and flags.
+         * @param x X coordinate (0-31).
+         * @param y Y coordinate (0-31).
+         * @param z Z coordinate (0-31).
+         * @param id Material ID (0-255).
          * @param flags Optional 2-bit flag (0-3).
          */
         void SetVoxel(int x, int y, int z, uint8_t id, uint8_t flags = 0) {
@@ -82,12 +86,20 @@ namespace vortex::voxel {
             }
         }
 
+        /**
+         * @brief Gets the material ID of a voxel.
+         * @return Material ID (0 if empty or out of bounds).
+         */
         uint8_t GetVoxel(int x, int y, int z) const {
             if (x < 0 || x >= CHUNK_SIZE || y < 0 || y >= CHUNK_SIZE || z < 0 || z >= CHUNK_SIZE) return 0;
             uint32_t linearIdx = x + y * 32 + z * 1024;
             return (voxelIDs[linearIdx >> 2] >> ((linearIdx & 3) << 3)) & 0xFF;
         }
 
+        /**
+         * @brief Gets the flags of a voxel.
+         * @return Flags (0-3).
+         */
         uint8_t GetFlags(int x, int y, int z) const {
             if (x < 0 || x >= CHUNK_SIZE || y < 0 || y >= CHUNK_SIZE || z < 0 || z >= CHUNK_SIZE) return 0;
             uint32_t linearIdx = x + y * 32 + z * 1024;

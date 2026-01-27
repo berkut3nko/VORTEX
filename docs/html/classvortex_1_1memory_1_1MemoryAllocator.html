@@ -109,12 +109,16 @@ Public Member Functions</h2></td></tr>
 <tr class="memitem:a797cef454c6f234072f1bab8b4660a88" id="r_a797cef454c6f234072f1bab8b4660a88"><td class="memItemLeft" align="right" valign="top">&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a797cef454c6f234072f1bab8b4660a88">~MemoryAllocator</a> ()=default</td></tr>
 <tr class="separator:a797cef454c6f234072f1bab8b4660a88"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a692ecdc24a82baff91f6b4d1e6daf53d" id="r_a692ecdc24a82baff91f6b4d1e6daf53d"><td class="memItemLeft" align="right" valign="top"><a class="el" href="structvortex_1_1memory_1_1AllocatedBuffer.html">AllocatedBuffer</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a692ecdc24a82baff91f6b4d1e6daf53d">CreateBuffer</a> (size_t size, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage)</td></tr>
+<tr class="memdesc:a692ecdc24a82baff91f6b4d1e6daf53d"><td class="mdescLeft">&#160;</td><td class="mdescRight">Allocates a Vulkan Buffer.  <br /></td></tr>
 <tr class="separator:a692ecdc24a82baff91f6b4d1e6daf53d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a7b43f7fb060b7180430e4459c5283fa2" id="r_a7b43f7fb060b7180430e4459c5283fa2"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a7b43f7fb060b7180430e4459c5283fa2">DestroyBuffer</a> (const <a class="el" href="structvortex_1_1memory_1_1AllocatedBuffer.html">AllocatedBuffer</a> &amp;buffer)</td></tr>
+<tr class="memdesc:a7b43f7fb060b7180430e4459c5283fa2"><td class="mdescLeft">&#160;</td><td class="mdescRight">Destroys a buffer and frees its memory.  <br /></td></tr>
 <tr class="separator:a7b43f7fb060b7180430e4459c5283fa2"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ab446f11a33ff910b4ca0ff65bebcc1c6" id="r_ab446f11a33ff910b4ca0ff65bebcc1c6"><td class="memItemLeft" align="right" valign="top"><a class="el" href="structvortex_1_1memory_1_1AllocatedImage.html">AllocatedImage</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#ab446f11a33ff910b4ca0ff65bebcc1c6">CreateImage</a> (uint32_t width, uint32_t height, VkFormat format, VkImageUsageFlags usage, VmaMemoryUsage memoryUsage)</td></tr>
+<tr class="memdesc:ab446f11a33ff910b4ca0ff65bebcc1c6"><td class="mdescLeft">&#160;</td><td class="mdescRight">Allocates a Vulkan Image.  <br /></td></tr>
 <tr class="separator:ab446f11a33ff910b4ca0ff65bebcc1c6"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aa7e8fe3acdb13ef07063b9e93117a86b" id="r_aa7e8fe3acdb13ef07063b9e93117a86b"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aa7e8fe3acdb13ef07063b9e93117a86b">DestroyImage</a> (const <a class="el" href="structvortex_1_1memory_1_1AllocatedImage.html">AllocatedImage</a> &amp;image)</td></tr>
+<tr class="memdesc:aa7e8fe3acdb13ef07063b9e93117a86b"><td class="mdescLeft">&#160;</td><td class="mdescRight">Destroys an image and frees its memory.  <br /></td></tr>
 <tr class="separator:aa7e8fe3acdb13ef07063b9e93117a86b"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a3f400eab8ff97d77f6028042b9d2bc6e" id="r_a3f400eab8ff97d77f6028042b9d2bc6e"><td class="memItemLeft" align="right" valign="top">VmaAllocator&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a3f400eab8ff97d77f6028042b9d2bc6e">GetVmaAllocator</a> () const</td></tr>
 <tr class="memdesc:a3f400eab8ff97d77f6028042b9d2bc6e"><td class="mdescLeft">&#160;</td><td class="mdescRight">Returns the raw VMA allocator handle.  <br /></td></tr>
@@ -194,6 +198,17 @@ Public Member Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
+<p>Allocates a Vulkan Buffer. </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">size</td><td>Size in bytes. </td></tr>
+    <tr><td class="paramname">usage</td><td>Vulkan buffer usage flags. </td></tr>
+    <tr><td class="paramname">memoryUsage</td><td>VMA memory usage hint (e.g., GPU_ONLY). </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>Returns</dt><dd>The allocated buffer struct. </dd></dl>
+
 </div>
 </div>
 <a id="ab446f11a33ff910b4ca0ff65bebcc1c6" name="ab446f11a33ff910b4ca0ff65bebcc1c6"></a>
@@ -230,6 +245,19 @@ Public Member Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
+<p>Allocates a Vulkan Image. </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">width</td><td>Image width. </td></tr>
+    <tr><td class="paramname">height</td><td>Image height. </td></tr>
+    <tr><td class="paramname">format</td><td>Vulkan format. </td></tr>
+    <tr><td class="paramname">usage</td><td>Image usage flags. </td></tr>
+    <tr><td class="paramname">memoryUsage</td><td>VMA memory usage hint. </td></tr>
+  </table>
+  </dd>
+</dl>
+<dl class="section return"><dt>Returns</dt><dd>The allocated image struct. </dd></dl>
+
 </div>
 </div>
 <a id="a7b43f7fb060b7180430e4459c5283fa2" name="a7b43f7fb060b7180430e4459c5283fa2"></a>
@@ -247,6 +275,8 @@ Public Member Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
+<p>Destroys a buffer and frees its memory. </p>
+
 </div>
 </div>
 <a id="aa7e8fe3acdb13ef07063b9e93117a86b" name="aa7e8fe3acdb13ef07063b9e93117a86b"></a>
@@ -263,6 +293,8 @@ Public Member Functions</h2></td></tr>
         </tr>
       </table>
 </div><div class="memdoc">
+
+<p>Destroys an image and frees its memory. </p>
 
 </div>
 </div>

@@ -30,6 +30,7 @@ var NAVTREE =
       [ "Module Members", "modulemembers.html", [
         [ "All", "modulemembers.html", null ],
         [ "Functions", "modulemembers_func.html", null ],
+        [ "Variables", "modulemembers_vars.html", null ],
         [ "Enumerations", "modulemembers_enum.html", null ]
       ] ]
     ] ],
@@ -45,9 +46,10 @@ var NAVTREE =
     [ "Classes", "annotated.html", [
       [ "Class List", "annotated.html", "annotated_dup" ],
       [ "Class Index", "classes.html", null ],
+      [ "Class Hierarchy", "hierarchy.html", "hierarchy" ],
       [ "Class Members", "functions.html", [
         [ "All", "functions.html", "functions_dup" ],
-        [ "Functions", "functions_func.html", null ],
+        [ "Functions", "functions_func.html", "functions_func" ],
         [ "Variables", "functions_vars.html", null ],
         [ "Typedefs", "functions_type.html", null ]
       ] ]
@@ -65,10 +67,11 @@ var NAVTREE =
 var NAVTREEINDEX =
 [
 "CameraController_8cpp.html",
-"classvortex_1_1graphics_1_1RenderResources.html#a8293bbbc5b8c8fd68529e352b95aba42",
-"classvortex_1_1memory_1_1MemoryAllocator.html#a7b43f7fb060b7180430e4459c5283fa2",
-"structvortex_1_1graphics_1_1CameraUBO.html#a6a0739ba3a6f2230948f85b5b62e25f5",
-"structvortex_1_1voxel_1_1PhysicalMaterial.html#a836423f4a870599b4038ed6a1a23efd4"
+"classvortex_1_1graphics_1_1GraphicsContext.html#af17abda7ed5b033a3c46d60dc4f4347d",
+"classvortex_1_1graphics_1_1Window.html#a51eff50332bc61ce511d1526efeea2d3",
+"module_vortex_8physics.html#ad6ddeaf5a71c678d395389ce7ae3e1ec",
+"structvortex_1_1graphics_1_1GraphicsInternal.html#aba69ca3674ca99368d95ca85dcfa1ce4",
+"structvortex_1_1voxel_1_1PhysicalMaterial.html"
 ];
 
 var SYNCONMSG = 'click to disable panel synchronisation';

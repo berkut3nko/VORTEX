@@ -1,6 +1,7 @@
 module;
 
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <memory>
 
@@ -10,18 +11,33 @@ import :chunk;
 
 namespace vortex::voxel {
 
+    /**
+     * @brief Represents a single Voxel Object (typically one chunk) within an Entity.
+     */
     export struct VoxelObject {
+        /// @brief Position relative to the Entity root.
         glm::vec3 position{0.0f};
+        /// @brief Rotation relative to the Entity root.
         glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        /// @brief Scale relative to the Entity root.
         glm::vec3 scale{1.0f};
 
-        // Logical Center (Center of Mass) relative to Chunk Origin (0,0,0)
+        /// @brief Logical Center (Center of Mass) relative to Chunk Origin (0,0,0).
         glm::vec3 logicalCenter{16.0f}; // Default to center of 32x32x32 block
+        
+        /// @brief Number of solid voxels in this object.
         uint32_t voxelCount{0};
 
+        /// @brief The actual voxel data container.
         std::shared_ptr<Chunk> chunk;
+        
+        /// @brief Per-object static flag (often overridden by Entity).
         bool isStatic = false;
         
+        /**
+         * @brief Computes the local transformation matrix for this part.
+         * @return Model matrix (Translation * Rotation * Scale).
+         */
         glm::mat4 GetTransformMatrix() const {
             glm::mat4 mat = glm::mat4(1.0f);
             mat = glm::translate(mat, position);
@@ -31,8 +47,8 @@ namespace vortex::voxel {
         }
 
         /**
-         * @brief Recalculates the logical center based on voxel positions.
-         * @details Should be called after modifying the chunk.
+         * @brief Recalculates the logical center based on voxel positions within the chunk.
+         * @details Should be called after modifying the chunk content.
          */
         void RecalculateCenter() {
             if (!chunk) return;

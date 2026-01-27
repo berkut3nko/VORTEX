@@ -1,0 +1,196 @@
+\doxysection{vortex\+::physics\+::Physics\+System Class Reference}
+\hypertarget{classvortex_1_1physics_1_1PhysicsSystem}{}\label{classvortex_1_1physics_1_1PhysicsSystem}\index{vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}}
+
+
+Wrapper around the Jolt Physics System.  
+
+
+\doxysubsubsection*{Classes}
+\begin{DoxyCompactItemize}
+\item 
+struct \mbox{\hyperlink{structvortex_1_1physics_1_1PhysicsSystem_1_1InternalState}{Internal\+State}}
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+\mbox{\hyperlink{classvortex_1_1physics_1_1PhysicsSystem_a847e34af59b32abe6d0a697cb1650995}{Physics\+System}} ()
+\item 
+\mbox{\hyperlink{classvortex_1_1physics_1_1PhysicsSystem_aafd46a05149db78921c4667abacd3b4b}{\texorpdfstring{$\sim$}{\string~}\+Physics\+System}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1physics_1_1PhysicsSystem_a2dc57f538b4478289464937a484f4a4b}{Initialize}} ()
+\begin{DoxyCompactList}\small\item\em Initializes the physics engine (allocators, job system, etc.). \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1physics_1_1PhysicsSystem_ad6ddeaf5a71c678d395389ce7ae3e1ec}{Shutdown}} ()
+\begin{DoxyCompactList}\small\item\em Shuts down the physics engine. \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1physics_1_1PhysicsSystem_ac8df02469344c509599f7508b244204b}{Update}} (float delta\+Time)
+\begin{DoxyCompactList}\small\item\em Steps the physics simulation. \end{DoxyCompactList}\item 
+\mbox{\hyperlink{structvortex_1_1physics_1_1BodyHandle}{Body\+Handle}} \mbox{\hyperlink{classvortex_1_1physics_1_1PhysicsSystem_a4ab155f989fafed89cad6e9e79664adf}{Add\+Body}} (std\+::shared\+\_\+ptr$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity}{vortex\+::voxel\+::\+Voxel\+Entity}} $>$ entity, bool is\+Static)
+\begin{DoxyCompactList}\small\item\em Creates a physics body from a Voxel\+Entity. \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1physics_1_1PhysicsSystem_af9a2529133b1b631e871b7eadacdf84e}{Remove\+Body}} (\mbox{\hyperlink{structvortex_1_1physics_1_1BodyHandle}{Body\+Handle}} handle)
+\begin{DoxyCompactList}\small\item\em Removes and destroys a physics body from the simulation. \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1physics_1_1PhysicsSystem_adfbb52de3e6b25a80831081fff73db7f}{Sync\+Body\+Transform}} (std\+::shared\+\_\+ptr$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity}{vortex\+::voxel\+::\+Voxel\+Entity}} $>$ entity, \mbox{\hyperlink{structvortex_1_1physics_1_1BodyHandle}{Body\+Handle}} handle)
+\begin{DoxyCompactList}\small\item\em Syncs the physics body\textquotesingle{}s transform back to the Voxel\+Entity (for dynamic objects). \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1physics_1_1PhysicsSystem_aadc07c1516dd90c2870047030e8ddc07}{Set\+Body\+Kinematic}} (\mbox{\hyperlink{structvortex_1_1physics_1_1BodyHandle}{Body\+Handle}} handle, bool is\+Kinematic)
+\begin{DoxyCompactList}\small\item\em Changes the body\textquotesingle{}s motion type temporarily (e.\+g. for Gizmo manipulation). \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1physics_1_1PhysicsSystem_a2e3adf5d44f31160c3e7841665225eb9}{Set\+Body\+Type}} (\mbox{\hyperlink{structvortex_1_1physics_1_1BodyHandle}{Body\+Handle}} handle, bool is\+Static)
+\begin{DoxyCompactList}\small\item\em Sets the fundamental type of the body (Static vs Dynamic). \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1physics_1_1PhysicsSystem_a3a5699d512939460ad42506ff0035a5b}{Set\+Body\+Sensor}} (\mbox{\hyperlink{structvortex_1_1physics_1_1BodyHandle}{Body\+Handle}} handle, bool is\+Trigger)
+\begin{DoxyCompactList}\small\item\em Sets whether the body is a trigger (Sensor). \end{DoxyCompactList}\item 
+void \mbox{\hyperlink{classvortex_1_1physics_1_1PhysicsSystem_aad3266a0dd57feea9f27382dfccbbfcc}{Set\+Body\+Transform}} (\mbox{\hyperlink{structvortex_1_1physics_1_1BodyHandle}{Body\+Handle}} handle, const glm\+::mat4 \&transform)
+\begin{DoxyCompactList}\small\item\em Forces the physics body to a new transform (Teleport). \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Wrapper around the Jolt Physics System. 
+
+\doxysubsection{Constructor \& Destructor Documentation}
+\Hypertarget{classvortex_1_1physics_1_1PhysicsSystem_a847e34af59b32abe6d0a697cb1650995}\label{classvortex_1_1physics_1_1PhysicsSystem_a847e34af59b32abe6d0a697cb1650995} 
+\index{vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}!PhysicsSystem@{PhysicsSystem}}
+\index{PhysicsSystem@{PhysicsSystem}!vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}}
+\doxysubsubsection{\texorpdfstring{PhysicsSystem()}{PhysicsSystem()}}
+{\footnotesize\ttfamily vortex\+::physics\+::\+Physics\+System\+::\+Physics\+System (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+\Hypertarget{classvortex_1_1physics_1_1PhysicsSystem_aafd46a05149db78921c4667abacd3b4b}\label{classvortex_1_1physics_1_1PhysicsSystem_aafd46a05149db78921c4667abacd3b4b} 
+\index{vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}!````~PhysicsSystem@{\texorpdfstring{$\sim$}{\string~}PhysicsSystem}}
+\index{````~PhysicsSystem@{\texorpdfstring{$\sim$}{\string~}PhysicsSystem}!vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}}
+\doxysubsubsection{\texorpdfstring{\texorpdfstring{$\sim$}{\string~}PhysicsSystem()}{\string~PhysicsSystem()}}
+{\footnotesize\ttfamily vortex\+::physics\+::\+Physics\+System\+::\texorpdfstring{$\sim$}{\string~}\+Physics\+System (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1physics_1_1PhysicsSystem_a4ab155f989fafed89cad6e9e79664adf}\label{classvortex_1_1physics_1_1PhysicsSystem_a4ab155f989fafed89cad6e9e79664adf} 
+\index{vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}!AddBody@{AddBody}}
+\index{AddBody@{AddBody}!vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}}
+\doxysubsubsection{\texorpdfstring{AddBody()}{AddBody()}}
+{\footnotesize\ttfamily \mbox{\hyperlink{structvortex_1_1physics_1_1BodyHandle}{Body\+Handle}} vortex\+::physics\+::\+Physics\+System\+::\+Add\+Body (\begin{DoxyParamCaption}\item[{std\+::shared\+\_\+ptr$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity}{vortex\+::voxel\+::\+Voxel\+Entity}} $>$}]{entity,  }\item[{bool}]{is\+Static }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+
+
+Creates a physics body from a Voxel\+Entity. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em entity} & The entity to physicalize. \\
+\hline
+{\em is\+Static} & Whether the body is immovable (Static) or movable (Dynamic). \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+A handle to the created body. 
+\end{DoxyReturn}
+\Hypertarget{classvortex_1_1physics_1_1PhysicsSystem_a2dc57f538b4478289464937a484f4a4b}\label{classvortex_1_1physics_1_1PhysicsSystem_a2dc57f538b4478289464937a484f4a4b} 
+\index{vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}!Initialize@{Initialize}}
+\index{Initialize@{Initialize}!vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}}
+\doxysubsubsection{\texorpdfstring{Initialize()}{Initialize()}}
+{\footnotesize\ttfamily void vortex\+::physics\+::\+Physics\+System\+::\+Initialize (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+
+
+Initializes the physics engine (allocators, job system, etc.). 
+
+\Hypertarget{classvortex_1_1physics_1_1PhysicsSystem_af9a2529133b1b631e871b7eadacdf84e}\label{classvortex_1_1physics_1_1PhysicsSystem_af9a2529133b1b631e871b7eadacdf84e} 
+\index{vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}!RemoveBody@{RemoveBody}}
+\index{RemoveBody@{RemoveBody}!vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}}
+\doxysubsubsection{\texorpdfstring{RemoveBody()}{RemoveBody()}}
+{\footnotesize\ttfamily void vortex\+::physics\+::\+Physics\+System\+::\+Remove\+Body (\begin{DoxyParamCaption}\item[{\mbox{\hyperlink{structvortex_1_1physics_1_1BodyHandle}{Body\+Handle}}}]{handle }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+
+
+Removes and destroys a physics body from the simulation. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em handle} & The handle of the body to remove. \\
+\hline
+\end{DoxyParams}
+\Hypertarget{classvortex_1_1physics_1_1PhysicsSystem_aadc07c1516dd90c2870047030e8ddc07}\label{classvortex_1_1physics_1_1PhysicsSystem_aadc07c1516dd90c2870047030e8ddc07} 
+\index{vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}!SetBodyKinematic@{SetBodyKinematic}}
+\index{SetBodyKinematic@{SetBodyKinematic}!vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}}
+\doxysubsubsection{\texorpdfstring{SetBodyKinematic()}{SetBodyKinematic()}}
+{\footnotesize\ttfamily void vortex\+::physics\+::\+Physics\+System\+::\+Set\+Body\+Kinematic (\begin{DoxyParamCaption}\item[{\mbox{\hyperlink{structvortex_1_1physics_1_1BodyHandle}{Body\+Handle}}}]{handle,  }\item[{bool}]{is\+Kinematic }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+
+
+Changes the body\textquotesingle{}s motion type temporarily (e.\+g. for Gizmo manipulation). 
+
+
+\begin{DoxyParams}{Parameters}
+{\em is\+Kinematic} & If true, the body is moved manually and ignores forces. \\
+\hline
+\end{DoxyParams}
+\Hypertarget{classvortex_1_1physics_1_1PhysicsSystem_a3a5699d512939460ad42506ff0035a5b}\label{classvortex_1_1physics_1_1PhysicsSystem_a3a5699d512939460ad42506ff0035a5b} 
+\index{vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}!SetBodySensor@{SetBodySensor}}
+\index{SetBodySensor@{SetBodySensor}!vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}}
+\doxysubsubsection{\texorpdfstring{SetBodySensor()}{SetBodySensor()}}
+{\footnotesize\ttfamily void vortex\+::physics\+::\+Physics\+System\+::\+Set\+Body\+Sensor (\begin{DoxyParamCaption}\item[{\mbox{\hyperlink{structvortex_1_1physics_1_1BodyHandle}{Body\+Handle}}}]{handle,  }\item[{bool}]{is\+Trigger }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+
+
+Sets whether the body is a trigger (Sensor). 
+
+
+\begin{DoxyParams}{Parameters}
+{\em is\+Trigger} & If true, body detects overlaps but has no collision response. \\
+\hline
+\end{DoxyParams}
+\Hypertarget{classvortex_1_1physics_1_1PhysicsSystem_aad3266a0dd57feea9f27382dfccbbfcc}\label{classvortex_1_1physics_1_1PhysicsSystem_aad3266a0dd57feea9f27382dfccbbfcc} 
+\index{vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}!SetBodyTransform@{SetBodyTransform}}
+\index{SetBodyTransform@{SetBodyTransform}!vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}}
+\doxysubsubsection{\texorpdfstring{SetBodyTransform()}{SetBodyTransform()}}
+{\footnotesize\ttfamily void vortex\+::physics\+::\+Physics\+System\+::\+Set\+Body\+Transform (\begin{DoxyParamCaption}\item[{\mbox{\hyperlink{structvortex_1_1physics_1_1BodyHandle}{Body\+Handle}}}]{handle,  }\item[{const glm\+::mat4 \&}]{transform }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+
+
+Forces the physics body to a new transform (Teleport). 
+
+\Hypertarget{classvortex_1_1physics_1_1PhysicsSystem_a2e3adf5d44f31160c3e7841665225eb9}\label{classvortex_1_1physics_1_1PhysicsSystem_a2e3adf5d44f31160c3e7841665225eb9} 
+\index{vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}!SetBodyType@{SetBodyType}}
+\index{SetBodyType@{SetBodyType}!vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}}
+\doxysubsubsection{\texorpdfstring{SetBodyType()}{SetBodyType()}}
+{\footnotesize\ttfamily void vortex\+::physics\+::\+Physics\+System\+::\+Set\+Body\+Type (\begin{DoxyParamCaption}\item[{\mbox{\hyperlink{structvortex_1_1physics_1_1BodyHandle}{Body\+Handle}}}]{handle,  }\item[{bool}]{is\+Static }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+
+
+Sets the fundamental type of the body (Static vs Dynamic). 
+
+\Hypertarget{classvortex_1_1physics_1_1PhysicsSystem_ad6ddeaf5a71c678d395389ce7ae3e1ec}\label{classvortex_1_1physics_1_1PhysicsSystem_ad6ddeaf5a71c678d395389ce7ae3e1ec} 
+\index{vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}!Shutdown@{Shutdown}}
+\index{Shutdown@{Shutdown}!vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}}
+\doxysubsubsection{\texorpdfstring{Shutdown()}{Shutdown()}}
+{\footnotesize\ttfamily void vortex\+::physics\+::\+Physics\+System\+::\+Shutdown (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+
+
+Shuts down the physics engine. 
+
+\Hypertarget{classvortex_1_1physics_1_1PhysicsSystem_adfbb52de3e6b25a80831081fff73db7f}\label{classvortex_1_1physics_1_1PhysicsSystem_adfbb52de3e6b25a80831081fff73db7f} 
+\index{vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}!SyncBodyTransform@{SyncBodyTransform}}
+\index{SyncBodyTransform@{SyncBodyTransform}!vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}}
+\doxysubsubsection{\texorpdfstring{SyncBodyTransform()}{SyncBodyTransform()}}
+{\footnotesize\ttfamily void vortex\+::physics\+::\+Physics\+System\+::\+Sync\+Body\+Transform (\begin{DoxyParamCaption}\item[{std\+::shared\+\_\+ptr$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity}{vortex\+::voxel\+::\+Voxel\+Entity}} $>$}]{entity,  }\item[{\mbox{\hyperlink{structvortex_1_1physics_1_1BodyHandle}{Body\+Handle}}}]{handle }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+
+
+Syncs the physics body\textquotesingle{}s transform back to the Voxel\+Entity (for dynamic objects). 
+
+\Hypertarget{classvortex_1_1physics_1_1PhysicsSystem_ac8df02469344c509599f7508b244204b}\label{classvortex_1_1physics_1_1PhysicsSystem_ac8df02469344c509599f7508b244204b} 
+\index{vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}!Update@{Update}}
+\index{Update@{Update}!vortex::physics::PhysicsSystem@{vortex::physics::PhysicsSystem}}
+\doxysubsubsection{\texorpdfstring{Update()}{Update()}}
+{\footnotesize\ttfamily void vortex\+::physics\+::\+Physics\+System\+::\+Update (\begin{DoxyParamCaption}\item[{float}]{delta\+Time }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [export]}}
+
+
+
+Steps the physics simulation. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em delta\+Time} & Time elapsed since last frame. \\
+\hline
+\end{DoxyParams}
+
+
+The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}
+\item 
+src/physics/\mbox{\hyperlink{Physics_8cppm}{Physics.\+cppm}}\item 
+src/physics/internal/\mbox{\hyperlink{Jolt_8cpp}{Jolt.\+cpp}}\end{DoxyCompactItemize}

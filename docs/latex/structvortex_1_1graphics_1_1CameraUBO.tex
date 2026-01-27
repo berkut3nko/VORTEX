@@ -1,5 +1,10 @@
 \doxysection{vortex\+::graphics\+::Camera\+UBO Struct Reference}
 \hypertarget{structvortex_1_1graphics_1_1CameraUBO}{}\label{structvortex_1_1graphics_1_1CameraUBO}\index{vortex::graphics::CameraUBO@{vortex::graphics::CameraUBO}}
+
+
+GPU \doxylink{structvortex_1_1graphics_1_1Camera}{Camera} Buffer (Uniform Buffer Object).  
+
+
 \doxysubsubsection*{Public Attributes}
 \begin{DoxyCompactItemize}
 \item 
@@ -13,22 +18,34 @@ glm\+::vec4 \mbox{\hyperlink{structvortex_1_1graphics_1_1CameraUBO_ad216c865f0eb
 \item 
 uint32\+\_\+t \mbox{\hyperlink{structvortex_1_1graphics_1_1CameraUBO_abfb9c87d147cf2a0ad0be6f3b79d0ccb}{object\+Count}}
 \item 
-float \mbox{\hyperlink{structvortex_1_1graphics_1_1CameraUBO_abdae5965b0ef0965e0789fba4e6411f4}{\+\_\+pad}} \mbox{[}3\mbox{]}
+float \mbox{\hyperlink{structvortex_1_1graphics_1_1CameraUBO_a00c82102265dc95c4586e62f68fa3ac4}{\+\_\+pad}} \mbox{[}3\mbox{]}
 \item 
 glm\+::mat4 \mbox{\hyperlink{structvortex_1_1graphics_1_1CameraUBO_ae8800f166be0583a39526110a4993d54}{view\+Proj}}
 \item 
 glm\+::mat4 \mbox{\hyperlink{structvortex_1_1graphics_1_1CameraUBO_a12a9e8879692155f2671ec1a41b507c5}{prev\+View\+Proj}}
 \item 
+glm\+::mat4 \mbox{\hyperlink{structvortex_1_1graphics_1_1CameraUBO_a738a07c65a8e6ff00437606f86d1d4b9}{view}}
+\item 
+glm\+::mat4 \mbox{\hyperlink{structvortex_1_1graphics_1_1CameraUBO_a4d99ab45432af9948895e4a2ac7f86a6}{proj}}
+\item 
 glm\+::vec4 \mbox{\hyperlink{structvortex_1_1graphics_1_1CameraUBO_a6c09541e798f8db889ea11e67cf36399}{jitter}}
 \end{DoxyCompactItemize}
 
 
+\doxysubsection{Detailed Description}
+GPU \doxylink{structvortex_1_1graphics_1_1Camera}{Camera} Buffer (Uniform Buffer Object). 
+
+\begin{DoxyNote}{Note}
+Must MATCH the std140 layout in shaders/voxel.\+vert EXACTLY. 
+\end{DoxyNote}
+
+
 \doxysubsection{Member Data Documentation}
-\Hypertarget{structvortex_1_1graphics_1_1CameraUBO_abdae5965b0ef0965e0789fba4e6411f4}\label{structvortex_1_1graphics_1_1CameraUBO_abdae5965b0ef0965e0789fba4e6411f4} 
+\Hypertarget{structvortex_1_1graphics_1_1CameraUBO_a00c82102265dc95c4586e62f68fa3ac4}\label{structvortex_1_1graphics_1_1CameraUBO_a00c82102265dc95c4586e62f68fa3ac4} 
 \index{vortex::graphics::CameraUBO@{vortex::graphics::CameraUBO}!\_pad@{\_pad}}
 \index{\_pad@{\_pad}!vortex::graphics::CameraUBO@{vortex::graphics::CameraUBO}}
 \doxysubsubsection{\texorpdfstring{\_pad}{\_pad}}
-{\footnotesize\ttfamily float vortex\+::graphics\+::\+Camera\+UBO\+::\+\_\+pad}
+{\footnotesize\ttfamily float vortex\+::graphics\+::\+Camera\+UBO\+::\+\_\+pad\mbox{[}3\mbox{]}}
 
 \Hypertarget{structvortex_1_1graphics_1_1CameraUBO_ad216c865f0ebe602ea53dcccaf7c6892}\label{structvortex_1_1graphics_1_1CameraUBO_ad216c865f0ebe602ea53dcccaf7c6892} 
 \index{vortex::graphics::CameraUBO@{vortex::graphics::CameraUBO}!direction@{direction}}
@@ -60,11 +77,23 @@ glm\+::vec4 \mbox{\hyperlink{structvortex_1_1graphics_1_1CameraUBO_a6c09541e798f
 \doxysubsubsection{\texorpdfstring{prevViewProj}{prevViewProj}}
 {\footnotesize\ttfamily glm\+::mat4 vortex\+::graphics\+::\+Camera\+UBO\+::prev\+View\+Proj}
 
+\Hypertarget{structvortex_1_1graphics_1_1CameraUBO_a4d99ab45432af9948895e4a2ac7f86a6}\label{structvortex_1_1graphics_1_1CameraUBO_a4d99ab45432af9948895e4a2ac7f86a6} 
+\index{vortex::graphics::CameraUBO@{vortex::graphics::CameraUBO}!proj@{proj}}
+\index{proj@{proj}!vortex::graphics::CameraUBO@{vortex::graphics::CameraUBO}}
+\doxysubsubsection{\texorpdfstring{proj}{proj}}
+{\footnotesize\ttfamily glm\+::mat4 vortex\+::graphics\+::\+Camera\+UBO\+::proj}
+
 \Hypertarget{structvortex_1_1graphics_1_1CameraUBO_ae7ccc53051e895a2cd92c850a6ea936e}\label{structvortex_1_1graphics_1_1CameraUBO_ae7ccc53051e895a2cd92c850a6ea936e} 
 \index{vortex::graphics::CameraUBO@{vortex::graphics::CameraUBO}!projInverse@{projInverse}}
 \index{projInverse@{projInverse}!vortex::graphics::CameraUBO@{vortex::graphics::CameraUBO}}
 \doxysubsubsection{\texorpdfstring{projInverse}{projInverse}}
 {\footnotesize\ttfamily glm\+::mat4 vortex\+::graphics\+::\+Camera\+UBO\+::proj\+Inverse}
+
+\Hypertarget{structvortex_1_1graphics_1_1CameraUBO_a738a07c65a8e6ff00437606f86d1d4b9}\label{structvortex_1_1graphics_1_1CameraUBO_a738a07c65a8e6ff00437606f86d1d4b9} 
+\index{vortex::graphics::CameraUBO@{vortex::graphics::CameraUBO}!view@{view}}
+\index{view@{view}!vortex::graphics::CameraUBO@{vortex::graphics::CameraUBO}}
+\doxysubsubsection{\texorpdfstring{view}{view}}
+{\footnotesize\ttfamily glm\+::mat4 vortex\+::graphics\+::\+Camera\+UBO\+::view}
 
 \Hypertarget{structvortex_1_1graphics_1_1CameraUBO_a6a0739ba3a6f2230948f85b5b62e25f5}\label{structvortex_1_1graphics_1_1CameraUBO_a6a0739ba3a6f2230948f85b5b62e25f5} 
 \index{vortex::graphics::CameraUBO@{vortex::graphics::CameraUBO}!viewInverse@{viewInverse}}
@@ -80,7 +109,6 @@ glm\+::vec4 \mbox{\hyperlink{structvortex_1_1graphics_1_1CameraUBO_a6c09541e798f
 
 
 
-The documentation for this struct was generated from the following files\+:\begin{DoxyCompactItemize}
+The documentation for this struct was generated from the following file\+:\begin{DoxyCompactItemize}
 \item 
-src/graphics/pipelines/\mbox{\hyperlink{RasterPipeline_8cppm}{Raster\+Pipeline.\+cppm}}\item 
-src/graphics/\mbox{\hyperlink{SceneManager_8cppm}{Scene\+Manager.\+cppm}}\end{DoxyCompactItemize}
+src/graphics/\mbox{\hyperlink{CameraStruct_8cppm}{Camera\+Struct.\+cppm}}\end{DoxyCompactItemize}

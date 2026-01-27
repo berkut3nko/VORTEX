@@ -98,21 +98,32 @@ $(function(){initNavTree('classvortex_1_1Log.html',''); initResizable(); });
   <div class="headertitle"><div class="title">vortex::Log Class Reference<span class="mlabels"><span class="mlabel">export</span></span><div class="ingroups">module <a class="el" href="module_vortex_8log.html">vortex.log</a></div></div></div>
 </div><!--header-->
 <div class="contents">
+
+<p>Static logging utility wrapper around spdlog.  
+ <a href="#details">More...</a></p>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-static-methods" name="pub-static-methods"></a>
 Static Public Member Functions</h2></td></tr>
 <tr class="memitem:a0ebd926f014a2d28748ca783cb14f2cb" id="r_a0ebd926f014a2d28748ca783cb14f2cb"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a0ebd926f014a2d28748ca783cb14f2cb">Init</a> ()</td></tr>
+<tr class="memdesc:a0ebd926f014a2d28748ca783cb14f2cb"><td class="mdescLeft">&#160;</td><td class="mdescRight">Initializes the logging subsystem.  <br /></td></tr>
 <tr class="separator:a0ebd926f014a2d28748ca783cb14f2cb"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a740e3c853acf1b0fe85e431c88587e86" id="r_a740e3c853acf1b0fe85e431c88587e86"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a740e3c853acf1b0fe85e431c88587e86">Info</a> (const std::string &amp;msg)</td></tr>
+<tr class="memdesc:a740e3c853acf1b0fe85e431c88587e86"><td class="mdescLeft">&#160;</td><td class="mdescRight">Logs an informational message (Green/White).  <br /></td></tr>
 <tr class="separator:a740e3c853acf1b0fe85e431c88587e86"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a63f68d5d988903c0b0993f0cb4e2cfb8" id="r_a63f68d5d988903c0b0993f0cb4e2cfb8"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a63f68d5d988903c0b0993f0cb4e2cfb8">Warn</a> (const std::string &amp;msg)</td></tr>
+<tr class="memdesc:a63f68d5d988903c0b0993f0cb4e2cfb8"><td class="mdescLeft">&#160;</td><td class="mdescRight">Logs a warning message (Yellow).  <br /></td></tr>
 <tr class="separator:a63f68d5d988903c0b0993f0cb4e2cfb8"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a0f164bb20680ee7de43fccd1b98a0696" id="r_a0f164bb20680ee7de43fccd1b98a0696"><td class="memItemLeft" align="right" valign="top">static void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a0f164bb20680ee7de43fccd1b98a0696">Error</a> (const std::string &amp;msg)</td></tr>
+<tr class="memdesc:a0f164bb20680ee7de43fccd1b98a0696"><td class="mdescLeft">&#160;</td><td class="mdescRight">Logs an error message (Red).  <br /></td></tr>
 <tr class="separator:a0f164bb20680ee7de43fccd1b98a0696"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:afc18a81b6be63460a4dc6ddd0f9cbca9" id="r_afc18a81b6be63460a4dc6ddd0f9cbca9"><td class="memItemLeft" align="right" valign="top">static std::shared_ptr&lt; spdlog::logger &gt; &amp;&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#afc18a81b6be63460a4dc6ddd0f9cbca9">GetCoreLogger</a> ()</td></tr>
+<tr class="memdesc:afc18a81b6be63460a4dc6ddd0f9cbca9"><td class="mdescLeft">&#160;</td><td class="mdescRight">Access the underlying spdlog logger.  <br /></td></tr>
 <tr class="separator:afc18a81b6be63460a4dc6ddd0f9cbca9"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
-<h2 class="groupheader">Member Function Documentation</h2>
+<a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
+<div class="textblock"><p>Static logging utility wrapper around spdlog. </p>
+<p>Provides thread-safe, colored console output for various severity levels. </p>
+</div><h2 class="groupheader">Member Function Documentation</h2>
 <a id="a0f164bb20680ee7de43fccd1b98a0696" name="a0f164bb20680ee7de43fccd1b98a0696"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a0f164bb20680ee7de43fccd1b98a0696">&#9670;&#160;</a></span>Error()</h2>
 
@@ -135,6 +146,14 @@ Static Public Member Functions</h2></td></tr>
   </tr>
 </table>
 </div><div class="memdoc">
+
+<p>Logs an error message (Red). </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">msg</td><td>The message string. </td></tr>
+  </table>
+  </dd>
+</dl>
 
 </div>
 </div>
@@ -161,6 +180,9 @@ Static Public Member Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
+<p>Access the underlying spdlog logger. </p>
+<dl class="section return"><dt>Returns</dt><dd>Reference to the shared pointer of the logger. </dd></dl>
+
 </div>
 </div>
 <a id="a740e3c853acf1b0fe85e431c88587e86" name="a740e3c853acf1b0fe85e431c88587e86"></a>
@@ -185,6 +207,14 @@ Static Public Member Functions</h2></td></tr>
   </tr>
 </table>
 </div><div class="memdoc">
+
+<p>Logs an informational message (Green/White). </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">msg</td><td>The message string. </td></tr>
+  </table>
+  </dd>
+</dl>
 
 </div>
 </div>
@@ -211,6 +241,9 @@ Static Public Member Functions</h2></td></tr>
 </table>
 </div><div class="memdoc">
 
+<p>Initializes the logging subsystem. </p>
+<p>Sets up the console sink and default formatting pattern. Pattern: "[Time] LoggerName: Message" </p>
+
 </div>
 </div>
 <a id="a63f68d5d988903c0b0993f0cb4e2cfb8" name="a63f68d5d988903c0b0993f0cb4e2cfb8"></a>
@@ -235,6 +268,14 @@ Static Public Member Functions</h2></td></tr>
   </tr>
 </table>
 </div><div class="memdoc">
+
+<p>Logs a warning message (Yellow). </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">msg</td><td>The message string. </td></tr>
+  </table>
+  </dd>
+</dl>
 
 </div>
 </div>

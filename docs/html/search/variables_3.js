@@ -4,7 +4,7 @@ var searchData=
   ['cameracontroller_1',['cameraController',['../structvortex_1_1Engine_1_1InternalState.html#aad9ad521c501565c70292cff283f1c6f',1,'vortex::Engine::InternalState']]],
   ['chunk_2',['chunk',['../structvortex_1_1voxel_1_1VoxelObject.html#a5439dc3c4149a3a314039c7dc4ebdca8',1,'vortex::voxel::VoxelObject']]],
   ['chunk_5fsize_3',['CHUNK_SIZE',['../namespacevortex_1_1voxel.html#ab8710aa35a133df16eb218eefdb2e5db',1,'vortex::voxel']]],
-  ['chunkindex_4',['chunkIndex',['../structvortex_1_1graphics_1_1GPUObject.html#a0ce133afacd9ab74f59d5bd25aaf8e87',1,'vortex::graphics::GPUObject::chunkIndex'],['../structvortex_1_1voxel_1_1ObjectInstance.html#a1c97e673f44b5d898edd29db4e61f803',1,'vortex::voxel::ObjectInstance::chunkIndex']]],
+  ['chunkindex_4',['chunkIndex',['../structvortex_1_1graphics_1_1SceneObject.html#a1cacf4dc9c9f7f5ac8ff31006f3882e0',1,'vortex::graphics::SceneObject::chunkIndex'],['../structvortex_1_1graphics_1_1GPUObject.html#a0ce133afacd9ab74f59d5bd25aaf8e87',1,'vortex::graphics::GPUObject::chunkIndex'],['../structvortex_1_1voxel_1_1ObjectInstance.html#a1c97e673f44b5d898edd29db4e61f803',1,'vortex::voxel::ObjectInstance::chunkIndex']]],
   ['chunks_5',['chunks',['../structvortex_1_1voxel_1_1ChunkPool.html#a1c523d06b5244a234ddf8574732df02a',1,'vortex::voxel::ChunkPool']]],
   ['color_6',['color',['../structvortex_1_1graphics_1_1SceneMaterial.html#a626b166e1248a55be5173059690ed6fa',1,'vortex::graphics::SceneMaterial::color'],['../structvortex_1_1voxel_1_1PhysicalMaterial.html#a7ee5955b0495773e2197e9ff511c18ca',1,'vortex::voxel::PhysicalMaterial::color']]],
   ['commandbuffers_7',['commandBuffers',['../structvortex_1_1graphics_1_1GraphicsInternal.html#af406bc29eee457c65b019a5e5b0b076f',1,'vortex::graphics::GraphicsInternal']]],

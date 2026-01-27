@@ -98,11 +98,12 @@ $(function(){initNavTree('SceneManager_8cppm.html',''); initResizable(); });
   <div class="headertitle"><div class="title">SceneManager.cppm File Reference<div class="ingroups">module <a class="el" href="module_vortex_8graphics.html">vortex.graphics</a></div></div></div>
 </div><!--header-->
 <div class="contents">
-<div class="textblock"><code>#include &lt;vulkan/vulkan.h&gt;</code><br />
-<code>#include &lt;vector&gt;</code><br />
+<div class="textblock"><code>#include &lt;vector&gt;</code><br />
 <code>#include &lt;glm/glm.hpp&gt;</code><br />
+<code>#include &lt;vulkan/vulkan.h&gt;</code><br />
 <code>import <a class="el" href="Voxel_8cppm.html">vortex.voxel</a>;</code><br />
 <code>import <a class="el" href="Memory_8cppm.html">vortex.memory</a>;</code><br />
+<code>import <a class="el" href="Graphics_8cppm.html">vortex.graphics:camera_struct</a>;</code><br />
 </div><div class="textblock"><div class="dynheader">
 Include dependency graph for SceneManager.cppm:</div>
 <div class="dyncontent">
@@ -111,17 +112,16 @@ Include dependency graph for SceneManager.cppm:</div>
 </div><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="nested-classes" name="nested-classes"></a>
 Classes</h2></td></tr>
-<tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structvortex_1_1graphics_1_1SceneObject.html">vortex::graphics::SceneObject</a></td></tr>
-<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">High-level CPU representation of an object.  <a href="structvortex_1_1graphics_1_1SceneObject.html#details">More...</a><br /></td></tr>
-<tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structvortex_1_1graphics_1_1SceneMaterial.html">vortex::graphics::SceneMaterial</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Represents a material in the scene.  <a href="structvortex_1_1graphics_1_1SceneMaterial.html#details">More...</a><br /></td></tr>
+<tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structvortex_1_1graphics_1_1SceneObject.html">vortex::graphics::SceneObject</a></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">CPU-side representation of an object in the scene.  <a href="structvortex_1_1graphics_1_1SceneObject.html#details">More...</a><br /></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structvortex_1_1graphics_1_1GPUObject.html">vortex::graphics::GPUObject</a></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:"><td class="memItemLeft" align="right" valign="top">struct &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structvortex_1_1graphics_1_1CameraUBO.html">vortex::graphics::CameraUBO</a></td></tr>
-<tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:"><td class="memItemLeft" align="right" valign="top">class &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="classvortex_1_1graphics_1_1SceneManager.html">vortex::graphics::SceneManager</a></td></tr>
-<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Handles scene data, culling, and GPU buffer updates.  <a href="classvortex_1_1graphics_1_1SceneManager.html#details">More...</a><br /></td></tr>
+<tr class="memdesc:"><td class="mdescLeft">&#160;</td><td class="mdescRight">Manages scene data buffers (Objects, Materials, Chunks, <a class="el" href="structvortex_1_1graphics_1_1Camera.html" title="Represents the state of a 3D Camera.">Camera</a>).  <a href="classvortex_1_1graphics_1_1SceneManager.html#details">More...</a><br /></td></tr>
 <tr class="separator:"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="namespaces" name="namespaces"></a>

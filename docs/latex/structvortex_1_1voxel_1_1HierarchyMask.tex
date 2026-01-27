@@ -2,16 +2,16 @@
 \hypertarget{structvortex_1_1voxel_1_1HierarchyMask}{}\label{structvortex_1_1voxel_1_1HierarchyMask}\index{vortex::voxel::HierarchyMask@{vortex::voxel::HierarchyMask}}
 
 
-Acceleration structure for Ray Tracing (Grid Hierarchy).  
+Acceleration structure for Voxel Ray Tracing (Grid Hierarchy).  
 
 
 \doxysubsubsection*{Public Member Functions}
 \begin{DoxyCompactItemize}
 \item 
 bool \mbox{\hyperlink{structvortex_1_1voxel_1_1HierarchyMask_af01cc9e99a45f9f4777b19bddc6305bd}{Is\+Block\+Empty}} (int bx, int by, int bz) const
-\item 
+\begin{DoxyCompactList}\small\item\em Checks if a specific 4x4x4 block is marked as empty. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{structvortex_1_1voxel_1_1HierarchyMask_ae25babd90da77513f7dee5e570c9428d}{Set\+Block\+Status}} (int bx, int by, int bz, bool not\+Empty)
-\end{DoxyCompactItemize}
+\begin{DoxyCompactList}\small\item\em Updates the occupancy status of a block. \end{DoxyCompactList}\end{DoxyCompactItemize}
 \doxysubsubsection*{Public Attributes}
 \begin{DoxyCompactItemize}
 \item 
@@ -20,9 +20,9 @@ uint64\+\_\+t \mbox{\hyperlink{structvortex_1_1voxel_1_1HierarchyMask_a28671016c
 
 
 \doxysubsection{Detailed Description}
-Acceleration structure for Ray Tracing (Grid Hierarchy). 
+Acceleration structure for Voxel Ray Tracing (Grid Hierarchy). 
 
-Represents a 32x32x32 chunk divided into 8x8x8 blocks (4x4x4 voxels each). Each bit corresponds to one 4x4x4 block. 512 bits total (64 bytes). 
+Represents a 32x32x32 chunk divided into 8x8x8 blocks (4x4x4 voxels each). Each bit corresponds to one 4x4x4 block. If a bit is 0, the entire 4x4x4 block is empty, allow the raymarcher to skip it. Total size\+: 512 bits (64 bytes). 
 
 \doxysubsection{Member Function Documentation}
 \Hypertarget{structvortex_1_1voxel_1_1HierarchyMask_af01cc9e99a45f9f4777b19bddc6305bd}\label{structvortex_1_1voxel_1_1HierarchyMask_af01cc9e99a45f9f4777b19bddc6305bd} 
@@ -31,12 +31,43 @@ Represents a 32x32x32 chunk divided into 8x8x8 blocks (4x4x4 voxels each). Each 
 \doxysubsubsection{\texorpdfstring{IsBlockEmpty()}{IsBlockEmpty()}}
 {\footnotesize\ttfamily bool vortex\+::voxel\+::\+Hierarchy\+Mask\+::\+Is\+Block\+Empty (\begin{DoxyParamCaption}\item[{int}]{bx,  }\item[{int}]{by,  }\item[{int}]{bz }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
 
+
+
+Checks if a specific 4x4x4 block is marked as empty. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em bx} & Block X (0-\/7). \\
+\hline
+{\em by} & Block Y (0-\/7). \\
+\hline
+{\em bz} & Block Z (0-\/7). \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+True if the block is empty. 
+\end{DoxyReturn}
 \Hypertarget{structvortex_1_1voxel_1_1HierarchyMask_ae25babd90da77513f7dee5e570c9428d}\label{structvortex_1_1voxel_1_1HierarchyMask_ae25babd90da77513f7dee5e570c9428d} 
 \index{vortex::voxel::HierarchyMask@{vortex::voxel::HierarchyMask}!SetBlockStatus@{SetBlockStatus}}
 \index{SetBlockStatus@{SetBlockStatus}!vortex::voxel::HierarchyMask@{vortex::voxel::HierarchyMask}}
 \doxysubsubsection{\texorpdfstring{SetBlockStatus()}{SetBlockStatus()}}
 {\footnotesize\ttfamily void vortex\+::voxel\+::\+Hierarchy\+Mask\+::\+Set\+Block\+Status (\begin{DoxyParamCaption}\item[{int}]{bx,  }\item[{int}]{by,  }\item[{int}]{bz,  }\item[{bool}]{not\+Empty }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
 
+
+
+Updates the occupancy status of a block. 
+
+
+\begin{DoxyParams}{Parameters}
+{\em bx} & Block X (0-\/7). \\
+\hline
+{\em by} & Block Y (0-\/7). \\
+\hline
+{\em bz} & Block Z (0-\/7). \\
+\hline
+{\em not\+Empty} & If true, marks the block as occupied. \\
+\hline
+\end{DoxyParams}
 
 
 \doxysubsection{Member Data Documentation}

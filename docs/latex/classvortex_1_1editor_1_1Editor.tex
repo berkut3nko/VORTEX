@@ -2,7 +2,7 @@
 \hypertarget{classvortex_1_1editor_1_1Editor}{}\label{classvortex_1_1editor_1_1Editor}\index{vortex::editor::Editor@{vortex::editor::Editor}}
 
 
-\doxylink{classvortex_1_1editor_1_1Editor}{Editor} module for object manipulation and selection.  
+The in-\/game editor system.  
 
 
 \doxysubsubsection*{Public Member Functions}
@@ -11,13 +11,27 @@
 \mbox{\hyperlink{classvortex_1_1editor_1_1Editor_a5172c5417457fbdfdd7e7c8b99e0a9e7}{Editor}} ()=default
 \item 
 void \mbox{\hyperlink{classvortex_1_1editor_1_1Editor_ac84cb7a48f128a3eda71dd8ca49edf81}{Update}} (GLFWwindow \texorpdfstring{$\ast$}{*}window, \mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{graphics\+::\+Camera}} \&camera, \mbox{\hyperlink{classvortex_1_1graphics_1_1SceneManager}{graphics\+::\+Scene\+Manager}} \&scene\+Manager, uint32\+\_\+t width, uint32\+\_\+t height)
-\begin{DoxyCompactList}\small\item\em Updates editor state (input handling, shortcuts). \end{DoxyCompactList}\item 
+\begin{DoxyCompactList}\small\item\em Updates editor logic, input handling, and UI rendering. \end{DoxyCompactList}\item 
 void \mbox{\hyperlink{classvortex_1_1editor_1_1Editor_adcb6c0576863e79f29a94ac06bc44f4a}{Render\+Gizmo}} (\mbox{\hyperlink{structvortex_1_1graphics_1_1Camera}{graphics\+::\+Camera}} \&camera, uint32\+\_\+t width, uint32\+\_\+t height)
-\begin{DoxyCompactList}\small\item\em Renders Gizmos. Must be called inside Im\+Gui frame. \end{DoxyCompactList}\end{DoxyCompactItemize}
+\begin{DoxyCompactList}\small\item\em Renders the 3D Gizmo for the selected entity. \end{DoxyCompactList}\item 
+std\+::vector$<$ std\+::shared\+\_\+ptr$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity}{voxel\+::\+Voxel\+Entity}} $>$ $>$ \& \mbox{\hyperlink{classvortex_1_1editor_1_1Editor_a0e719044eaa2b17815f193371a3ef91b}{Get\+Entities}} ()
+\item 
+bool \mbox{\hyperlink{classvortex_1_1editor_1_1Editor_a9a0e8d585a8a3d056a51d164b63bfacd}{Is\+Scene\+Dirty}} () const
+\item 
+void \mbox{\hyperlink{classvortex_1_1editor_1_1Editor_a6d7a9200539cb4cb7ad80b8a527056d1}{Reset\+Scene\+Dirty}} ()
+\item 
+void \mbox{\hyperlink{classvortex_1_1editor_1_1Editor_a74988a866e36e655b2524eba3680f9ba}{Mark\+Dirty}} ()
+\item 
+std\+::shared\+\_\+ptr$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity}{voxel\+::\+Voxel\+Entity}} $>$ \mbox{\hyperlink{classvortex_1_1editor_1_1Editor_ab99727fd375bbe223c09a2976a27fb38}{Get\+Selected\+Entity}} () const
+\begin{DoxyCompactList}\small\item\em Returns the currently selected entity, or nullptr if none. \end{DoxyCompactList}\item 
+std\+::vector$<$ std\+::shared\+\_\+ptr$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity}{voxel\+::\+Voxel\+Entity}} $>$ $>$ \mbox{\hyperlink{classvortex_1_1editor_1_1Editor_a5ef5546bf52c19eb36d40b182a5302a8}{Consume\+Created\+Entities}} ()
+\begin{DoxyCompactList}\small\item\em Returns and clears the list of entities created by the \doxylink{classvortex_1_1editor_1_1Editor}{Editor} (e.\+g. Importer). \end{DoxyCompactList}\end{DoxyCompactItemize}
 
 
 \doxysubsection{Detailed Description}
-\doxylink{classvortex_1_1editor_1_1Editor}{Editor} module for object manipulation and selection. 
+The in-\/game editor system. 
+
+Handles object selection, Gizmo manipulation, and the Importer UI. 
 
 \doxysubsection{Constructor \& Destructor Documentation}
 \Hypertarget{classvortex_1_1editor_1_1Editor_a5172c5417457fbdfdd7e7c8b99e0a9e7}\label{classvortex_1_1editor_1_1Editor_a5172c5417457fbdfdd7e7c8b99e0a9e7} 
@@ -29,6 +43,44 @@ void \mbox{\hyperlink{classvortex_1_1editor_1_1Editor_adcb6c0576863e79f29a94ac06
 
 
 \doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1editor_1_1Editor_a5ef5546bf52c19eb36d40b182a5302a8}\label{classvortex_1_1editor_1_1Editor_a5ef5546bf52c19eb36d40b182a5302a8} 
+\index{vortex::editor::Editor@{vortex::editor::Editor}!ConsumeCreatedEntities@{ConsumeCreatedEntities}}
+\index{ConsumeCreatedEntities@{ConsumeCreatedEntities}!vortex::editor::Editor@{vortex::editor::Editor}}
+\doxysubsubsection{\texorpdfstring{ConsumeCreatedEntities()}{ConsumeCreatedEntities()}}
+{\footnotesize\ttfamily std\+::vector$<$ std\+::shared\+\_\+ptr$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity}{voxel\+::\+Voxel\+Entity}} $>$ $>$ vortex\+::editor\+::\+Editor\+::\+Consume\+Created\+Entities (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+
+
+Returns and clears the list of entities created by the \doxylink{classvortex_1_1editor_1_1Editor}{Editor} (e.\+g. Importer). 
+
+These entities need to be officially registered with the \doxylink{classvortex_1_1Engine}{Engine} to have physics. \Hypertarget{classvortex_1_1editor_1_1Editor_a0e719044eaa2b17815f193371a3ef91b}\label{classvortex_1_1editor_1_1Editor_a0e719044eaa2b17815f193371a3ef91b} 
+\index{vortex::editor::Editor@{vortex::editor::Editor}!GetEntities@{GetEntities}}
+\index{GetEntities@{GetEntities}!vortex::editor::Editor@{vortex::editor::Editor}}
+\doxysubsubsection{\texorpdfstring{GetEntities()}{GetEntities()}}
+{\footnotesize\ttfamily std\+::vector$<$ std\+::shared\+\_\+ptr$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity}{voxel\+::\+Voxel\+Entity}} $>$ $>$ \& vortex\+::editor\+::\+Editor\+::\+Get\+Entities (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1editor_1_1Editor_ab99727fd375bbe223c09a2976a27fb38}\label{classvortex_1_1editor_1_1Editor_ab99727fd375bbe223c09a2976a27fb38} 
+\index{vortex::editor::Editor@{vortex::editor::Editor}!GetSelectedEntity@{GetSelectedEntity}}
+\index{GetSelectedEntity@{GetSelectedEntity}!vortex::editor::Editor@{vortex::editor::Editor}}
+\doxysubsubsection{\texorpdfstring{GetSelectedEntity()}{GetSelectedEntity()}}
+{\footnotesize\ttfamily std\+::shared\+\_\+ptr$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelEntity}{voxel\+::\+Voxel\+Entity}} $>$ vortex\+::editor\+::\+Editor\+::\+Get\+Selected\+Entity (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const}
+
+
+
+Returns the currently selected entity, or nullptr if none. 
+
+\Hypertarget{classvortex_1_1editor_1_1Editor_a9a0e8d585a8a3d056a51d164b63bfacd}\label{classvortex_1_1editor_1_1Editor_a9a0e8d585a8a3d056a51d164b63bfacd} 
+\index{vortex::editor::Editor@{vortex::editor::Editor}!IsSceneDirty@{IsSceneDirty}}
+\index{IsSceneDirty@{IsSceneDirty}!vortex::editor::Editor@{vortex::editor::Editor}}
+\doxysubsubsection{\texorpdfstring{IsSceneDirty()}{IsSceneDirty()}}
+{\footnotesize\ttfamily bool vortex\+::editor\+::\+Editor\+::\+Is\+Scene\+Dirty (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption}) const\hspace{0.3cm}{\ttfamily [inline]}}
+
+\Hypertarget{classvortex_1_1editor_1_1Editor_a74988a866e36e655b2524eba3680f9ba}\label{classvortex_1_1editor_1_1Editor_a74988a866e36e655b2524eba3680f9ba} 
+\index{vortex::editor::Editor@{vortex::editor::Editor}!MarkDirty@{MarkDirty}}
+\index{MarkDirty@{MarkDirty}!vortex::editor::Editor@{vortex::editor::Editor}}
+\doxysubsubsection{\texorpdfstring{MarkDirty()}{MarkDirty()}}
+{\footnotesize\ttfamily void vortex\+::editor\+::\+Editor\+::\+Mark\+Dirty (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
+
 \Hypertarget{classvortex_1_1editor_1_1Editor_adcb6c0576863e79f29a94ac06bc44f4a}\label{classvortex_1_1editor_1_1Editor_adcb6c0576863e79f29a94ac06bc44f4a} 
 \index{vortex::editor::Editor@{vortex::editor::Editor}!RenderGizmo@{RenderGizmo}}
 \index{RenderGizmo@{RenderGizmo}!vortex::editor::Editor@{vortex::editor::Editor}}
@@ -37,17 +89,14 @@ void \mbox{\hyperlink{classvortex_1_1editor_1_1Editor_adcb6c0576863e79f29a94ac06
 
 
 
-Renders Gizmos. Must be called inside Im\+Gui frame. 
+Renders the 3D Gizmo for the selected entity. 
 
+\Hypertarget{classvortex_1_1editor_1_1Editor_a6d7a9200539cb4cb7ad80b8a527056d1}\label{classvortex_1_1editor_1_1Editor_a6d7a9200539cb4cb7ad80b8a527056d1} 
+\index{vortex::editor::Editor@{vortex::editor::Editor}!ResetSceneDirty@{ResetSceneDirty}}
+\index{ResetSceneDirty@{ResetSceneDirty}!vortex::editor::Editor@{vortex::editor::Editor}}
+\doxysubsubsection{\texorpdfstring{ResetSceneDirty()}{ResetSceneDirty()}}
+{\footnotesize\ttfamily void vortex\+::editor\+::\+Editor\+::\+Reset\+Scene\+Dirty (\begin{DoxyParamCaption}{ }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [inline]}}
 
-\begin{DoxyParams}{Parameters}
-{\em camera} & Main camera. \\
-\hline
-{\em width} & Screen width. \\
-\hline
-{\em height} & Screen height. \\
-\hline
-\end{DoxyParams}
 \Hypertarget{classvortex_1_1editor_1_1Editor_ac84cb7a48f128a3eda71dd8ca49edf81}\label{classvortex_1_1editor_1_1Editor_ac84cb7a48f128a3eda71dd8ca49edf81} 
 \index{vortex::editor::Editor@{vortex::editor::Editor}!Update@{Update}}
 \index{Update@{Update}!vortex::editor::Editor@{vortex::editor::Editor}}
@@ -56,19 +105,19 @@ Renders Gizmos. Must be called inside Im\+Gui frame.
 
 
 
-Updates editor state (input handling, shortcuts). 
+Updates editor logic, input handling, and UI rendering. 
 
 
 \begin{DoxyParams}{Parameters}
-{\em window} & Raw GLFW window. \\
+{\em window} & Input window. \\
 \hline
-{\em camera} & Main camera. \\
+{\em camera} & Active camera. \\
 \hline
-{\em scene\+Manager} & Scene manager for object access. \\
+{\em scene\+Manager} & Reference to the scene manager for raycasting/updates. \\
 \hline
-{\em width} & Screen width. \\
+{\em width} & Viewport width. \\
 \hline
-{\em height} & Screen height. \\
+{\em height} & Viewport height. \\
 \hline
 \end{DoxyParams}
 

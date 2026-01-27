@@ -34,8 +34,8 @@ digraph "src/graphics/internal/Swapchain.cpp"
   Node12 [id="Node000012",label="vector",height=0.2,width=0.4,color="grey60", fillcolor="#E0E0E0", style="filled",tooltip=" "];
   Node11 -> Node13 [id="edge37_Node000011_Node000013",color="steelblue1",style="solid",tooltip=" "];
   Node13 [id="Node000013",label="glm/glm.hpp",height=0.2,width=0.4,color="grey60", fillcolor="#E0E0E0", style="filled",tooltip=" "];
-  Node11 -> Node11 [id="edge38_Node000011_Node000011",color="steelblue1",style="solid",tooltip=" "];
-  Node11 -> Node14 [id="edge39_Node000011_Node000014",color="steelblue1",style="solid",tooltip=" "];
+  Node11 -> Node14 [id="edge38_Node000011_Node000014",color="steelblue1",style="solid",tooltip=" "];
   Node14 [id="Node000014",label="vortex.voxel",height=0.2,width=0.4,color="grey40", fillcolor="white", style="filled",URL="$Voxel_8cppm.html",tooltip=" "];
-  Node14 -> Node14 [id="edge40_Node000014_Node000014",color="steelblue1",style="solid",tooltip=" "];
+  Node14 -> Node14 [id="edge39_Node000014_Node000014",color="steelblue1",style="solid",tooltip=" "];
+  Node11 -> Node11 [id="edge40_Node000011_Node000011",color="steelblue1",style="solid",tooltip=" "];
 }

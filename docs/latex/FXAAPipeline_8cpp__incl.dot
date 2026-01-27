@@ -37,8 +37,8 @@ digraph "src/graphics/pipelines/internal/FXAAPipeline.cpp"
   Node13 -> Node3 [id="edge40_Node000013_Node000003",color="steelblue1",style="solid",tooltip=" "];
   Node13 -> Node14 [id="edge41_Node000013_Node000014",color="steelblue1",style="solid",tooltip=" "];
   Node14 [id="Node000014",label="glm/glm.hpp",height=0.2,width=0.4,color="grey60", fillcolor="#E0E0E0", style="filled",tooltip=" "];
-  Node13 -> Node13 [id="edge42_Node000013_Node000013",color="steelblue1",style="solid",tooltip=" "];
-  Node13 -> Node15 [id="edge43_Node000013_Node000015",color="steelblue1",style="solid",tooltip=" "];
+  Node13 -> Node15 [id="edge42_Node000013_Node000015",color="steelblue1",style="solid",tooltip=" "];
   Node15 [id="Node000015",label="vortex.voxel",height=0.2,width=0.4,color="grey40", fillcolor="white", style="filled",URL="$Voxel_8cppm.html",tooltip=" "];
-  Node15 -> Node15 [id="edge44_Node000015_Node000015",color="steelblue1",style="solid",tooltip=" "];
+  Node15 -> Node15 [id="edge43_Node000015_Node000015",color="steelblue1",style="solid",tooltip=" "];
+  Node13 -> Node13 [id="edge44_Node000013_Node000013",color="steelblue1",style="solid",tooltip=" "];
 }

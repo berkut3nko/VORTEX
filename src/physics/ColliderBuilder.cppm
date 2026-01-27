@@ -15,18 +15,18 @@ namespace vortex::physics {
     export struct ColliderBox {
         glm::vec3 min;
         glm::vec3 size;
-        uint8_t materialID; // To set friction/restitution based on material
+        uint8_t materialID; /// @brief Used to look up friction/restitution.
     };
 
     /**
      * @brief Responsible for converting Voxel Chunks into optimized physics shapes.
-     * @details Uses a Greedy Meshing approach tailored for physics boxes (not rendering quads).
+     * @details Uses a Greedy Meshing algorithm tailored for physics boxes (merging voxels into larger boxes).
      * This significantly reduces the number of child shapes in a Jolt CompoundShape.
      */
     export class VoxelColliderBuilder {
     public:
         /**
-         * @brief Generates a list of optimized boxes from a chunk.
+         * @brief Generates a list of optimized boxes from a voxel chunk.
          * @param chunk The source voxel data.
          * @return A vector of boxes representing the solid volume.
          */

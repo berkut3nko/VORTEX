@@ -98,6 +98,9 @@ $(function(){initNavTree('classvortex_1_1graphics_1_1RasterPipeline.html',''); i
   <div class="headertitle"><div class="title">vortex::graphics::RasterPipeline Class Reference<span class="mlabels"><span class="mlabel">export</span></span><div class="ingroups">module <a class="el" href="module_vortex_8graphics.html">vortex.graphics</a></div></div></div>
 </div><!--header-->
 <div class="contents">
+
+<p>Manages the main rasterization pipeline for Voxel Raymarching.  
+ <a href="#details">More...</a></p>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-methods" name="pub-methods"></a>
 Public Member Functions</h2></td></tr>
@@ -106,15 +109,21 @@ Public Member Functions</h2></td></tr>
 <tr class="memitem:aec5aa8958a15fd34e61239ecbff3a79a" id="r_aec5aa8958a15fd34e61239ecbff3a79a"><td class="memItemLeft" align="right" valign="top">&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#aec5aa8958a15fd34e61239ecbff3a79a">~RasterPipeline</a> ()</td></tr>
 <tr class="separator:aec5aa8958a15fd34e61239ecbff3a79a"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a105d93ebbdbc0b3429dc637aed6c9243" id="r_a105d93ebbdbc0b3429dc637aed6c9243"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a105d93ebbdbc0b3429dc637aed6c9243">Initialize</a> (VkDevice device, VkFormat colorFormat, VkFormat velocityFormat, VkFormat depthFormat, uint32_t framesInFlight, const <a class="el" href="structvortex_1_1memory_1_1AllocatedBuffer.html">memory::AllocatedBuffer</a> &amp;cameraBuffer, const <a class="el" href="structvortex_1_1memory_1_1AllocatedBuffer.html">memory::AllocatedBuffer</a> &amp;materialBuffer, const <a class="el" href="structvortex_1_1memory_1_1AllocatedBuffer.html">memory::AllocatedBuffer</a> &amp;objectBuffer, const <a class="el" href="structvortex_1_1memory_1_1AllocatedBuffer.html">memory::AllocatedBuffer</a> &amp;chunkBuffer)</td></tr>
+<tr class="memdesc:a105d93ebbdbc0b3429dc637aed6c9243"><td class="mdescLeft">&#160;</td><td class="mdescRight">Initializes the graphics pipeline, layout, and descriptors.  <br /></td></tr>
 <tr class="separator:a105d93ebbdbc0b3429dc637aed6c9243"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a10daf5467ff19bb9030980410248f0bc" id="r_a10daf5467ff19bb9030980410248f0bc"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a10daf5467ff19bb9030980410248f0bc">Shutdown</a> ()</td></tr>
 <tr class="separator:a10daf5467ff19bb9030980410248f0bc"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a617e244708c49bd15d0962109f01e4ad" id="r_a617e244708c49bd15d0962109f01e4ad"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a617e244708c49bd15d0962109f01e4ad">Bind</a> (VkCommandBuffer cmd, uint32_t frameIndex)</td></tr>
+<tr class="memdesc:a617e244708c49bd15d0962109f01e4ad"><td class="mdescLeft">&#160;</td><td class="mdescRight">Binds the pipeline and descriptor sets for the current frame.  <br /></td></tr>
 <tr class="separator:a617e244708c49bd15d0962109f01e4ad"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a5994ce3d7a3ec48124c1b1b8d85fcf31" id="r_a5994ce3d7a3ec48124c1b1b8d85fcf31"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="#a5994ce3d7a3ec48124c1b1b8d85fcf31">UpdateDescriptors</a> (uint32_t frameIndex)</td></tr>
+<tr class="memdesc:a5994ce3d7a3ec48124c1b1b8d85fcf31"><td class="mdescLeft">&#160;</td><td class="mdescRight">Updates descriptor sets with current buffer handles.  <br /></td></tr>
 <tr class="separator:a5994ce3d7a3ec48124c1b1b8d85fcf31"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
-<h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
+<a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
+<div class="textblock"><p>Manages the main rasterization pipeline for Voxel Raymarching. </p>
+<p>Uses a full-screen triangle or cube bounding boxes to trigger the fragment shader raymarcher. </p>
+</div><h2 class="groupheader">Constructor &amp; Destructor Documentation</h2>
 <a id="a3bcee315f878bbef495692431c39585c" name="a3bcee315f878bbef495692431c39585c"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a3bcee315f878bbef495692431c39585c">&#9670;&#160;</a></span>RasterPipeline()</h2>
 
@@ -168,6 +177,8 @@ Public Member Functions</h2></td></tr>
         </tr>
       </table>
 </div><div class="memdoc">
+
+<p>Binds the pipeline and descriptor sets for the current frame. </p>
 
 </div>
 </div>
@@ -225,6 +236,8 @@ Public Member Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
+<p>Initializes the graphics pipeline, layout, and descriptors. </p>
+
 </div>
 </div>
 <a id="a10daf5467ff19bb9030980410248f0bc" name="a10daf5467ff19bb9030980410248f0bc"></a>
@@ -258,6 +271,8 @@ Public Member Functions</h2></td></tr>
         </tr>
       </table>
 </div><div class="memdoc">
+
+<p>Updates descriptor sets with current buffer handles. </p>
 
 </div>
 </div>
