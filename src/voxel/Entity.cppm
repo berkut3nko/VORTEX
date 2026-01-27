@@ -32,6 +32,11 @@ namespace vortex::voxel {
         glm::vec3 logicalCenter{0.0f};
         uint32_t totalVoxelCount{0};
 
+        // --- Physics Properties ---
+        bool isStatic = false;       ///< If true, object is immovable (Bedrock).
+        bool isTrigger = false;      ///< If true, object detects overlaps but has no collision response.
+        bool shouldRebuildPhysics = false; ///< Set to true to force physics body regeneration (e.g. after Re-mesh).
+
         virtual ~VoxelEntity() = default;
 
         /**

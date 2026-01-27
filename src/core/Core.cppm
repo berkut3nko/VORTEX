@@ -8,6 +8,7 @@ module;
 export module vortex.core;
 
 export import vortex.graphics;
+export import vortex.physics;
 import vortex.voxel; 
 
 export import :camera;    
@@ -26,9 +27,14 @@ namespace vortex {
         
         void Shutdown();
         
-        void AddEntity(std::shared_ptr<voxel::VoxelEntity> entity);
+        /**
+         * @brief Adds an entity to the world and registers it with the physics engine.
+         * @param entity The voxel entity to add.
+         * @param isStatic If true, the object will be an immovable static collider (e.g., floor).
+         */
+        void AddEntity(std::shared_ptr<voxel::VoxelEntity> entity, bool isStatic = false);
 
-        // Updated to use PhysicalMaterial to match GraphicsContext
+        // Internal use / Advanced use
         void UploadScene(
             const std::vector<graphics::SceneObject>& objects, 
             const std::vector<voxel::PhysicalMaterial>& materials,

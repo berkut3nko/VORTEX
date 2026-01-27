@@ -63,6 +63,9 @@ target_sources(VortexCore PRIVATE
     src/core/internal/CameraController.cpp
     src/memory/internal/MemoryAllocator.cpp
 
+    src/physics/internal/ColliderBuilder.cpp
+    src/physics/internal/Jolt.cpp
+
     src/graphics/internal/ShaderCompiler.cpp
     src/graphics/internal/Graphics.cpp
     src/graphics/internal/UI.cpp
@@ -92,6 +95,10 @@ target_sources(VortexCore PUBLIC
     src/core/Logger.cppm
     src/core/Profiler.cppm
     src/memory/Memory.cppm
+
+    # Physics Modules
+    src/physics/Physics.cppm
+    src/physics/ColliderBuilder.cppm
 
     # Graphics Modules
     src/graphics/Graphics.cppm

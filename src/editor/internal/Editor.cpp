@@ -3,11 +3,6 @@ module;
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 #include <ImGuizmo.h>
-
-// DO NOT USE GLM_FORCE_DEPTH_ZERO_TO_ONE HERE
-// ImGuizmo expects OpenGL-style clip space (-1 to 1 Z).
-// Using Vulkan 0..1 range here breaks ImGuizmo raycasting.
-
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -49,6 +44,13 @@ namespace vortex::editor {
         RenderImporterWindow();
     }
 
+    std::shared_ptr<voxel::VoxelEntity> Editor::GetSelectedEntity() const {
+        if (m_SelectedObjectID >= 0 && m_SelectedObjectID < (int)m_Entities.size()) {
+            return m_Entities[m_SelectedObjectID];
+        }
+        return nullptr;
+    }
+
     void Editor::RenderImporterWindow() {
         if (ImGui::Begin("Scene Editor")) {
             if (ImGui::CollapsingHeader("Importer")) {
@@ -63,9 +65,7 @@ namespace vortex::editor {
                     
                     Log::Info("Importing: " + dynObj->name);
                     dynObj->Remesh();
-                    
-                    m_Entities.push_back(dynObj);
-                    m_SceneDirty = true;
+                    m_CreatedEntities.push_back(dynObj);
                 }
             }
 
@@ -84,17 +84,36 @@ namespace vortex::editor {
         bool isSelected = (m_SelectedObjectID == index);
         
         if (ImGui::Selectable(entity->name.c_str(), isSelected)) {
-            m_SelectedObjectID = index;
+            if(m_SelectedObjectID != index)
+                m_SelectedObjectID = index;
+            else
+                m_SelectedObjectID = -1; 
         }
 
-        if (isSelected && ImGui::TreeNode("Details")) {
+        if (isSelected) {
+            ImGui::Indent();
+            ImGui::TextDisabled("Physics Properties");
+            
+            // Physics toggles
+            ImGui::Checkbox("Is Static (Bedrock)", &entity->isStatic);
+            ImGui::Checkbox("Is Trigger (Sensor)", &entity->isTrigger);
+            ImGui::Spacing();
+
             auto dynMesh = std::dynamic_pointer_cast<voxel::DynamicMeshObject>(entity);
             if (dynMesh) {
                 ImGui::TextColored(ImVec4(0.5f,1.0f,0.5f,1.0f), "[Imported Mesh]");
                 if (ImGui::DragFloat("Re-Import Scale", &dynMesh->importSettings.scale, 0.1f, 0.1f, 100.0f)) {}
-                if (ImGui::Button("Re-Mesh")) {
+                
+                // --- RE-MESH LOGIC ---
+                if (ImGui::Button("Re-Mesh & Rebuild Physics")) {
+                    // 1. Re-generate Voxels from Mesh
                     dynMesh->Remesh();
-                    m_SceneDirty = true;
+                    
+                    // 2. Mark Scene Dirty (Update Graphics Buffer)
+                    m_SceneDirty = true; 
+                    
+                    // 3. Mark Physics Dirty (Engine will regenerate Jolt Body)
+                    entity->shouldRebuildPhysics = true; 
                 }
             } else {
                  ImGui::TextColored(ImVec4(0.5f,0.8f,1.0f,1.0f), "[Procedural/Generic]");
@@ -102,7 +121,8 @@ namespace vortex::editor {
 
             ImGui::Text("Parts: %zu", entity->parts.size());
             ImGui::Text("Voxels: %u", entity->totalVoxelCount);
-            ImGui::TreePop();
+            ImGui::Unindent();
+            ImGui::Separator();
         }
         ImGui::PopID();
     }
@@ -118,7 +138,6 @@ namespace vortex::editor {
             glfwGetCursorPos(window, &mouseX, &mouseY);
             
             glm::mat4 view = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
-            // Increased Z-Far to 400.0f to match renderer
             glm::mat4 proj = glm::perspective(glm::radians(camera.fov), (float)width / (float)height, 0.5f, 400.0f);
             
             float x = (2.0f * (float)mouseX) / width - 1.0f;
@@ -173,9 +192,6 @@ namespace vortex::editor {
 
         glm::mat4 view = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
         glm::mat4 proj = glm::perspective(glm::radians(camera.fov), (float)width / (float)height, 0.5f, 400.0f);
-        
-        // Fix for Vulkan Y-flip
-        proj[1][1] *= -1; 
 
         auto& entity = m_Entities[m_SelectedObjectID];
         glm::mat4 model = entity->transform;
