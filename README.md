@@ -53,49 +53,87 @@ add_custom_command(TARGET ${CMAKE_PROJECT_NAME} POST_BUILD
 # Code structure
 ```text
 engine/
-├── cmake/
-├── shaders/
-├── src/
-│   ├── core/
-│   │   ├── internal/
-│   │   │   └── Engine.cpp
+├── cmake
+│   └── Dependencies.cmake
+├── CMakeLists.txt
+├── LICENSE
+├── models
+│   └── frank.glb
+├── README.md
+├── shaders
+│   ├── fxaa.comp
+│   ├── taa.comp
+│   ├── voxel.frag
+│   └── voxel.vert
+├── src
+│   ├── core
+│   │   ├── CameraController.cppm
 │   │   ├── Core.cppm
+│   │   ├── internal
+│   │   │   ├── CameraController.cpp
+│   │   │   ├── Engine.cpp
+│   │   │   └── Profiler.cpp
 │   │   ├── Logger.cppm
 │   │   └── Profiler.cppm
-│   │   
-│   ├── math/
-│   │   ├── Math.cppm
-│   │   └── VoxelMath.cppm
-│   │   
-│   ├── voxel/
-│   │   ├── Voxel.cppm
-│   │   ├── Data.cppm
-│   │   ├── meshing/
-│   │   │   ├── MesherInterface.cppm
-│   │   │   ├── Greedy.cpp
-│   │   │   ├── Marching.cpp
-│   │   │   └── Naive.cpp
-│   │   └── storage/
-│   │   
-│   ├── graphics/
-│   │   ├── rhi/
-│   │   ├── pipelines/
-│   │   ├── internal/
+│   ├── editor
+│   │   ├── Editor.cppm
+│   │   └── internal
+│   │       └── Editor.cpp
+│   ├── graphics
+│   │   ├── CameraStruct.cppm
+│   │   ├── Context.cppm
+│   │   ├── Graphics.cppm
+│   │   ├── internal
+│   │   │   ├── Context.cpp
+│   │   │   ├── Graphics.cpp
+│   │   │   ├── RenderResources.cpp
+│   │   │   ├── SceneManager.cpp
 │   │   │   ├── ShaderCompiler.cpp
-│   │   │   └── VulkanContext.cpp
-│   │   └── Graphics.cppm
-│   ├── memory/
-│   │   ├── internal/
+│   │   │   ├── Swapchain.cpp
+│   │   │   ├── UI.cpp
+│   │   │   └── Window.cpp
+│   │   ├── pipelines
+│   │   │   ├── FXAAPipeline.cppm
+│   │   │   ├── internal
+│   │   │   │   ├── FXAAPipeline.cpp
+│   │   │   │   ├── RasterPipeline.cpp
+│   │   │   │   └── TAAPipeline.cpp
+│   │   │   ├── RasterPipeline.cppm
+│   │   │   └── TAAPipeline.cppm
+│   │   ├── RenderResources.cppm
+│   │   ├── SceneManager.cppm
+│   │   ├── Shader.cppm
+│   │   ├── Swapchain.cppm
+│   │   ├── UI.cppm
+│   │   └── Window.cppm
+│   ├── memory
+│   │   ├── internal
 │   │   │   └── MemoryAllocator.cpp
 │   │   └── Memory.cppm
-│   │   
-│   └── physics/
-│       ├── Physics.cppm
-│       └── Body.cppm
-│        
-└── main.cpp
-│
-└── tests/
+│   ├── mesh
+│   │   ├── internal
+│   │   │   └── MeshConverter.cpp
+│   │   ├── MeshConverter.cppm
+│   │   └── MeshObject.cppm
+│   ├── physics
+│   │   ├── ColliderBuilder.cppm
+│   │   ├── internal
+│   │   │   ├── ColliderBuilder.cpp
+│   │   │   └── Jolt.cpp
+│   │   └── Physics.cppm
+│   └── voxel
+│       ├── Chunk.cppm
+│       ├── Entity.cppm
+│       ├── Hierarchy.cppm
+│       ├── Material.cppm
+│       ├── Object.cppm
+│       ├── Palette.cppm
+│       ├── ShapeBuilder.cppm
+│       ├── Voxel.cppm
+│       └── World.cppm
+└── tests
+    ├── CMakeLists.txt
+    └── test_main.cpp
 ```
 
 # LICENSE
