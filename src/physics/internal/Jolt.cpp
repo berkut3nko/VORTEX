@@ -11,7 +11,7 @@ module;
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Body/BodyActivationListener.h>
-#include <Jolt/Physics/Body/BodyLock.h> // Required for BodyLockWrite
+#include <Jolt/Physics/Body/BodyLock.h> 
 
 #include <iostream>
 #include <cstdarg>
@@ -26,8 +26,6 @@ module vortex.physics;
 import vortex.log;
 import vortex.voxel;
 
-// --- Jolt Boilerplate Helpers ---
-
 namespace Layers {
     static constexpr JPH::ObjectLayer NON_MOVING = 0;
     static constexpr JPH::ObjectLayer MOVING = 1;
@@ -40,19 +38,17 @@ namespace BroadPhaseLayers {
     static constexpr uint32_t NUM_LAYERS(2);
 };
 
-// Class that determines if two object layers can collide
 class ObjectLayerPairFilterImpl : public JPH::ObjectLayerPairFilter {
 public:
     virtual bool ShouldCollide(JPH::ObjectLayer inObject1, JPH::ObjectLayer inObject2) const override {
         switch (inObject1) {
-            case Layers::NON_MOVING: return inObject2 == Layers::MOVING; // Non-moving only collides with moving
-            case Layers::MOVING:     return true; // Moving collides with everything
+            case Layers::NON_MOVING: return inObject2 == Layers::MOVING; 
+            case Layers::MOVING:     return true; 
             default:                 return false;
         }
     }
 };
 
-// Class that determines if an object layer can collide with a broadphase layer
 class BPLayerInterfaceImpl : public JPH::BroadPhaseLayerInterface {
 public:
     BPLayerInterfaceImpl() {
@@ -67,6 +63,7 @@ public:
         return mObjectToBroadPhase[inLayer];
     }
 
+    // --- FIX: Implement GetBroadPhaseLayerName ---
 #if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
     virtual const char* GetBroadPhaseLayerName(JPH::BroadPhaseLayer inLayer) const override {
         switch ((JPH::BroadPhaseLayer::Type)inLayer) {
@@ -81,7 +78,6 @@ private:
     JPH::BroadPhaseLayer mObjectToBroadPhase[Layers::NUM_LAYERS];
 };
 
-// Class that determines if an object layer can collide with a broadphase layer
 class ObjectVsBroadPhaseLayerFilterImpl : public JPH::ObjectVsBroadPhaseLayerFilter {
 public:
     virtual bool ShouldCollide(JPH::ObjectLayer inLayer1, JPH::BroadPhaseLayer inLayer2) const override {
@@ -93,14 +89,11 @@ public:
     }
 };
 
-// Simple body activation listener
 class MyBodyActivationListener : public JPH::BodyActivationListener {
 public:
     virtual void OnBodyActivated(const JPH::BodyID& inBodyID, uint64_t inBodyUserData) override { }
     virtual void OnBodyDeactivated(const JPH::BodyID& inBodyID, uint64_t inBodyUserData) override { }
 };
-
-// --- Helpers ---
 
 static void TraceImpl(const char* inFMT, ...) {
     va_list list;
@@ -132,13 +125,18 @@ namespace vortex::physics {
     PhysicsSystem::~PhysicsSystem() { Shutdown(); }
 
     void PhysicsSystem::Initialize() {
+        // Prevent double initialization leak
+        if (m_Internal->jobSystem) {
+            Shutdown();
+        }
+
         JPH::RegisterDefaultAllocator();
         
         JPH::Trace = TraceImpl;
         JPH::Factory::sInstance = new JPH::Factory();
         JPH::RegisterTypes();
 
-        m_Internal->tempAllocator = new JPH::TempAllocatorImpl(10 * 1024 * 1024); // 10MB temp buffer
+        m_Internal->tempAllocator = new JPH::TempAllocatorImpl(10 * 1024 * 1024);
         m_Internal->jobSystem = new JPH::JobSystemThreadPool(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, std::thread::hardware_concurrency() - 1);
 
         const uint32_t cMaxBodies = 1024;
@@ -159,45 +157,45 @@ namespace vortex::physics {
     }
 
     void PhysicsSystem::Shutdown() {
-        if (m_Internal->jobSystem) {
+        if (m_Internal && m_Internal->jobSystem) {
             delete m_Internal->jobSystem;
             delete m_Internal->tempAllocator;
-            delete JPH::Factory::sInstance;
-            JPH::Factory::sInstance = nullptr;
+            
+            // JPH::Factory is global singleton, strictly we should delete it.
+            if (JPH::Factory::sInstance) {
+                delete JPH::Factory::sInstance;
+                JPH::Factory::sInstance = nullptr;
+            }
+            
             m_Internal->jobSystem = nullptr;
+            m_Internal->tempAllocator = nullptr;
         }
     }
 
     void PhysicsSystem::Update(float deltaTime) {
-        // If deltaTime is too high, clamp it or step multiple times. 
-        // For simplicity, we use 1 step per frame here, but ideally use fixed timestep accumulator.
         const int cCollisionSteps = 1;
-        m_Internal->physicsSystem.Update(deltaTime, cCollisionSteps, m_Internal->tempAllocator, m_Internal->jobSystem);
+        // Check if initialized before update
+        if(m_Internal->jobSystem) {
+            m_Internal->physicsSystem.Update(deltaTime, cCollisionSteps, m_Internal->tempAllocator, m_Internal->jobSystem);
+        }
     }
 
     BodyHandle PhysicsSystem::AddBody(std::shared_ptr<vortex::voxel::VoxelEntity> entity, bool isStatic) {
-        if (!entity || entity->parts.empty()) return {JPH::BodyID::cInvalidBodyID};
-
-        auto& chunk = *entity->parts[0]->chunk;
+        if (!entity || entity->parts.empty() || !m_Internal->jobSystem) return {JPH::BodyID::cInvalidBodyID};
         
-        // 1. Build Colliders using VoxelColliderBuilder
-        auto boxes = VoxelColliderBuilder::Build(chunk);
-
-        if (boxes.empty()) {
-            // Check if ANY part has colliders (logic from previous fix)
-            bool hasAny = false;
-            for(auto& p : entity->parts) {
+        auto boxes = VoxelColliderBuilder::Build(*entity->parts[0]->chunk); // Simplified for part 0
+        bool hasAny = !boxes.empty();
+        
+        if (!hasAny) {
+             for(auto& p : entity->parts) {
                 if(p->chunk && !VoxelColliderBuilder::Build(*p->chunk).empty()) {
                     hasAny = true; break;
                 }
             }
-            if(!hasAny) {
-                vortex::Log::Warn("No colliders generated for entity: " + entity->name);
-                return {JPH::BodyID::cInvalidBodyID};
-            }
         }
+        
+        if(!hasAny) return {JPH::BodyID::cInvalidBodyID};
 
-        // 2. Create Compound Shape
         JPH::StaticCompoundShapeSettings compoundSettings;
         
         for (const auto& part : entity->parts) {
@@ -206,38 +204,34 @@ namespace vortex::physics {
             auto partBoxes = VoxelColliderBuilder::Build(*part->chunk);
             for (const auto& box : partBoxes) {
                 JPH::Vec3 halfExtent = ToJolt(box.size) * 0.5f;
-                // Calculate center in Entity Local Space
                 glm::vec3 boxCenterLocal = part->position + box.min + (box.size * 0.5f);
                 JPH::Vec3 center = ToJolt(boxCenterLocal);
-
                 compoundSettings.AddShape(center, JPH::Quat::sIdentity(), new JPH::BoxShape(halfExtent));
             }
         }
 
         auto shapeResult = compoundSettings.Create();
         if (shapeResult.HasError()) {
-            vortex::Log::Error("Failed to create Jolt shape: " + std::string(shapeResult.GetError()));
+            vortex::Log::Error("Jolt Shape Error: " + std::string(shapeResult.GetError()));
             return {JPH::BodyID::cInvalidBodyID};
         }
 
         JPH::ShapeRefC shape = shapeResult.Get();
 
-        // 3. Create Body
         JPH::BodyCreationSettings bodySettings(
-            shape.GetPtr(),                          // Pass raw pointer to shape
-            ToJolt(glm::vec3(entity->transform[3])), // Initial Position
-            ToJolt(glm::quat(entity->transform)),    // Initial Rotation
+            shape.GetPtr(),                          
+            ToJolt(glm::vec3(entity->transform[3])), 
+            ToJolt(glm::quat(entity->transform)),    
             isStatic ? JPH::EMotionType::Static : JPH::EMotionType::Dynamic,
             isStatic ? Layers::NON_MOVING : Layers::MOVING
         );
 
-        // Allow dynamic objects to sleep
         bodySettings.mAllowSleeping = true;
         bodySettings.mIsSensor = entity->isTrigger;
         
         if (!isStatic) {
             bodySettings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
-            bodySettings.mMassPropertiesOverride.mMass = 10.0f; // Default mass
+            bodySettings.mMassPropertiesOverride.mMass = 10.0f;
         }
 
         JPH::BodyInterface& bodyInterface = m_Internal->physicsSystem.GetBodyInterface();
@@ -251,7 +245,7 @@ namespace vortex::physics {
     }
 
     void PhysicsSystem::RemoveBody(BodyHandle handle) {
-        if (handle.id == JPH::BodyID::cInvalidBodyID) return;
+        if (handle.id == JPH::BodyID::cInvalidBodyID || !m_Internal->jobSystem) return;
         
         JPH::BodyID bodyID(handle.id);
         JPH::BodyInterface& bodyInterface = m_Internal->physicsSystem.GetBodyInterface();
@@ -261,10 +255,10 @@ namespace vortex::physics {
     }
 
     void PhysicsSystem::SyncBodyTransform(std::shared_ptr<vortex::voxel::VoxelEntity> entity, BodyHandle handle) {
+        if(!m_Internal->jobSystem) return;
         JPH::BodyID bodyID(handle.id);
         JPH::BodyInterface& bodyInterface = m_Internal->physicsSystem.GetBodyInterface();
         
-        // If body is kinematic (being moved by gizmo), don't overwrite transform from physics!
         if (bodyInterface.GetMotionType(bodyID) == JPH::EMotionType::Kinematic || 
             bodyInterface.GetMotionType(bodyID) == JPH::EMotionType::Static) return;
 
@@ -278,34 +272,27 @@ namespace vortex::physics {
         glm::mat4 transform = glm::mat4(1.0f);
         transform = glm::translate(transform, glmPos);
         transform = transform * glm::mat4_cast(glmRot);
-        
-        // Preserve scale if it exists (assuming uniform scale 1.0 for now as Jolt doesn't scale rigid bodies easily)
         entity->transform = transform;
     }
 
     void PhysicsSystem::SetBodyKinematic(BodyHandle handle, bool isKinematic) {
+        if(!m_Internal->jobSystem) return;
         JPH::BodyID bodyID(handle.id);
         JPH::BodyInterface& bodyInterface = m_Internal->physicsSystem.GetBodyInterface();
 
-        // Check if static to prevent changing bedrock
         if (bodyInterface.GetMotionType(bodyID) == JPH::EMotionType::Static) return;
 
         JPH::EMotionType targetType = isKinematic ? JPH::EMotionType::Kinematic : JPH::EMotionType::Dynamic;
 
         if (bodyInterface.GetMotionType(bodyID) != targetType) {
             bodyInterface.SetMotionType(bodyID, targetType, JPH::EActivation::Activate);
-            
-            if (isKinematic) {
-                // Stop movement when grabbing
-                bodyInterface.SetLinearAndAngularVelocity(bodyID, JPH::Vec3::sZero(), JPH::Vec3::sZero());
-            } else {
-                // Wake up when releasing
-                bodyInterface.ActivateBody(bodyID);
-            }
+            if (isKinematic) bodyInterface.SetLinearAndAngularVelocity(bodyID, JPH::Vec3::sZero(), JPH::Vec3::sZero());
+            else bodyInterface.ActivateBody(bodyID);
         }
     }
 
     void PhysicsSystem::SetBodyType(BodyHandle handle, bool isStatic) {
+        if(!m_Internal->jobSystem) return;
         JPH::BodyID bodyID(handle.id);
         JPH::BodyInterface& bodyInterface = m_Internal->physicsSystem.GetBodyInterface();
         
@@ -319,8 +306,8 @@ namespace vortex::physics {
     }
 
     void PhysicsSystem::SetBodySensor(BodyHandle handle, bool isTrigger) {
+        if(!m_Internal->jobSystem) return;
         JPH::BodyID bodyID(handle.id);
-        // Use BodyLockWrite because BodyInterface does not have SetIsSensor
         const JPH::BodyLockInterface& lockInterface = m_Internal->physicsSystem.GetBodyLockInterface();
         JPH::BodyLockWrite lock(lockInterface, bodyID);
         if (lock.Succeeded()) {
@@ -329,6 +316,7 @@ namespace vortex::physics {
     }
 
     void PhysicsSystem::SetBodyTransform(BodyHandle handle, const glm::mat4& transform) {
+        if(!m_Internal->jobSystem) return;
         JPH::BodyID bodyID(handle.id);
         JPH::BodyInterface& bodyInterface = m_Internal->physicsSystem.GetBodyInterface();
         
@@ -339,5 +327,4 @@ namespace vortex::physics {
 
         bodyInterface.SetPositionAndRotation(bodyID, ToJolt(pos), ToJolt(rot), JPH::EActivation::DontActivate);
     }
-
 }
