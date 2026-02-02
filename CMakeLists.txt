@@ -66,6 +66,8 @@ target_sources(VortexCore PRIVATE
     src/physics/internal/ColliderBuilder.cpp
     src/physics/internal/Jolt.cpp
 
+    src/voxel/internal/Destruction.cpp
+
     src/graphics/internal/ShaderCompiler.cpp
     src/graphics/internal/Graphics.cpp
     src/graphics/internal/UI.cpp
@@ -126,6 +128,7 @@ target_sources(VortexCore PUBLIC
     src/voxel/Object.cppm
     src/voxel/ShapeBuilder.cppm
     src/voxel/Entity.cppm
+    src/voxel/Destruction.cppm
 
     # Dynamic Mesh Objects
     src/mesh/MeshObject.cppm

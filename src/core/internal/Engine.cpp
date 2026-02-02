@@ -6,6 +6,7 @@ module;
 #include <functional>
 #include <vector> 
 #include <string> 
+#include <algorithm> // Added for std::remove
 #include <GLFW/glfw3.h>
 #include <imgui.h> 
 #include <glm/glm.hpp>
@@ -62,20 +63,28 @@ namespace vortex {
     }
 
     void Engine::AddEntity(std::shared_ptr<voxel::VoxelEntity> entity, bool isStatic) {
-        if (entity) {
-            // Set initial state
-            entity->isStatic = isStatic;
-            
-            // Add to Editor
-            m_State->editor.GetEntities().push_back(entity);
-            m_State->editor.MarkDirty();
-            
-            // Add to Physics
-            auto handle = m_State->physicsSystem.AddBody(entity, isStatic);
-            
-            // Add to Simulation Loop using explicit constructor
-            m_State->simObjects.emplace_back(entity, handle, isStatic, entity->isTrigger);
+        if (!entity) return;
+
+        // --- SHRED Analysis Pass (Initial) ---
+        if (entity->isDestructible) {
+            auto islands = voxel::SHREDSystem::AnalyzeConnectivity(entity);
+            if (islands.size() > 1) {
+                Log::Info("SHRED: Entity '" + entity->name + "' split into " + std::to_string(islands.size()) + " fragments upon init.");
+                auto fragments = voxel::SHREDSystem::SplitEntity(entity, islands);
+                for (auto& frag : fragments) {
+                    frag->isDestructible = true; // Allow recursive destruction
+                    AddEntity(frag, frag->isStatic);
+                }
+                return; 
+            }
         }
+
+        entity->isStatic = isStatic;
+        m_State->editor.GetEntities().push_back(entity);
+        m_State->editor.MarkDirty();
+        
+        auto handle = m_State->physicsSystem.AddBody(entity, isStatic);
+        m_State->simObjects.emplace_back(entity, handle, isStatic, entity->isTrigger);
     }
 
     void Engine::Run(std::function<void()> onGuiRender) {
@@ -104,10 +113,9 @@ namespace vortex {
                 core::ProfileScope p("CPU: Editor Update");
                 m_State->editor.Update(m_State->graphicsContext->GetWindow(), m_State->graphicsContext->GetCamera(), m_State->graphicsContext->GetSceneManager(), width, height);
 
-                // NEW: Register entities created by Editor (Importer)
                 auto newEntities = m_State->editor.ConsumeCreatedEntities();
                 for(auto& e : newEntities) {
-                    AddEntity(e, false); // Default to Dynamic for imported meshes
+                    AddEntity(e, false); 
                 }
             }
 
@@ -198,46 +206,82 @@ namespace vortex {
     void Engine::UpdateSystems(float deltaTime) { 
         auto selectedEntity = m_State->editor.GetSelectedEntity();
 
-        // Iterate by reference to modify state
-        for (auto& simObj : m_State->simObjects) {
+        // 1. Prepare Palette for SHRED checks
+        voxel::MaterialPalette tempPalette;
+        for(const auto& m : m_State->persistentMaterials) tempPalette.AddMaterial(m);
+        // Note: Dynamic meshes might have their own local materials not in persistent list at index.
+        // For simplicity, we assume global palette for integrity checks or basic default.
+
+        // Lists to manage entity lifecycle changes
+        std::vector<std::shared_ptr<voxel::VoxelEntity>> entitiesToAdd;
+        std::vector<physics::BodyHandle> bodiesToRemove;
+        
+        // We use an index loop because we might need to remove elements (carefully)
+        std::vector<size_t> indicesToRemove;
+
+        for (size_t i = 0; i < m_State->simObjects.size(); ++i) {
+            auto& simObj = m_State->simObjects[i];
             auto& entity = simObj.entity;
             
             if (!entity) continue;
 
-            // --- 1. Handle Physics Rebuild (e.g. after Re-mesh) ---
-            // Use local bool to help optimizer
-            bool needsRebuild = entity->shouldRebuildPhysics;
-            if (needsRebuild) {
-                Log::Info("Rebuilding physics for entity: " + entity->name);
+            // --- SHRED: Structural Integrity Check ---
+            // Only check if destructible and NOT currently being grabbed by editor
+            if (entity->isDestructible && entity != selectedEntity) {
+                // Perform check. Warning: This is expensive to do every frame for all objects.
+                // In a real game, schedule this less frequently or only on collision events.
+                if (voxel::SHREDSystem::ValidateStructuralIntegrity(entity, tempPalette)) {
+                    // Integrity failed -> Voxels destroyed.
+                    // Now check if it split into islands.
+                    auto islands = voxel::SHREDSystem::AnalyzeConnectivity(entity);
+                    
+                    if (islands.empty()) {
+                        // Case 0: Total destruction (no voxels left)
+                        Log::Info("SHRED: Entity '" + entity->name + "' was completely pulverized.");
+                        indicesToRemove.push_back(i);
+                        bodiesToRemove.push_back(simObj.bodyHandle);
+                    }
+                    else if (islands.size() > 1) {
+                        // Case 1: Split into multiple fragments
+                        Log::Info("SHRED: Structural Failure! Entity '" + entity->name + "' split into " + std::to_string(islands.size()) + " fragments.");
+                        auto fragments = voxel::SHREDSystem::SplitEntity(entity, islands);
+                        entitiesToAdd.insert(entitiesToAdd.end(), fragments.begin(), fragments.end());
+                        
+                        // Mark current parent for removal
+                        indicesToRemove.push_back(i);
+                        bodiesToRemove.push_back(simObj.bodyHandle);
+                    } else {
+                        // Case 2: Just damage (1 island remaining), keep original entity but update physics
+                        entity->shouldRebuildPhysics = true;
+                        m_State->editor.MarkDirty();
+                    }
+                }
+            }
+
+            // --- Physics Rebuild ---
+            if (entity->shouldRebuildPhysics) {
                 m_State->physicsSystem.RemoveBody(simObj.bodyHandle);
                 simObj.bodyHandle = m_State->physicsSystem.AddBody(entity, entity->isStatic);
-                
-                if (entity->isTrigger) {
-                    m_State->physicsSystem.SetBodySensor(simObj.bodyHandle, true);
-                }
+                if (entity->isTrigger) m_State->physicsSystem.SetBodySensor(simObj.bodyHandle, true);
                 
                 entity->shouldRebuildPhysics = false;
-                
-                // Sync internal state
                 simObj.lastStaticState = entity->isStatic;
                 simObj.lastTriggerState = entity->isTrigger;
             }
 
-            // --- 2. Handle State Changes (Editor Toggles) ---
-            bool currentStatic = entity->isStatic;
-            if (currentStatic != simObj.lastStaticState) {
-                m_State->physicsSystem.SetBodyType(simObj.bodyHandle, currentStatic);
-                simObj.lastStaticState = currentStatic;
+            // --- State Sync ---
+            if (entity->isStatic != simObj.lastStaticState) {
+                m_State->physicsSystem.SetBodyType(simObj.bodyHandle, entity->isStatic);
+                simObj.lastStaticState = entity->isStatic;
             }
 
-            bool currentTrigger = entity->isTrigger;
-            if (currentTrigger != simObj.lastTriggerState) {
-                m_State->physicsSystem.SetBodySensor(simObj.bodyHandle, currentTrigger);
-                simObj.lastTriggerState = currentTrigger;
+            if (entity->isTrigger != simObj.lastTriggerState) {
+                m_State->physicsSystem.SetBodySensor(simObj.bodyHandle, entity->isTrigger);
+                simObj.lastTriggerState = entity->isTrigger;
             }
 
-            // --- 3. Handle Gizmo Interaction ---
-            if (!currentStatic) {
+            // Gizmo/Physics Sync
+            if (!entity->isStatic) {
                 bool isSelected = (entity == selectedEntity);
                 m_State->physicsSystem.SetBodyKinematic(simObj.bodyHandle, isSelected);
 
@@ -247,27 +291,51 @@ namespace vortex {
             }
         }
 
-        // --- 4. Step Physics ---
+        // Process Removals (Reverse order to keep indices valid)
+        for (auto it = indicesToRemove.rbegin(); it != indicesToRemove.rend(); ++it) {
+            size_t idx = *it;
+            
+            // Capture the entity pointer before removing the wrapper from simObjects
+            auto entityPtr = m_State->simObjects[idx].entity;
+
+            // 1. Remove from Physics Simulation list
+            m_State->simObjects.erase(m_State->simObjects.begin() + idx);
+            
+            // 2. Remove from Editor Entity List (Crucial for correct selection and rendering)
+            auto& editorEntities = m_State->editor.GetEntities();
+            
+            // Note: std::remove shifts valid elements to the front and returns the new logical end.
+            auto newEnd = std::remove(editorEntities.begin(), editorEntities.end(), entityPtr);
+            if (newEnd != editorEntities.end()) {
+                editorEntities.erase(newEnd, editorEntities.end());
+                // Force scene update since entity list changed
+                m_State->editor.MarkDirty();
+            }
+        }
+        
+        // Clean up Jolt physics bodies
+        for(auto b : bodiesToRemove) m_State->physicsSystem.RemoveBody(b);
+
+        // Process Additions (New fragments)
+        for (auto& newE : entitiesToAdd) {
+            AddEntity(newE, newE->isStatic);
+        }
+
+        // --- Physics Step ---
         m_State->physicsSystem.Update(deltaTime);
 
-        // --- 5. Sync Physics -> Graphics ---
+        // --- Sync Transforms ---
         auto& sceneManager = m_State->graphicsContext->GetSceneManager();
         int renderIndex = 0;
         
         for (const auto& simObj : m_State->simObjects) {
             auto& entity = simObj.entity;
-            if (!entity) {
-                renderIndex += 1; // Or handle appropriately if using complex indexing
-                continue;
-            }
+            if (!entity) { renderIndex++; continue; }
 
-            // Sync Transform: Physics -> Entity
-            // Skip if static or selected (controlled by Gizmo)
             if (!entity->isStatic && entity != selectedEntity) {
                 m_State->physicsSystem.SyncBodyTransform(entity, simObj.bodyHandle);
             }
             
-            // Sync Transform: Entity -> SceneManager (Render Cache)
             glm::mat4 rootTransform = entity->transform;
             for (const auto& part : entity->parts) {
                 if (part->chunk) {

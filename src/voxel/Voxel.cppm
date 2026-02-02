@@ -13,3 +13,4 @@ export import :entity;
 
 export import :mesh_converter;
 export import :dynamic_mesh;
+export import :destruction;
