@@ -85,6 +85,28 @@ namespace vortex::physics {
          */
         void SetBodyTransform(BodyHandle handle, const glm::mat4& transform);
 
+        // --- Velocity Control (New) ---
+        
+        /**
+         * @brief Gets the linear velocity of the body.
+         */
+        glm::vec3 GetLinearVelocity(BodyHandle handle);
+        
+        /**
+         * @brief Gets the angular velocity of the body.
+         */
+        glm::vec3 GetAngularVelocity(BodyHandle handle);
+
+        /**
+         * @brief Sets the linear velocity of the body.
+         */
+        void SetLinearVelocity(BodyHandle handle, const glm::vec3& velocity);
+
+        /**
+         * @brief Sets the angular velocity of the body.
+         */
+        void SetAngularVelocity(BodyHandle handle, const glm::vec3& velocity);
+
     private:
         struct InternalState;
         std::unique_ptr<InternalState> m_Internal;

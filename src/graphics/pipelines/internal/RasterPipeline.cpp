@@ -36,22 +36,25 @@ namespace vortex::graphics {
                                     const memory::AllocatedBuffer& materialBuffer,
                                     const memory::AllocatedBuffer& objectBuffer,
                                     const memory::AllocatedBuffer& chunkBuffer,
-                                    const memory::AllocatedBuffer& lightBuffer) {
+                                    const memory::AllocatedBuffer& lightBuffer,
+                                    const memory::AllocatedBuffer& tlasBuffer) {
         m_Device = device;
         m_CameraBuffer = cameraBuffer.buffer;
         m_MaterialBuffer = materialBuffer.buffer;
         m_ObjectBuffer = objectBuffer.buffer;
         m_ChunkBuffer = chunkBuffer.buffer;
         m_LightBuffer = lightBuffer.buffer;
+        m_TLASBuffer = tlasBuffer.buffer;
 
-        // Increased bindings to 5
-        std::vector<VkDescriptorSetLayoutBinding> bindings(5);
+        // Increased bindings to 6
+        std::vector<VkDescriptorSetLayoutBinding> bindings(6);
         bindings[0] = {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
         bindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
         bindings[2] = {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
         bindings[3] = {3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
-        // Light Buffer Binding
         bindings[4] = {4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+        // TLAS Binding
+        bindings[5] = {5, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
 
         VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
         layoutInfo.bindingCount = (uint32_t)bindings.size();
@@ -152,8 +155,8 @@ namespace vortex::graphics {
 
         // Descriptors
         VkDescriptorPoolSize sizes[] = {
-            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 * framesInFlight }, // Increased for light buffer
-            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 * framesInFlight }
+            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 * framesInFlight }, 
+            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 4 * framesInFlight } // Increased
         };
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         poolInfo.maxSets = framesInFlight;
@@ -183,13 +186,15 @@ namespace vortex::graphics {
         VkDescriptorBufferInfo objInfo{m_ObjectBuffer, 0, VK_WHOLE_SIZE};
         VkDescriptorBufferInfo chkInfo{m_ChunkBuffer, 0, VK_WHOLE_SIZE};
         VkDescriptorBufferInfo lightInfo{m_LightBuffer, 0, VK_WHOLE_SIZE};
+        VkDescriptorBufferInfo tlasInfo{m_TLASBuffer, 0, VK_WHOLE_SIZE};
 
-        std::vector<VkWriteDescriptorSet> writes(5);
+        std::vector<VkWriteDescriptorSet> writes(6);
         writes[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 0, 0, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr, &camInfo, nullptr};
         writes[1] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &matInfo, nullptr};
         writes[2] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 2, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &objInfo, nullptr};
         writes[3] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 3, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &chkInfo, nullptr};
         writes[4] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 4, 0, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr, &lightInfo, nullptr};
+        writes[5] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 5, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &tlasInfo, nullptr};
 
         vkUpdateDescriptorSets(m_Device, (uint32_t)writes.size(), writes.data(), 0, nullptr);
     }

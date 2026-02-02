@@ -36,6 +36,13 @@ namespace vortex::voxel {
         bool isTrigger = false;
         bool shouldRebuildPhysics = false;
 
+        // --- Velocity Inheritance ---
+        /// @brief Temporary storage for linear velocity to apply on physics creation.
+        glm::vec3 cachedLinearVelocity{0.0f};
+        
+        /// @brief Temporary storage for angular velocity.
+        glm::vec3 cachedAngularVelocity{0.0f};
+
         virtual ~VoxelEntity() = default;
 
         /**

@@ -45,7 +45,7 @@ namespace vortex {
         std::vector<voxel::Chunk> persistentChunks;
         std::vector<voxel::PhysicalMaterial> persistentMaterials;
         
-        // Sun Settings
+        // --- Lighting Settings (Restored) ---
         float sunPitch = 45.0f;
         float sunYaw = 45.0f;
         float sunIntensity = 1.0f;
@@ -72,14 +72,39 @@ namespace vortex {
     void Engine::AddEntity(std::shared_ptr<voxel::VoxelEntity> entity, bool isStatic) {
         if (!entity) return;
 
+        // --- SHRED Analysis Pass (Initial) ---
         if (entity->isDestructible) {
             auto islands = voxel::SHREDSystem::AnalyzeConnectivity(entity);
             if (islands.size() > 1) {
                 Log::Info("SHRED: Entity '" + entity->name + "' split into " + std::to_string(islands.size()) + " fragments upon init.");
                 auto fragments = voxel::SHREDSystem::SplitEntity(entity, islands);
+                
+                std::vector<voxel::PhysicalMaterial> inheritedMats;
+                if (auto mesh = std::dynamic_pointer_cast<voxel::DynamicMeshObject>(entity)) {
+                    inheritedMats = mesh->materials;
+                }
+
                 for (auto& frag : fragments) {
                     frag->isDestructible = true; 
-                    AddEntity(frag, frag->isStatic);
+                    
+                    if (!inheritedMats.empty()) {
+                        auto meshFrag = std::make_shared<voxel::DynamicMeshObject>();
+                        meshFrag->name = frag->name;
+                        meshFrag->transform = frag->transform;
+                        meshFrag->parts = frag->parts;
+                        meshFrag->localBoundsMin = frag->localBoundsMin;
+                        meshFrag->localBoundsMax = frag->localBoundsMax;
+                        meshFrag->logicalCenter = frag->logicalCenter;
+                        meshFrag->totalVoxelCount = frag->totalVoxelCount;
+                        meshFrag->isDestructible = frag->isDestructible;
+                        meshFrag->isStatic = frag->isStatic;
+                        meshFrag->isTrigger = frag->isTrigger;
+                        meshFrag->materials = inheritedMats;
+                        
+                        AddEntity(meshFrag, meshFrag->isStatic);
+                    } else {
+                        AddEntity(frag, frag->isStatic);
+                    }
                 }
                 return; 
             }
@@ -90,6 +115,17 @@ namespace vortex {
         m_State->editor.MarkDirty();
         
         auto handle = m_State->physicsSystem.AddBody(entity, isStatic);
+        
+        if (!isStatic) {
+            if (glm::length(entity->cachedLinearVelocity) > 0.0f || glm::length(entity->cachedAngularVelocity) > 0.0f) {
+                 m_State->physicsSystem.SetLinearVelocity(handle, entity->cachedLinearVelocity);
+                 m_State->physicsSystem.SetAngularVelocity(handle, entity->cachedAngularVelocity);
+                 
+                 entity->cachedLinearVelocity = glm::vec3(0.0f);
+                 entity->cachedAngularVelocity = glm::vec3(0.0f);
+            }
+        }
+
         m_State->simObjects.emplace_back(entity, handle, isStatic, entity->isTrigger);
     }
 
@@ -124,13 +160,31 @@ namespace vortex {
                 }
             }
 
+            {
+                core::ProfileScope p("CPU: Systems Update");
+                m_State->cameraController.Update(m_State->graphicsContext->GetWindow(), m_State->graphicsContext->GetCamera(), deltaTime);
+                m_State->graphicsContext->UploadCamera();
+
+                // --- RESTORED: Light Update & Upload ---
+                graphics::DirectionalLight sun;
+                sun.SetDirection(m_State->sunPitch, m_State->sunYaw);
+                sun.direction.w = m_State->sunIntensity;
+                sun.color = glm::vec4(m_State->sunColor[0], m_State->sunColor[1], m_State->sunColor[2], m_State->ambientIntensity);
+                m_State->graphicsContext->UploadLight(sun);
+                
+                UpdateSystems(deltaTime);
+            }
+
             if (m_State->editor.IsSceneDirty()) {
                 core::ProfileScope p("CPU: Scene Upload");
                 
                 std::vector<graphics::SceneObject> objects;
-                std::vector<voxel::Chunk> chunks = m_State->persistentChunks;
+                std::vector<voxel::Chunk> chunks; 
+                
+                // 1. Починаємо з матеріалів, завантажених у main.cpp (Глобальна палітра)
                 std::vector<voxel::PhysicalMaterial> finalMaterials = m_State->persistentMaterials; 
                 
+                // 2. Якщо палітра порожня, додаємо дефолтний, щоб уникнути крашу
                 if (finalMaterials.empty()) {
                     voxel::PhysicalMaterial defMat{};
                     defMat.color = glm::vec4(1.0f);
@@ -143,7 +197,7 @@ namespace vortex {
                     
                     auto dynMesh = std::dynamic_pointer_cast<voxel::DynamicMeshObject>(entity);
                     if (dynMesh && !dynMesh->materials.empty()) {
-                        currentPaletteOffset = (uint32_t)finalMaterials.size();
+                        currentPaletteOffset = (uint32_t)finalMaterials.size() - 1;
                         finalMaterials.insert(finalMaterials.end(), dynMesh->materials.begin(), dynMesh->materials.end());
                     } else {
                         currentPaletteOffset = 0; 
@@ -167,21 +221,6 @@ namespace vortex {
                 m_State->editor.ResetSceneDirty();
             }
 
-            {
-                core::ProfileScope p("CPU: Systems Update");
-                m_State->cameraController.Update(m_State->graphicsContext->GetWindow(), m_State->graphicsContext->GetCamera(), deltaTime);
-                m_State->graphicsContext->UploadCamera();
-
-                // Update and Upload Sun
-                graphics::DirectionalLight sun;
-                sun.SetDirection(m_State->sunPitch, m_State->sunYaw);
-                sun.direction.w = m_State->sunIntensity;
-                sun.color = glm::vec4(m_State->sunColor[0], m_State->sunColor[1], m_State->sunColor[2], m_State->ambientIntensity);
-                m_State->graphicsContext->UploadLight(sun);
-                
-                UpdateSystems(deltaTime);
-            }
-
             m_State->graphicsContext->BeginRecording();
             m_State->graphicsContext->RecordScene();
             m_State->graphicsContext->RecordAA();
@@ -192,6 +231,7 @@ namespace vortex {
                 if (onGuiRender) onGuiRender();
                 ImGui::Separator();
                 
+                // --- RESTORED: Lighting Controls ---
                 if (ImGui::CollapsingHeader("Lighting", ImGuiTreeNodeFlags_DefaultOpen)) {
                     ImGui::DragFloat("Sun Pitch", &m_State->sunPitch, 1.0f, -89.0f, 89.0f);
                     ImGui::DragFloat("Sun Yaw", &m_State->sunYaw, 1.0f, 0.0f, 360.0f);
@@ -247,7 +287,44 @@ namespace vortex {
                     }
                     else if (islands.size() > 1) {
                         Log::Info("SHRED: Structural Failure! Entity '" + entity->name + "' split into " + std::to_string(islands.size()) + " fragments.");
+                        
+                        glm::vec3 parentLinVel = m_State->physicsSystem.GetLinearVelocity(simObj.bodyHandle);
+                        glm::vec3 parentAngVel = m_State->physicsSystem.GetAngularVelocity(simObj.bodyHandle);
+
+                        std::vector<voxel::PhysicalMaterial> parentMaterials;
+                        auto parentMesh = std::dynamic_pointer_cast<voxel::DynamicMeshObject>(entity);
+                        if (parentMesh) {
+                            parentMaterials = parentMesh->materials;
+                        }
+
                         auto fragments = voxel::SHREDSystem::SplitEntity(entity, islands);
+                        
+                        for(auto& frag : fragments) {
+                            frag->cachedLinearVelocity = parentLinVel;
+                            frag->cachedAngularVelocity = parentAngVel;
+
+                            if (!parentMaterials.empty()) {
+                                auto meshFrag = std::make_shared<voxel::DynamicMeshObject>();
+                                meshFrag->name = frag->name;
+                                meshFrag->transform = frag->transform;
+                                meshFrag->parts = frag->parts;
+                                meshFrag->localBoundsMin = frag->localBoundsMin;
+                                meshFrag->localBoundsMax = frag->localBoundsMax;
+                                meshFrag->logicalCenter = frag->logicalCenter;
+                                meshFrag->totalVoxelCount = frag->totalVoxelCount;
+                                meshFrag->isDestructible = frag->isDestructible;
+                                meshFrag->isStatic = frag->isStatic;
+                                meshFrag->isTrigger = frag->isTrigger;
+                                meshFrag->shouldRebuildPhysics = frag->shouldRebuildPhysics;
+                                meshFrag->cachedLinearVelocity = frag->cachedLinearVelocity;
+                                meshFrag->cachedAngularVelocity = frag->cachedAngularVelocity;
+                                
+                                meshFrag->materials = parentMaterials;
+                                
+                                frag = meshFrag; 
+                            }
+                        }
+
                         entitiesToAdd.insert(entitiesToAdd.end(), fragments.begin(), fragments.end());
                         
                         indicesToRemove.push_back(i);

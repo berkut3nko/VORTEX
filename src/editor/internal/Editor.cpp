@@ -3,6 +3,9 @@ module;
 #include <GLFW/glfw3.h>
 #include <imgui.h>
 #include <ImGuizmo.h>
+
+// Critical: Use same depth range 0..1 as Vulkan
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
@@ -11,6 +14,7 @@ module;
 #include <limits>
 #include <algorithm>
 #include <memory>
+#include <cmath>
 
 module vortex.editor;
 
@@ -22,15 +26,92 @@ namespace vortex::editor {
 
     struct Ray { glm::vec3 origin; glm::vec3 direction; };
 
-    static bool IntersectRayAABB(const Ray& ray, const glm::vec3& min, const glm::vec3& max, float& t) {
+    // Покращена версія AABB перетину, що повертає точки входу та виходу
+    static bool IntersectRayAABB(const Ray& ray, const glm::vec3& min, const glm::vec3& max, float& tNear, float& tFar) {
         glm::vec3 invDir = 1.0f / ray.direction;
         glm::vec3 tbot = invDir * (min - ray.origin);
         glm::vec3 ttop = invDir * (max - ray.origin);
         glm::vec3 tmin = glm::min(ttop, tbot);
         glm::vec3 tmax = glm::max(ttop, tbot);
-        float t0 = glm::max(glm::max(tmin.x, tmin.y), tmin.z);
-        float t1 = glm::min(glm::min(tmax.x, tmax.y), tmax.z);
-        if (t1 >= t0 && t1 >= 0.0f) { t = t0; return true; }
+        tNear = glm::max(glm::max(tmin.x, tmin.y), tmin.z);
+        tFar = glm::min(glm::min(tmax.x, tmax.y), tmax.z);
+        return tFar >= tNear && tFar > 0.0f;
+    }
+
+    // CPU реалізація DDA (як у шейдері) для точного виділення вокселів
+    static bool RaycastDDA(const Ray& ray, const vortex::voxel::Chunk& chunk, float& tHit) {
+        float tNear, tFar;
+        // Перевіряємо межі чанка (0..32)
+        if (!IntersectRayAABB(ray, glm::vec3(0.0f), glm::vec3(32.0f), tNear, tFar)) return false;
+
+        float tCurrent = std::max(0.0f, tNear);
+        
+        // Починаємо трохи всередині, щоб уникнути похибок на гранях
+        glm::vec3 rayPos = ray.origin + ray.direction * (tCurrent + 0.001f);
+        glm::ivec3 mapPos = glm::ivec3(glm::floor(rayPos));
+        
+        // Clamp координат, щоб не вийти за межі масиву при старті
+        mapPos = glm::clamp(mapPos, glm::ivec3(0), glm::ivec3(31));
+
+        // Безпечний напрямок (уникнення ділення на 0)
+        glm::vec3 safeDir = ray.direction;
+        if (std::abs(safeDir.x) < 1e-6) safeDir.x = 1e-6f;
+        if (std::abs(safeDir.y) < 1e-6) safeDir.y = 1e-6f;
+        if (std::abs(safeDir.z) < 1e-6) safeDir.z = 1e-6f;
+
+        glm::vec3 deltaDist = glm::abs(1.0f / safeDir);
+        glm::ivec3 stepDir = glm::ivec3(glm::sign(safeDir));
+        glm::vec3 sideDist;
+
+        // Розрахунок початкових sideDist відносно точки входу
+        glm::vec3 origin = ray.origin + ray.direction * tCurrent;
+        for (int i = 0; i < 3; i++) {
+            if (safeDir[i] < 0) {
+                stepDir[i] = -1;
+                sideDist[i] = (origin[i] - mapPos[i]) * deltaDist[i];
+            } else {
+                stepDir[i] = 1;
+                sideDist[i] = (mapPos[i] + 1.0f - origin[i]) * deltaDist[i];
+            }
+        }
+
+        // DDA Цикл
+        for (int i = 0; i < 128; i++) {
+            // Перевірка вокселя
+            if (chunk.GetVoxel(mapPos.x, mapPos.y, mapPos.z) != 0) {
+                // Знайдено воксель!
+                // tHit вже містить відстань до входу в цей воксель (приблизно)
+                // Для точності додамо відстань, пройдену всередині чанка
+                tHit = tCurrent; 
+                return true;
+            }
+
+            // Крок вперед
+            if (sideDist.x < sideDist.y) {
+                if (sideDist.x < sideDist.z) {
+                    tCurrent += (sideDist.x - (sideDist.x - deltaDist.x)); // Update t (не ідеально точно, але достатньо для сортування)
+                    sideDist.x += deltaDist.x;
+                    mapPos.x += stepDir.x;
+                } else {
+                    tCurrent += (sideDist.z - (sideDist.z - deltaDist.z));
+                    sideDist.z += deltaDist.z;
+                    mapPos.z += stepDir.z;
+                }
+            } else {
+                if (sideDist.y < sideDist.z) {
+                    tCurrent += (sideDist.y - (sideDist.y - deltaDist.y));
+                    sideDist.y += deltaDist.y;
+                    mapPos.y += stepDir.y;
+                } else {
+                    tCurrent += (sideDist.z - (sideDist.z - deltaDist.z));
+                    sideDist.z += deltaDist.z;
+                    mapPos.z += stepDir.z;
+                }
+            }
+            
+            // Вихід за межі чанка
+            if (mapPos.x < 0 || mapPos.x >= 32 || mapPos.y < 0 || mapPos.y >= 32 || mapPos.z < 0 || mapPos.z >= 32) return false;
+        }
         return false;
     }
 
@@ -106,13 +187,8 @@ namespace vortex::editor {
                 
                 // --- RE-MESH LOGIC ---
                 if (ImGui::Button("Re-Mesh & Rebuild Physics")) {
-                    // 1. Re-generate Voxels from Mesh
                     dynMesh->Remesh();
-                    
-                    // 2. Mark Scene Dirty (Update Graphics Buffer)
                     m_SceneDirty = true; 
-                    
-                    // 3. Mark Physics Dirty (Engine will regenerate Jolt Body)
                     entity->shouldRebuildPhysics = true; 
                 }
             } else {
@@ -138,35 +214,66 @@ namespace vortex::editor {
             glfwGetCursorPos(window, &mouseX, &mouseY);
             
             glm::mat4 view = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
-            glm::mat4 proj = glm::perspective(glm::radians(camera.fov), (float)width / (float)height, 0.5f, 400.0f);
+            glm::mat4 proj = glm::perspective(glm::radians(camera.fov), (float)width / (float)height, 0.1f, 400.0f);
+            proj[1][1] *= -1; // FIX: Flip Y for Vulkan projection
             
+            // Convert Mouse Coordinates to Vulkan Clip Space
+            // Vulkan Clip: (-1,-1) is Top-Left, (1,1) is Bottom-Right.
+            // Mouse (0,0) is Top-Left.
             float x = (2.0f * (float)mouseX) / width - 1.0f;
-            float y = 1.0f - (2.0f * (float)mouseY) / height;
-            glm::vec4 rayClip = glm::vec4(x, y, -1.0, 1.0);
+            float y = (2.0f * (float)mouseY) / height - 1.0f; // Maps 0 to -1 (Top)
+
+            glm::vec4 rayClip = glm::vec4(x, y, 1.0, 1.0); // Point on Far plane
             glm::vec4 rayEye = glm::inverse(proj) * rayClip;
-            rayEye = glm::vec4(rayEye.x, rayEye.y, -1.0, 0.0);
+            rayEye = glm::vec4(rayEye.x, rayEye.y, rayEye.z, 0.0);
             glm::vec3 rayWor = glm::normalize(glm::vec3(glm::inverse(view) * rayEye));
 
             Ray ray{ camera.position, rayWor };
             float minT = std::numeric_limits<float>::max();
             int hitIndex = -1;
 
+            // Iterate all entities
             for (size_t i = 0; i < m_Entities.size(); ++i) {
                 auto& entity = m_Entities[i];
                 glm::mat4 model = entity->transform;
                 glm::mat4 invModel = glm::inverse(model);
 
+                // Ray to Entity Local Space
                 glm::vec3 localOrigin = glm::vec3(invModel * glm::vec4(ray.origin, 1.0f));
                 glm::vec3 localDir = glm::normalize(glm::vec3(invModel * glm::vec4(ray.direction, 0.0f)));
                 Ray localRay{ localOrigin, localDir };
 
-                float t = 0.0f;
-                if (IntersectRayAABB(localRay, entity->localBoundsMin, entity->localBoundsMax, t)) {
-                    glm::vec3 hitWorld = glm::vec3(model * glm::vec4(localOrigin + localDir * t, 1.0f));
-                    float dist = glm::distance(camera.position, hitWorld);
-                    if (dist < minT) {
-                        minT = dist;
-                        hitIndex = (int)i;
+                float tBroadNear, tBroadFar;
+                // Broad Phase: Entity AABB
+                if (IntersectRayAABB(localRay, entity->localBoundsMin, entity->localBoundsMax, tBroadNear, tBroadFar)) {
+                    
+                    // Narrow Phase: Check individual Parts (Chunks) with DDA
+                    for (const auto& part : entity->parts) {
+                        if (!part->chunk) continue;
+
+                        // Ray to Part Local Space (Chunk Space 0..32)
+                        // Part transform is relative to Entity
+                        glm::mat4 partModel = part->GetTransformMatrix();
+                        glm::mat4 partInv = glm::inverse(partModel);
+
+                        glm::vec3 partOrigin = glm::vec3(partInv * glm::vec4(localOrigin, 1.0f));
+                        glm::vec3 partDir = glm::normalize(glm::vec3(partInv * glm::vec4(localDir, 0.0f)));
+                        Ray partRay{ partOrigin, partDir };
+
+                        float hitT = 0.0f;
+                        if (RaycastDDA(partRay, *part->chunk, hitT)) {
+                            // Calculate actual world distance
+                            // hitT is distance in Chunk Space. We need to map it back to World to compare minT properly.
+                            glm::vec3 hitPointChunk = partOrigin + partDir * hitT;
+                            glm::vec3 hitPointEntity = glm::vec3(partModel * glm::vec4(hitPointChunk, 1.0f));
+                            glm::vec3 hitPointWorld = glm::vec3(model * glm::vec4(hitPointEntity, 1.0f));
+
+                            float dist = glm::distance(ray.origin, hitPointWorld);
+                            if (dist < minT) {
+                                minT = dist;
+                                hitIndex = (int)i;
+                            }
+                        }
                     }
                 }
             }
@@ -191,7 +298,7 @@ namespace vortex::editor {
         ImGuizmo::SetRect(0, 0, (float)width, (float)height);
 
         glm::mat4 view = glm::lookAt(camera.position, camera.position + camera.front, camera.up);
-        glm::mat4 proj = glm::perspective(glm::radians(camera.fov), (float)width / (float)height, 0.5f, 400.0f);
+        glm::mat4 proj = glm::perspective(glm::radians(camera.fov), (float)width / (float)height, 0.1f, 400.0f);
 
         auto& entity = m_Entities[m_SelectedObjectID];
         glm::mat4 model = entity->transform;

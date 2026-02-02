@@ -31,7 +31,8 @@ namespace vortex::graphics {
                         const memory::AllocatedBuffer& materialBuffer,
                         const memory::AllocatedBuffer& objectBuffer,
                         const memory::AllocatedBuffer& chunkBuffer,
-                        const memory::AllocatedBuffer& lightBuffer); // Added light buffer
+                        const memory::AllocatedBuffer& lightBuffer,
+                        const memory::AllocatedBuffer& tlasBuffer); // Added TLAS buffer
 
         void Shutdown();
         
@@ -53,5 +54,6 @@ namespace vortex::graphics {
         VkBuffer m_ObjectBuffer{VK_NULL_HANDLE};
         VkBuffer m_ChunkBuffer{VK_NULL_HANDLE};
         VkBuffer m_LightBuffer{VK_NULL_HANDLE};
+        VkBuffer m_TLASBuffer{VK_NULL_HANDLE};
     };
 }

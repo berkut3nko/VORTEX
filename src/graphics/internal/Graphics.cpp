@@ -112,7 +112,8 @@ namespace vortex::graphics {
                                     i.sceneManager.GetMaterialBuffer(), 
                                     i.sceneManager.GetObjectBuffer(), 
                                     i.sceneManager.GetChunkBuffer(),
-                                    i.sceneManager.GetLightBuffer()); // Pass Light Buffer
+                                    i.sceneManager.GetLightBuffer(),
+                                    i.sceneManager.GetTLASBuffer()); 
         
         i.ui.Initialize(i.context, i.window, i.swapchain.GetFormat(), i.swapchain.GetExtent(), i.swapchain.GetImageViews());
         
