@@ -36,6 +36,10 @@ namespace vortex::voxel {
         bool isTrigger = false;
         bool shouldRebuildPhysics = false;
 
+        /// @brief Forces the engine to check for disconnected islands (connectivity analysis) next frame.
+        /// @details Set this to true when manually modifying voxels (e.g. from Editor).
+        bool shouldCheckConnectivity = false;
+
         // --- Velocity Inheritance ---
         /// @brief Temporary storage for linear velocity to apply on physics creation.
         glm::vec3 cachedLinearVelocity{0.0f};
@@ -46,7 +50,7 @@ namespace vortex::voxel {
         virtual ~VoxelEntity() = default;
 
         /**
-         * @brief @brief Recalculates stats.
+         * @brief Recalculates stats.
          */
         void RecalculateStats() {
             totalVoxelCount = 0;

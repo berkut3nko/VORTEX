@@ -1,109 +1,114 @@
 module;
 
+#include <vector>
 #include <cstdint>
-#include <cstring> 
+#include <cstring>
+#include <glm/glm.hpp>
 
 export module vortex.voxel:chunk;
 
 namespace vortex::voxel {
 
-    constexpr int CHUNK_SIZE = 32;
+    // --- Configuration ---
+    // Set to true to enable Z-Order Curve (Morton) memory layout.
+    // Must match the shader definition!
+    constexpr bool USE_MORTON_LAYOUT = true;
+
+    // --- Helpers ---
+
+    // Expands 10-bit integer to 30-bit by inserting 2 zeros after each bit.
+    // Matches GLSL implementation.
+    constexpr uint32_t ExpandBits(uint32_t v) {
+        v = (v * 0x00010001u) & 0xFF0000FFu;
+        v = (v * 0x00000101u) & 0x0F00F00Fu;
+        v = (v * 0x00000011u) & 0xC30C30C3u;
+        v = (v * 0x00000005u) & 0x49249249u;
+        return v;
+    }
+
+    // Calculates 3D Morton Code (Z-Order Curve index)
+    constexpr uint32_t Morton3D(uint32_t x, uint32_t y, uint32_t z) {
+        return ExpandBits(x) | (ExpandBits(y) << 1) | (ExpandBits(z) << 2);
+    }
 
     /**
-     * @brief A single 32x32x32 voxel chunk (SoA Layout).
-     * @details
-     * - voxelIDs: 8 bits per voxel (Material Index). 32KB.
-     * - voxelFlags: 2 bits per voxel (State flags). 8KB.
-     * - hierarchy: 1 bit per 4x4x4 block (Occupancy). 64 Bytes.
-     * Total Size: ~40KB per chunk.
+     * @brief Represents a 32x32x32 block of voxels.
+     * @details Uses SoA (Structure of Arrays) layout aligned for GPU consumption.
+     * Data layout for voxelIDs can be Linear or Morton (Z-Order) for cache optimization.
      */
     export struct Chunk {
-        // Material Indices (8 bits * 32768 voxels)
-        // Packed 4 per uint32: [Mat3][Mat2][Mat1][Mat0]
-        uint32_t voxelIDs[8192]; 
-
-        // Voxel Flags (2 bits * 32768 voxels)
-        // Packed 16 per uint32
+        // 32^3 = 32768 voxels.
+        // Packed 4 voxels per uint (8 bits each).
+        uint32_t voxelIDs[8192];
+        
+        // Flags: 2 bits per voxel? Currently reserved/unused or used for other properties.
         uint32_t voxelFlags[2048]; 
-
-        // Acceleration Structure (512 bits)
-        // 1 bit per 4x4x4 block
-        uint32_t hierarchy[16]; 
+        
+        // Hierarchy: 1 bit per 4x4x4 block.
+        // 32/4 = 8 blocks per axis. 8^3 = 512 bits = 16 uints.
+        uint32_t hierarchy[16];
 
         Chunk() {
-            Clear();
-        }
-
-        /**
-         * @brief Resets the chunk to an empty state (all zeros).
-         */
-        void Clear() {
             std::memset(voxelIDs, 0, sizeof(voxelIDs));
             std::memset(voxelFlags, 0, sizeof(voxelFlags));
             std::memset(hierarchy, 0, sizeof(hierarchy));
         }
 
         /**
-         * @brief Sets a voxel's material and flags.
-         * @param x X coordinate (0-31).
-         * @param y Y coordinate (0-31).
-         * @param z Z coordinate (0-31).
-         * @param id Material ID (0-255).
-         * @param flags Optional 2-bit flag (0-3).
+         * @brief Sets a voxel at local coordinates (0..31).
+         * @details Automatically handles Linear vs Morton addressing.
          */
-        void SetVoxel(int x, int y, int z, uint8_t id, uint8_t flags = 0) {
-            if (x < 0 || x >= CHUNK_SIZE || y < 0 || y >= CHUNK_SIZE || z < 0 || z >= CHUNK_SIZE) return;
+        void SetVoxel(int x, int y, int z, uint8_t id) {
+            if (x < 0 || x >= 32 || y < 0 || y >= 32 || z < 0 || z >= 32) return;
 
-            uint32_t linearIdx = x + y * 32 + z * 1024;
+            uint32_t index;
+            if constexpr (USE_MORTON_LAYOUT) {
+                index = Morton3D((uint32_t)x, (uint32_t)y, (uint32_t)z);
+            } else {
+                index = x + y * 32 + z * 1024;
+            }
 
-            // 1. Set Material ID (8 bits)
-            uint32_t idArrIdx = linearIdx >> 2; // / 4
-            uint32_t idShift = (linearIdx & 3) << 3; // % 4 * 8
+            // Pack into 32-bit array (4 voxels per uint)
+            uint32_t arrayIdx = index >> 2;       // index / 4
+            uint32_t shift = (index & 3) << 3;    // (index % 4) * 8
             
-            voxelIDs[idArrIdx] &= ~(0xFFu << idShift);
-            voxelIDs[idArrIdx] |= (uint32_t(id) << idShift);
+            // Clear old value
+            voxelIDs[arrayIdx] &= ~(0xFF << shift);
+            // Set new value
+            voxelIDs[arrayIdx] |= (static_cast<uint32_t>(id) << shift);
 
-            // 2. Set Flags (2 bits)
-            uint32_t flagArrIdx = linearIdx >> 4; // / 16
-            uint32_t flagShift = (linearIdx & 15) << 1; // % 16 * 2
-            
-            voxelFlags[flagArrIdx] &= ~(0x3u << flagShift);
-            voxelFlags[flagArrIdx] |= (uint32_t(flags & 0x3) << flagShift);
-
-            // 3. Update Hierarchy (Occupancy Bit)
-            // Block coordinate (0..7)
-            int bx = x >> 2;
-            int by = y >> 2;
-            int bz = z >> 2;
-            
-            // Linear hierarchy index (0..511)
-            int hIdx = bx + by * 8 + bz * 64;
-            int hArrIdx = hIdx >> 5; // / 32
-            int hBitIdx = hIdx & 31; // % 32
-            
+            // Update Hierarchy (Linear mapping used for hierarchy to match simple shader logic)
+            // Hierarchy tracks 4x4x4 blocks.
             if (id != 0) {
-                hierarchy[hArrIdx] |= (1u << hBitIdx);
+                int bx = x >> 2;
+                int by = y >> 2;
+                int bz = z >> 2;
+                uint32_t hIndex = bx + by * 8 + bz * 64;
+                
+                hierarchy[hIndex >> 5] |= (1u << (hIndex & 31));
+            } else {
+                // Note: Clearing hierarchy bit requires checking all 64 voxels in the block.
+                // Skipped for performance in simple Setter. Rebuild hierarchy if mass clearing.
             }
         }
 
         /**
-         * @brief Gets the material ID of a voxel.
-         * @return Material ID (0 if empty or out of bounds).
+         * @brief Gets a voxel ID at local coordinates.
          */
         uint8_t GetVoxel(int x, int y, int z) const {
-            if (x < 0 || x >= CHUNK_SIZE || y < 0 || y >= CHUNK_SIZE || z < 0 || z >= CHUNK_SIZE) return 0;
-            uint32_t linearIdx = x + y * 32 + z * 1024;
-            return (voxelIDs[linearIdx >> 2] >> ((linearIdx & 3) << 3)) & 0xFF;
-        }
+            if (x < 0 || x >= 32 || y < 0 || y >= 32 || z < 0 || z >= 32) return 0;
 
-        /**
-         * @brief Gets the flags of a voxel.
-         * @return Flags (0-3).
-         */
-        uint8_t GetFlags(int x, int y, int z) const {
-            if (x < 0 || x >= CHUNK_SIZE || y < 0 || y >= CHUNK_SIZE || z < 0 || z >= CHUNK_SIZE) return 0;
-            uint32_t linearIdx = x + y * 32 + z * 1024;
-            return (voxelFlags[linearIdx >> 4] >> ((linearIdx & 15) << 1)) & 0x3;
+            uint32_t index;
+            if constexpr (USE_MORTON_LAYOUT) {
+                index = Morton3D((uint32_t)x, (uint32_t)y, (uint32_t)z);
+            } else {
+                index = x + y * 32 + z * 1024;
+            }
+
+            uint32_t arrayIdx = index >> 2;
+            uint32_t shift = (index & 3) << 3;
+
+            return (voxelIDs[arrayIdx] >> shift) & 0xFF;
         }
     };
 }

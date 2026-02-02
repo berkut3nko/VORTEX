@@ -17,6 +17,8 @@ module;
 #include <cstdarg>
 #include <thread>
 #include <vector>
+#include <cmath> // Added for ceil
+#include <algorithm> // Added for max
 #include <glm/glm.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/quaternion.hpp> 
@@ -63,7 +65,6 @@ public:
         return mObjectToBroadPhase[inLayer];
     }
 
-    // --- FIX: Implement GetBroadPhaseLayerName ---
 #if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
     virtual const char* GetBroadPhaseLayerName(JPH::BroadPhaseLayer inLayer) const override {
         switch ((JPH::BroadPhaseLayer::Type)inLayer) {
@@ -125,7 +126,6 @@ namespace vortex::physics {
     PhysicsSystem::~PhysicsSystem() { Shutdown(); }
 
     void PhysicsSystem::Initialize() {
-        // Prevent double initialization leak
         if (m_Internal->jobSystem) {
             Shutdown();
         }
@@ -139,10 +139,10 @@ namespace vortex::physics {
         m_Internal->tempAllocator = new JPH::TempAllocatorImpl(10 * 1024 * 1024);
         m_Internal->jobSystem = new JPH::JobSystemThreadPool(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, std::thread::hardware_concurrency() - 1);
 
-        const uint32_t cMaxBodies = 1024;
+        const uint32_t cMaxBodies = 4096; // Increased body limit for voxel debris
         const uint32_t cNumBodyMutexes = 0;
-        const uint32_t cMaxBodyPairs = 1024;
-        const uint32_t cMaxContactConstraints = 1024;
+        const uint32_t cMaxBodyPairs = 4096;
+        const uint32_t cMaxContactConstraints = 4096;
 
         m_Internal->physicsSystem.Init(
             cMaxBodies, cNumBodyMutexes, cMaxBodyPairs, cMaxContactConstraints,
@@ -153,6 +153,13 @@ namespace vortex::physics {
 
         m_Internal->physicsSystem.SetBodyActivationListener(&m_Internal->bodyActivationListener);
         
+        // --- Critical for Voxel Stability ---
+        // Increase tolerance for penetration slightly to prevent jitter
+        JPH::PhysicsSettings settings;
+        settings.mPenetrationSlop = 0.02f; // Default is 0.02, kept for reference
+        settings.mBaumgarte = 0.2f;        // Stabilization factor
+        m_Internal->physicsSystem.SetPhysicsSettings(settings);
+
         vortex::Log::Info("Jolt Physics Initialized.");
     }
 
@@ -161,7 +168,6 @@ namespace vortex::physics {
             delete m_Internal->jobSystem;
             delete m_Internal->tempAllocator;
             
-            // JPH::Factory is global singleton, strictly we should delete it.
             if (JPH::Factory::sInstance) {
                 delete JPH::Factory::sInstance;
                 JPH::Factory::sInstance = nullptr;
@@ -173,9 +179,16 @@ namespace vortex::physics {
     }
 
     void PhysicsSystem::Update(float deltaTime) {
-        const int cCollisionSteps = 1;
-        // Check if initialized before update
         if(m_Internal->jobSystem) {
+            // FIX: Prevent tunneling by ensuring enough collision steps
+            // If deltaTime is large (lag), we take more steps.
+            // Target frequency: 60Hz.
+            const float stepSize = 1.0f / 60.0f;
+            int cCollisionSteps = std::max(1, (int)std::ceil(deltaTime / stepSize));
+            
+            // Hard cap to prevent death spiral on extreme lag
+            if (cCollisionSteps > 10) cCollisionSteps = 10;
+
             m_Internal->physicsSystem.Update(deltaTime, cCollisionSteps, m_Internal->tempAllocator, m_Internal->jobSystem);
         }
     }
@@ -183,7 +196,8 @@ namespace vortex::physics {
     BodyHandle PhysicsSystem::AddBody(std::shared_ptr<vortex::voxel::VoxelEntity> entity, bool isStatic) {
         if (!entity || entity->parts.empty() || !m_Internal->jobSystem) return {JPH::BodyID::cInvalidBodyID};
         
-        auto boxes = VoxelColliderBuilder::Build(*entity->parts[0]->chunk); // Simplified for part 0
+        // Check if we have any valid colliders
+        auto boxes = VoxelColliderBuilder::Build(*entity->parts[0]->chunk); 
         bool hasAny = !boxes.empty();
         
         if (!hasAny) {
@@ -204,6 +218,7 @@ namespace vortex::physics {
             auto partBoxes = VoxelColliderBuilder::Build(*part->chunk);
             for (const auto& box : partBoxes) {
                 JPH::Vec3 halfExtent = ToJolt(box.size) * 0.5f;
+                // Jolt boxes are centered.
                 glm::vec3 boxCenterLocal = part->position + box.min + (box.size * 0.5f);
                 JPH::Vec3 center = ToJolt(boxCenterLocal);
                 compoundSettings.AddShape(center, JPH::Quat::sIdentity(), new JPH::BoxShape(halfExtent));
@@ -231,7 +246,11 @@ namespace vortex::physics {
         
         if (!isStatic) {
             bodySettings.mOverrideMassProperties = JPH::EOverrideMassProperties::CalculateInertia;
-            bodySettings.mMassPropertiesOverride.mMass = 10.0f;
+            bodySettings.mMassPropertiesOverride.mMass = 10.0f; // TODO: Calculate based on voxel count/density
+            
+            // --- FIX: Enable Continuous Collision Detection (CCD) ---
+            // This prevents fast moving voxel debris from tunneling through the floor.
+            bodySettings.mMotionQuality = JPH::EMotionQuality::LinearCast;
         }
 
         JPH::BodyInterface& bodyInterface = m_Internal->physicsSystem.GetBodyInterface();
@@ -326,5 +345,35 @@ namespace vortex::physics {
         glm::quat rot = glm::quat_cast(transform);
 
         bodyInterface.SetPositionAndRotation(bodyID, ToJolt(pos), ToJolt(rot), JPH::EActivation::DontActivate);
+    }
+
+    // --- Velocity Implementation ---
+
+    glm::vec3 PhysicsSystem::GetLinearVelocity(BodyHandle handle) {
+        if(!m_Internal->jobSystem) return glm::vec3(0.0f);
+        JPH::BodyID bodyID(handle.id);
+        JPH::BodyInterface& bodyInterface = m_Internal->physicsSystem.GetBodyInterface();
+        return ToGlm(bodyInterface.GetLinearVelocity(bodyID));
+    }
+
+    glm::vec3 PhysicsSystem::GetAngularVelocity(BodyHandle handle) {
+        if(!m_Internal->jobSystem) return glm::vec3(0.0f);
+        JPH::BodyID bodyID(handle.id);
+        JPH::BodyInterface& bodyInterface = m_Internal->physicsSystem.GetBodyInterface();
+        return ToGlm(bodyInterface.GetAngularVelocity(bodyID));
+    }
+
+    void PhysicsSystem::SetLinearVelocity(BodyHandle handle, const glm::vec3& velocity) {
+        if(!m_Internal->jobSystem) return;
+        JPH::BodyID bodyID(handle.id);
+        JPH::BodyInterface& bodyInterface = m_Internal->physicsSystem.GetBodyInterface();
+        bodyInterface.SetLinearVelocity(bodyID, ToJolt(velocity));
+    }
+
+    void PhysicsSystem::SetAngularVelocity(BodyHandle handle, const glm::vec3& velocity) {
+        if(!m_Internal->jobSystem) return;
+        JPH::BodyID bodyID(handle.id);
+        JPH::BodyInterface& bodyInterface = m_Internal->physicsSystem.GetBodyInterface();
+        bodyInterface.SetAngularVelocity(bodyID, ToJolt(velocity));
     }
 }

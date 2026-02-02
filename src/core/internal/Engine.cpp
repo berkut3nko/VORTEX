@@ -72,6 +72,10 @@ namespace vortex {
     void Engine::AddEntity(std::shared_ptr<voxel::VoxelEntity> entity, bool isStatic) {
         if (!entity) return;
 
+        // Ensure bounds, centers and voxel counts are valid. 
+        // Important for Physics bodies and Editor selection (AABB checks).
+        entity->RecalculateStats();
+
         // --- SHRED Analysis Pass (Initial) ---
         if (entity->isDestructible) {
             auto islands = voxel::SHREDSystem::AnalyzeConnectivity(entity);
@@ -92,10 +96,7 @@ namespace vortex {
                         meshFrag->name = frag->name;
                         meshFrag->transform = frag->transform;
                         meshFrag->parts = frag->parts;
-                        meshFrag->localBoundsMin = frag->localBoundsMin;
-                        meshFrag->localBoundsMax = frag->localBoundsMax;
-                        meshFrag->logicalCenter = frag->logicalCenter;
-                        meshFrag->totalVoxelCount = frag->totalVoxelCount;
+                        // localBounds will be recalculated in the recursive AddEntity call
                         meshFrag->isDestructible = frag->isDestructible;
                         meshFrag->isStatic = frag->isStatic;
                         meshFrag->isTrigger = frag->isTrigger;
@@ -181,10 +182,8 @@ namespace vortex {
                 std::vector<graphics::SceneObject> objects;
                 std::vector<voxel::Chunk> chunks; 
                 
-                // 1. Починаємо з матеріалів, завантажених у main.cpp (Глобальна палітра)
                 std::vector<voxel::PhysicalMaterial> finalMaterials = m_State->persistentMaterials; 
                 
-                // 2. Якщо палітра порожня, додаємо дефолтний, щоб уникнути крашу
                 if (finalMaterials.empty()) {
                     voxel::PhysicalMaterial defMat{};
                     defMat.color = glm::vec4(1.0f);
@@ -231,7 +230,6 @@ namespace vortex {
                 if (onGuiRender) onGuiRender();
                 ImGui::Separator();
                 
-                // --- RESTORED: Lighting Controls ---
                 if (ImGui::CollapsingHeader("Lighting", ImGuiTreeNodeFlags_DefaultOpen)) {
                     ImGui::DragFloat("Sun Pitch", &m_State->sunPitch, 1.0f, -89.0f, 89.0f);
                     ImGui::DragFloat("Sun Yaw", &m_State->sunYaw, 1.0f, 0.0f, 360.0f);
@@ -276,8 +274,20 @@ namespace vortex {
             
             if (!entity) continue;
 
+            // --- Check for Destruction or Disconnects ---
             if (entity->isDestructible && entity != selectedEntity) {
-                if (voxel::SHREDSystem::ValidateStructuralIntegrity(entity, tempPalette)) {
+                
+                bool needsConnectivityCheck = entity->shouldCheckConnectivity;
+                
+                // If not manually triggered, check load/stress (SIT)
+                if (!needsConnectivityCheck) {
+                     if (voxel::SHREDSystem::ValidateStructuralIntegrity(entity, tempPalette)) {
+                         needsConnectivityCheck = true;
+                     }
+                }
+
+                if (needsConnectivityCheck) {
+                    entity->shouldCheckConnectivity = false; // Clear flag
                     auto islands = voxel::SHREDSystem::AnalyzeConnectivity(entity);
                     
                     if (islands.empty()) {
@@ -308,10 +318,7 @@ namespace vortex {
                                 meshFrag->name = frag->name;
                                 meshFrag->transform = frag->transform;
                                 meshFrag->parts = frag->parts;
-                                meshFrag->localBoundsMin = frag->localBoundsMin;
-                                meshFrag->localBoundsMax = frag->localBoundsMax;
-                                meshFrag->logicalCenter = frag->logicalCenter;
-                                meshFrag->totalVoxelCount = frag->totalVoxelCount;
+                                // We don't need to manually copy bounds here as AddEntity will call RecalculateStats
                                 meshFrag->isDestructible = frag->isDestructible;
                                 meshFrag->isStatic = frag->isStatic;
                                 meshFrag->isTrigger = frag->isTrigger;
@@ -330,6 +337,9 @@ namespace vortex {
                         indicesToRemove.push_back(i);
                         bodiesToRemove.push_back(simObj.bodyHandle);
                     } else {
+                        // Just one island, but shape changed (e.g. voxel erased) -> Rebuild collider
+                        // This handles the case where ValidateStructuralIntegrity failed (broken voxels) but object stayed in one piece
+                        // OR editor modified it but it's still one piece.
                         entity->shouldRebuildPhysics = true;
                         m_State->editor.MarkDirty();
                     }

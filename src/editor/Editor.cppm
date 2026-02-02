@@ -16,8 +16,16 @@ import vortex.voxel;
 namespace vortex::editor {
 
     /**
+     * @brief Defines the active tool in the editor.
+     */
+    export enum class ToolMode {
+        Select, ///< Standard Gizmo manipulation.
+        Brush   ///< Voxel painting/erasing.
+    };
+
+    /**
      * @brief The in-game editor system.
-     * @details Handles object selection, Gizmo manipulation, and the Importer UI.
+     * @details Handles object selection, Gizmo manipulation, the Importer UI, and Voxel Tools.
      */
     export class Editor {
     public:
@@ -51,7 +59,6 @@ namespace vortex::editor {
 
         /**
          * @brief Returns and clears the list of entities created by the Editor (e.g. Importer).
-         * @details These entities need to be officially registered with the Engine to have physics.
          */
         std::vector<std::shared_ptr<voxel::VoxelEntity>> ConsumeCreatedEntities() {
             auto result = std::move(m_CreatedEntities);
@@ -66,17 +73,24 @@ namespace vortex::editor {
         
         graphics::SceneManager* m_SceneManager = nullptr;
         std::vector<std::shared_ptr<voxel::VoxelEntity>> m_Entities;
-        
-        // Queue for new entities created via UI (Importer)
         std::vector<std::shared_ptr<voxel::VoxelEntity>> m_CreatedEntities;
         
         char m_ImportPathBuffer[256] = "assets/models/frank.glb";
         float m_ImportScale = 10.0f;
-        
         bool m_SceneDirty = false;
 
-        void HandleSelection(GLFWwindow* window, graphics::Camera& camera, uint32_t width, uint32_t height);
-        void RenderImporterWindow();
+        // --- Tools State ---
+        ToolMode m_CurrentTool = ToolMode::Select;
+        int m_BrushMaterialID = 1;     ///< 0 = Eraser (Air).
+        int m_BrushSize = 0;           ///< Radius/Extents (0 = 1x1x1).
+        bool m_BrushIsSphere = false;  ///< Box vs Sphere shape.
+
+        // --- Internal Helpers ---
+        void HandleInput(GLFWwindow* window, graphics::Camera& camera, uint32_t width, uint32_t height);
+        void HandleSelection(const glm::vec3& rayOrigin, const glm::vec3& rayDir);
+        void HandleBrushAction(const glm::vec3& rayOrigin, const glm::vec3& rayDir);
+        
+        void RenderUI();
         void RenderEntityNode(int index, std::shared_ptr<voxel::VoxelEntity> entity);
     };
 }

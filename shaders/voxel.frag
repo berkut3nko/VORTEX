@@ -4,6 +4,8 @@
 /**
  * @brief Voxel Raymarching Fragment Shader.
  * @details Supports Global Inter-Object Shadows via BVH TLAS Traversal.
+ * Includes Domain-Aware Cache Optimization (Morton Encoding) and Stochastic Sampling.
+ * Optimized for performance on integrated graphics.
  */
 
 layout (depth_greater) out float gl_FragDepth;
@@ -12,6 +14,10 @@ layout(location = 0) in flat uint v_InstanceIndex;
 layout(location = 1) in vec3 v_LocalPos; 
 
 layout(location = 0) out vec4 outColor;
+
+// --- Configuration ---
+// ENABLED: Z-Order Curve memory layout for better cache locality.
+#define USE_MORTON_LAYOUT 
 
 // --- Structures ---
 
@@ -76,20 +82,49 @@ layout(binding = 5, std430) readonly buffer TLAS {
     BVHNode nodes[];
 } tlas;
 
+// --- Optimization & Utilities ---
+
+// Expands a 10-bit integer into 30 bits by inserting 2 zeros after each bit.
+uint ExpandBits(uint v) {
+    v = (v * 0x00010001u) & 0xFF0000FFu;
+    v = (v * 0x00000101u) & 0x0F00F00Fu;
+    v = (v * 0x00000011u) & 0xC30C30C3u;
+    v = (v * 0x00000005u) & 0x49249249u;
+    return v;
+}
+
+// Calculates Morton Code (Z-Order Curve) index for 3D coordinates.
+uint Morton3D(uvec3 p) {
+    return ExpandBits(p.x) | (ExpandBits(p.y) << 1) | (ExpandBits(p.z) << 2);
+}
+
+// Interleaved Gradient Noise (IGN)
+float InterleavedGradientNoise(vec2 position) {
+    vec3 magic = vec3(0.06711056, 0.00583715, 52.9829189);
+    return fract(magic.z * fract(dot(position, magic.xy)));
+}
+
 // --- Helpers ---
 
 bool IsBlockOccupied(uint chunkIdx, ivec3 mapPos) {
+    // Hierarchy uses LINEAR layout (as per C++ implementation)
     ivec3 bPos = mapPos >> 2; 
     uint hIndex = bPos.x + bPos.y * 8 + bPos.z * 64;
     return (chunkBuffer.chunks[chunkIdx].hierarchy[hIndex >> 5] & (1u << (hIndex & 31))) != 0;
 }
 
 uint GetVoxel(uint chunkIdx, ivec3 pos) {
-    uint index = pos.x + pos.y * 32 + pos.z * 1024;
-    return (chunkBuffer.chunks[chunkIdx].voxelIDs[index >> 2] >> ((index & 3) << 3)) & 0xFF;
+    #ifdef USE_MORTON_LAYOUT
+        uint mIndex = Morton3D(uvec3(pos));
+        return (chunkBuffer.chunks[chunkIdx].voxelIDs[mIndex >> 2] >> ((mIndex & 3) << 3)) & 0xFF;
+    #else
+        uint index = pos.x + pos.y * 32 + pos.z * 1024;
+        return (chunkBuffer.chunks[chunkIdx].voxelIDs[index >> 2] >> ((index & 3) << 3)) & 0xFF;
+    #endif
 }
 
-bool IntersectAABB(vec3 ro, vec3 rd, vec3 boxMin, vec3 boxMax, out float tNear, out float tFar) {
+// Improved AABB intersection
+bool IntersectAABB(vec3 ro, vec3 rd, vec3 boxMin, vec3 boxMax, out float tNear, out float tFar, out vec3 normal) {
     vec3 invDir = 1.0 / rd;
     vec3 tbot = invDir * (boxMin - ro);
     vec3 ttop = invDir * (boxMax - ro);
@@ -102,14 +137,34 @@ bool IntersectAABB(vec3 ro, vec3 rd, vec3 boxMin, vec3 boxMax, out float tNear, 
     
     tNear = t0;
     tFar = t1;
+
+    if (t0 == tmin.x) normal = vec3(-sign(rd.x), 0.0, 0.0);
+    else if (t0 == tmin.y) normal = vec3(0.0, -sign(rd.y), 0.0);
+    else normal = vec3(0.0, 0.0, -sign(rd.z));
+
+    return t1 >= t0 && t1 > 0.0;
+}
+
+// Shadow Trace AABB
+bool IntersectAABB_Shadow(vec3 ro, vec3 rd, vec3 boxMin, vec3 boxMax, out float tNear, out float tFar) {
+    vec3 invDir = 1.0 / rd;
+    vec3 tbot = invDir * (boxMin - ro);
+    vec3 ttop = invDir * (boxMax - ro);
+    vec3 tmin = min(ttop, tbot);
+    vec3 tmax = max(ttop, tbot);
+    float t0 = max(max(tmin.x, tmin.y), tmin.z);
+    float t1 = min(min(tmax.x, tmax.y), tmax.z);
+    tNear = t0;
+    tFar = t1;
     return t1 >= t0 && t1 > 0.0;
 }
 
 bool TraceShadowChunk(vec3 ro, vec3 rd, uint chunkIdx, float maxDist) {
     ivec3 mapPos = ivec3(floor(ro));
     
+    // Safety check for start pos
     if (mapPos.x < 0 || mapPos.x >= 32 || mapPos.y < 0 || mapPos.y >= 32 || mapPos.z < 0 || mapPos.z >= 32) {
-       // Should ideally march to entry point if starting outside, but AABB intersection usually handles this.
+       // Should rely on AABB intersection to provide valid entry
     }
 
     vec3 deltaDist = abs(1.0 / rd);
@@ -120,8 +175,7 @@ bool TraceShadowChunk(vec3 ro, vec3 rd, uint chunkIdx, float maxDist) {
     sideDist.y = (sign(rd.y) * (vec3(mapPos).y - ro.y) + (sign(rd.y) * 0.5) + 0.5) * deltaDist.y;
     sideDist.z = (sign(rd.z) * (vec3(mapPos).z - ro.z) + (sign(rd.z) * 0.5) + 0.5) * deltaDist.z;
 
-    float distTraveled = 0.0;
-    const int MAX_SHADOW_STEPS = 64; 
+    const int MAX_SHADOW_STEPS = 32; 
 
     for (int i = 0; i < MAX_SHADOW_STEPS; i++) {
         if (mapPos.x < 0 || mapPos.x >= 32 || mapPos.y < 0 || mapPos.y >= 32 || mapPos.z < 0 || mapPos.z >= 32) return false;
@@ -133,51 +187,47 @@ bool TraceShadowChunk(vec3 ro, vec3 rd, uint chunkIdx, float maxDist) {
 
         if (sideDist.x < sideDist.y) {
             if (sideDist.x < sideDist.z) {
-                distTraveled = sideDist.x;
                 sideDist.x += deltaDist.x;
                 mapPos.x += stepDir.x;
             } else {
-                distTraveled = sideDist.z;
                 sideDist.z += deltaDist.z;
                 mapPos.z += stepDir.z;
             }
         } else {
             if (sideDist.y < sideDist.z) {
-                distTraveled = sideDist.y;
                 sideDist.y += deltaDist.y;
                 mapPos.y += stepDir.y;
             } else {
-                distTraveled = sideDist.z;
                 sideDist.z += deltaDist.z;
                 mapPos.z += stepDir.z;
             }
         }
         
-        if (distTraveled > maxDist) return false;
+        if (sideDist.x > maxDist && sideDist.y > maxDist && sideDist.z > maxDist) return false; 
     }
     return false;
 }
 
-/**
- * @brief Checks global shadows using the TLAS (Top-Level Acceleration Structure).
- * @details Replaces O(N) loop with O(log N) stack-based traversal.
- */
-float CalculateGlobalShadow(vec3 worldPos, vec3 lightDir) {
+float CalculateGlobalShadow(vec3 worldPos, vec3 lightDir, float noise) {
     if (cam.objectCount == 0) return 1.0;
 
-    vec3 shadowRoWorld = worldPos + lightDir * 0.05; 
+    float shadowBias = 0.02 + (noise * 0.01); 
+    vec3 shadowRoWorld = worldPos + lightDir * shadowBias; 
+    
     vec3 invDir = 1.0 / lightDir;
 
-    // TLAS Traversal Stack
     int stack[32];
     int stackPtr = 0;
-    stack[stackPtr++] = 0; // Push Root Node (Index 0)
+    stack[stackPtr++] = 0; 
 
-    while (stackPtr > 0) {
+    int loops = 0;
+    const int MAX_BVH_LOOPS = 64; 
+
+    while (stackPtr > 0 && loops < MAX_BVH_LOOPS) {
+        loops++;
         int nodeIdx = stack[--stackPtr];
         BVHNode node = tlas.nodes[nodeIdx];
 
-        // 1. Intersect AABB
         vec3 t0s = (node.min - shadowRoWorld) * invDir;
         vec3 t1s = (node.max - shadowRoWorld) * invDir;
         vec3 tsmaller = min(t0s, t1s);
@@ -186,38 +236,31 @@ float CalculateGlobalShadow(vec3 worldPos, vec3 lightDir) {
         float tmax = min(tbigger.x, min(tbigger.y, tbigger.z));
 
         if (tmax >= tmin && tmax > 0.0) {
-            
-            // Check if Leaf (Sentinel 0xFFFFFFFF)
             if (node.rightOrCount == 0xFFFFFFFF) {
-                // Leaf Node -> Test Object
                 uint objIdx = node.leftOrInstance;
                 Object obj = objBuffer.objects[objIdx];
                 
-                // Transform to Local
                 vec3 localRo = (obj.invModel * vec4(shadowRoWorld, 1.0)).xyz;
                 vec3 localRd = normalize(mat3(obj.invModel) * lightDir);
 
-                // Detailed Chunk Trace
                 float tn, tf;
-                if (IntersectAABB(localRo, localRd, vec3(0.0), vec3(32.0), tn, tf)) {
+                if (IntersectAABB_Shadow(localRo, localRd, vec3(0.0), vec3(32.0), tn, tf)) {
                     vec3 marchStart = localRo;
                     if (tn > 0.0) marchStart += localRd * (tn + 1e-4);
                     float maxDist = (tn > 0.0) ? (tf - tn) : tf;
 
                     if (TraceShadowChunk(marchStart, localRd, obj.chunkIndex, maxDist)) {
-                        return 0.0; // Shadow Hit
+                        return 0.0; 
                     }
                 }
-
             } else {
-                // Internal Node -> Push Children
                 stack[stackPtr++] = int(node.rightOrCount);
                 stack[stackPtr++] = int(node.leftOrInstance);
             }
         }
     }
     
-    return 1.0; // Lit
+    return 1.0;
 }
 
 // --- Main ---
@@ -228,10 +271,12 @@ void main() {
     vec3 localCamPos = (obj.invModel * vec4(cam.position.xyz, 1.0)).xyz;
     vec3 rawDir = v_LocalPos - localCamPos;
     if (dot(rawDir, rawDir) < 1e-6) discard;
+    
     vec3 localDir = normalize(rawDir);
 
     float tNear, tFar;
-    if (!IntersectAABB(localCamPos, localDir, vec3(0.0), vec3(32.0), tNear, tFar)) {
+    vec3 entryNormal;
+    if (!IntersectAABB(localCamPos, localDir, vec3(0.0), vec3(32.0), tNear, tFar, entryNormal)) {
         discard;
     }
     
@@ -242,9 +287,9 @@ void main() {
     mapPos = clamp(mapPos, ivec3(0), ivec3(31));
 
     vec3 safeDir = localDir;
-    if (abs(safeDir.x) < 1e-6) safeDir.x = 1e-6;
-    if (abs(safeDir.y) < 1e-6) safeDir.y = 1e-6;
-    if (abs(safeDir.z) < 1e-6) safeDir.z = 1e-6;
+    if (abs(safeDir.x) < 1e-5) safeDir.x = 1e-5;
+    if (abs(safeDir.y) < 1e-5) safeDir.y = 1e-5;
+    if (abs(safeDir.z) < 1e-5) safeDir.z = 1e-5;
 
     vec3 deltaDist = abs(1.0 / safeDir);
     ivec3 stepDir = ivec3(sign(safeDir));
@@ -256,7 +301,10 @@ void main() {
 
     ivec3 mask = ivec3(0);
 
-    const int MAX_STEPS = 128; 
+    mat3 normalMatrix = transpose(mat3(obj.invModel));
+
+    const int MAX_STEPS = 96; 
+    
     for (int i = 0; i < MAX_STEPS; i++) {
         if (mapPos.x < 0 || mapPos.x >= 32 || mapPos.y < 0 || mapPos.y >= 32 || mapPos.z < 0 || mapPos.z >= 32) break;
 
@@ -270,11 +318,11 @@ void main() {
                     baseColor = matBuffer.materials[globalMatID].color;
                 }
 
-                vec3 normal = vec3(0.0);
-                if (mask.x != 0) normal.x = -float(stepDir.x);
-                else if (mask.y != 0) normal.y = -float(stepDir.y);
-                else if (mask.z != 0) normal.z = -float(stepDir.z);
-                if (mask == ivec3(0)) normal = -localDir; 
+                // Normal determination moved to hit time
+                vec3 normal = entryNormal; 
+                if (mask.x != 0) normal = vec3(-float(stepDir.x), 0, 0);
+                else if (mask.y != 0) normal = vec3(0, -float(stepDir.y), 0);
+                else if (mask.z != 0) normal = vec3(0, 0, -float(stepDir.z));
 
                 float tHit = tStart;
                 if (mask.x != 0) {
@@ -292,16 +340,14 @@ void main() {
 
                 vec3 lightDir = normalize(sun.direction.xyz);
                 
-                // --- FIX: Use Transpose Inverse for Correct Normal Transformation ---
-                // obj.invModel is already the Inverse. We just transpose it.
-                // This correctly handles non-uniform scaling and rotation.
-                vec3 worldNormal = normalize(transpose(mat3(obj.invModel)) * normal);
+                vec3 worldNormal = normalize(normalMatrix * normal);
                 
                 float diff = max(dot(worldNormal, lightDir), 0.0);
                 
                 float shadow = 1.0;
                 if (diff > 0.0) {
-                    shadow = CalculateGlobalShadow(hitWorldPos, lightDir);
+                    float noise = InterleavedGradientNoise(gl_FragCoord.xy);
+                    shadow = CalculateGlobalShadow(hitWorldPos, lightDir, noise);
                 }
 
                 vec3 ambient = sun.color.a * baseColor.rgb;
