@@ -7,6 +7,7 @@ module;
 export module vortex.graphics:scenemanager;
 
 import :camera_struct;
+import :light; // Import the new light module
 import vortex.memory;
 import vortex.voxel; 
 
@@ -62,7 +63,7 @@ namespace vortex::graphics {
     };
 
     /**
-     * @brief Manages scene data buffers (Objects, Materials, Chunks, Camera).
+     * @brief Manages scene data buffers (Objects, Materials, Chunks, Camera, Lights).
      */
     export class SceneManager {
     public:
@@ -79,9 +80,6 @@ namespace vortex::graphics {
 
         /**
          * @brief Uploads all scene data to the GPU.
-         * @param objects List of objects.
-         * @param materials List of materials (using binary compatible PhysicalMaterial).
-         * @param chunks List of chunks.
          */
         void UploadSceneData(const std::vector<SceneObject>& objects, 
                              const std::vector<vortex::voxel::PhysicalMaterial>& materials, 
@@ -89,33 +87,33 @@ namespace vortex::graphics {
         
         /**
          * @brief Updates the camera uniform buffer.
-         * @param camera The camera state.
-         * @param width Viewport width.
-         * @param height Viewport height.
-         * @param frameCount Current frame counter (for jitter).
-         * @param useJitter Whether to apply TAA jitter.
          */
         void UploadCameraBuffer(const Camera& camera, uint32_t width, uint32_t height, uint64_t frameCount, bool useJitter);
         
         /**
+         * @brief Updates the Global Light uniform buffer.
+         * @param light The directional light data.
+         */
+        void UploadLightBuffer(const DirectionalLight& light);
+
+        /**
          * @brief Culls objects against the frustum and updates the visible object buffer.
-         * @param camera The camera to cull against.
-         * @param aspectRatio Aspect ratio of the viewport.
-         * @return Number of visible objects.
          */
         size_t CullAndUpload(const Camera& camera, float aspectRatio);
 
         std::vector<SceneObject>& GetObjects() { return m_Objects; }
         
-        /**
-         * @brief Updates the transform of a specific object in the local cache.
-         */
         void SetObjectTransform(int index, const glm::mat4& transform);
 
         const memory::AllocatedBuffer& GetCameraBuffer() const { return m_CameraUBO; }
         const memory::AllocatedBuffer& GetMaterialBuffer() const { return m_MaterialsSSBO; }
         const memory::AllocatedBuffer& GetObjectBuffer() const { return m_ObjectsSSBO; }
         const memory::AllocatedBuffer& GetChunkBuffer() const { return m_ChunksSSBO; }
+        
+        /**
+         * @brief Returns the light UBO.
+         */
+        const memory::AllocatedBuffer& GetLightBuffer() const { return m_LightUBO; }
 
     private:
         memory::MemoryAllocator* m_Allocator{nullptr};
@@ -124,6 +122,7 @@ namespace vortex::graphics {
         std::vector<SceneObject> m_CachedObjects;
         
         memory::AllocatedBuffer m_CameraUBO;
+        memory::AllocatedBuffer m_LightUBO;
         memory::AllocatedBuffer m_MaterialsSSBO;
         memory::AllocatedBuffer m_ObjectsSSBO;
         memory::AllocatedBuffer m_ChunksSSBO;

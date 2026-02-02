@@ -11,7 +11,6 @@ module;
 #include <limits>
 #include <algorithm>
 #include <memory>
-#include <cmath> 
 
 module vortex.editor;
 
@@ -31,132 +30,7 @@ namespace vortex::editor {
         glm::vec3 tmax = glm::max(ttop, tbot);
         float t0 = glm::max(glm::max(tmin.x, tmin.y), tmin.z);
         float t1 = glm::min(glm::min(tmax.x, tmax.y), tmax.z);
-        
-        // Check if intersection is valid and not behind the ray origin (unless we are inside)
-        if (t1 >= t0) {
-            // If t0 is negative (inside box), return t1? Or 0? 
-            // Usually we return t0 if >= 0, else 0 if inside.
-            // But here we just need to know IF we hit and where to start.
-            // If t0 < 0, we are inside, so entry is 0.0f.
-            float entry = (t0 < 0.0f) ? 0.0f : t0;
-            if (t1 >= 0.0f) {
-                t = entry;
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // --- DDA Voxel Raycaster ---
-    static bool IntersectRayVoxel(const Ray& rayWorld, const std::shared_ptr<voxel::VoxelEntity>& entity, float& outDist) {
-        bool hasHit = false;
-        float minHitDist = std::numeric_limits<float>::max();
-
-        glm::mat4 invEntityTransform = glm::inverse(entity->transform);
-        
-        // Transform ray to Entity Local Space
-        glm::vec3 originE = glm::vec3(invEntityTransform * glm::vec4(rayWorld.origin, 1.0f));
-        glm::vec3 dirE = glm::vec3(invEntityTransform * glm::vec4(rayWorld.direction, 0.0f)); 
-
-        for(const auto& part : entity->parts) {
-            if(!part->chunk) continue;
-
-            // Transform ray to Chunk Local Space (0..32 coordinates)
-            glm::mat4 invPartMatrix = glm::inverse(part->GetTransformMatrix());
-            glm::vec3 ro = glm::vec3(invPartMatrix * glm::vec4(originE, 1.0f));
-            glm::vec3 rd = glm::vec3(invPartMatrix * glm::vec4(dirE, 0.0f));
-            
-            glm::vec3 rdNorm = glm::normalize(rd);
-            
-            // 1. Intersect Chunk AABB to find entry point
-            float tEntry = 0.0f;
-            Ray localRay = { ro, rdNorm };
-            
-            // Chunk is always 32x32x32 in local voxel space
-            if(!IntersectRayAABB(localRay, glm::vec3(0.0f), glm::vec3(32.0f), tEntry)) {
-                continue;
-            }
-
-            // Nudge entry point slightly inside to avoid precision issues at boundaries
-            glm::vec3 startPos = ro + rdNorm * (tEntry + 0.001f);
-
-            // 2. Initialize DDA
-            // Clamp start position to be within grid indices
-            int x = std::clamp((int)std::floor(startPos.x), 0, 31);
-            int y = std::clamp((int)std::floor(startPos.y), 0, 31);
-            int z = std::clamp((int)std::floor(startPos.z), 0, 31);
-
-            int stepX = (rdNorm.x > 0) ? 1 : -1;
-            int stepY = (rdNorm.y > 0) ? 1 : -1;
-            int stepZ = (rdNorm.z > 0) ? 1 : -1;
-
-            glm::vec3 tDelta = glm::abs(1.0f / rdNorm);
-            glm::vec3 tMax;
-
-            // Calculate distance to next voxel boundary
-            if (rdNorm.x > 0) tMax.x = (std::floor(startPos.x) + 1.0f - startPos.x) * tDelta.x;
-            else              tMax.x = (startPos.x - std::floor(startPos.x)) * tDelta.x;
-
-            if (rdNorm.y > 0) tMax.y = (std::floor(startPos.y) + 1.0f - startPos.y) * tDelta.y;
-            else              tMax.y = (startPos.y - std::floor(startPos.y)) * tDelta.y;
-
-            if (rdNorm.z > 0) tMax.z = (std::floor(startPos.z) + 1.0f - startPos.z) * tDelta.z;
-            else              tMax.z = (startPos.z - std::floor(startPos.z)) * tDelta.z;
-
-            // Prevent infinite loops if ray is parallel to axis (tMax becomes Inf)
-            // Logic below handles Inf correctly (condition < Inf is true)
-
-            // 3. Traverse Grid
-            // Max steps = 32 * 3 (diagonal traversal)
-            for(int i=0; i<100; ++i) {
-                // Check Voxel
-                if (x >= 0 && x < 32 && y >= 0 && y < 32 && z >= 0 && z < 32) {
-                    if (part->chunk->GetVoxel(x, y, z) != 0) {
-                        // HIT!
-                        // Calculate precise world distance to this voxel
-                        // We use the AABB of the single voxel to get exact t
-                        float tVoxel = 0.0f;
-                        if(IntersectRayAABB(localRay, glm::vec3(x,y,z), glm::vec3(x+1,y+1,z+1), tVoxel)) {
-                            glm::vec3 hitPointLocal = ro + rdNorm * tVoxel;
-                            glm::vec4 hitPointWorld = entity->transform * part->GetTransformMatrix() * glm::vec4(hitPointLocal, 1.0f);
-                            float dist = glm::distance(rayWorld.origin, glm::vec3(hitPointWorld));
-                            
-                            if (dist < minHitDist) {
-                                minHitDist = dist;
-                                hasHit = true;
-                            }
-                        }
-                        break; // Found the first hit in this chunk, move to next part (if any overlap)
-                    }
-                } else {
-                    break; // Left the chunk
-                }
-
-                // Step to next voxel
-                if (tMax.x < tMax.y) {
-                    if (tMax.x < tMax.z) {
-                        x += stepX;
-                        tMax.x += tDelta.x;
-                    } else {
-                        z += stepZ;
-                        tMax.z += tDelta.z;
-                    }
-                } else {
-                    if (tMax.y < tMax.z) {
-                        y += stepY;
-                        tMax.y += tDelta.y;
-                    } else {
-                        z += stepZ;
-                        tMax.z += tDelta.z;
-                    }
-                }
-            }
-        }
-
-        if (hasHit) {
-            outDist = minHitDist;
-            return true;
-        }
+        if (t1 >= t0 && t1 >= 0.0f) { t = t0; return true; }
         return false;
     }
 
@@ -279,9 +153,6 @@ namespace vortex::editor {
 
             for (size_t i = 0; i < m_Entities.size(); ++i) {
                 auto& entity = m_Entities[i];
-                
-                // --- Broadphase Check (AABB) ---
-                // We transform ray to local space to check against localBounds
                 glm::mat4 model = entity->transform;
                 glm::mat4 invModel = glm::inverse(model);
 
@@ -289,15 +160,10 @@ namespace vortex::editor {
                 glm::vec3 localDir = glm::normalize(glm::vec3(invModel * glm::vec4(ray.direction, 0.0f)));
                 Ray localRay{ localOrigin, localDir };
 
-                float tAABB = 0.0f;
-                if (!IntersectRayAABB(localRay, entity->localBoundsMin, entity->localBoundsMax, tAABB)) {
-                    continue; // Skipped by broadphase
-                }
-
-                // --- Narrowphase Check (DDA Voxel) ---
-                // If AABB hit, check actual voxels for precision
-                float dist = 0.0f;
-                if (IntersectRayVoxel(ray, entity, dist)) {
+                float t = 0.0f;
+                if (IntersectRayAABB(localRay, entity->localBoundsMin, entity->localBoundsMax, t)) {
+                    glm::vec3 hitWorld = glm::vec3(model * glm::vec4(localOrigin + localDir * t, 1.0f));
+                    float dist = glm::distance(camera.position, hitWorld);
                     if (dist < minT) {
                         minT = dist;
                         hitIndex = (int)i;

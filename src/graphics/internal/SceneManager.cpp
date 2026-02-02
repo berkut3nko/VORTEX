@@ -18,6 +18,7 @@ module vortex.graphics;
 import :scenemanager;
 import vortex.memory;
 import :camera_struct;
+import :light;
 import vortex.log;
 import vortex.voxel;
 
@@ -35,7 +36,9 @@ namespace vortex::graphics {
         m_Allocator = allocator;
         
         m_CameraUBO = allocator->CreateBuffer(sizeof(CameraUBO), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-        // Ensure buffer size is enough for the larger material structure
+        // Create Light UBO
+        m_LightUBO = allocator->CreateBuffer(sizeof(DirectionalLight), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+
         m_MaterialsSSBO = allocator->CreateBuffer(sizeof(voxel::PhysicalMaterial) * 2048, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
         m_ObjectsSSBO = allocator->CreateBuffer(sizeof(GPUObject) * 10000, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
         
@@ -52,6 +55,7 @@ namespace vortex::graphics {
                 m_MappedObjectBuffer = nullptr;
             }
             m_Allocator->DestroyBuffer(m_CameraUBO);
+            m_Allocator->DestroyBuffer(m_LightUBO); // Destroy Light Buffer
             m_Allocator->DestroyBuffer(m_MaterialsSSBO);
             m_Allocator->DestroyBuffer(m_ObjectsSSBO);
             m_Allocator->DestroyBuffer(m_ChunksSSBO);
@@ -82,6 +86,13 @@ namespace vortex::graphics {
         if (index >= 0 && index < (int)m_CachedObjects.size()) {
             m_CachedObjects[index].model = newModel;
         }
+    }
+
+    void SceneManager::UploadLightBuffer(const DirectionalLight& light) {
+        void* data;
+        vmaMapMemory(m_Allocator->GetVmaAllocator(), m_LightUBO.allocation, &data);
+        memcpy(data, &light, sizeof(DirectionalLight));
+        vmaUnmapMemory(m_Allocator->GetVmaAllocator(), m_LightUBO.allocation);
     }
 
     void SceneManager::UploadCameraBuffer(const Camera& camera, uint32_t width, uint32_t height, uint64_t frameCount, bool useJitter) {

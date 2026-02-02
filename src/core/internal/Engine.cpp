@@ -6,7 +6,7 @@ module;
 #include <functional>
 #include <vector> 
 #include <string> 
-#include <algorithm> // Added for std::remove
+#include <algorithm> 
 #include <GLFW/glfw3.h>
 #include <imgui.h> 
 #include <glm/glm.hpp>
@@ -45,6 +45,13 @@ namespace vortex {
         std::vector<voxel::Chunk> persistentChunks;
         std::vector<voxel::PhysicalMaterial> persistentMaterials;
         
+        // Sun Settings
+        float sunPitch = 45.0f;
+        float sunYaw = 45.0f;
+        float sunIntensity = 1.0f;
+        float ambientIntensity = 0.3f;
+        float sunColor[3] = {1.0f, 0.95f, 0.8f};
+
         bool isRunning = false;
     };
 
@@ -65,14 +72,13 @@ namespace vortex {
     void Engine::AddEntity(std::shared_ptr<voxel::VoxelEntity> entity, bool isStatic) {
         if (!entity) return;
 
-        // --- SHRED Analysis Pass (Initial) ---
         if (entity->isDestructible) {
             auto islands = voxel::SHREDSystem::AnalyzeConnectivity(entity);
             if (islands.size() > 1) {
                 Log::Info("SHRED: Entity '" + entity->name + "' split into " + std::to_string(islands.size()) + " fragments upon init.");
                 auto fragments = voxel::SHREDSystem::SplitEntity(entity, islands);
                 for (auto& frag : fragments) {
-                    frag->isDestructible = true; // Allow recursive destruction
+                    frag->isDestructible = true; 
                     AddEntity(frag, frag->isStatic);
                 }
                 return; 
@@ -108,7 +114,6 @@ namespace vortex {
             int width, height;
             glfwGetFramebufferSize(m_State->graphicsContext->GetWindow(), &width, &height);
             
-            // Editor Update
             {
                 core::ProfileScope p("CPU: Editor Update");
                 m_State->editor.Update(m_State->graphicsContext->GetWindow(), m_State->graphicsContext->GetCamera(), m_State->graphicsContext->GetSceneManager(), width, height);
@@ -119,7 +124,6 @@ namespace vortex {
                 }
             }
 
-            // Scene Upload (if dirty)
             if (m_State->editor.IsSceneDirty()) {
                 core::ProfileScope p("CPU: Scene Upload");
                 
@@ -163,16 +167,21 @@ namespace vortex {
                 m_State->editor.ResetSceneDirty();
             }
 
-            // Systems Update
             {
                 core::ProfileScope p("CPU: Systems Update");
                 m_State->cameraController.Update(m_State->graphicsContext->GetWindow(), m_State->graphicsContext->GetCamera(), deltaTime);
                 m_State->graphicsContext->UploadCamera();
+
+                // Update and Upload Sun
+                graphics::DirectionalLight sun;
+                sun.SetDirection(m_State->sunPitch, m_State->sunYaw);
+                sun.direction.w = m_State->sunIntensity;
+                sun.color = glm::vec4(m_State->sunColor[0], m_State->sunColor[1], m_State->sunColor[2], m_State->ambientIntensity);
+                m_State->graphicsContext->UploadLight(sun);
                 
                 UpdateSystems(deltaTime);
             }
 
-            // Rendering
             m_State->graphicsContext->BeginRecording();
             m_State->graphicsContext->RecordScene();
             m_State->graphicsContext->RecordAA();
@@ -183,6 +192,14 @@ namespace vortex {
                 if (onGuiRender) onGuiRender();
                 ImGui::Separator();
                 
+                if (ImGui::CollapsingHeader("Lighting", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    ImGui::DragFloat("Sun Pitch", &m_State->sunPitch, 1.0f, -89.0f, 89.0f);
+                    ImGui::DragFloat("Sun Yaw", &m_State->sunYaw, 1.0f, 0.0f, 360.0f);
+                    ImGui::SliderFloat("Sun Intensity", &m_State->sunIntensity, 0.0f, 5.0f);
+                    ImGui::SliderFloat("Ambient", &m_State->ambientIntensity, 0.0f, 1.0f);
+                    ImGui::ColorEdit3("Sun Color", m_State->sunColor);
+                }
+
                 static int currentAA = 1;
                 const char* aaModes[] = { "None", "FXAA", "TAA" };
                 if (ImGui::Combo("Anti-Aliasing", &currentAA, aaModes, IM_ARRAYSIZE(aaModes))) {
@@ -206,17 +223,11 @@ namespace vortex {
     void Engine::UpdateSystems(float deltaTime) { 
         auto selectedEntity = m_State->editor.GetSelectedEntity();
 
-        // 1. Prepare Palette for SHRED checks
         voxel::MaterialPalette tempPalette;
         for(const auto& m : m_State->persistentMaterials) tempPalette.AddMaterial(m);
-        // Note: Dynamic meshes might have their own local materials not in persistent list at index.
-        // For simplicity, we assume global palette for integrity checks or basic default.
 
-        // Lists to manage entity lifecycle changes
         std::vector<std::shared_ptr<voxel::VoxelEntity>> entitiesToAdd;
         std::vector<physics::BodyHandle> bodiesToRemove;
-        
-        // We use an index loop because we might need to remove elements (carefully)
         std::vector<size_t> indicesToRemove;
 
         for (size_t i = 0; i < m_State->simObjects.size(); ++i) {
@@ -225,40 +236,29 @@ namespace vortex {
             
             if (!entity) continue;
 
-            // --- SHRED: Structural Integrity Check ---
-            // Only check if destructible and NOT currently being grabbed by editor
             if (entity->isDestructible && entity != selectedEntity) {
-                // Perform check. Warning: This is expensive to do every frame for all objects.
-                // In a real game, schedule this less frequently or only on collision events.
                 if (voxel::SHREDSystem::ValidateStructuralIntegrity(entity, tempPalette)) {
-                    // Integrity failed -> Voxels destroyed.
-                    // Now check if it split into islands.
                     auto islands = voxel::SHREDSystem::AnalyzeConnectivity(entity);
                     
                     if (islands.empty()) {
-                        // Case 0: Total destruction (no voxels left)
                         Log::Info("SHRED: Entity '" + entity->name + "' was completely pulverized.");
                         indicesToRemove.push_back(i);
                         bodiesToRemove.push_back(simObj.bodyHandle);
                     }
                     else if (islands.size() > 1) {
-                        // Case 1: Split into multiple fragments
                         Log::Info("SHRED: Structural Failure! Entity '" + entity->name + "' split into " + std::to_string(islands.size()) + " fragments.");
                         auto fragments = voxel::SHREDSystem::SplitEntity(entity, islands);
                         entitiesToAdd.insert(entitiesToAdd.end(), fragments.begin(), fragments.end());
                         
-                        // Mark current parent for removal
                         indicesToRemove.push_back(i);
                         bodiesToRemove.push_back(simObj.bodyHandle);
                     } else {
-                        // Case 2: Just damage (1 island remaining), keep original entity but update physics
                         entity->shouldRebuildPhysics = true;
                         m_State->editor.MarkDirty();
                     }
                 }
             }
 
-            // --- Physics Rebuild ---
             if (entity->shouldRebuildPhysics) {
                 m_State->physicsSystem.RemoveBody(simObj.bodyHandle);
                 simObj.bodyHandle = m_State->physicsSystem.AddBody(entity, entity->isStatic);
@@ -269,7 +269,6 @@ namespace vortex {
                 simObj.lastTriggerState = entity->isTrigger;
             }
 
-            // --- State Sync ---
             if (entity->isStatic != simObj.lastStaticState) {
                 m_State->physicsSystem.SetBodyType(simObj.bodyHandle, entity->isStatic);
                 simObj.lastStaticState = entity->isStatic;
@@ -280,7 +279,6 @@ namespace vortex {
                 simObj.lastTriggerState = entity->isTrigger;
             }
 
-            // Gizmo/Physics Sync
             if (!entity->isStatic) {
                 bool isSelected = (entity == selectedEntity);
                 m_State->physicsSystem.SetBodyKinematic(simObj.bodyHandle, isSelected);
@@ -291,40 +289,26 @@ namespace vortex {
             }
         }
 
-        // Process Removals (Reverse order to keep indices valid)
         for (auto it = indicesToRemove.rbegin(); it != indicesToRemove.rend(); ++it) {
             size_t idx = *it;
-            
-            // Capture the entity pointer before removing the wrapper from simObjects
             auto entityPtr = m_State->simObjects[idx].entity;
-
-            // 1. Remove from Physics Simulation list
             m_State->simObjects.erase(m_State->simObjects.begin() + idx);
-            
-            // 2. Remove from Editor Entity List (Crucial for correct selection and rendering)
             auto& editorEntities = m_State->editor.GetEntities();
-            
-            // Note: std::remove shifts valid elements to the front and returns the new logical end.
             auto newEnd = std::remove(editorEntities.begin(), editorEntities.end(), entityPtr);
             if (newEnd != editorEntities.end()) {
                 editorEntities.erase(newEnd, editorEntities.end());
-                // Force scene update since entity list changed
                 m_State->editor.MarkDirty();
             }
         }
         
-        // Clean up Jolt physics bodies
         for(auto b : bodiesToRemove) m_State->physicsSystem.RemoveBody(b);
 
-        // Process Additions (New fragments)
         for (auto& newE : entitiesToAdd) {
             AddEntity(newE, newE->isStatic);
         }
 
-        // --- Physics Step ---
         m_State->physicsSystem.Update(deltaTime);
 
-        // --- Sync Transforms ---
         auto& sceneManager = m_State->graphicsContext->GetSceneManager();
         int renderIndex = 0;
         

@@ -13,7 +13,6 @@ namespace vortex::graphics {
 
     /**
      * @brief Manages the main rasterization pipeline for Voxel Raymarching.
-     * @details Uses a full-screen triangle or cube bounding boxes to trigger the fragment shader raymarcher.
      */
     export class RasterPipeline {
     public:
@@ -31,18 +30,12 @@ namespace vortex::graphics {
                         const memory::AllocatedBuffer& cameraBuffer,
                         const memory::AllocatedBuffer& materialBuffer,
                         const memory::AllocatedBuffer& objectBuffer,
-                        const memory::AllocatedBuffer& chunkBuffer);
+                        const memory::AllocatedBuffer& chunkBuffer,
+                        const memory::AllocatedBuffer& lightBuffer); // Added light buffer
 
         void Shutdown();
         
-        /**
-         * @brief Binds the pipeline and descriptor sets for the current frame.
-         */
         void Bind(VkCommandBuffer cmd, uint32_t frameIndex);
-        
-        /**
-         * @brief Updates descriptor sets with current buffer handles.
-         */
         void UpdateDescriptors(uint32_t frameIndex);
 
     private:
@@ -59,5 +52,6 @@ namespace vortex::graphics {
         VkBuffer m_MaterialBuffer{VK_NULL_HANDLE};
         VkBuffer m_ObjectBuffer{VK_NULL_HANDLE};
         VkBuffer m_ChunkBuffer{VK_NULL_HANDLE};
+        VkBuffer m_LightBuffer{VK_NULL_HANDLE};
     };
 }

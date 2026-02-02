@@ -112,6 +112,7 @@ target_sources(VortexCore PUBLIC
     src/graphics/RenderResources.cppm
     src/graphics/CameraStruct.cppm
     src/graphics/SceneManager.cppm
+    src/graphics/Light.cppm
 
     #src/graphics/pipelines/RayTracingPipeline.cppm
     src/graphics/pipelines/RasterPipeline.cppm

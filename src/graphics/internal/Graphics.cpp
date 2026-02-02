@@ -12,7 +12,7 @@ import vortex.log;
 import vortex.memory;
 import vortex.voxel;
 import :render_resources;
-import :scenemanager; // Correct partition name
+import :scenemanager; 
 import :taapipeline; 
 import :fxaapipeline;
 
@@ -111,7 +111,8 @@ namespace vortex::graphics {
                                     i.sceneManager.GetCameraBuffer(), 
                                     i.sceneManager.GetMaterialBuffer(), 
                                     i.sceneManager.GetObjectBuffer(), 
-                                    i.sceneManager.GetChunkBuffer());
+                                    i.sceneManager.GetChunkBuffer(),
+                                    i.sceneManager.GetLightBuffer()); // Pass Light Buffer
         
         i.ui.Initialize(i.context, i.window, i.swapchain.GetFormat(), i.swapchain.GetExtent(), i.swapchain.GetImageViews());
         
@@ -409,7 +410,10 @@ namespace vortex::graphics {
             useJitter); 
     }
 
-    // UPDATED to accept PhysicalMaterial as per interface
+    void GraphicsContext::UploadLight(const DirectionalLight& light) {
+        m_Internal->sceneManager.UploadLightBuffer(light);
+    }
+
     void GraphicsContext::UploadScene(const std::vector<SceneObject>& o, 
                                       const std::vector<vortex::voxel::PhysicalMaterial>& m, 
                                       const std::vector<vortex::voxel::Chunk>& c) { 

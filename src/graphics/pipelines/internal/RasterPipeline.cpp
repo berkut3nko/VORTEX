@@ -35,18 +35,23 @@ namespace vortex::graphics {
                                     const memory::AllocatedBuffer& cameraBuffer,
                                     const memory::AllocatedBuffer& materialBuffer,
                                     const memory::AllocatedBuffer& objectBuffer,
-                                    const memory::AllocatedBuffer& chunkBuffer) {
+                                    const memory::AllocatedBuffer& chunkBuffer,
+                                    const memory::AllocatedBuffer& lightBuffer) {
         m_Device = device;
         m_CameraBuffer = cameraBuffer.buffer;
         m_MaterialBuffer = materialBuffer.buffer;
         m_ObjectBuffer = objectBuffer.buffer;
         m_ChunkBuffer = chunkBuffer.buffer;
+        m_LightBuffer = lightBuffer.buffer;
 
-        std::vector<VkDescriptorSetLayoutBinding> bindings(4);
+        // Increased bindings to 5
+        std::vector<VkDescriptorSetLayoutBinding> bindings(5);
         bindings[0] = {0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
         bindings[1] = {1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
         bindings[2] = {2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
         bindings[3] = {3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
+        // Light Buffer Binding
+        bindings[4] = {4, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr};
 
         VkDescriptorSetLayoutCreateInfo layoutInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
         layoutInfo.bindingCount = (uint32_t)bindings.size();
@@ -92,11 +97,6 @@ namespace vortex::graphics {
         rasterizer.rasterizerDiscardEnable = VK_FALSE;
         rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
         rasterizer.lineWidth = 1.0f;
-        
-        // --- OPTIMIZATION FIX ---
-        // Back-face culling enabled.
-        // We use CLOCKWISE because Vulkan's Y-flip in projection makes standard CCW triangles appear CW.
-        // This ensures we only draw the FRONT face (1x shader run per pixel).
         rasterizer.cullMode = VK_CULL_MODE_BACK_BIT; 
         rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
 
@@ -152,7 +152,7 @@ namespace vortex::graphics {
 
         // Descriptors
         VkDescriptorPoolSize sizes[] = {
-            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 * framesInFlight },
+            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 2 * framesInFlight }, // Increased for light buffer
             { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3 * framesInFlight }
         };
         VkDescriptorPoolCreateInfo poolInfo{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -182,12 +182,14 @@ namespace vortex::graphics {
         VkDescriptorBufferInfo matInfo{m_MaterialBuffer, 0, VK_WHOLE_SIZE};
         VkDescriptorBufferInfo objInfo{m_ObjectBuffer, 0, VK_WHOLE_SIZE};
         VkDescriptorBufferInfo chkInfo{m_ChunkBuffer, 0, VK_WHOLE_SIZE};
+        VkDescriptorBufferInfo lightInfo{m_LightBuffer, 0, VK_WHOLE_SIZE};
 
-        std::vector<VkWriteDescriptorSet> writes(4);
+        std::vector<VkWriteDescriptorSet> writes(5);
         writes[0] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 0, 0, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr, &camInfo, nullptr};
         writes[1] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 1, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &matInfo, nullptr};
         writes[2] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 2, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &objInfo, nullptr};
         writes[3] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 3, 0, 1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, nullptr, &chkInfo, nullptr};
+        writes[4] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, nullptr, m_DescriptorSets[frameIndex], 4, 0, 1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, nullptr, &lightInfo, nullptr};
 
         vkUpdateDescriptorSets(m_Device, (uint32_t)writes.size(), writes.data(), 0, nullptr);
     }
