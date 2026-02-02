@@ -1,0 +1,62 @@
+#version 460
+
+layout(local_size_x = 16, local_size_y = 16) in;
+
+// Use a sampler that allows manual texture offsets (logic handles blending)
+layout(binding = 0) uniform sampler2D lowResTexture;
+layout(binding = 1, rgba8) uniform writeonly image2D highResImage;
+
+layout(push_constant) uniform PushConsts {
+    vec2 texelSize; // 1.0 / lowResWidth, 1.0 / lowResHeight
+} pc;
+
+void main() {
+    ivec2 highResPos = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 outputSize = imageSize(highResImage);
+
+    if (highResPos.x >= outputSize.x || highResPos.y >= outputSize.y) {
+        return;
+    }
+
+    // Determine the base pixel in the low-res image.
+    // Since LowRes = HighRes / 2, coordinate (0,0) and (1,0) in HighRes
+    // both map to the neighborhood of (0,0) in LowRes.
+    ivec2 lowResBasePos = highResPos / 2;
+    
+    // Convert to UV coordinates that point EXACTLY to the center of the low-res texel.
+    // This is critical for textureLodOffset to work reliably with integer offsets.
+    vec2 uv = (vec2(lowResBasePos) + 0.5) * pc.texelSize;
+
+    // Determine parity (0 or 1) to know which interpolation pattern to use.
+    int xParity = highResPos.x % 2;
+    int yParity = highResPos.y % 2;
+
+    vec4 resultColor;
+
+    // Fetch the base pixel (Top-Left of the 2x2 block being reconstructed)
+    vec4 c00 = textureLod(lowResTexture, uv, 0);
+
+    if (xParity == 0 && yParity == 0) {
+        // Direct pixel: Exactly matches the low-res sample
+        resultColor = c00;
+    } 
+    else if (xParity == 1 && yParity == 0) {
+        // Horizontal edge: Mix with right neighbor (1, 0)
+        vec4 c10 = textureLodOffset(lowResTexture, uv, 0, ivec2(1, 0));
+        resultColor = (c00 + c10) * 0.5;
+    } 
+    else if (xParity == 0 && yParity == 1) {
+        // Vertical edge: Mix with bottom neighbor (0, 1)
+        vec4 c01 = textureLodOffset(lowResTexture, uv, 0, ivec2(0, 1));
+        resultColor = (c00 + c01) * 0.5;
+    } 
+    else {
+        // Center/Diagonal: Mix 4 neighbors (0,0), (1,0), (0,1), (1,1)
+        vec4 c10 = textureLodOffset(lowResTexture, uv, 0, ivec2(1, 0));
+        vec4 c01 = textureLodOffset(lowResTexture, uv, 0, ivec2(0, 1));
+        vec4 c11 = textureLodOffset(lowResTexture, uv, 0, ivec2(1, 1));
+        resultColor = (c00 + c10 + c01 + c11) * 0.25;
+    }
+
+    imageStore(highResImage, highResPos, resultColor);
+}
