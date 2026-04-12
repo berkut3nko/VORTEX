@@ -1,0 +1,67 @@
+#version 460
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0) uniform sampler2D texColor;
+layout(binding = 1) uniform sampler2D texHistory;
+layout(binding = 2) uniform sampler2D texVelocity;
+layout(binding = 3) uniform sampler2D texDepth;
+layout(binding = 4, rgba8) uniform writeonly image2D imgOutput;
+
+void main() {
+    ivec2 pixelPos = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 size = imageSize(imgOutput);
+    if(pixelPos.x >= size.x || pixelPos.y >= size.y) return;
+
+    vec2 uv = (vec2(pixelPos) + 0.5) / vec2(size);
+    vec2 texelSize = 1.0 / vec2(textureSize(texColor, 0));
+
+    // 1. Read Current Color (Center)
+    vec3 color = texture(texColor, uv).rgb;
+
+    // 2. Read Velocity
+    vec2 velocity = texture(texVelocity, uv).rg;
+
+    // 3. Reproject to find History UV
+    vec2 prevUV = uv - velocity;
+
+    // 4. Check validity
+    if(prevUV.x < 0.0 || prevUV.x > 1.0 || prevUV.y < 0.0 || prevUV.y > 1.0) {
+        imageStore(imgOutput, pixelPos, vec4(color, 1.0));
+        return;
+    }
+
+    // 5. Read History
+    vec3 history = texture(texHistory, prevUV).rgb;
+
+    // 6. Optimized Neighborhood Clamping (5-tap Cross instead of 9-tap Box)
+    // Center is already in 'color'
+    vec3 minColor = color;
+    vec3 maxColor = color;
+
+    // Offsets for Top, Bottom, Left, Right
+    const vec2 offsets[4] = vec2[](
+        vec2(0, 1), vec2(0, -1), vec2(1, 0), vec2(-1, 0)
+    );
+
+    for(int i = 0; i < 4; i++) {
+        vec3 neighbor = texture(texColor, uv + offsets[i] * texelSize).rgb;
+        minColor = min(minColor, neighbor);
+        maxColor = max(maxColor, neighbor);
+    }
+    
+    // Clamp history to the range of neighbors
+    history = clamp(history, minColor, maxColor);
+
+    // 7. Blend
+    // Reduce blend factor slightly to be more responsive (less ghosting)
+    float blend = 0.9; 
+    
+    // Optional: Dynamic blend based on motion speed to reduce ghosting
+    // float speed = length(velocity * vec2(size));
+    // float dynamicBlend = mix(0.9, 0.8, clamp(speed * 0.1, 0.0, 1.0));
+
+    vec3 result = mix(color, history, blend);
+
+    imageStore(imgOutput, pixelPos, vec4(result, 1.0));
+}

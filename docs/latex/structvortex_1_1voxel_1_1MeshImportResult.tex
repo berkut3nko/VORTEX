@@ -1,0 +1,69 @@
+\doxysection{vortex\+::voxel\+::Mesh\+Import\+Result Struct Reference}
+\hypertarget{structvortex_1_1voxel_1_1MeshImportResult}{}\label{structvortex_1_1voxel_1_1MeshImportResult}\index{vortex::voxel::MeshImportResult@{vortex::voxel::MeshImportResult}}
+
+
+Result of a mesh import operation.  
+
+
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+std\+::vector$<$ std\+::shared\+\_\+ptr$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelObject}{Voxel\+Object}} $>$ $>$ \mbox{\hyperlink{structvortex_1_1voxel_1_1MeshImportResult_a9a2551539dead63a1343cdf999a84a93}{parts}}
+\begin{DoxyCompactList}\small\item\em Generated voxel objects (chunks). \end{DoxyCompactList}\item 
+std\+::vector$<$ \mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{Physical\+Material}} $>$ \mbox{\hyperlink{structvortex_1_1voxel_1_1MeshImportResult_a2339bad87256268bffeab0cd0f08f5b1}{materials}}
+\begin{DoxyCompactList}\small\item\em Extracted materials from the mesh, converted to \doxylink{structvortex_1_1voxel_1_1PhysicalMaterial}{Physical\+Material}. \end{DoxyCompactList}\item 
+glm\+::vec3 \mbox{\hyperlink{structvortex_1_1voxel_1_1MeshImportResult_a1afb6b63b2990ed83b2ad59b8ef0d6ce}{min\+Bound}}
+\begin{DoxyCompactList}\small\item\em AABB Minimum bound of the imported mesh. \end{DoxyCompactList}\item 
+glm\+::vec3 \mbox{\hyperlink{structvortex_1_1voxel_1_1MeshImportResult_a3b560cb968c578096485885cbeefe6dd}{max\+Bound}}
+\begin{DoxyCompactList}\small\item\em AABB Maximum bound of the imported mesh. \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Result of a mesh import operation. 
+
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structvortex_1_1voxel_1_1MeshImportResult_a2339bad87256268bffeab0cd0f08f5b1}\label{structvortex_1_1voxel_1_1MeshImportResult_a2339bad87256268bffeab0cd0f08f5b1} 
+\index{vortex::voxel::MeshImportResult@{vortex::voxel::MeshImportResult}!materials@{materials}}
+\index{materials@{materials}!vortex::voxel::MeshImportResult@{vortex::voxel::MeshImportResult}}
+\doxysubsubsection{\texorpdfstring{materials}{materials}}
+{\footnotesize\ttfamily std\+::vector$<$\mbox{\hyperlink{structvortex_1_1voxel_1_1PhysicalMaterial}{Physical\+Material}}$>$ vortex\+::voxel\+::\+Mesh\+Import\+Result\+::materials}
+
+
+
+Extracted materials from the mesh, converted to \doxylink{structvortex_1_1voxel_1_1PhysicalMaterial}{Physical\+Material}. 
+
+\Hypertarget{structvortex_1_1voxel_1_1MeshImportResult_a3b560cb968c578096485885cbeefe6dd}\label{structvortex_1_1voxel_1_1MeshImportResult_a3b560cb968c578096485885cbeefe6dd} 
+\index{vortex::voxel::MeshImportResult@{vortex::voxel::MeshImportResult}!maxBound@{maxBound}}
+\index{maxBound@{maxBound}!vortex::voxel::MeshImportResult@{vortex::voxel::MeshImportResult}}
+\doxysubsubsection{\texorpdfstring{maxBound}{maxBound}}
+{\footnotesize\ttfamily glm\+::vec3 vortex\+::voxel\+::\+Mesh\+Import\+Result\+::max\+Bound}
+
+
+
+AABB Maximum bound of the imported mesh. 
+
+\Hypertarget{structvortex_1_1voxel_1_1MeshImportResult_a1afb6b63b2990ed83b2ad59b8ef0d6ce}\label{structvortex_1_1voxel_1_1MeshImportResult_a1afb6b63b2990ed83b2ad59b8ef0d6ce} 
+\index{vortex::voxel::MeshImportResult@{vortex::voxel::MeshImportResult}!minBound@{minBound}}
+\index{minBound@{minBound}!vortex::voxel::MeshImportResult@{vortex::voxel::MeshImportResult}}
+\doxysubsubsection{\texorpdfstring{minBound}{minBound}}
+{\footnotesize\ttfamily glm\+::vec3 vortex\+::voxel\+::\+Mesh\+Import\+Result\+::min\+Bound}
+
+
+
+AABB Minimum bound of the imported mesh. 
+
+\Hypertarget{structvortex_1_1voxel_1_1MeshImportResult_a9a2551539dead63a1343cdf999a84a93}\label{structvortex_1_1voxel_1_1MeshImportResult_a9a2551539dead63a1343cdf999a84a93} 
+\index{vortex::voxel::MeshImportResult@{vortex::voxel::MeshImportResult}!parts@{parts}}
+\index{parts@{parts}!vortex::voxel::MeshImportResult@{vortex::voxel::MeshImportResult}}
+\doxysubsubsection{\texorpdfstring{parts}{parts}}
+{\footnotesize\ttfamily std\+::vector$<$std\+::shared\+\_\+ptr$<$\mbox{\hyperlink{structvortex_1_1voxel_1_1VoxelObject}{Voxel\+Object}}$>$ $>$ vortex\+::voxel\+::\+Mesh\+Import\+Result\+::parts}
+
+
+
+Generated voxel objects (chunks). 
+
+
+
+The documentation for this struct was generated from the following file\+:\begin{DoxyCompactItemize}
+\item 
+src/mesh/\mbox{\hyperlink{MeshConverter_8cppm}{Mesh\+Converter.\+cppm}}\end{DoxyCompactItemize}

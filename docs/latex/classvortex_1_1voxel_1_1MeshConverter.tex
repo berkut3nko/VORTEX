@@ -1,0 +1,42 @@
+\doxysection{vortex\+::voxel\+::Mesh\+Converter Class Reference}
+\hypertarget{classvortex_1_1voxel_1_1MeshConverter}{}\label{classvortex_1_1voxel_1_1MeshConverter}\index{vortex::voxel::MeshConverter@{vortex::voxel::MeshConverter}}
+
+
+Utility class to convert standard 3D meshes into Voxel Entities.  
+
+
+\doxysubsubsection*{Static Public Member Functions}
+\begin{DoxyCompactItemize}
+\item 
+static \mbox{\hyperlink{structvortex_1_1voxel_1_1MeshImportResult}{Mesh\+Import\+Result}} \mbox{\hyperlink{classvortex_1_1voxel_1_1MeshConverter_a84387902de27d409b603e4041e4c8f64}{Import}} (const \mbox{\hyperlink{structvortex_1_1voxel_1_1MeshImportSettings}{Mesh\+Import\+Settings}} \&settings)
+\begin{DoxyCompactList}\small\item\em Voxelizes a mesh and extracts simple materials (base color). \end{DoxyCompactList}\end{DoxyCompactItemize}
+
+
+\doxysubsection{Detailed Description}
+Utility class to convert standard 3D meshes into Voxel Entities. 
+
+\doxysubsection{Member Function Documentation}
+\Hypertarget{classvortex_1_1voxel_1_1MeshConverter_a84387902de27d409b603e4041e4c8f64}\label{classvortex_1_1voxel_1_1MeshConverter_a84387902de27d409b603e4041e4c8f64} 
+\index{vortex::voxel::MeshConverter@{vortex::voxel::MeshConverter}!Import@{Import}}
+\index{Import@{Import}!vortex::voxel::MeshConverter@{vortex::voxel::MeshConverter}}
+\doxysubsubsection{\texorpdfstring{Import()}{Import()}}
+{\footnotesize\ttfamily \mbox{\hyperlink{structvortex_1_1voxel_1_1MeshImportResult}{Mesh\+Import\+Result}} vortex\+::voxel\+::\+Mesh\+Converter\+::\+Import (\begin{DoxyParamCaption}\item[{const \mbox{\hyperlink{structvortex_1_1voxel_1_1MeshImportSettings}{Mesh\+Import\+Settings}} \&}]{settings }\end{DoxyParamCaption})\hspace{0.3cm}{\ttfamily [static]}}
+
+
+
+Voxelizes a mesh and extracts simple materials (base color). 
+
+Uses a triangle-\/box intersection test to generate voxel data. 
+\begin{DoxyParams}{Parameters}
+{\em settings} & Configuration for the import process. \\
+\hline
+\end{DoxyParams}
+\begin{DoxyReturn}{Returns}
+The result containing voxel chunks and materials. 
+\end{DoxyReturn}
+
+
+The documentation for this class was generated from the following files\+:\begin{DoxyCompactItemize}
+\item 
+src/mesh/\mbox{\hyperlink{MeshConverter_8cppm}{Mesh\+Converter.\+cppm}}\item 
+src/mesh/internal/\mbox{\hyperlink{MeshConverter_8cpp}{Mesh\+Converter.\+cpp}}\end{DoxyCompactItemize}

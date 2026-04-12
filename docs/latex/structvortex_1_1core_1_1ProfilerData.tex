@@ -1,0 +1,54 @@
+\doxysection{vortex\+::core\+::Profiler\+Data Struct Reference}
+\hypertarget{structvortex_1_1core_1_1ProfilerData}{}\label{structvortex_1_1core_1_1ProfilerData}\index{vortex::core::ProfilerData@{vortex::core::ProfilerData}}
+\doxysubsubsection*{Public Types}
+\begin{DoxyCompactItemize}
+\item 
+using \mbox{\hyperlink{structvortex_1_1core_1_1ProfilerData_a0689e35f7405bd1ff0b7cf8ac731b521}{Clock}} = std\+::chrono\+::high\+\_\+resolution\+\_\+clock
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+std\+::unordered\+\_\+map$<$ std\+::string, Clock\+::time\+\_\+point $>$ \mbox{\hyperlink{structvortex_1_1core_1_1ProfilerData_abe5d3ca06074edb75889a05d6dca7293}{start\+Times}}
+\item 
+std\+::map$<$ std\+::string, std\+::vector$<$ float $>$ $>$ \mbox{\hyperlink{structvortex_1_1core_1_1ProfilerData_a8f71f653ffc1748abbe9ada6ff24be46}{history}}
+\end{DoxyCompactItemize}
+\doxysubsubsection*{Static Public Attributes}
+\begin{DoxyCompactItemize}
+\item 
+static constexpr int \mbox{\hyperlink{structvortex_1_1core_1_1ProfilerData_aa971b0713c2987032c4ac8c2462b3cb7}{HISTORY\+\_\+\+SIZE}} = 100
+\end{DoxyCompactItemize}
+
+
+\doxysubsection{Member Typedef Documentation}
+\Hypertarget{structvortex_1_1core_1_1ProfilerData_a0689e35f7405bd1ff0b7cf8ac731b521}\label{structvortex_1_1core_1_1ProfilerData_a0689e35f7405bd1ff0b7cf8ac731b521} 
+\index{vortex::core::ProfilerData@{vortex::core::ProfilerData}!Clock@{Clock}}
+\index{Clock@{Clock}!vortex::core::ProfilerData@{vortex::core::ProfilerData}}
+\doxysubsubsection{\texorpdfstring{Clock}{Clock}}
+{\footnotesize\ttfamily using \mbox{\hyperlink{structvortex_1_1core_1_1ProfilerData_a0689e35f7405bd1ff0b7cf8ac731b521}{vortex\+::core\+::\+Profiler\+Data\+::\+Clock}} = std\+::chrono\+::high\+\_\+resolution\+\_\+clock}
+
+
+
+\doxysubsection{Member Data Documentation}
+\Hypertarget{structvortex_1_1core_1_1ProfilerData_a8f71f653ffc1748abbe9ada6ff24be46}\label{structvortex_1_1core_1_1ProfilerData_a8f71f653ffc1748abbe9ada6ff24be46} 
+\index{vortex::core::ProfilerData@{vortex::core::ProfilerData}!history@{history}}
+\index{history@{history}!vortex::core::ProfilerData@{vortex::core::ProfilerData}}
+\doxysubsubsection{\texorpdfstring{history}{history}}
+{\footnotesize\ttfamily std\+::map$<$std\+::string, std\+::vector$<$float$>$ $>$ vortex\+::core\+::\+Profiler\+Data\+::history}
+
+\Hypertarget{structvortex_1_1core_1_1ProfilerData_aa971b0713c2987032c4ac8c2462b3cb7}\label{structvortex_1_1core_1_1ProfilerData_aa971b0713c2987032c4ac8c2462b3cb7} 
+\index{vortex::core::ProfilerData@{vortex::core::ProfilerData}!HISTORY\_SIZE@{HISTORY\_SIZE}}
+\index{HISTORY\_SIZE@{HISTORY\_SIZE}!vortex::core::ProfilerData@{vortex::core::ProfilerData}}
+\doxysubsubsection{\texorpdfstring{HISTORY\_SIZE}{HISTORY\_SIZE}}
+{\footnotesize\ttfamily constexpr int vortex\+::core\+::\+Profiler\+Data\+::\+HISTORY\+\_\+\+SIZE = 100\hspace{0.3cm}{\ttfamily [static]}, {\ttfamily [constexpr]}}
+
+\Hypertarget{structvortex_1_1core_1_1ProfilerData_abe5d3ca06074edb75889a05d6dca7293}\label{structvortex_1_1core_1_1ProfilerData_abe5d3ca06074edb75889a05d6dca7293} 
+\index{vortex::core::ProfilerData@{vortex::core::ProfilerData}!startTimes@{startTimes}}
+\index{startTimes@{startTimes}!vortex::core::ProfilerData@{vortex::core::ProfilerData}}
+\doxysubsubsection{\texorpdfstring{startTimes}{startTimes}}
+{\footnotesize\ttfamily std\+::unordered\+\_\+map$<$std\+::string, Clock\+::time\+\_\+point$>$ vortex\+::core\+::\+Profiler\+Data\+::start\+Times}
+
+
+
+The documentation for this struct was generated from the following file\+:\begin{DoxyCompactItemize}
+\item 
+src/core/internal/\mbox{\hyperlink{Profiler_8cpp}{Profiler.\+cpp}}\end{DoxyCompactItemize}

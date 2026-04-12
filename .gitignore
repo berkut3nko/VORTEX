@@ -1,0 +1,41 @@
+# --- Build & Output Directories (Engine Standalone) ---
+build/
+cmake-build-*/
+out/
+bin/
+lib/
+test_results/
+
+# --- Dependency Artifacts ---
+_deps/
+external/vcpkg/
+
+# --- IDE & Tooling (Engine Level) ---
+.vscode/
+.idea/
+*.sln
+*.vcxproj
+*.vcxproj.user
+CMakeUserPresets.json
+compile_commands.json
+
+# --- C++ Compiled Objects ---
+*.o
+*.obj
+*.so
+*.dylib
+*.dll
+*.a
+*.lib
+*.exe
+*.pdb
+*.ilk
+
+# --- Assets & Intermediate ---
+*.spv
+*.shader_cache
+imgui.ini
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db
