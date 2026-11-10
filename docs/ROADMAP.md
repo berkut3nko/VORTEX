@@ -13,7 +13,7 @@ What exists today, and what was designed for but is not built yet. See
 | Terrain | Built-in generator: hills, mountains, beaches, sea, caves, trees. Custom generators through `IWorldGenerator`. |
 | Ray queries | One traversal shared by GPU and CPU (`shaders/shared/trace.glsl`), world + dynamic objects through a BVH. |
 | Objects | Voxel models of any size shared between instances, collider boxes, mass from material density. |
-| Destruction | Connected-component splitting, floating-terrain detection, `Engine::Explode`. |
+| Destruction | Terrain carving with floating-terrain detection; objects lose voxels and split into pieces (`Engine::DamageObject`, `Engine::Explode`). |
 | Import | MagicaVoxel `.vox` read / write, glTF voxelisation. |
 | Physics | Jolt behind an engine interface, fixed time step, terrain colliders streamed around moving things, character controller. |
 | Particles | CPU pool with emitters, voxel collision, effect presets. |
@@ -43,7 +43,10 @@ Known costs worth attacking, in order of expected gain:
 
 1. ~~**Player**: character controller on the terrain~~ - done in the game (walk, run, jump,
    first / third person, free flight). Still missing: a proper character model and animation.
-2. **Object destruction**: route damage to voxel objects (`SplitComponents`) so crates and debris break.
+2. ~~**Object destruction**~~ - done: `Engine::DamageObject` carves an object, splits it into
+   connected pieces that inherit its motion and turns small fragments into particles; `Explode`
+   applies it to every object in range. Still missing: damage from impacts (contact events), and
+   reclaiming the slots of destroyed objects (the object list only grows).
 3. **Scene / ECS**: replace `Engine`'s object list before more object kinds are added.
 4. **Editor**: brush, selection, importer UI - needed to build content faster than by code.
 5. **Memory**: skip unseen underground chunks, then palette-compressed chunks; then view distance
@@ -57,8 +60,6 @@ Known costs worth attacking, in order of expected gain:
   rigid body, light, emitter and lifetime components. Today `Engine` keeps a plain object list.
 - **Editor** (`vortex.editor`, ImGuizmo is already a dependency): selection and gizmo, voxel brush for
   world and objects, importer UI, lighting and render settings panels, profiler view.
-- **Object destruction wired into gameplay**: `SplitComponents` exists and is tested, but only terrain
-  is destructible through `Engine::Explode`; damaging an object does not yet split it.
 - **CPU reference renderer** (`tools/cpu_render`): software frame from the shared shader code, for
   image checks on machines without a GPU.
 

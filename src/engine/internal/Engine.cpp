@@ -53,6 +53,33 @@ namespace vortex {
         graphics::UiLayer ui;
 
         std::vector<VoxelObject> objects;
+
+        /// (Re)creates the rigid body of an object from its model, at its current transform.
+        void CreateBody(size_t index, physics::MotionType motion, const glm::vec3& linear, const glm::vec3& angular) {
+            VoxelObject& object = objects[index];
+            const float vs = object.transform.scale;
+            std::vector<physics::BoxDesc> boxes;
+            for (const voxel::ColliderBox& b : voxel::BuildColliderBoxes(object.model->Volume(), false)) {
+                physics::BoxDesc d;
+                d.halfExtent = glm::vec3(b.size) * (0.5f * vs);
+                d.center = glm::vec3(b.min) * vs + d.halfExtent;
+                d.density = std::max(1.0f, materials.Get(object.model->Palette(), b.material).density);
+                boxes.push_back(d);
+            }
+            physics::BodyDesc body;
+            body.shape = physics.CreateCompoundShape(boxes);
+            body.position = object.transform.position;
+            body.rotation = object.transform.rotation;
+            body.motion = motion;
+            // Small fragments do not collide with each other: piles of rubble stay cheap.
+            body.layer = motion == physics::MotionType::Static ? physics::Layer::Static
+                       : (object.model->SolidCount() < 48 ? physics::Layer::Debris : physics::Layer::Dynamic);
+            body.linearVelocity = linear;
+            body.angularVelocity = angular;
+            body.userData = index;
+            if (body.shape) object.body = physics.CreateBody(body);
+        }
+
         std::vector<graphics::InstanceDesc> instances;
         std::vector<fx::GpuParticle> gpuParticles;
         bool exitRequested = false;
@@ -117,15 +144,6 @@ namespace vortex {
         const float vs = s.world->VoxelSize();
         if (!model->IsBaked()) model->Bake(s.store);
 
-        std::vector<physics::BoxDesc> boxes;
-        for (const voxel::ColliderBox& b : voxel::BuildColliderBoxes(model->Volume(), false)) {
-            physics::BoxDesc d;
-            d.halfExtent = glm::vec3(b.size) * (0.5f * vs);
-            d.center = glm::vec3(b.min) * vs + d.halfExtent;
-            d.density = std::max(1.0f, s.materials.Get(model->Palette(), b.material).density);
-            boxes.push_back(d);
-        }
-
         VoxelObject object;
         object.model = std::move(model);
         object.transform.position = position;
@@ -133,17 +151,92 @@ namespace vortex {
         object.transform.scale = vs;
         object.previous = object.transform;
 
-        physics::BodyDesc body;
-        body.shape = s.physics.CreateCompoundShape(boxes);
-        body.position = position;
-        body.rotation = rotation;
-        body.motion = motion;
-        body.layer = motion == physics::MotionType::Static ? physics::Layer::Static : physics::Layer::Dynamic;
-        body.userData = s.objects.size();
-        if (withBody && body.shape) object.body = s.physics.CreateBody(body);
-
         s.objects.push_back(std::move(object));
+        if (withBody) s.CreateBody(s.objects.size() - 1, motion, glm::vec3(0.0f), glm::vec3(0.0f));
         return s.objects.size() - 1;
+    }
+
+    uint32_t Engine::DamageObject(size_t index, const glm::dvec3& center, float radius) {
+        Impl& s = *m_Impl;
+        if (index >= s.objects.size()) return 0;
+        if (!s.objects[index].alive || !s.objects[index].body.IsValid() || !s.objects[index].model) return 0;
+
+        const math::Transform transform = s.objects[index].transform;
+        const std::shared_ptr<voxel::VoxelModel> model = s.objects[index].model;
+        const voxel::PaletteId palette = model->Palette();
+        const float vs = transform.scale;
+
+        // Sphere in the object's voxel space.
+        const glm::vec3 local = transform.InverseTransformPoint(glm::vec3(center));
+        const float r = radius / vs;
+        const glm::ivec3 size = model->Size();
+        const glm::ivec3 lo = glm::max(glm::ivec3(glm::floor(local - glm::vec3(r))), glm::ivec3(0));
+        const glm::ivec3 hi = glm::min(glm::ivec3(glm::ceil(local + glm::vec3(r))) + glm::ivec3(1), size);
+        if (lo.x >= hi.x || lo.y >= hi.y || lo.z >= hi.z) return 0;
+
+        // Models are shared between objects: work on a private copy of the volume.
+        voxel::VoxelVolume volume = model->Volume();
+        uint32_t removed = 0;
+        for (int z = lo.z; z < hi.z; ++z)
+            for (int y = lo.y; y < hi.y; ++y)
+                for (int x = lo.x; x < hi.x; ++x) {
+                    const uint8_t id = volume.Get(x, y, z);
+                    if (id == 0) continue;
+                    const glm::vec3 d = glm::vec3(x, y, z) + glm::vec3(0.5f) - local;
+                    if (glm::dot(d, d) > r * r) continue;
+                    const voxel::Material& material = s.materials.Get(palette, id);
+                    if ((material.flags & voxel::MaterialFlag_Indestructible) != 0) continue;
+                    volume.Set(x, y, z, 0);
+                    if ((removed++ % 3) == 0) {     // a third of the voxels is plenty of debris
+                        const glm::vec3 world = transform.TransformPoint(glm::vec3(x, y, z) + glm::vec3(0.5f));
+                        fx::SpawnVoxelBreak(s.particles, glm::dvec3(world), material.color, vs,
+                                            glm::normalize(world - glm::vec3(center) + glm::vec3(0.0f, 1.0e-3f, 0.0f)) * 2.5f);
+                    }
+                }
+        if (removed == 0) return 0;
+
+        const physics::BodyState state = s.physics.GetState(s.objects[index].body);
+        const physics::BodyId oldBody = s.objects[index].body;
+        auto pointVelocity = [&](const glm::vec3& worldPoint) { return s.physics.GetPointVelocity(oldBody, worldPoint); };
+
+        voxel::SplitResult split = voxel::SplitComponents(volume, 6);
+        for (const voxel::LooseVoxel& v : split.loose) {
+            const glm::vec3 world = transform.TransformPoint(glm::vec3(v.position) + glm::vec3(0.5f));
+            fx::SpawnVoxelBreak(s.particles, glm::dvec3(world), s.materials.Get(palette, v.material).color, vs, pointVelocity(world));
+        }
+
+        // Every piece becomes an object placed where it was inside the original; the largest one
+        // takes over this object's slot so references to it stay meaningful.
+        std::vector<glm::vec3> linear;
+        for (const voxel::VolumePiece& piece : split.pieces) {
+            linear.push_back(pointVelocity(transform.TransformPoint(glm::vec3(piece.offset) + glm::vec3(piece.volume.Size()) * 0.5f)));
+        }
+        s.physics.DestroyBody(oldBody);
+        s.objects[index].body = physics::BodyId{};
+        if (split.pieces.empty()) {
+            s.objects[index].alive = false;
+            s.objects[index].model.reset();
+            return removed;
+        }
+        for (size_t i = 0; i < split.pieces.size(); ++i) {
+            voxel::VolumePiece& piece = split.pieces[i];
+            auto pieceModel = std::make_shared<voxel::VoxelModel>(std::move(piece.volume), palette, model->Name());
+            pieceModel->Bake(s.store);
+            math::Transform t = transform;
+            t.position = transform.TransformPoint(glm::vec3(piece.offset));
+            size_t target = index;
+            if (i > 0) {
+                s.objects.emplace_back();
+                target = s.objects.size() - 1;
+            }
+            VoxelObject& object = s.objects[target];      // (re-fetched: emplace_back may reallocate)
+            object.model = std::move(pieceModel);
+            object.transform = t;
+            object.previous = t;
+            object.alive = true;
+            s.CreateBody(target, physics::MotionType::Dynamic, linear[i], state.angularVelocity);
+        }
+        return removed;
     }
 
     void Engine::Explode(const glm::dvec3& center, float radius, float power) {
@@ -172,6 +265,16 @@ namespace vortex {
              voxel::ExtractFloatingIslands(world, &s.materials, c - margin, c + margin, 60000)) {
             auto model = std::make_shared<voxel::VoxelModel>(std::move(island.volume), voxel::kWorldPalette, "debris");
             SpawnObject(std::move(model), glm::vec3(world.VoxelToWorld(island.origin)));
+        }
+
+        // Objects caught in the blast lose voxels and may fall apart. (Only objects that exist
+        // now: the pieces created here are not damaged a second time.)
+        const size_t objectCount = s.objects.size();
+        for (size_t i = 0; i < objectCount; ++i) {
+            if (!s.objects[i].alive || !s.objects[i].body.IsValid()) continue;
+            math::AABB bounds = s.physics.GetBounds(s.objects[i].body);
+            bounds.Expand(radius);
+            if (bounds.Contains(glm::vec3(center))) DamageObject(i, center, radius);
         }
 
         // Push nearby bodies outwards.

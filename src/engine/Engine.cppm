@@ -105,8 +105,16 @@ export namespace vortex {
         float StepAlpha() const;
         std::vector<VoxelObject>& Objects();
 
-        /// @brief Removes terrain in a sphere, throws debris particles, detaches floating
-        /// terrain as falling objects and pushes nearby bodies away.
+        /**
+         * @brief Removes the voxels of an object inside a sphere (world metres) and lets it fall
+         * apart: the largest remaining piece stays this object, other pieces become new objects
+         * that inherit its motion, tiny fragments and the removed voxels become particles.
+         * @return Number of voxels removed. Objects without a body (visual only) are not affected.
+         */
+        uint32_t DamageObject(size_t index, const glm::dvec3& center, float radius);
+
+        /// @brief Blast: removes terrain and object voxels in a sphere, throws debris particles,
+        /// detaches floating terrain as falling objects and pushes nearby bodies away.
         void Explode(const glm::dvec3& center, float radius, float power);
 
     private:
