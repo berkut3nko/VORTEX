@@ -93,7 +93,9 @@ namespace vortex::graphics {
         ImGuiIO& io = ImGui::GetIO();
 
         if (windowed) {
-            io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+            // Keyboard navigation stays off: with it, io.WantCaptureKeyboard is set whenever any
+            // window has focus (not only while a widget is being edited), which would hide the
+            // keyboard from the game and the editor after every click on a panel.
 
             // The window installed its own GLFW callbacks already; the backend chains to them.
             if (!ImGui_ImplGlfw_InitForVulkan(window->Native(), true)) {

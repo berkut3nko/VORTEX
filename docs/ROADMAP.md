@@ -19,7 +19,8 @@ What exists today, and what was designed for but is not built yet. See
 | Physics | Jolt behind an engine interface, fixed time step, terrain colliders streamed around moving things, character controller. |
 | Particles | CPU pool with emitters, voxel collision, effect presets. |
 | Renderer | Ray-marched G-buffer, ray-traced sun shadows, ambient occlusion, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping, ImGui. Headless mode with screenshots. Validation-clean on Intel UHD 620. |
-| Tests | 223 unit tests, none needing a GPU. |
+| Editor | `vortex.editor`: in-game editor toggled with F1 - fly camera, entity selection with a translate / rotate gizmo, inspector, terrain brush, primitive spawning, `.vox` / glTF import, environment / render / profiler / world panels. Tool logic is separate from the widgets and unit tested. |
+| Tests | 264 unit tests, none needing a GPU. |
 
 ## Performance (Intel UHD 620, 1280x720 output, 768x432 internal)
 
@@ -53,7 +54,16 @@ Known costs worth attacking, in order of expected gain:
    are still handled by hand), parent / child transforms, routing contact events to entities,
    cleaning up debris that came to rest (nothing gives pieces a `Lifetime` yet), a spatial
    index for `QueryBodies` (it tests every body), and saving / loading entities.
-4. **Editor**: brush, selection, importer UI - needed to build content faster than by code.
+4. ~~**Editor**~~ - done: `vortex.editor` (ARCHITECTURE.md section 8). Select tool with an
+   ImGuizmo translate / rotate gizmo, inspector, delete and duplicate; sphere / box terrain brush
+   (add / remove, any world material, stroke spacing); box / sphere primitives and `.vox` / glTF
+   import by path; environment, render, profiler and world panels; an editor fly camera. Still
+   missing: undo / redo; a voxel brush for objects (the brush edits terrain only); a scale gizmo
+   and snapping; a file dialog (paths are typed); reusing or freeing palettes (every import adds
+   one of 256 GPU materials and nothing removes it); saving / loading entities (only terrain
+   edits persist, through World::Save); pausing the simulation while editing; picking entities
+   without a body (the player figure and lights are only selectable from the scene list);
+   changing an entity's motion type, name or material from the inspector; a material editor.
 5. **Memory**: skip unseen underground chunks, then palette-compressed chunks; then view distance
    through level-of-detail cascades.
 6. **Look**: reflections (metals are faked with diffuse today), bloom, shadowed particles.
@@ -63,8 +73,8 @@ Known costs worth attacking, in order of expected gain:
 ### Engine structure
 - **Scene, next parts**: emitter component, transform hierarchy, contact events per entity, debris
   clean-up, entity serialisation (the base layer exists, see step 3 above).
-- **Editor** (`vortex.editor`, ImGuizmo is already a dependency): selection and gizmo, voxel brush for
-  world and objects, importer UI, lighting and render settings panels, profiler view.
+- **Editor, next parts**: undo / redo, object voxel brush, scale gizmo and snapping, file dialog,
+  palette reuse, entity serialisation, simulation pause (the base exists, see step 4 above).
 - **CPU reference renderer** (`tools/cpu_render`): software frame from the shared shader code, for
   image checks on machines without a GPU.
 

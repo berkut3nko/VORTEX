@@ -31,6 +31,12 @@ int main(int argc, char** argv) {
 }
 ```
 
+The in-game editor is opt-in: `import vortex.editor;`, own a `vortex::editor::Editor`, call
+`editor.OnUpdate(engine, dt)` first in `OnUpdate`, skip your own input handling while
+`editor.CapturesInput()`, and call `editor.OnGui(engine)` from `OnGui`. F1 toggles it; hold the
+right mouse button + WASD to fly, 1 / 2 / 3 choose the select / brush / spawn tool, G / R the
+gizmo mode, Del deletes the selection. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) section 8.
+
 Requirements: Clang >= 18, CMake >= 3.28, Ninja, a Vulkan 1.3 driver, `glslangValidator` (built from
 source automatically if missing). All other dependencies are fetched at pinned versions.
 

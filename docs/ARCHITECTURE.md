@@ -16,7 +16,7 @@ share. If code and document disagree, fix one of them.
 | Testable without a GPU | Everything except `graphics` builds and runs headless; the ray traversal is one source file compiled for both the GPU and the CPU, so unit tests cover the shader logic. |
 
 Not goals (yet): level of detail cascades for very long view distances, transparency /
-refraction, skeletal animation, audio, networking. Section 9 lists what the design already
+refraction, skeletal animation, audio, networking. Section 10 lists what the design already
 does to keep those doors open.
 
 ## 2. Layout and layering
@@ -38,7 +38,7 @@ engine/
     graphics/ vortex.graphics  Vulkan device, window, renderer, UI layer
     scene/    vortex.scene     entities (EnTT): components, object lifetime, destruction, render data
     engine/   vortex.engine    application loop, explosions, glue
-    editor/   vortex.editor    in-game tools
+    editor/   vortex.editor    in-game editor: tool logic (no ImGui), panels, gizmo
   tests/                 GoogleTest suites, none of which need a GPU
   tools/                 cpu_render: software renderer built on the shared shader code
 ```
@@ -56,7 +56,9 @@ A dedicated server or a tool links `Vortex::Core` (+ `Vortex::Physics`) and neve
 
 Inside `Vortex::Engine`, `scene` is the lower layer: it imports voxel, fx, physics and only the
 plain frame description types of graphics (`InstanceDesc`, `PointLight`), never a device, a
-window or `vortex.engine`. `engine` owns a `scene::Scene` and drives it.
+window or `vortex.engine`. `engine` owns a `scene::Scene` and drives it. `editor` is the top
+layer: it imports `vortex.engine`, and nothing in `engine` or below knows it exists - a game
+that wants the editor owns an `editor::Editor` and forwards two callbacks to it (section 8).
 
 ## 3. Conventions
 
@@ -443,7 +445,77 @@ voxel objects.
 object whose bounds the blast reaches, push bodies away, wake what rested on the removed
 ground, and add a flash.
 
-## 8. Testing
+## 8. Editor
+
+`vortex.editor` is an in-game editor: it runs inside the game's own frame, on the live world.
+It has three parts, one module partition each:
+
+| partition | content | needs |
+|---|---|---|
+| `:view` | cursor ray, the matrices handed to ImGuizmo, gizmo <-> `Transform`, sun angles, fly camera | math, `graphics::Camera` |
+| `:tools` | surface picking, brush, primitives, placement, material lists and import palettes, model import, entity description / duplication | voxel, physics, scene |
+| `Editor` | input handling, ImGui panels, the ImGuizmo gizmo, the actions behind the buttons | `vortex.engine`, ImGui, ImGuizmo |
+
+Everything that is logic rather than widgets is a free function of `:view` / `:tools` and needs
+neither ImGui nor a GPU; `Editor` only adds input and widgets. That split is what makes the
+editor testable (section 9).
+
+**Protocol.** `Engine::Run` opens the ImGui frame before `Application::OnUpdate` and closes it
+after `Application::OnGui`. The game calls
+
+```
+OnUpdate:  editor.OnUpdate(engine, dt);                 // first
+           if (!editor.CapturesInput()) { game input, game camera, cursor capture }
+OnGui:     game windows;  editor.OnGui(engine);
+```
+
+`OnUpdate` handles the toggle key (F1), the editor camera, shortcuts and the active tool's mouse
+action, so edits happen where game logic edits the world - before the particle update and the
+scene gather. `OnGui` starts the ImGuizmo frame, then submits the menu bar, the panels, the gizmo
+and the tool overlays. Closed, the editor makes no ImGui call and only watches the toggle key.
+Without a window (headless) both run unchanged and nothing is drawn, so
+`Shredborne --headless --editor` is a smoke test of every panel.
+
+**Input**, in priority order: ImGui (the `Input` object already hides what ImGui wants) ->
+camera look (right button, latched; the cursor is captured and ImGui is told to ignore the
+mouse) -> gizmo (left button while `ImGuizmo::IsOver()`) -> active tool -> game. While
+`CapturesInput()` is true the game must not react to mouse or keyboard, move the camera or touch
+the cursor capture.
+
+**Cursor ray and gizmo matrices.** Cursor position and viewport size come from ImGui
+(`io.MousePos`, `io.DisplaySize`), the same numbers ImGuizmo gets through `SetRect`.
+`CursorToRay` is the renderer's primary ray (`VxCameraRay` without jitter):
+`normalize(Forward + ndc.x * tan(fovY/2) * aspect * Right - ndc.y * tan(fovY/2) * Up)` with
+`ndc = cursor / size * 2 - 1`; cursor y grows downwards, so the top of the screen looks up.
+ImGuizmo is **never** given the engine's projection (reverse-Z, infinite far plane, y flipped
+for Vulkan). It gets `GizmoView` - a plain look-at in single precision world space, the space of
+`scene::Transform` and the physics bodies - and `GizmoProjection`, a conventional right-handed,
+y-up, depth 0..1 perspective with a finite far plane. `ProjectToCursor` with those two is the
+exact inverse of `CursorToRay`, which is what puts the gizmo where the object is drawn and makes
+it react where it is seen. The object matrix is `GizmoModelMatrix(transform, pivot)` (rotation
+and the model centre, unit scale); the result goes back through `TransformFromGizmo` and
+`Scene::SetTransform(entity, position, rotation, teleport = false)`, and a dragged body is held
+still.
+
+**Selection** is a `scene::Entity` id, validated on every use (`Editor::Selection`), so an entity
+destroyed by anything - the editor, an explosion, a lifetime - simply stops being selected. A
+change of selection cancels a gizmo drag.
+
+**Tools.** *Select*: click = `TraceSurface` (nearest of the voxel ray and the physics ray; the
+body's entity through `Scene::EntityFromBody`), gizmo, inspector, delete, duplicate (the copy
+shares the model). *Brush*: `World::FillSphere` / `FillBox` at the terrain hit - id 0 to remove,
+ignoring hardness; adding sits on the surface along the hit normal - repeated while the button is
+held, at most once per `spacing x radius` of travel of the hit point (`StrokeBrushAlongRay`
+measures from where the last applied ray meets the terrain after its own edit, so a resting cursor
+applies once instead of drilling and the spacing does not depend on the viewing angle). *Spawn*: a box / sphere primitive on the
+surface under the cursor or in front of the camera; `.vox` (`LoadVox` + `RegisterVoxPalette`) and
+glTF (`ImportMesh` + `BuildImportPalette`) files by path, each with a palette of its own.
+
+**Panels**: Tools, Scene (entity list), Inspector, Environment (sun as azimuth / elevation, sky,
+fog), Render (`RenderSettings`, debug view, GPU pass timings), Profiler (timer history, counters),
+World (statistics, save).
+
+## 9. Testing
 
 * `VortexCoreTests` - chunks, store, traversal vs. a reference DDA, BVH, world streaming /
   editing / persistence, generator determinism, colliders, connectivity, importers, particles.
@@ -454,13 +526,20 @@ ground, and add a flash.
   (no device, no window): entity lifetime releasing bodies and chunk slots, shared models
   surviving damage, splitting (a cut beam is two entities whose voxels add up and which inherit
   motion), loose fragments, stale ids through every function, instance and light gathering,
-  lifetimes, body <-> entity mapping.
+  lifetimes, body <-> entity mapping. The editor logic on the same objects plus a flat-generator
+  world (no ImGui context either): the cursor ray (screen centre = `Camera::Forward()`, edges at
+  the field of view, y not flipped), points of a cursor ray projecting back to the cursor through
+  the matrices handed to ImGuizmo, gizmo matrix round trips, brush application and stroke spacing,
+  primitive volumes, placement, sun angles, import palettes, `.vox` / glTF import and its failure
+  paths, picking, entity description and duplication, selection going stale.
 * `tools/cpu_render` renders a frame on the CPU with the shared shader code and writes a PNG:
   a visual check of world data, traversal and shading that needs no GPU.
 * With a GPU: `Shredborne --headless --frames N --screenshot out.png --validation` exercises
-  the Vulkan path and fails on validation errors.
+  the Vulkan path and fails on validation errors. Adding `--editor` opens the editor with every
+  panel, cycles the tools each frame and runs its actions (select, spawn, duplicate, brush,
+  import, delete), so the editor UI is exercised on every frame of the run.
 
-## 9. Where the design leaves room
+## 10. Where the design leaves room
 
 * **Level of detail**: the grid descriptor (`size`, `minChunk`, `voxelSize`) is a parameter of
   `VxTraceWorld`; clip-map cascades are additional grids with doubled voxel size.
