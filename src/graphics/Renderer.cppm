@@ -29,6 +29,7 @@ export namespace vortex::graphics {
         bool lightShadows = true;            ///< Point light shadows.
         bool fog = true;
         bool spatialFilter = true;
+        bool checkerboardLighting = true;    ///< Trace lighting rays for half of the pixels each frame.
         float ambientDistance = 6.0f;        ///< Length of ambient occlusion rays in metres.
         float ambientIntensity = 1.0f;
         float emissiveScale = 1.0f;

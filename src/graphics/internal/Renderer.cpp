@@ -1191,6 +1191,7 @@ namespace vortex::graphics {
             if (settings.taa) features |= Feature_Taa;
             if (settings.fog) features |= Feature_Fog;
             if (settings.spatialFilter) features |= Feature_SpatialFilter;
+            if (settings.checkerboardLighting) features |= Feature_Checkerboard;
             u.counts = glm::ivec4(static_cast<int>(instanceCount), static_cast<int>(bvhCount), static_cast<int>(lightCount),
                                   static_cast<int>(frameIndex & 0x7FFFFFFFu));
             u.settings = glm::ivec4(features, static_cast<int>(settings.debugView), static_cast<int>(frontCount), 0);

@@ -367,3 +367,28 @@ TEST(Terrain, StreamsThroughTheWorld) {
         }
     EXPECT_GT(columnsWithGround, 60);
 }
+
+TEST(World, WindowSizeNeedNotBePowerOfTwo) {
+    Fixture f({}, {6, 5, 12}, 512);
+    f.world->LoadBlocking(glm::dvec3(-37.0, 20.0, 91.0));     // negative coordinates exercise the wrap-around
+    EXPECT_EQ(f.world->Stats().pendingChunks, 0u);
+    EXPECT_EQ(f.world->Stats().denseChunks, 6u * 12u);
+    Rng rng(21);
+    int hits = 0;
+    for (int i = 0; i < 400; ++i) {
+        const glm::dvec3 origin(-37.0 + rng.Range(-20.0f, 20.0f), 20.0 + rng.Range(1.0f, 15.0f), 91.0 + rng.Range(-40.0f, 40.0f));
+        const glm::vec3 dir = glm::normalize(glm::vec3(rng.Range(-1.0f, 1.0f), rng.Range(-1.0f, -0.2f), rng.Range(-1.0f, 1.0f)));
+        const WorldRayHit hit = f.world->Raycast(origin, dir, 30.0f);
+        double refT = 0.0;
+        const bool ref = ReferenceMarch(*f.world, origin, glm::dvec3(dir), 30.0, refT);
+        ASSERT_EQ(hit.hit, ref);
+        if (hit.hit) {
+            ++hits;
+            EXPECT_NEAR(hit.distance, refT, 0.05);
+        }
+    }
+    EXPECT_GT(hits, 200);
+    // Moving the window keeps everything consistent.
+    f.world->LoadBlocking(glm::dvec3(-37.0 + 16.0 * 7, 20.0, 91.0));
+    EXPECT_EQ(f.world->Stats().denseChunks, 6u * 12u);
+}

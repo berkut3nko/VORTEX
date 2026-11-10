@@ -27,6 +27,7 @@ const int   VX_MAX_LIGHTS        = 256;      // constant loop bound; lights beyo
 const float VX_SHADOW_DISTANCE   = 1.0e4;    // m, the traversal clips it to the streaming window
 const float VX_HISTORY_DEPTH_TOL = 0.1;      // relative depth difference that rejects history
 const float VX_HISTORY_NORMAL    = 0.9;      // minimum cosine between current and previous normal
+const float VX_CHECKERBOARD_MIN_HISTORY = 6.0;   // frames of history before a pixel may skip
 const float VX_MAX_SAMPLE        = 64.0;     // clamp of a single frame's sample (fireflies)
 
 // Decode without the NaN a zero vector would produce.
@@ -76,6 +77,59 @@ void main() {
     vec3 origin = pos + n * (voxelSize * 0.02 + t * 2.0e-4);
 
     uint rng = VxRandomSeed(uint(px.x), uint(px.y), uint(u_Frame.counts.w));
+
+    // ---- Temporal accumulation -----------------------------------------------------------------
+    // Reproject into the previous frame and accept its history only if it shows the same
+    // surface: on screen, similar depth, similar normal.
+    float count = 0.0;
+    vec4 history = vec4(0.0);
+    if (u_Frame.temporalParams.z > 0.5) {
+        vec2 prevUv = v_Uv - texelFetch(u_GVelocity, px, 0).rg;
+        vec4 prevClip = u_Frame.prevViewProjNoJitter * vec4(pos, 1.0);
+        if (prevUv.x > 0.0 && prevUv.x < 1.0 && prevUv.y > 0.0 && prevUv.y < 1.0 && prevClip.w > 1.0e-6) {
+            float expectedDepth = prevClip.z / prevClip.w;
+            // Bilinear footprint with every tap validated on its own, so that lighting of
+            // another surface (or the empty sky) next to a silhouette never leaks in.
+            vec2 texel = prevUv * u_Frame.renderSize.xy - 0.5;
+            ivec2 base = ivec2(floor(texel));
+            vec2 f = texel - vec2(base);
+            ivec2 maxPx = ivec2(u_Frame.renderSize.xy) - ivec2(1);
+            vec4 historySum = vec4(0.0);
+            float countSum = 0.0;
+            float weightSum = 0.0;
+            for (int i = 0; i < 4; ++i) {
+                ivec2 offset = ivec2(i & 1, i >> 1);
+                ivec2 tap = clamp(base + offset, ivec2(0), maxPx);
+                float prevDepth = texelFetch(u_PrevDepth, tap, 0).r;
+                vec3 prevNormal = SafeNormal(texelFetch(u_PrevNormal, tap, 0));
+                bool sameDepth = prevDepth > 0.0 &&
+                                 abs(prevDepth - expectedDepth) <= VX_HISTORY_DEPTH_TOL * max(prevDepth, expectedDepth);
+                bool sameNormal = dot(prevNormal, n) >= VX_HISTORY_NORMAL;
+                float w = ((offset.x == 1) ? f.x : 1.0 - f.x) * ((offset.y == 1) ? f.y : 1.0 - f.y);
+                w = (sameDepth && sameNormal) ? w : 0.0;
+                historySum += max(texelFetch(u_PrevLighting, tap, 0), vec4(0.0)) * w;
+                countSum += texelFetch(u_PrevLightCount, tap, 0).r * w;
+                weightSum += w;
+            }
+            if (weightSum > 1.0e-3) {
+                history = historySum / weightSum;
+                count = floor(countSum / weightSum * 255.0 + 0.5);
+            }
+        }
+    }
+
+
+    // ---- Checkerboard ---------------------------------------------------------------------
+    // With an established history only half of the screen traces new rays each frame (the
+    // pattern alternates), the other half keeps its history. The pattern is made of 8x8 pixel
+    // tiles rather than single pixels: GPUs shade fragments in SIMD groups, and a group in
+    // which only some lanes skip still pays for the full trace.
+    if (VxFeature(VX_FEATURE_CHECKERBOARD) && count >= VX_CHECKERBOARD_MIN_HISTORY &&
+        (((px.x >> 3) + (px.y >> 3) + u_Frame.counts.w) & 1) == 1) {
+        o_Lighting = history;
+        o_Count = count * (1.0 / 255.0);
+        return;
+    }
 
     vec3 irradiance = vec3(0.0);
     float specular = 0.0;
@@ -187,46 +241,6 @@ void main() {
     }
 
     vec4 current = clamp(vec4(irradiance, specular), vec4(0.0), vec4(VX_MAX_SAMPLE));
-
-    // ---- Temporal accumulation -----------------------------------------------------------------
-    // Reproject into the previous frame and accept its history only if it shows the same
-    // surface: on screen, similar depth, similar normal.
-    float count = 0.0;
-    vec4 history = vec4(0.0);
-    if (u_Frame.temporalParams.z > 0.5) {
-        vec2 prevUv = v_Uv - texelFetch(u_GVelocity, px, 0).rg;
-        vec4 prevClip = u_Frame.prevViewProjNoJitter * vec4(pos, 1.0);
-        if (prevUv.x > 0.0 && prevUv.x < 1.0 && prevUv.y > 0.0 && prevUv.y < 1.0 && prevClip.w > 1.0e-6) {
-            float expectedDepth = prevClip.z / prevClip.w;
-            // Bilinear footprint with every tap validated on its own, so that lighting of
-            // another surface (or the empty sky) next to a silhouette never leaks in.
-            vec2 texel = prevUv * u_Frame.renderSize.xy - 0.5;
-            ivec2 base = ivec2(floor(texel));
-            vec2 f = texel - vec2(base);
-            ivec2 maxPx = ivec2(u_Frame.renderSize.xy) - ivec2(1);
-            vec4 historySum = vec4(0.0);
-            float countSum = 0.0;
-            float weightSum = 0.0;
-            for (int i = 0; i < 4; ++i) {
-                ivec2 offset = ivec2(i & 1, i >> 1);
-                ivec2 tap = clamp(base + offset, ivec2(0), maxPx);
-                float prevDepth = texelFetch(u_PrevDepth, tap, 0).r;
-                vec3 prevNormal = SafeNormal(texelFetch(u_PrevNormal, tap, 0));
-                bool sameDepth = prevDepth > 0.0 &&
-                                 abs(prevDepth - expectedDepth) <= VX_HISTORY_DEPTH_TOL * max(prevDepth, expectedDepth);
-                bool sameNormal = dot(prevNormal, n) >= VX_HISTORY_NORMAL;
-                float w = ((offset.x == 1) ? f.x : 1.0 - f.x) * ((offset.y == 1) ? f.y : 1.0 - f.y);
-                w = (sameDepth && sameNormal) ? w : 0.0;
-                historySum += max(texelFetch(u_PrevLighting, tap, 0), vec4(0.0)) * w;
-                countSum += texelFetch(u_PrevLightCount, tap, 0).r * w;
-                weightSum += w;
-            }
-            if (weightSum > 1.0e-3) {
-                history = historySum / weightSum;
-                count = floor(countSum / weightSum * 255.0 + 0.5);
-            }
-        }
-    }
 
     float maxHistory = clamp(u_Frame.temporalParams.x, 1.0, 255.0);
     float samples = min(count + 1.0, maxHistory);

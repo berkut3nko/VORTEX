@@ -113,7 +113,9 @@ void main() {
     vec4 lighting = max(FilteredLighting(px, depth, n), vec4(0.0));
 
     float metallic = clamp(params.y, 0.0, 1.0);
-    vec3 diffuseColor = albedo * (1.0 - metallic);
+    // There are no reflections yet, so a physically correct metal (no diffuse at all) would
+    // render black. Until reflections exist metals keep most of their albedo as diffuse.
+    vec3 diffuseColor = albedo * (1.0 - 0.35 * metallic);
     vec3 specularColor = mix(vec3(0.04), albedo, metallic);
     vec3 emission = albedo * (max(colorEmissive.a, 0.0) * u_Frame.ambientParams.z);
 

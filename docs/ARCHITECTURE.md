@@ -109,10 +109,9 @@ a chunk calls `MarkDirty(slot)`; the renderer drains `TakeDirty()` once per fram
 
 ### 4.3 World
 
-`voxel::World` keeps a box of chunks around a focus point - the *window*, `windowSize` chunks
-(powers of two). Each window cell is `Unloaded`, `Loading`, `Empty`, `Uniform` (one solid
+`voxel::World` keeps a box of chunks around a focus point - the *window*, `windowSize` chunks. Each window cell is `Unloaded`, `Loading`, `Empty`, `Uniform` (one solid
 material, no storage) or `Dense` (owns a slot). Cells are stored in a toroidal array
-(`index = coord & (size - 1)`, `x + z*sx + y*sx*sz`), so moving the window re-targets one slab
+(`index = coord mod size`, `x + z*sx + y*sx*sz`), so moving the window re-targets one slab
 of cells and moves no data.
 
 `World::Grid()` is the same array in GPU encoding: `0` empty, `0x80000000 | id` uniform,

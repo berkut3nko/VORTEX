@@ -18,7 +18,37 @@ What exists today, and what was designed for but is not built yet. See
 | Physics | Jolt behind an engine interface, fixed time step, terrain colliders streamed around moving things, character controller. |
 | Particles | CPU pool with emitters, voxel collision, effect presets. |
 | Renderer | Ray-marched G-buffer, ray-traced sun shadows, ambient occlusion, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping, ImGui. Headless mode with screenshots. Validation-clean on Intel UHD 620. |
-| Tests | 198 unit tests, none needing a GPU. |
+| Tests | 199 unit tests, none needing a GPU. |
+
+## Performance (Intel UHD 620, 1280x720 output, 768x432 internal)
+
+| Pass | GPU time |
+|---|---|
+| gbuffer (primary rays) | ~9-11 ms |
+| lighting (sun shadow + ambient ray, tile checkerboard) | ~9-10 ms |
+| composite, TAA, present | ~2.5 ms |
+
+World window 48 x 8 x 48 chunks (154 m across at 0.1 m voxels), about 8100 dense chunks, 473 MiB
+of GPU memory. Measured cost of the lighting features: sun shadows ~4.7 ms, ambient occlusion
+~5.9 ms, emissive pickup ~1.5 ms; each can be switched off (`--no-shadows`, `--no-ao`, `--no-emissive`).
+
+Known costs worth attacking, in order of expected gain:
+1. About half of the dense chunks are underground cave chunks nobody sees; they cost memory and
+   upload time, not frame time. Lazy loading of chunks without a line to the surface would halve memory.
+2. Primary rays: a half-resolution depth pre-pass (start each ray at the conservative depth of its
+   2x2 tile) would cut most empty-space steps.
+3. Lighting at half resolution with a depth-aware upsample.
+
+## Next steps (proposed order)
+
+1. **Player**: character controller on the terrain (walk, jump), first / third person camera. The
+   physics side exists (`PhysicsWorld::CreateCharacter`); it needs wiring into the game.
+2. **Object destruction**: route damage to voxel objects (`SplitComponents`) so crates and debris break.
+3. **Scene / ECS**: replace `Engine`'s object list before more object kinds are added.
+4. **Editor**: brush, selection, importer UI - needed to build content faster than by code.
+5. **Memory**: skip unseen underground chunks, then palette-compressed chunks; then view distance
+   through level-of-detail cascades.
+6. **Look**: reflections (metals are faked with diffuse today), bloom, shadowed particles.
 
 ## Planned, not built
 

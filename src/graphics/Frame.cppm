@@ -56,6 +56,7 @@ export namespace vortex::graphics {
         Feature_Taa              = 16,
         Feature_Fog              = 32,
         Feature_SpatialFilter    = 64,
+        Feature_Checkerboard     = 128,
     };
 
     /// @brief FrameUniforms::settings.y (VX_DEBUG_* in common.glsl).

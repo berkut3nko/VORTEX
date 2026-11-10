@@ -63,6 +63,7 @@ const int VX_FEATURE_LIGHT_SHADOWS    = 8;    // point light shadows
 const int VX_FEATURE_TAA              = 16;
 const int VX_FEATURE_FOG              = 32;
 const int VX_FEATURE_SPATIAL_FILTER   = 64;   // edge-aware blur of the lighting buffer
+const int VX_FEATURE_CHECKERBOARD     = 128;  // lighting traces half of the pixels per frame
 
 const int VX_DEBUG_NONE       = 0;
 const int VX_DEBUG_ALBEDO     = 1;

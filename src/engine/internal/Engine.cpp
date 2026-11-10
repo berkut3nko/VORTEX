@@ -25,6 +25,12 @@ namespace vortex {
         width = static_cast<uint32_t>(args.GetInt("--width", static_cast<int>(width)));
         height = static_cast<uint32_t>(args.GetInt("--height", static_cast<int>(height)));
         render.renderScale = args.GetFloat("--scale", render.renderScale);
+        render.ambientDistance = args.GetFloat("--ao-distance", render.ambientDistance);
+        if (args.Has("--no-shadows")) render.sunShadows = false;
+        if (args.Has("--no-ao")) render.ambientOcclusion = false;
+        if (args.Has("--no-emissive")) render.emissiveLighting = false;
+        if (args.Has("--no-taa")) render.taa = false;
+        if (args.Has("--no-checkerboard")) render.checkerboardLighting = false;
     }
 
     struct Engine::Impl {
@@ -306,6 +312,8 @@ namespace vortex {
 
         app.OnShutdown(*this);
         if (s.config.exitAfterFrames != 0) {
+            const voxel::WorldStats ws = s.world->Stats();
+            Log::Info("World: {} dense, {} uniform, {} empty chunks; store {}/{}", ws.denseChunks, ws.uniformChunks, ws.emptyChunks, s.store.UsedCount(), s.store.Capacity());
             for (const graphics::PassTiming& pass : s.renderer.Stats().passes) Log::Info("GPU {:<10} {:.2f} ms", pass.name, pass.milliseconds);
         }
         const uint32_t errors = s.device.ValidationErrorCount();

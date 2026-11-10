@@ -12,7 +12,7 @@
 //    VX_GRID_ENTRY(i)                 uint   world grid entry (0 = empty,
 //                                            bit 31 set = uniform solid chunk, low byte = id,
 //                                            otherwise chunk slot + 1)
-//    VX_GRID_SIZE                     ivec3  window size in chunks (powers of two)
+//    VX_GRID_SIZE                     ivec3  window size in chunks
 //    VX_GRID_MIN_CHUNK                ivec3  absolute chunk coordinate of the window minimum
 //    VX_GRID_ORIGIN                   vec3   position of the window minimum in ray space
 //    VX_VOXEL_SIZE / VX_INV_VOXEL_SIZE float edge length of a world voxel in ray space units
@@ -145,7 +145,9 @@ bool VxTraceChunk(uint slot, vec3 ro, vec3 rd, vec3 invRd, float tStart, float t
             } else {
                 ivec3 l = cell & 3;
                 uint li = uint(l.x + l.y * 4 + l.z * 16);
-                if (((VX_OCC_WORD(slot, VX_OCC_VOXEL_OFFSET + bi * 2u + (li >> 5u)) >> (li & 31u)) & 1u) != 0u) {
+                // One word holds the 32 voxels of the block's lower or upper half (z < 2 / z >= 2).
+                uint word = VX_OCC_WORD(slot, VX_OCC_VOXEL_OFFSET + bi * 2u + (li >> 5u));
+                if (((word >> (li & 31u)) & 1u) != 0u) {
                     hit.t = t;
                     hit.normal = VxFaceNormal(axis, rd);
                     hit.voxel = cell;
@@ -153,6 +155,11 @@ bool VxTraceChunk(uint slot, vec3 ro, vec3 rd, vec3 invRd, float tStart, float t
                     hit.material = VX_VOXEL_ID(slot, bi * 64u + li);
                     return true;
                 }
+                // Free extra level: the 2^3 group this voxel belongs to lies entirely in the word
+                // just fetched. If none of its eight bits is set, leave the whole group at once.
+                ivec3 g = l & 2;
+                uint groupShift = uint(g.x + g.y * 4);   // both z layers of the group are in this word
+                if ((word & (0x00330033u << groupShift)) == 0u) size = 2;
             }
         }
 
@@ -208,7 +215,8 @@ bool VxTraceWorld(vec3 ro, vec3 rdIn, float tMin, float tMax, VX_INOUT(VxHit) hi
         float tCellExit = tAxis[exitAxis];
 
         // The grid is addressed toroidally, so moving the window never copies entries.
-        ivec3 w = (gridMin + cc) & (gridSize - ivec3(1));
+        // (Positive modulo rather than a mask: the window size need not be a power of two.)
+        ivec3 w = (((gridMin + cc) % gridSize) + gridSize) % gridSize;
         uint entry = VX_GRID_ENTRY(uint(w.x + w.z * gridSize.x + w.y * gridSize.x * gridSize.z));
         if (entry != 0u) {
             ivec3 chunkMin = cc * VX_CHUNK_SIZE;

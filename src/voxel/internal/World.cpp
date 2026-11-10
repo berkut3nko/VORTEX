@@ -47,9 +47,7 @@ namespace vortex::voxel {
                  std::shared_ptr<const IWorldGenerator> generator, const MaterialLibrary* materials)
         : m_Config(config), m_Store(store), m_Jobs(jobs), m_Materials(materials) {
         const glm::ivec3 s = m_Config.windowSize;
-        Verify(s.x > 0 && s.y > 0 && s.z > 0 && math::IsPowerOfTwo(static_cast<uint32_t>(s.x)) &&
-                   math::IsPowerOfTwo(static_cast<uint32_t>(s.y)) && math::IsPowerOfTwo(static_cast<uint32_t>(s.z)),
-               "WorldConfig::windowSize components must be powers of two");
+        Verify(s.x > 0 && s.y > 0 && s.z > 0, "WorldConfig::windowSize components must be positive");
         Verify(m_Config.voxelSize > 0.0f, "WorldConfig::voxelSize must be positive");
         Verify(generator != nullptr, "World needs a generator");
 
@@ -86,7 +84,7 @@ namespace vortex::voxel {
 
     uint32_t World::CellIndex(const glm::ivec3& chunk) const {
         const glm::ivec3 s = m_Config.windowSize;
-        const glm::ivec3 w = chunk & (s - glm::ivec3(1));
+        const glm::ivec3 w = glm::ivec3(math::FloorMod(chunk.x, s.x), math::FloorMod(chunk.y, s.y), math::FloorMod(chunk.z, s.z));
         // Must match VxTraceWorld in shaders/shared/trace.glsl.
         return static_cast<uint32_t>(w.x + w.z * s.x + w.y * s.x * s.z);
     }

@@ -34,7 +34,8 @@ export namespace vortex {
         voxel::WorldConfig world;
         graphics::RenderSettings render;
 
-        /// @brief Applies --headless --validation --frames N --screenshot F --width W --height H --scale S.
+        /// @brief Applies --headless --validation --frames N --screenshot F --width W --height H --scale S
+        /// --ao-distance M --no-shadows --no-ao --no-emissive --no-taa.
         void ApplyCommandLine(const CommandLine& args);
     };
 

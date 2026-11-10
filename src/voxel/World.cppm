@@ -22,7 +22,7 @@ export namespace vortex::voxel {
 
     struct WorldConfig {
         float voxelSize = 0.1f;                  ///< Edge length of a voxel in metres.
-        glm::ivec3 windowSize{32, 16, 32};       ///< Loaded region in chunks; each a power of two.
+        glm::ivec3 windowSize{32, 16, 32};       ///< Loaded region in chunks.
         std::filesystem::path saveDirectory;     ///< Where modified chunks are stored ("" = memory only).
         uint32_t maxJobsInFlight = 0;            ///< Generation jobs running at once (0 = 2 per worker).
         uint32_t maxIntegrationsPerUpdate = 64;  ///< Finished chunks installed per Update().
@@ -65,7 +65,7 @@ export namespace vortex::voxel {
      * Storage is sparse: chunks that are all air or all one material need no memory, only
      * chunks containing a surface occupy a slot in the ChunkStore.
      *
-     * The window is a toroidal array: a chunk coordinate maps to `coord & (size - 1)`, so
+     * The window is a toroidal array: a chunk coordinate maps to `coord mod size`, so
      * moving the window never moves data. The same array, in the same encoding, is what the
      * shaders traverse (see shaders/shared/trace.glsl) - `Grid()` is uploaded verbatim.
      *
