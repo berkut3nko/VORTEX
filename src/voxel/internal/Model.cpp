@@ -30,6 +30,13 @@ namespace vortex::voxel {
         m_Parts.clear();
     }
 
+    void VoxelModel::Unbake() {
+        if (!m_Store) return;
+        ReleaseParts();
+        m_Store = nullptr;
+        ++m_Revision;
+    }
+
     void VoxelModel::SetVolume(VoxelVolume volume) {
         m_Volume = std::move(volume);
         m_SolidCount = m_Volume.CountSolid();
@@ -48,7 +55,6 @@ namespace vortex::voxel {
         const glm::ivec3 size = m_Volume.Size();
         const glm::ivec3 chunks = (size + glm::ivec3(kChunkSize - 1)) / kChunkSize;
         const std::vector<uint8_t>& data = m_Volume.Data();
-        bool complete = true;
 
         for (int cz = 0; cz < chunks.z; ++cz)
             for (int cy = 0; cy < chunks.y; ++cy)
@@ -72,9 +78,11 @@ namespace vortex::voxel {
 
                     const uint32_t slot = store.Alloc();
                     if (slot == ChunkStore::kInvalidSlot) {
-                        Log::Error("VoxelModel '{}': chunk store is full, model is incomplete", m_Name);
-                        complete = false;
-                        continue;
+                        // All or nothing: a half-baked model would look baked and stay incomplete.
+                        Log::Error("VoxelModel '{}': chunk store is full, model is not baked", m_Name);
+                        ReleaseParts();
+                        m_Store = nullptr;
+                        return false;
                     }
                     Chunk& chunk = store.Get(slot);
                     for (int z = origin.z; z < end.z; ++z)
@@ -95,6 +103,6 @@ namespace vortex::voxel {
                     part.boundsMax = mx + glm::ivec3(1);
                     m_Parts.push_back(part);
                 }
-        return complete;
+        return true;
     }
 }

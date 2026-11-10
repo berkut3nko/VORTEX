@@ -1,0 +1,254 @@
+module;
+
+#include <entt/entt.hpp>
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
+export module vortex.scene;
+
+export import :components;
+
+import vortex.core;
+import vortex.math;
+import vortex.voxel;
+import vortex.fx;
+import vortex.physics;
+import vortex.graphics;
+
+export namespace vortex::scene {
+
+    /// @brief Tuning of a scene. The defaults reproduce the engine's destruction behaviour.
+    struct SceneConfig {
+        float voxelSize = 0.1f;               ///< Metres per voxel of every voxel object (Transform scale). Use the world's.
+        uint32_t minPieceVoxels = 6;          ///< Connected pieces with fewer voxels become particles instead of entities.
+        uint32_t debrisBodyVoxels = 48;       ///< Non-static bodies with fewer solid voxels use physics::Layer::Debris.
+        uint32_t debrisParticleStride = 3;    ///< One debris particle burst per this many carved voxels (>= 1).
+    };
+
+    /// @brief What to create with Scene::CreateVoxelObject.
+    struct VoxelObjectDesc {
+        std::shared_ptr<voxel::VoxelModel> model;       ///< Required. Baked into the scene's store if it is not baked yet.
+        glm::vec3 position{0.0f};                       ///< World metres: where the model origin (minimum corner) goes.
+        glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        physics::MotionType motion = physics::MotionType::Dynamic;
+        bool withBody = true;                           ///< false: visual only (no collision, immune to damage).
+        glm::vec3 linearVelocity{0.0f};                 ///< Initial velocities of the body (ignored without one).
+        glm::vec3 angularVelocity{0.0f};
+        bool visible = true;
+        std::string name;                               ///< Empty: the model's name. No Name component if both are empty.
+    };
+
+    /// @brief What to create with Scene::CreateLight.
+    struct LightDesc {
+        glm::dvec3 position{0.0};             ///< World metres.
+        glm::vec3 color{1.0f, 0.8f, 0.6f};
+        float intensity = 5.0f;
+        float radius = 8.0f;
+        float sourceRadius = 0.1f;
+        float lifetime = 0.0f;                ///< Seconds; 0 = persistent (no Lifetime component).
+        float decay = 0.0f;                   ///< Lifetime::lightDecay; only used when lifetime > 0.
+    };
+
+    /// @brief Outcome of Scene::Damage.
+    struct DamageResult {
+        uint32_t removed = 0;             ///< Voxels carved out by the sphere. 0 = nothing happened at all.
+        uint32_t loose = 0;               ///< Further voxels that fell off as fragments too small to be a piece (particles).
+        /// The damaged entity no longer exists: nothing big enough was left, or (out of physics
+        /// bodies) its piece could not get a body and was dropped. In the second case `pieces`
+        /// can still list entities that did get one, so do not read this as "nothing remains".
+        bool destroyed = false;
+        std::vector<Entity> pieces;       ///< NEW entities split off (largest first). The largest piece overall keeps the damaged entity and is not listed.
+    };
+
+    /**
+     * @brief The entities of a game world: an EnTT registry plus the systems that tie voxel
+     * models, rigid bodies, lights and lifetimes together.
+     * @details
+     *  - The scene only *references* the chunk store, material library, physics world and
+     *    particle system it is constructed from. It has no dependency on a GPU device or a
+     *    window, so everything here runs in unit tests.
+     *  - **Destruction order**: a Scene must be destroyed (or `Clear()`ed) before the ChunkStore
+     *    and before `PhysicsWorld::Shutdown()` / destruction, because entities own bodies and
+     *    model references (chunk slots). `~Scene` calls `Clear()`.
+     *  - **Entity lifetime is real**: destroying an entity destroys its body and drops its model
+     *    reference; ids are recycled with a new version. Every function taking an Entity accepts
+     *    kNoEntity and stale ids and then does nothing / returns the documented default.
+     *  - **Bodies map back to entities**: the user data of every body created here is
+     *    `ToUserData(entity)`, so `physics::RayHit::userData` and `ContactEvent::userDataA/B`
+     *    resolve through `EntityFromUserData`.
+     *  - **Creating while iterating**: `Damage` and the `Create*` functions add entities and
+     *    components. Never call them from inside a registry view / `each` loop over the same
+     *    components (references and iterators may be invalidated, and new pieces could be visited
+     *    again). Take a snapshot first - `QueryBodies` exists for exactly that - and iterate the
+     *    snapshot; entries that died in the meantime are harmless because stale ids are safe.
+     *  - Main-thread only.
+     *
+     * Frame protocol (what vortex::Engine does):
+     * @code
+     *   scene.BeginFrame();                    // previous = current, once per rendered frame
+     *   for each fixed step:
+     *       app.OnFixedUpdate(); physics.Step(dt);
+     *       scene.SyncFromPhysics();           // bodies -> Transform::current
+     *   app.OnUpdate();
+     *   scene.GatherInstances(instances); scene.GatherLights(lights);  -> renderer
+     *   scene.Update(frameDt);                 // lifetimes, light fades (after the frame was drawn)
+     * @endcode
+     */
+    class Scene {
+    public:
+        Scene(voxel::ChunkStore& store, const voxel::MaterialLibrary& materials, physics::PhysicsWorld& physics,
+              fx::ParticleSystem& particles, const SceneConfig& config = {});
+        ~Scene();
+        Scene(const Scene&) = delete;
+        Scene& operator=(const Scene&) = delete;
+
+        const SceneConfig& Config() const;
+
+        // --- entities ----------------------------------------------------------------------------
+
+        /**
+         * @brief Creates a voxel object: Transform (previous = current, scale = voxel size),
+         * VoxelBody, Name (if any) and - with `withBody` - a RigidBody.
+         * @details The body is a compound of the model's collider boxes with material densities
+         * (mass and inertia are real); layer Static for static bodies, Debris below
+         * `debrisBodyVoxels` solid voxels, Dynamic otherwise. A model without solid voxels gets
+         * no body. Requesting a body before the physics world is initialised is an error.
+         * @return kNoEntity (and a log line) if the model is null, could not be baked because
+         * the store ran out of slots, or the requested body could not be created; nothing is
+         * leaked in that case (a model that could not be baked is left unbaked and holds no
+         * chunk slots, so the same model can be used again once the store has room).
+         */
+        Entity CreateVoxelObject(const VoxelObjectDesc& desc);
+
+        /// @brief Creates a light entity: Transform (scale 1) + PointLight, plus Lifetime when
+        /// `desc.lifetime > 0` (an explosion flash). Never fails.
+        Entity CreateLight(const LightDesc& desc);
+
+        /// @brief Destroys an entity now: its body is removed from the physics world and its
+        /// model reference released. No-op for kNoEntity / stale ids.
+        void Destroy(Entity entity);
+
+        /// @brief Destroys every entity (bodies and model references included).
+        void Clear();
+
+        /// @brief True if the id refers to a living entity of this scene.
+        bool IsValid(Entity entity) const;
+
+        size_t EntityCount() const;          ///< Living entities of any kind.
+        size_t VoxelObjectCount() const;     ///< Living entities with a VoxelBody (visible or not).
+
+        /**
+         * @brief Direct access to the registry for game components, views and anything the
+         * functions below do not cover.
+         * @details Rules: RigidBody is managed by the scene (see the component); destroy entities
+         * with `Destroy` or `registry.destroy` at will; do not call scene functions that create
+         * entities while iterating a view.
+         */
+        entt::registry& Registry();
+        const entt::registry& Registry() const;
+
+        /// @brief Component of an entity, or nullptr if the entity is invalid / stale or has no
+        /// such component. The pointer is invalidated by anything that creates or destroys
+        /// entities or components of that type: do not keep it.
+        template <typename Component>
+        Component* TryGet(Entity entity) {
+            entt::registry& registry = Registry();
+            return registry.valid(entity) ? registry.try_get<Component>(entity) : nullptr;
+        }
+        template <typename Component>
+        const Component* TryGet(Entity entity) const {
+            const entt::registry& registry = Registry();
+            return registry.valid(entity) ? registry.try_get<Component>(entity) : nullptr;
+        }
+
+        /**
+         * @brief Places an entity: writes Transform::current (scale untouched) and moves its body,
+         * if it has one (velocities are kept, the body is woken up).
+         * @param teleport true: previous = current as well, so the renderer sees no motion (use it
+         * for cuts and for entities you position every frame yourself); false: the change shows
+         * up as motion from the pose drawn last frame.
+         */
+        void SetTransform(Entity entity, const glm::vec3& position, const glm::quat& rotation, bool teleport = true);
+
+        // --- physics <-> entities ----------------------------------------------------------------
+
+        /// @brief Living entity behind a body's user data (ray hits, contact events); kNoEntity
+        /// if the value is not from a scene or the entity is gone.
+        Entity EntityFromUserData(uint64_t userData) const;
+
+        /// @brief Living entity that owns `body`; kNoEntity for invalid, foreign or dead bodies.
+        Entity EntityFromBody(physics::BodyId body) const;
+
+        /**
+         * @brief Snapshot of the entities whose rigid body bounds overlap a world-space box.
+         * @details Appends to `out`. This is the safe way to "do something to everything near a
+         * point" when the something creates or destroys entities (Damage): collect first, then act
+         * on the list. Pieces created while acting are not in the list, so nothing is hit twice.
+         */
+        void QueryBodies(const math::AABB& box, std::vector<Entity>& out) const;
+
+        // --- destruction -------------------------------------------------------------------------
+
+        /**
+         * @brief Carves a sphere (world metres) out of a voxel object and lets it fall apart.
+         * @details
+         *  - Only entities with a VoxelBody AND a RigidBody are affected (visual-only objects are
+         *    immune). Voxels of materials flagged MaterialFlag_Indestructible stay.
+         *  - The shared model is never modified: the entity gets a private new model, other users
+         *    of the old model are untouched (and the old one is freed with its last user).
+         *  - The remaining voxels are split into face-connected pieces. The largest keeps this
+         *    entity - id, Name and any other components; every other piece becomes a new Dynamic
+         *    entity (Transform, VoxelBody, RigidBody, Name copy). The entity keeps its motion type
+         *    only while it stays in one piece: a Static / Kinematic object that is cut apart
+         *    becomes Dynamic as a whole, so no severed part is left hanging in the air. All pieces
+         *    stay exactly where their voxels were and inherit the motion of the original body:
+         *    linear velocity = velocity of the original at the piece's centre, same angular velocity.
+         *  - `Transform::previous` of every piece is the original's previous pose re-based by the
+         *    piece's voxel offset, so motion vectors continue seamlessly through the cut.
+         *  - Pieces smaller than `minPieceVoxels` turn into particles moving with the object;
+         *    carved voxels throw debris particles away from `center`.
+         *  - If nothing big enough is left the entity is destroyed (`destroyed = true`).
+         *  - The old model is released before the pieces are baked, so an unshared object never
+         *    runs out of chunk slots by being damaged. A piece whose body cannot be created
+         *    (PhysicsConfig::maxBodies reached) is dropped with a log line.
+         * @return What happened; `removed == 0` (and no other effect) if the sphere touched no
+         * destructible voxel or the entity is invalid, stale or not damageable.
+         */
+        DamageResult Damage(Entity entity, const glm::dvec3& center, float radius);
+
+        // --- per frame ---------------------------------------------------------------------------
+
+        /// @brief Remembers what was drawn: `previous = current` for every Transform. Call once
+        /// per rendered frame, before that frame's simulation steps and game update.
+        void BeginFrame();
+
+        /// @brief Pulls position and rotation of every entity with a valid RigidBody from the
+        /// physics world into Transform::current. Call after each PhysicsWorld::Step.
+        void SyncFromPhysics();
+
+        /// @brief Advances lifetimes by `dt` seconds: fades lights (Lifetime::lightDecay) and
+        /// destroys entities whose time is up.
+        void Update(float dt);
+
+        // --- render data -------------------------------------------------------------------------
+
+        /// @brief Appends one InstanceDesc per baked chunk (ModelPart) of every visible voxel
+        /// object: localToWorld / prevLocalToWorld = current / previous transform x part offset,
+        /// plus the part's slot, tight bounds and the model's palette.
+        void GatherInstances(std::vector<graphics::InstanceDesc>& out) const;
+
+        /// @brief Appends the point lights of all entities with Transform + PointLight and a
+        /// positive intensity, in world space.
+        void GatherLights(std::vector<graphics::PointLight>& out) const;
+
+    private:
+        struct Impl;
+        std::unique_ptr<Impl> m_Impl;
+    };
+}

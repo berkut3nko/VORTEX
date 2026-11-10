@@ -1,5 +1,6 @@
 module;
 
+#include <entt/entt.hpp>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -34,7 +35,9 @@ namespace vortex {
     }
 
     struct Engine::Impl {
-        explicit Impl(const EngineConfig& c) : config(c), store(c.chunkCapacity), particles(c.maxParticles) {}
+        explicit Impl(const EngineConfig& c)
+            : config(c), store(c.chunkCapacity), particles(c.maxParticles),
+              scene(store, materials, physics, particles, scene::SceneConfig{.voxelSize = c.world.voxelSize}) {}
 
         EngineConfig config;
         JobSystem jobs;
@@ -46,41 +49,16 @@ namespace vortex {
         physics::PhysicsWorld physics;
         std::unique_ptr<physics::TerrainColliders> terrain;
         fx::ParticleSystem particles;
+        // After everything it references: entities own bodies and model chunk slots.
+        scene::Scene scene;
 
         graphics::Window window;
         graphics::Device device;
         graphics::Renderer renderer;
         graphics::UiLayer ui;
 
-        std::vector<VoxelObject> objects;
-
-        /// (Re)creates the rigid body of an object from its model, at its current transform.
-        void CreateBody(size_t index, physics::MotionType motion, const glm::vec3& linear, const glm::vec3& angular) {
-            VoxelObject& object = objects[index];
-            const float vs = object.transform.scale;
-            std::vector<physics::BoxDesc> boxes;
-            for (const voxel::ColliderBox& b : voxel::BuildColliderBoxes(object.model->Volume(), false)) {
-                physics::BoxDesc d;
-                d.halfExtent = glm::vec3(b.size) * (0.5f * vs);
-                d.center = glm::vec3(b.min) * vs + d.halfExtent;
-                d.density = std::max(1.0f, materials.Get(object.model->Palette(), b.material).density);
-                boxes.push_back(d);
-            }
-            physics::BodyDesc body;
-            body.shape = physics.CreateCompoundShape(boxes);
-            body.position = object.transform.position;
-            body.rotation = object.transform.rotation;
-            body.motion = motion;
-            // Small fragments do not collide with each other: piles of rubble stay cheap.
-            body.layer = motion == physics::MotionType::Static ? physics::Layer::Static
-                       : (object.model->SolidCount() < 48 ? physics::Layer::Debris : physics::Layer::Dynamic);
-            body.linearVelocity = linear;
-            body.angularVelocity = angular;
-            body.userData = index;
-            if (body.shape) object.body = physics.CreateBody(body);
-        }
-
         std::vector<graphics::InstanceDesc> instances;
+        std::vector<graphics::PointLight> lights;
         std::vector<fx::GpuParticle> gpuParticles;
         bool exitRequested = false;
         float stepAlpha = 0.0f;
@@ -92,8 +70,7 @@ namespace vortex {
     Engine::~Engine() {
         Impl& s = *m_Impl;
         if (s.device.IsInitialized()) s.device.WaitIdle();
-        for (VoxelObject& o : s.objects) s.physics.DestroyBody(o.body);
-        s.objects.clear();          // releases model chunk slots before the store goes away
+        s.scene.Clear();            // releases bodies and model chunk slots before physics and the store go away
         s.terrain.reset();
         s.world.reset();
         s.ui.Shutdown();
@@ -138,107 +115,6 @@ namespace vortex {
         return true;
     }
 
-    size_t Engine::SpawnObject(std::shared_ptr<voxel::VoxelModel> model, const glm::vec3& position,
-                               const glm::quat& rotation, physics::MotionType motion, bool withBody) {
-        Impl& s = *m_Impl;
-        const float vs = s.world->VoxelSize();
-        if (!model->IsBaked()) model->Bake(s.store);
-
-        VoxelObject object;
-        object.model = std::move(model);
-        object.transform.position = position;
-        object.transform.rotation = rotation;
-        object.transform.scale = vs;
-        object.previous = object.transform;
-
-        s.objects.push_back(std::move(object));
-        if (withBody) s.CreateBody(s.objects.size() - 1, motion, glm::vec3(0.0f), glm::vec3(0.0f));
-        return s.objects.size() - 1;
-    }
-
-    uint32_t Engine::DamageObject(size_t index, const glm::dvec3& center, float radius) {
-        Impl& s = *m_Impl;
-        if (index >= s.objects.size()) return 0;
-        if (!s.objects[index].alive || !s.objects[index].body.IsValid() || !s.objects[index].model) return 0;
-
-        const math::Transform transform = s.objects[index].transform;
-        const std::shared_ptr<voxel::VoxelModel> model = s.objects[index].model;
-        const voxel::PaletteId palette = model->Palette();
-        const float vs = transform.scale;
-
-        // Sphere in the object's voxel space.
-        const glm::vec3 local = transform.InverseTransformPoint(glm::vec3(center));
-        const float r = radius / vs;
-        const glm::ivec3 size = model->Size();
-        const glm::ivec3 lo = glm::max(glm::ivec3(glm::floor(local - glm::vec3(r))), glm::ivec3(0));
-        const glm::ivec3 hi = glm::min(glm::ivec3(glm::ceil(local + glm::vec3(r))) + glm::ivec3(1), size);
-        if (lo.x >= hi.x || lo.y >= hi.y || lo.z >= hi.z) return 0;
-
-        // Models are shared between objects: work on a private copy of the volume.
-        voxel::VoxelVolume volume = model->Volume();
-        uint32_t removed = 0;
-        for (int z = lo.z; z < hi.z; ++z)
-            for (int y = lo.y; y < hi.y; ++y)
-                for (int x = lo.x; x < hi.x; ++x) {
-                    const uint8_t id = volume.Get(x, y, z);
-                    if (id == 0) continue;
-                    const glm::vec3 d = glm::vec3(x, y, z) + glm::vec3(0.5f) - local;
-                    if (glm::dot(d, d) > r * r) continue;
-                    const voxel::Material& material = s.materials.Get(palette, id);
-                    if ((material.flags & voxel::MaterialFlag_Indestructible) != 0) continue;
-                    volume.Set(x, y, z, 0);
-                    if ((removed++ % 3) == 0) {     // a third of the voxels is plenty of debris
-                        const glm::vec3 world = transform.TransformPoint(glm::vec3(x, y, z) + glm::vec3(0.5f));
-                        fx::SpawnVoxelBreak(s.particles, glm::dvec3(world), material.color, vs,
-                                            glm::normalize(world - glm::vec3(center) + glm::vec3(0.0f, 1.0e-3f, 0.0f)) * 2.5f);
-                    }
-                }
-        if (removed == 0) return 0;
-
-        const physics::BodyState state = s.physics.GetState(s.objects[index].body);
-        const physics::BodyId oldBody = s.objects[index].body;
-        auto pointVelocity = [&](const glm::vec3& worldPoint) { return s.physics.GetPointVelocity(oldBody, worldPoint); };
-
-        voxel::SplitResult split = voxel::SplitComponents(volume, 6);
-        for (const voxel::LooseVoxel& v : split.loose) {
-            const glm::vec3 world = transform.TransformPoint(glm::vec3(v.position) + glm::vec3(0.5f));
-            fx::SpawnVoxelBreak(s.particles, glm::dvec3(world), s.materials.Get(palette, v.material).color, vs, pointVelocity(world));
-        }
-
-        // Every piece becomes an object placed where it was inside the original; the largest one
-        // takes over this object's slot so references to it stay meaningful.
-        std::vector<glm::vec3> linear;
-        for (const voxel::VolumePiece& piece : split.pieces) {
-            linear.push_back(pointVelocity(transform.TransformPoint(glm::vec3(piece.offset) + glm::vec3(piece.volume.Size()) * 0.5f)));
-        }
-        s.physics.DestroyBody(oldBody);
-        s.objects[index].body = physics::BodyId{};
-        if (split.pieces.empty()) {
-            s.objects[index].alive = false;
-            s.objects[index].model.reset();
-            return removed;
-        }
-        for (size_t i = 0; i < split.pieces.size(); ++i) {
-            voxel::VolumePiece& piece = split.pieces[i];
-            auto pieceModel = std::make_shared<voxel::VoxelModel>(std::move(piece.volume), palette, model->Name());
-            pieceModel->Bake(s.store);
-            math::Transform t = transform;
-            t.position = transform.TransformPoint(glm::vec3(piece.offset));
-            size_t target = index;
-            if (i > 0) {
-                s.objects.emplace_back();
-                target = s.objects.size() - 1;
-            }
-            VoxelObject& object = s.objects[target];      // (re-fetched: emplace_back may reallocate)
-            object.model = std::move(pieceModel);
-            object.transform = t;
-            object.previous = t;
-            object.alive = true;
-            s.CreateBody(target, physics::MotionType::Dynamic, linear[i], state.angularVelocity);
-        }
-        return removed;
-    }
-
     void Engine::Explode(const glm::dvec3& center, float radius, float power) {
         Impl& s = *m_Impl;
         voxel::World& world = *s.world;
@@ -264,38 +140,38 @@ namespace vortex {
         for (voxel::FloatingIsland& island :
              voxel::ExtractFloatingIslands(world, &s.materials, c - margin, c + margin, 60000)) {
             auto model = std::make_shared<voxel::VoxelModel>(std::move(island.volume), voxel::kWorldPalette, "debris");
-            SpawnObject(std::move(model), glm::vec3(world.VoxelToWorld(island.origin)));
+            s.scene.CreateVoxelObject({.model = std::move(model), .position = glm::vec3(world.VoxelToWorld(island.origin))});
         }
 
-        // Objects caught in the blast lose voxels and may fall apart. (Only objects that exist
-        // now: the pieces created here are not damaged a second time.)
-        const size_t objectCount = s.objects.size();
-        for (size_t i = 0; i < objectCount; ++i) {
-            if (!s.objects[i].alive || !s.objects[i].body.IsValid()) continue;
-            math::AABB bounds = s.physics.GetBounds(s.objects[i].body);
-            bounds.Expand(radius);
-            if (bounds.Contains(glm::vec3(center))) DamageObject(i, center, radius);
-        }
+        // Objects caught in the blast lose voxels and may fall apart. The list is a snapshot:
+        // the pieces created here are not damaged a second time.
+        std::vector<scene::Entity> caught;
+        s.scene.QueryBodies(math::AABB(glm::vec3(center) - glm::vec3(radius), glm::vec3(center) + glm::vec3(radius)), caught);
+        for (const scene::Entity entity : caught) s.scene.Damage(entity, center, radius);
 
-        // Push nearby bodies outwards.
-        for (VoxelObject& o : s.objects) {
-            if (!o.alive || !o.body.IsValid()) continue;
-            const physics::BodyState state = s.physics.GetState(o.body);
+        // Push nearby bodies outwards (the new pieces included).
+        for (const auto [entity, body] : s.scene.Registry().view<const scene::RigidBody>().each()) {
+            if (!s.physics.IsValid(body.body)) continue;
+            const physics::BodyState state = s.physics.GetState(body.body);
             const glm::vec3 d = state.position - glm::vec3(center);
             const float dist = glm::length(d);
             if (dist > radius * 3.0f) continue;
             const float falloff = 1.0f - dist / (radius * 3.0f);
-            s.physics.AddImpulse(o.body, (dist > 1e-3f ? d / dist : glm::vec3(0, 1, 0)) * (s.physics.GetMass(o.body) * 6.0f * falloff));
+            s.physics.AddImpulse(body.body, (dist > 1e-3f ? d / dist : glm::vec3(0, 1, 0)) * (s.physics.GetMass(body.body) * 6.0f * falloff));
         }
         math::AABB wake(glm::vec3(center) - glm::vec3(radius * 2.0f), glm::vec3(center) + glm::vec3(radius * 2.0f));
         s.physics.ActivateInBox(wake);
 
-        graphics::PointLight flash;
+        // A flash of light that fades out quickly and removes itself once it is too dim to see.
+        constexpr float kFlashDecay = 9.0f, kFlashCutoff = 0.05f;
+        scene::LightDesc flash;
         flash.position = center;
         flash.color = glm::vec3(1.0f, 0.7f, 0.35f);
         flash.intensity = 40.0f * radius;
         flash.radius = radius * 8.0f;
-        lights.push_back(flash);
+        flash.decay = kFlashDecay;
+        flash.lifetime = std::log(flash.intensity / kFlashCutoff) / kFlashDecay;
+        if (flash.lifetime > 0.0f) s.scene.CreateLight(flash);
     }
 
     int Engine::Run(Application& app) {
@@ -307,7 +183,6 @@ namespace vortex {
         double last = NowSeconds();
         double accumulator = 0.0;
         uint32_t frame = 0;
-        const size_t persistentLights = lights.size();
 
         while (!s.exitRequested) {
             ProfileScope frameScope("CPU: frame");
@@ -343,16 +218,11 @@ namespace vortex {
                 ProfileScope scope("CPU: simulation");
                 accumulator += dt;
                 int steps = 0;
+                s.scene.BeginFrame();       // what was drawn last frame becomes "previous"
                 while (accumulator >= fixedDt && steps < 4) {
-                    for (VoxelObject& o : s.objects) o.previous = o.transform;
                     app.OnFixedUpdate(*this, fixedDt);
                     s.physics.Step(fixedDt);
-                    for (VoxelObject& o : s.objects) {
-                        if (!o.alive || !o.body.IsValid()) continue;
-                        const physics::BodyState state = s.physics.GetState(o.body);
-                        o.transform.position = state.position;
-                        o.transform.rotation = state.rotation;
-                    }
+                    s.scene.SyncFromPhysics();
                     accumulator -= fixedDt;
                     ++steps;
                 }
@@ -367,22 +237,9 @@ namespace vortex {
 
             // --- render ----------------------------------------------------------------------
             s.instances.clear();
-            for (const VoxelObject& o : s.objects) {
-                if (!o.alive || !o.model) continue;
-                const glm::mat4 current = o.transform.ToMatrix();
-                const glm::mat4 previous = o.previous.ToMatrix();
-                for (const voxel::ModelPart& part : o.model->Parts()) {
-                    const glm::mat4 offset = glm::translate(glm::mat4(1.0f), glm::vec3(part.offset));
-                    graphics::InstanceDesc inst;
-                    inst.localToWorld = current * offset;
-                    inst.prevLocalToWorld = previous * offset;
-                    inst.slot = part.slot;
-                    inst.boundsMin = part.boundsMin;
-                    inst.boundsMax = part.boundsMax;
-                    inst.palette = o.model->Palette();
-                    s.instances.push_back(inst);
-                }
-            }
+            s.scene.GatherInstances(s.instances);
+            s.lights.clear();
+            s.scene.GatherLights(s.lights);
             s.particles.BuildRenderData(s.world->WindowOrigin(), camera.position, s.gpuParticles);
 
             graphics::FrameInput in;
@@ -394,7 +251,7 @@ namespace vortex {
             in.store = &s.store;
             in.materials = &s.materials;
             in.instances = s.instances;
-            in.lights = lights;
+            in.lights = s.lights;
             in.particles = s.gpuParticles;
             in.time = now;
             in.deltaTime = dt;
@@ -404,12 +261,9 @@ namespace vortex {
             if (lastFrame && !s.config.screenshotPath.empty()) s.renderer.RequestScreenshot(s.config.screenshotPath);
             s.renderer.RenderFrame(in);
 
-            // Transient lights (explosion flashes) fade out quickly.
-            for (size_t i = persistentLights; i < lights.size();) {
-                lights[i].intensity *= std::exp(-dt * 9.0f);
-                if (lights[i].intensity < 0.05f) lights.erase(lights.begin() + static_cast<std::ptrdiff_t>(i));
-                else ++i;
-            }
+            // Lifetimes and light fades advance after the frame was drawn, so a flash is seen
+            // at full intensity on its first frame.
+            s.scene.Update(dt);
 
             Profiler::EndFrame();
             if (lastFrame) break;
@@ -440,5 +294,5 @@ namespace vortex {
     fx::ParticleSystem& Engine::Particles() { return m_Impl->particles; }
     graphics::Renderer& Engine::Renderer() { return m_Impl->renderer; }
     graphics::Window* Engine::Window() { return m_Impl->config.headless ? nullptr : &m_Impl->window; }
-    std::vector<VoxelObject>& Engine::Objects() { return m_Impl->objects; }
+    scene::Scene& Engine::Scene() { return m_Impl->scene; }
 }

@@ -36,8 +36,8 @@ engine/
     fx/       vortex.fx        particle simulation and effect presets
     physics/  vortex.physics   Jolt behind an engine interface, terrain collider streaming
     graphics/ vortex.graphics  Vulkan device, window, renderer, UI layer
-    scene/    vortex.scene     ECS components and systems (EnTT)
-    engine/   vortex.engine    application loop, destruction, glue
+    scene/    vortex.scene     entities (EnTT): components, object lifetime, destruction, render data
+    engine/   vortex.engine    application loop, explosions, glue
     editor/   vortex.editor    in-game tools
   tests/                 GoogleTest suites, none of which need a GPU
   tools/                 cpu_render: software renderer built on the shared shader code
@@ -53,6 +53,10 @@ Vortex::Engine    scene, engine, editor        -> all of the above, EnTT, ImGuiz
 ```
 
 A dedicated server or a tool links `Vortex::Core` (+ `Vortex::Physics`) and never sees Vulkan.
+
+Inside `Vortex::Engine`, `scene` is the lower layer: it imports voxel, fx, physics and only the
+plain frame description types of graphics (`InstanceDesc`, `PointLight`), never a device, a
+window or `vortex.engine`. `engine` owns a `scene::Scene` and drives it.
 
 ## 3. Conventions
 
@@ -135,8 +139,10 @@ re-expresses last frame's matrices in the new space.
 
 A dynamic object is a `voxel::VoxelModel`: a dense `VoxelVolume` of any size plus the chunks
 it was *baked* into (`ModelPart`: slot, offset, tight bounds). Models are shared between
-entities; modifying one (destruction) first makes a private copy. `Revision()` changes on every
-bake so dependants (physics shapes) know when to refresh.
+entities; a model is never modified through an entity - destruction gives the damaged entity a
+private new model (section 7). The chunk slots of a model go back to the store with its last
+reference. Baking is all or nothing: if the store runs out of slots the model is left unbaked
+and holds none. `Revision()` changes on every bake so dependants (physics shapes) know when to refresh.
 
 For rendering and ray queries each part becomes a `GpuInstance` (transform + slot + bounds +
 palette); a BVH over the instances (`BuildBvh`, rebuilt per frame) lets rays find them.
@@ -339,21 +345,103 @@ layout(location = 2) out vec2 o_Velocity;` plus `gl_FragDepth`. Lighting outputs
 
 `physics::PhysicsWorld` wraps Jolt: bodies are compounds of boxes (from `BuildColliderBoxes`,
 densities from materials, so mass and inertia are real) or static triangle meshes. It is
-stepped with a fixed time step by the engine loop; render transforms are interpolated.
+stepped with a fixed time step by the engine loop; after every step the scene copies body poses
+into the entities' transforms (`Scene::SyncFromPhysics`).
+
+Every body carries 64 bits of user data, returned by ray casts and contact events. Bodies of
+scene entities store `scene::ToUserData(entity)` (a tag in the upper half, the entity id in the
+lower), terrain colliders store 0, so `Scene::EntityFromUserData` can tell them apart.
 
 `physics::TerrainColliders` streams static meshes for terrain chunks near "focus points"
 (players, moving bodies): it snapshots a chunk and its neighbours' border voxels on the main
 thread, cooks the mesh (`BuildChunkCollisionMesh` + Jolt mesh shape) on a worker thread and
 installs the body on the main thread. It consumes `World::TakeChangedChunks()`.
 
-## 7. Destruction
+## 7. Scene and destruction
+
+### 7.1 Scene
+
+`scene::Scene` is the list of things in the game besides the terrain: an `entt::registry` plus
+the few systems that tie voxel models, rigid bodies, lights and lifetimes together. It is
+constructed from references to a `ChunkStore`, `MaterialLibrary`, `PhysicsWorld` and
+`ParticleSystem` - not from `Engine` - so it runs, and is unit tested, without a GPU or a window.
+
+Components are plain structs (`scene/Components.cppm`); games add their own to the same registry.
+
+| component | content |
+|---|---|
+| `Transform` | `current` and `previous` `math::Transform`. `previous` is the pose drawn last frame (motion vectors). For voxel objects the position is the model's minimum corner and the scale is the voxel size. |
+| `Name` | label for tools and logs |
+| `VoxelBody` | `shared_ptr<VoxelModel>` + `visible` |
+| `RigidBody` | `physics::BodyId` + motion type. The body belongs to the component. |
+| `PointLight` | colour, intensity, radius, source radius, offset in the entity's frame |
+| `Lifetime` | seconds left, optional exponential fade of a light on the same entity |
+
+There are no tag components: an object without a `RigidBody` is visual only (the player figure).
+
+Rules everything relies on:
+
+* **Entity lifetime is real.** `Scene::Destroy` (or `registry.destroy`) removes the entity now.
+  The scene listens to `on_destroy<RigidBody>`, so however the component goes away - destroy,
+  `remove<RigidBody>`, `clear` - its body leaves the physics world; dropping `VoxelBody` drops the
+  model reference and with the last one the chunk slots. Nothing is flagged dead and kept.
+* **Stale ids are safe.** An `Entity` is an `entt::entity` (index + version). Every `Scene`
+  function accepts `kNoEntity` and ids of destroyed entities and does nothing / returns the
+  default (`TryGet<T>` returns `nullptr`). Store ids, not component pointers.
+* **Bodies map back to entities** through the body's user data (section 6):
+  `EntityFromUserData(hit.userData)` / `EntityFromBody(body)` return a living entity or `kNoEntity`.
+* **Snapshot before you create.** `Damage` and the `Create*` functions add entities and
+  components, which invalidates references and iterators of registry views. Code that does
+  something to "everything near a point" collects ids first (`QueryBodies`) and then walks the
+  list; `Explode` is the model. New pieces are not in the snapshot, so nothing is hit twice.
+* **Destruction order.** A scene must be cleared before `PhysicsWorld::Shutdown()` and before the
+  chunk store goes away; `~Scene` calls `Clear()` (the registry's own destructor fires no signals),
+  and `Engine` declares the scene after the subsystems it references and clears it explicitly.
+* **EnTT is an implementation detail for most code.** `scene::Entity`, `kNoEntity`, `TryGet<>`
+  and views obtained from `Registry()` work without including EnTT; only code that spells
+  `entt::` names includes `<entt/entt.hpp>` (in its global module fragment).
+
+Frame protocol, driven by `Engine::Run`:
+
+```
+scene.BeginFrame()                 previous = current, once per rendered frame
+for each fixed step:
+    app.OnFixedUpdate(); physics.Step(dt)
+    scene.SyncFromPhysics()        body pose -> Transform::current
+app.OnUpdate()                     game moves body-less entities (Scene::SetTransform)
+scene.GatherInstances / GatherLights -> FrameInput -> Renderer::RenderFrame
+scene.Update(frameDt)              lifetimes and light fades, after the frame was drawn
+```
+
+`GatherInstances` emits one `graphics::InstanceDesc` per baked chunk of every visible voxel
+object (transform x chunk offset, slot, tight bounds, palette); `GatherLights` one
+`graphics::PointLight` per light with a positive intensity. All lights are entities: persistent
+ones have no `Lifetime`, an explosion flash is `Transform + PointLight + Lifetime`.
+
+### 7.2 Destruction
 
 Carving the world returns the removed voxels (for particles) and is followed by a bounded
 search for terrain that lost its support (`ExtractFloatingIslands`), which becomes dynamic
-objects. Damaging an object edits its volume, labels connected components
-(`LabelComponents`, a linear flood fill) and splits it (`SplitComponents`): the largest piece
-keeps the entity, the others become new entities inheriting the velocity at their position,
-and pieces below a size threshold turn into particles instead of bodies.
+voxel objects.
+
+`Scene::Damage(entity, centre, radius)` carves a sphere out of a voxel object:
+
+1. The sphere is applied to a private copy of the volume (voxels of indestructible materials
+   stay); the shared model is not touched. Removed voxels throw debris particles.
+2. The rest is labelled (`LabelComponents`, a linear flood fill) and split (`SplitComponents`).
+   Components below `SceneConfig::minPieceVoxels` become particles that move with the object.
+3. The largest piece keeps the entity - id, name, game components - with a new model and a new
+   body (the old model is released first, so its chunk slots are available to the pieces).
+   Every other piece becomes a new dynamic entity. A static or kinematic object keeps its
+   motion type only while it stays in one piece; once cut apart all of it is dynamic. Each piece stays
+   exactly where its voxels were, gets the velocity the original body had at its centre and the
+   same angular velocity; `Transform::previous` is re-based the same way, so motion vectors
+   continue through the cut.
+4. If nothing big enough is left the entity is destroyed.
+
+`Engine::Explode` combines the two: carve the terrain, detach floating islands, damage every
+object whose bounds the blast reaches, push bodies away, wake what rested on the removed
+ground, and add a flash.
 
 ## 8. Testing
 
@@ -362,7 +450,11 @@ and pieces below a size threshold turn into particles instead of bodies.
 * `VortexPhysicsTests` - bodies, shapes, ray casts, characters, terrain colliders.
 * `VortexGraphicsTests` - SPIR-V reflection of the real shader binaries, C++ / GLSL struct
   layout parity, proxy cube winding, pipeline description validation. No Vulkan device needed.
-* `VortexEngineTests` - scene and destruction logic.
+* `VortexEngineTests` - the scene on real chunk store / material / physics / particle objects
+  (no device, no window): entity lifetime releasing bodies and chunk slots, shared models
+  surviving damage, splitting (a cut beam is two entities whose voxels add up and which inherit
+  motion), loose fragments, stale ids through every function, instance and light gathering,
+  lifetimes, body <-> entity mapping.
 * `tools/cpu_render` renders a frame on the CPU with the shared shader code and writes a PNG:
   a visual check of world data, traversal and shading that needs no GPU.
 * With a GPU: `Shredborne --headless --frames N --screenshot out.png --validation` exercises

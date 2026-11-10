@@ -13,12 +13,13 @@ What exists today, and what was designed for but is not built yet. See
 | Terrain | Built-in generator: hills, mountains, beaches, sea, caves, trees. Custom generators through `IWorldGenerator`. |
 | Ray queries | One traversal shared by GPU and CPU (`shaders/shared/trace.glsl`), world + dynamic objects through a BVH. |
 | Objects | Voxel models of any size shared between instances, collider boxes, mass from material density. |
-| Destruction | Terrain carving with floating-terrain detection; objects lose voxels and split into pieces (`Engine::DamageObject`, `Engine::Explode`). |
+| Scene | `vortex.scene`: EnTT entities with transform, voxel body, rigid body, point light and lifetime components; destroying an entity releases its body and chunk slots; usable and tested without a GPU. |
+| Destruction | Terrain carving with floating-terrain detection; objects lose voxels and split into pieces (`Scene::Damage`, `Engine::Explode`). |
 | Import | MagicaVoxel `.vox` read / write, glTF voxelisation. |
 | Physics | Jolt behind an engine interface, fixed time step, terrain colliders streamed around moving things, character controller. |
 | Particles | CPU pool with emitters, voxel collision, effect presets. |
 | Renderer | Ray-marched G-buffer, ray-traced sun shadows, ambient occlusion, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping, ImGui. Headless mode with screenshots. Validation-clean on Intel UHD 620. |
-| Tests | 199 unit tests, none needing a GPU. |
+| Tests | 223 unit tests, none needing a GPU. |
 
 ## Performance (Intel UHD 620, 1280x720 output, 768x432 internal)
 
@@ -43,11 +44,15 @@ Known costs worth attacking, in order of expected gain:
 
 1. ~~**Player**: character controller on the terrain~~ - done in the game (walk, run, jump,
    first / third person, free flight). Still missing: a proper character model and animation.
-2. ~~**Object destruction**~~ - done: `Engine::DamageObject` carves an object, splits it into
+2. ~~**Object destruction**~~ - done: `Scene::Damage` carves an object, splits it into
    connected pieces that inherit its motion and turns small fragments into particles; `Explode`
-   applies it to every object in range. Still missing: damage from impacts (contact events), and
-   reclaiming the slots of destroyed objects (the object list only grows).
-3. **Scene / ECS**: replace `Engine`'s object list before more object kinds are added.
+   applies it to every object in range. Still missing: damage from impacts (contact events).
+3. ~~**Scene / ECS**~~ - done: `vortex.scene` replaced `Engine`'s object list. Objects, lights and
+   explosion flashes are entities; destroyed objects give their body and chunk slots back;
+   physics bodies map back to entities. Still missing: an emitter component (particle emitters
+   are still handled by hand), parent / child transforms, routing contact events to entities,
+   cleaning up debris that came to rest (nothing gives pieces a `Lifetime` yet), a spatial
+   index for `QueryBodies` (it tests every body), and saving / loading entities.
 4. **Editor**: brush, selection, importer UI - needed to build content faster than by code.
 5. **Memory**: skip unseen underground chunks, then palette-compressed chunks; then view distance
    through level-of-detail cascades.
@@ -56,8 +61,8 @@ Known costs worth attacking, in order of expected gain:
 ## Planned, not built
 
 ### Engine structure
-- **Scene / ECS** (`vortex.scene`, EnTT is already a dependency): entities with transform, voxel body,
-  rigid body, light, emitter and lifetime components. Today `Engine` keeps a plain object list.
+- **Scene, next parts**: emitter component, transform hierarchy, contact events per entity, debris
+  clean-up, entity serialisation (the base layer exists, see step 3 above).
 - **Editor** (`vortex.editor`, ImGuizmo is already a dependency): selection and gizmo, voxel brush for
   world and objects, importer UI, lighting and render settings panels, profiler view.
 - **CPU reference renderer** (`tools/cpu_render`): software frame from the shared shader code, for

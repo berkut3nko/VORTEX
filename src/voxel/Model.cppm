@@ -51,9 +51,14 @@ export namespace vortex::voxel {
 
         /**
          * @brief Splits the volume into chunks in `store` so it can be rendered and ray traced.
-         * @return false if the store ran out of slots (the model is then partially baked).
+         * @details All or nothing: if the store runs out of slots, the slots taken so far are
+         * given back and the model is left unbaked (`IsBaked() == false`, no parts), so a later
+         * attempt starts from scratch. This also holds for a re-bake through `SetVolume`.
+         * @return false if the store ran out of slots.
          */
         bool Bake(ChunkStore& store);
+        /// @brief Returns the chunk slots to the store; the model can be baked again later.
+        void Unbake();
         bool IsBaked() const { return m_Store != nullptr; }
         std::span<const ModelPart> Parts() const { return m_Parts; }
 
