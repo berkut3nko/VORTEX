@@ -41,8 +41,8 @@ Known costs worth attacking, in order of expected gain:
 
 ## Next steps (proposed order)
 
-1. **Player**: character controller on the terrain (walk, jump), first / third person camera. The
-   physics side exists (`PhysicsWorld::CreateCharacter`); it needs wiring into the game.
+1. ~~**Player**: character controller on the terrain~~ - done in the game (walk, run, jump,
+   first / third person, free flight). Still missing: a proper character model and animation.
 2. **Object destruction**: route damage to voxel objects (`SplitComponents`) so crates and debris break.
 3. **Scene / ECS**: replace `Engine`'s object list before more object kinds are added.
 4. **Editor**: brush, selection, importer UI - needed to build content faster than by code.

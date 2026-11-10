@@ -56,6 +56,7 @@ namespace vortex {
         std::vector<graphics::InstanceDesc> instances;
         std::vector<fx::GpuParticle> gpuParticles;
         bool exitRequested = false;
+        float stepAlpha = 0.0f;
         bool initialized = false;
     };
 
@@ -111,7 +112,7 @@ namespace vortex {
     }
 
     size_t Engine::SpawnObject(std::shared_ptr<voxel::VoxelModel> model, const glm::vec3& position,
-                               const glm::quat& rotation, physics::MotionType motion) {
+                               const glm::quat& rotation, physics::MotionType motion, bool withBody) {
         Impl& s = *m_Impl;
         const float vs = s.world->VoxelSize();
         if (!model->IsBaked()) model->Bake(s.store);
@@ -139,7 +140,7 @@ namespace vortex {
         body.motion = motion;
         body.layer = motion == physics::MotionType::Static ? physics::Layer::Static : physics::Layer::Dynamic;
         body.userData = s.objects.size();
-        if (body.shape) object.body = s.physics.CreateBody(body);
+        if (withBody && body.shape) object.body = s.physics.CreateBody(body);
 
         s.objects.push_back(std::move(object));
         return s.objects.size() - 1;
@@ -253,6 +254,7 @@ namespace vortex {
                     ++steps;
                 }
                 if (steps == 4) accumulator = 0.0;   // do not spiral when the frame is too slow
+                s.stepAlpha = static_cast<float>(accumulator / fixedDt);
             }
 
             app.OnUpdate(*this, dt);
@@ -321,6 +323,8 @@ namespace vortex {
         return errors > 0 ? 2 : 0;
     }
 
+    bool Engine::TerrainReady(const glm::dvec3& position) const { return m_Impl->terrain && m_Impl->terrain->IsReady(position); }
+    float Engine::StepAlpha() const { return m_Impl->stepAlpha; }
     void Engine::RequestExit() { m_Impl->exitRequested = true; }
     const EngineConfig& Engine::Config() const { return m_Impl->config; }
     JobSystem& Engine::Jobs() { return m_Impl->jobs; }

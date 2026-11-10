@@ -98,7 +98,11 @@ export namespace vortex {
         /// @brief Spawns a dynamic (or static) voxel object. `position` is the model origin.
         size_t SpawnObject(std::shared_ptr<voxel::VoxelModel> model, const glm::vec3& position,
                            const glm::quat& rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
-                           physics::MotionType motion = physics::MotionType::Dynamic);
+                           physics::MotionType motion = physics::MotionType::Dynamic, bool withBody = true);
+        /// @brief True once terrain collision exists around `position` (wait for it before simulating a character there).
+        bool TerrainReady(const glm::dvec3& position) const;
+        /// @brief Fraction (0..1) of a fixed step elapsed since the last simulation step, for interpolation.
+        float StepAlpha() const;
         std::vector<VoxelObject>& Objects();
 
         /// @brief Removes terrain in a sphere, throws debris particles, detaches floating
