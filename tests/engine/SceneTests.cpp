@@ -1068,3 +1068,325 @@ TEST(SceneDamage, SnapshotThenDamageHitsEveryObjectOnce) {
     for (const Entity entity : caught) EXPECT_EQ(f.scene.Damage(entity, center, radius).removed, 0u);
     EXPECT_EQ(f.scene.EntityCount(), 0u);
 }
+
+// --- rubble ----------------------------------------------------------------------------------------
+
+namespace {
+    /// A 3^3 lump (27 voxels: a piece, but small) created as rubble.
+    Entity Lump(Fixture& f, const glm::vec3& position) {
+        return f.scene.CreateVoxelObject({.model = f.Box({3, 3, 3}, 0, "lump"), .position = position, .debris = true});
+    }
+}
+
+TEST(SceneDebris, SmallPiecesSplitOffAreRubbleTheDamagedEntityIsNot) {
+    Fixture f;
+    const Entity beam = f.scene.CreateVoxelObject({.model = f.Box({24, 3, 3}), .position = {0.0f, 5.0f, 0.0f}});
+    ASSERT_NE(beam, kNoEntity);
+    EXPECT_EQ(f.scene.DebrisCount(), 0u);
+
+    // Cut near one end: 27 voxels come off, 144 stay.
+    const scene::DamageResult cut = f.scene.Damage(beam, glm::dvec3(0.55, 5.15, 0.15), 0.25f);
+    ASSERT_EQ(cut.pieces.size(), 1u);
+    EXPECT_EQ(f.scene.TryGet<scene::VoxelBody>(cut.pieces[0])->model->SolidCount(), 27u);
+    EXPECT_NE(f.scene.TryGet<scene::Debris>(cut.pieces[0]), nullptr);
+    EXPECT_EQ(f.scene.TryGet<scene::Debris>(beam), nullptr);
+    EXPECT_EQ(f.scene.DebrisCount(), 1u);
+
+    // Cut in the middle of what is left: both halves are big, neither is rubble.
+    const scene::DamageResult middle = f.scene.Damage(beam, glm::dvec3(1.6, 5.15, 0.15), 0.25f);
+    ASSERT_EQ(middle.pieces.size(), 1u);
+    EXPECT_GE(f.scene.TryGet<scene::VoxelBody>(middle.pieces[0])->model->SolidCount(), f.scene.Config().debrisBodyVoxels);
+    EXPECT_EQ(f.scene.TryGet<scene::Debris>(middle.pieces[0]), nullptr);
+    EXPECT_EQ(f.scene.DebrisCount(), 1u);
+}
+
+TEST(SceneDebris, DefaultsKeepTinyFragmentsOutOfTheScene) {
+    const scene::SceneConfig defaults;
+    EXPECT_GE(defaults.minPieceVoxels, 6u);                    // nothing of 1-5 voxels is ever an object
+    EXPECT_GT(defaults.debrisBodyVoxels, defaults.minPieceVoxels);
+    EXPECT_GT(defaults.debrisLifetime, 0.0f);
+    EXPECT_GT(defaults.maxDebris, 0u);
+
+    // A 12-voxel end of a beam is below the default piece size: particles, not an entity.
+    Fixture f;
+    voxel::VoxelVolume volume(glm::ivec3(24, 2, 2));
+    volume.FillBox({0, 0, 0}, {24, 2, 2}, f.ids.stone);
+    const Entity beam = f.scene.CreateVoxelObject({.model = std::make_shared<voxel::VoxelModel>(std::move(volume), voxel::kWorldPalette),
+                                                   .position = {0.0f, 5.0f, 0.0f}});
+    const scene::DamageResult cut = f.scene.Damage(beam, glm::dvec3(0.4, 5.1, 0.1), 0.12f);
+    EXPECT_GT(cut.removed, 0u);
+    EXPECT_GT(cut.loose, 0u);
+    EXPECT_LT(cut.loose, defaults.minPieceVoxels);
+    EXPECT_TRUE(cut.pieces.empty());
+    EXPECT_EQ(f.scene.VoxelObjectCount(), 1u);
+    EXPECT_EQ(f.physics.BodyCount(), 1u);
+}
+
+TEST(SceneDebris, RubbleTooSmallToBeAPieceCrumblesInsteadOfBecomingAnEntity) {
+    Fixture f;
+    // What Engine::Explode does with a floating crumb of terrain.
+    const Entity crumb = f.scene.CreateVoxelObject({.model = f.Box({2, 2, 1}, 0, "crumb"), .position = {0.0f, 2.0f, 0.0f}, .debris = true});
+    EXPECT_EQ(crumb, kNoEntity);
+    EXPECT_EQ(f.scene.EntityCount(), 0u);
+    EXPECT_EQ(f.physics.BodyCount(), 0u);
+    EXPECT_EQ(f.store.UsedCount(), 0u);
+    EXPECT_GT(f.particles.AliveCount(), 0u);
+
+    // The same model as an ordinary object is an ordinary object.
+    const Entity pebble = f.scene.CreateVoxelObject({.model = f.Box({2, 2, 1}), .position = {0.0f, 2.0f, 0.0f}});
+    ASSERT_NE(pebble, kNoEntity);
+    EXPECT_EQ(f.scene.TryGet<scene::Debris>(pebble), nullptr);
+
+    // Rubble that is a piece but small is marked; a big one is not, nor is static or body-less rubble.
+    const Entity lump = Lump(f, {1.0f, 2.0f, 0.0f});
+    ASSERT_NE(lump, kNoEntity);
+    EXPECT_NE(f.scene.TryGet<scene::Debris>(lump), nullptr);
+    const Entity boulder = f.scene.CreateVoxelObject({.model = f.Box({8, 8, 8}), .position = {3.0f, 2.0f, 0.0f}, .debris = true});
+    EXPECT_EQ(f.scene.TryGet<scene::Debris>(boulder), nullptr);
+    const Entity fixed = f.scene.CreateVoxelObject(
+        {.model = f.Box({2, 2, 1}), .position = {5.0f, 2.0f, 0.0f}, .motion = physics::MotionType::Static, .debris = true});
+    ASSERT_NE(fixed, kNoEntity);
+    EXPECT_EQ(f.scene.TryGet<scene::Debris>(fixed), nullptr);
+    EXPECT_EQ(f.scene.DebrisCount(), 1u);
+}
+
+TEST(SceneDebris, RubbleExpiresIntoParticlesAndReleasesEverything) {
+    scene::SceneConfig config;
+    config.debrisLifetime = 2.0f;
+    Fixture f(256, true, config);
+    const Entity lump = Lump(f, {0.0f, 2.0f, 0.0f});
+    const Entity crate = f.scene.CreateVoxelObject({.model = f.Box({3, 3, 3}, 0, "crate"), .position = {2.0f, 2.0f, 0.0f}});   // small, not rubble
+    ASSERT_NE(lump, kNoEntity);
+    ASSERT_NE(crate, kNoEntity);
+    ASSERT_EQ(f.physics.BodyCount(), 2u);
+    const uint32_t slots = f.store.UsedCount();
+
+    f.scene.Update(1.5f);
+    EXPECT_TRUE(f.scene.IsValid(lump));
+    EXPECT_NEAR(f.scene.TryGet<scene::Debris>(lump)->age, 1.5f, 1e-6f);
+    EXPECT_EQ(f.particles.AliveCount(), 0u);
+
+    f.scene.Update(0.6f);
+    EXPECT_FALSE(f.scene.IsValid(lump));
+    EXPECT_TRUE(f.scene.IsValid(crate));                        // a small object nobody called rubble stays
+    EXPECT_EQ(f.scene.DebrisCount(), 0u);
+    EXPECT_EQ(f.physics.BodyCount(), 1u);
+    EXPECT_LT(f.store.UsedCount(), slots);
+    EXPECT_GT(f.particles.AliveCount(), 0u);                    // it went in a puff
+
+    f.scene.Update(1000.0f);
+    EXPECT_TRUE(f.scene.IsValid(crate));
+
+    // No bursts configured: it just disappears. No lifetime configured: it stays.
+    scene::SceneConfig silent;
+    silent.debrisLifetime = 1.0f;
+    silent.debrisDespawnBursts = 0;
+    Fixture quiet(256, true, silent);
+    const Entity gone = Lump(quiet, {0.0f, 2.0f, 0.0f});
+    quiet.scene.Update(1.5f);
+    EXPECT_FALSE(quiet.scene.IsValid(gone));
+    EXPECT_EQ(quiet.particles.AliveCount(), 0u);
+
+    scene::SceneConfig forever;
+    forever.debrisLifetime = 0.0f;
+    Fixture keep(256, true, forever);
+    const Entity kept = Lump(keep, {0.0f, 2.0f, 0.0f});
+    keep.scene.Update(1.0e6f);
+    EXPECT_TRUE(keep.scene.IsValid(kept));
+}
+
+TEST(SceneDebris, CapRemovesTheOldestFirst) {
+    scene::SceneConfig config;
+    config.maxDebris = 3;
+    config.debrisLifetime = 100.0f;
+    Fixture f(256, true, config);
+    std::vector<Entity> lumps;
+    for (int i = 0; i < 5; ++i) {
+        lumps.push_back(Lump(f, {static_cast<float>(i), 2.0f, 0.0f}));
+        ASSERT_NE(lumps.back(), kNoEntity);
+        if (i < 2) f.scene.Update(0.1f);                        // 0 and 1 are older than the rest
+    }
+    EXPECT_EQ(f.scene.DebrisCount(), 5u);                       // the cap is applied by Update
+
+    f.scene.Update(0.1f);
+    EXPECT_EQ(f.scene.DebrisCount(), 3u);
+    EXPECT_FALSE(f.scene.IsValid(lumps[0]));
+    EXPECT_FALSE(f.scene.IsValid(lumps[1]));
+    for (int i = 2; i < 5; ++i) EXPECT_TRUE(f.scene.IsValid(lumps[static_cast<size_t>(i)]));
+    EXPECT_EQ(f.physics.BodyCount(), 3u);
+
+    // Objects that are not rubble do not count.
+    for (int i = 0; i < 4; ++i) ASSERT_NE(f.scene.CreateVoxelObject({.model = f.Box({3, 3, 3}), .position = {0.0f, 4.0f, static_cast<float>(i)}}), kNoEntity);
+    f.scene.Update(0.1f);
+    EXPECT_EQ(f.scene.DebrisCount(), 3u);
+    EXPECT_EQ(f.scene.VoxelObjectCount(), 7u);
+}
+
+TEST(SceneDebris, RestingRubbleFarFromTheViewerGoesSooner) {
+    scene::SceneConfig config;
+    config.debrisLifetime = 100.0f;
+    config.debrisFarDistance = 20.0f;
+    config.debrisFarLifetime = 1.0f;
+    Fixture f(256, true, config);
+
+    const Entity nearResting = Lump(f, {0.0f, 2.0f, 0.0f});
+    const Entity farResting = Lump(f, {50.0f, 2.0f, 0.0f});
+    const Entity farMoving = Lump(f, {50.0f, 2.0f, 5.0f});      // bodies are created awake
+    // "Resting": asleep or held by the terrain guard. Freezing is the quick way to get there.
+    f.physics.SetFrozen(f.scene.TryGet<scene::RigidBody>(nearResting)->body, true);
+    f.physics.SetFrozen(f.scene.TryGet<scene::RigidBody>(farResting)->body, true);
+
+    // Without a viewer the rule is off.
+    f.scene.Update(2.0f);
+    EXPECT_EQ(f.scene.DebrisCount(), 3u);
+
+    f.scene.SetViewer({0.0, 2.0, 0.0});
+    f.scene.Update(0.1f);
+    EXPECT_TRUE(f.scene.IsValid(nearResting));
+    EXPECT_FALSE(f.scene.IsValid(farResting));
+    EXPECT_TRUE(f.scene.IsValid(farMoving));                    // still flying: let it land first
+
+    // Young rubble is given debrisFarLifetime before the rule applies.
+    const Entity fresh = Lump(f, {60.0f, 2.0f, 0.0f});
+    f.physics.SetFrozen(f.scene.TryGet<scene::RigidBody>(fresh)->body, true);
+    f.scene.Update(0.5f);
+    EXPECT_TRUE(f.scene.IsValid(fresh));
+    f.scene.Update(0.6f);
+    EXPECT_FALSE(f.scene.IsValid(fresh));
+
+    // The viewer walks away from the near one.
+    f.scene.SetViewer({0.0, 2.0, 40.0});
+    f.scene.Update(0.1f);
+    EXPECT_FALSE(f.scene.IsValid(nearResting));
+}
+
+TEST(SceneDebris, SmallBodiesDoNotTunnelThroughThinGround) {
+    Fixture f;
+    // A 0.1 m thick static slab, and a 0.2 m lump shot at it at 60 m/s: 1 m per step.
+    const Entity slab = f.scene.CreateVoxelObject(
+        {.model = f.Box({40, 1, 40}, f.ids.stone, "slab"), .position = {-2.0f, 0.0f, -2.0f}, .motion = physics::MotionType::Static});
+    const Entity lump = f.scene.CreateVoxelObject(
+        {.model = f.Box({2, 2, 2}, f.ids.stone, "shot"), .position = {0.0f, 5.6f, 0.0f}, .linearVelocity = {0.0f, -60.0f, 0.0f}});
+    ASSERT_NE(slab, kNoEntity);
+    ASSERT_NE(lump, kNoEntity);
+    for (int i = 0; i < 120; ++i) {
+        f.physics.Step(kStep);
+        f.scene.SyncFromPhysics();
+    }
+    EXPECT_GT(f.scene.TryGet<scene::Transform>(lump)->current.position.y, 0.0f);
+}
+
+TEST(SceneDebris, ThinBodiesDoNotTunnelWhateverTheirVoxelCount) {
+    // A 0.1 m thick static floor and a 0.1 m thick plate of 64 voxels - not "small" - falling
+    // flat at 30 m/s: 0.5 m per step, five times its thickness. Without the thin-body rule
+    // (thinBodyVoxels = 0) it is below the floor after one step and never comes back.
+    for (const bool thinRule : {true, false}) {
+        scene::SceneConfig config;
+        if (!thinRule) config.thinBodyVoxels = 0;
+        Fixture f(256, true, config);
+        const Entity floor = f.scene.CreateVoxelObject(
+            {.model = f.Box({40, 1, 40}, f.ids.stone, "floor"), .position = {-2.0f, 0.0f, -2.0f}, .motion = physics::MotionType::Static});
+        const Entity plate = f.scene.CreateVoxelObject(
+            {.model = f.Box({8, 1, 8}, f.ids.stone, "plate"), .position = {0.0f, 5.33f, 0.0f}, .linearVelocity = {0.0f, -30.0f, 0.0f}});
+        ASSERT_NE(floor, kNoEntity);
+        ASSERT_NE(plate, kNoEntity);
+        ASSERT_GE(f.scene.TryGet<scene::VoxelBody>(plate)->model->SolidCount(), f.scene.Config().debrisBodyVoxels);
+        for (int i = 0; i < 120; ++i) {
+            f.physics.Step(kStep);
+            f.scene.SyncFromPhysics();
+        }
+        EXPECT_EQ(f.scene.TryGet<scene::Transform>(plate)->current.position.y > 0.0f, thinRule);
+    }
+}
+
+TEST(SceneDebris, RemnantOfADamagedObjectBecomesRubbleOnceItIsSmall) {
+    for (const bool remnants : {true, false}) {
+        scene::SceneConfig config;
+        config.debrisRemnants = remnants;
+        Fixture f(256, true, config);
+        const Entity crate = f.scene.CreateVoxelObject({.model = f.Box({4, 4, 4}), .position = {0.0f, 5.0f, 0.0f}});
+        const Entity fixed = f.scene.CreateVoxelObject(
+            {.model = f.Box({4, 4, 4}), .position = {3.0f, 5.0f, 0.0f}, .motion = physics::MotionType::Static});
+        ASSERT_NE(crate, kNoEntity);
+        ASSERT_NE(fixed, kNoEntity);
+
+        // A dent: 64 voxels minus a corner is still an object.
+        ASSERT_GT(f.scene.Damage(crate, glm::dvec3(0.0, 5.0, 0.0), 0.12f).removed, 0u);
+        ASSERT_GE(f.scene.TryGet<scene::VoxelBody>(crate)->model->SolidCount(), config.debrisBodyVoxels);
+        EXPECT_EQ(f.scene.TryGet<scene::Debris>(crate), nullptr);
+
+        // Half of it gone: what is left is a lump (two of the four layers, 32 voxels).
+        ASSERT_GT(f.scene.Damage(crate, glm::dvec3(0.2, 5.4, 0.2), 0.3f).removed, 0u);
+        ASSERT_GT(f.scene.Damage(fixed, glm::dvec3(3.2, 5.4, 0.2), 0.3f).removed, 0u);
+        ASSERT_TRUE(f.scene.IsValid(crate));
+        ASSERT_TRUE(f.scene.IsValid(fixed));
+        const uint32_t left = f.scene.TryGet<scene::VoxelBody>(crate)->model->SolidCount();
+        ASSERT_LT(left, config.debrisBodyVoxels);
+        ASSERT_GE(left, config.minPieceVoxels);
+        EXPECT_EQ(f.scene.TryGet<scene::Debris>(crate) != nullptr, remnants);
+        EXPECT_EQ(f.scene.TryGet<scene::Debris>(fixed), nullptr);          // dented, still static: never rubble
+        EXPECT_EQ(f.scene.DebrisCount(), remnants ? 1u : 0u);
+
+        // Damaging rubble again keeps the one component (and its age).
+        if (remnants) {
+            f.scene.Update(1.0f);
+            f.scene.Damage(crate, glm::dvec3(0.0, 5.0, 0.0), 0.12f);
+            if (f.scene.IsValid(crate)) {
+                ASSERT_NE(f.scene.TryGet<scene::Debris>(crate), nullptr);
+                EXPECT_NEAR(f.scene.TryGet<scene::Debris>(crate)->age, 1.0f, 1e-6f);
+            }
+        }
+    }
+}
+
+TEST(Scene, DestroyBelowRemovesWhatFellOutOfTheWorld) {
+    Fixture f;
+    const Entity above = f.scene.CreateVoxelObject({.model = f.Box({4, 4, 4}), .position = {0.0f, 5.0f, 0.0f}});
+    const Entity straddling = f.scene.CreateVoxelObject({.model = f.Box({4, 4, 4}), .position = {2.0f, -50.2f, 0.0f}});
+    const Entity below = f.scene.CreateVoxelObject({.model = f.Box({4, 4, 4}), .position = {4.0f, -80.0f, 0.0f}});
+    const Entity fixedBelow = f.scene.CreateVoxelObject(
+        {.model = f.Box({4, 4, 4}), .position = {6.0f, -90.0f, 0.0f}, .motion = physics::MotionType::Static});
+    const Entity movedBelow = f.scene.CreateVoxelObject(
+        {.model = f.Box({4, 4, 4}), .position = {10.0f, -90.0f, 0.0f}, .motion = physics::MotionType::Kinematic});
+    const Entity light = f.scene.CreateLight({.position = {0.0, -500.0, 0.0}});
+    const Entity figure = f.scene.CreateVoxelObject({.model = f.Box({4, 4, 4}), .position = {8.0f, -500.0f, 0.0f}, .withBody = false});
+
+    // Resting down there: a crate asleep on a floor, then parked by the terrain guard ...
+    const Entity floor = f.scene.CreateVoxelObject(
+        {.model = f.Box({20, 2, 20}, f.ids.stone), .position = {19.0f, -100.0f, -1.0f}, .motion = physics::MotionType::Static});
+    const Entity resting = f.scene.CreateVoxelObject({.model = f.Box({4, 4, 4}), .position = {20.0f, -99.79f, 0.0f}});
+    // ... and one stopped by the guard in flight.
+    const Entity stopped = f.scene.CreateVoxelObject({.model = f.Box({4, 4, 4}), .position = {30.0f, -80.0f, 0.0f}});
+    ASSERT_NE(floor, kNoEntity);
+    for (const Entity held : {above, straddling, below, stopped}) {                // keep these where they are meanwhile
+        f.physics.SetFrozen(f.scene.TryGet<scene::RigidBody>(held)->body, true);
+    }
+    for (int i = 0; i < 240; ++i) f.physics.Step(kStep);
+    f.scene.SyncFromPhysics();
+    const physics::BodyId restingBody = f.scene.TryGet<scene::RigidBody>(resting)->body;
+    ASSERT_FALSE(f.physics.GetState(restingBody).active);
+    for (const Entity released : {above, straddling, below}) {                     // falling again
+        f.physics.SetFrozen(f.scene.TryGet<scene::RigidBody>(released)->body, false);
+    }
+    EXPECT_TRUE(f.physics.GetState(f.scene.TryGet<scene::RigidBody>(stopped)->body).wantsToMove);
+
+    for (const bool parked : {false, true}) {
+        f.physics.SetFrozen(restingBody, parked);
+        EXPECT_FALSE(f.physics.GetState(restingBody).wantsToMove);
+        EXPECT_EQ(f.scene.DestroyBelow(-50.0f), parked ? 0u : 2u);
+        EXPECT_TRUE(f.scene.IsValid(above));
+        EXPECT_TRUE(f.scene.IsValid(straddling));               // its top is still above the line
+        EXPECT_FALSE(f.scene.IsValid(below));                   // awake and below: it is falling
+        EXPECT_FALSE(f.scene.IsValid(stopped));                 // was falling when the guard stopped it
+        EXPECT_TRUE(f.scene.IsValid(fixedBelow));               // placed there: static ...
+        EXPECT_TRUE(f.scene.IsValid(movedBelow));               // ... kinematic ...
+        EXPECT_TRUE(f.scene.IsValid(floor));
+        EXPECT_TRUE(f.scene.IsValid(resting));                  // ... or simply at rest, asleep or parked
+        EXPECT_TRUE(f.scene.IsValid(light));                    // only bodies fall
+        EXPECT_TRUE(f.scene.IsValid(figure));
+    }
+    // Once something sets it in motion down there, it is on its way out as well.
+    f.physics.Activate(restingBody);
+    EXPECT_EQ(f.scene.DestroyBelow(-50.0f), 1u);
+    EXPECT_FALSE(f.scene.IsValid(resting));
+}

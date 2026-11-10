@@ -9,6 +9,7 @@ module;
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <format>
 #include <memory>
 #include <string>
 #include <utility>
@@ -37,7 +38,13 @@ namespace vortex {
     struct Engine::Impl {
         explicit Impl(const EngineConfig& c)
             : config(c), store(c.chunkCapacity), particles(c.maxParticles),
-              scene(store, materials, physics, particles, scene::SceneConfig{.voxelSize = c.world.voxelSize}) {}
+              scene(store, materials, physics, particles, SceneConfigFor(c)) {}
+
+        static scene::SceneConfig SceneConfigFor(const EngineConfig& c) {
+            scene::SceneConfig config = c.scene;
+            config.voxelSize = c.world.voxelSize;
+            return config;
+        }
 
         EngineConfig config;
         JobSystem jobs;
@@ -139,8 +146,9 @@ namespace vortex {
         const glm::ivec3 c = glm::ivec3(glm::floor(centerVoxel));
         for (voxel::FloatingIsland& island :
              voxel::ExtractFloatingIslands(world, &s.materials, c - margin, c + margin, 60000)) {
+            // Rubble: crumbs become particles right here, small lumps are cleaned up by the scene.
             auto model = std::make_shared<voxel::VoxelModel>(std::move(island.volume), voxel::kWorldPalette, "debris");
-            s.scene.CreateVoxelObject({.model = std::move(model), .position = glm::vec3(world.VoxelToWorld(island.origin))});
+            s.scene.CreateVoxelObject({.model = std::move(model), .position = glm::vec3(world.VoxelToWorld(island.origin)), .debris = true});
         }
 
         // Objects caught in the blast lose voxels and may fall apart. The list is a snapshot:
@@ -206,10 +214,9 @@ namespace vortex {
             {
                 ProfileScope scope("CPU: world");
                 s.world->Update(camera.position);
-                std::vector<glm::dvec3> focus{camera.position};
-                std::vector<physics::BodyId> active;
-                s.physics.GetActiveBodies(active);
-                for (size_t i = 0; i < active.size() && i < 32; ++i) focus.push_back(glm::dvec3(s.physics.GetState(active[i]).position));
+                // The camera keeps the ground around the player. Bodies ask for their own
+                // colliders and are frozen while they have none (TerrainColliders::GuardBodies).
+                const glm::dvec3 focus[] = {camera.position};
                 s.terrain->Update(focus, s.config.colliderRadius);
             }
 
@@ -221,6 +228,9 @@ namespace vortex {
                 s.scene.BeginFrame();       // what was drawn last frame becomes "previous"
                 while (accumulator >= fixedDt && steps < 4) {
                     app.OnFixedUpdate(*this, fixedDt);
+                    // Whatever the game or the last frame's update created or moved since the
+                    // last guard is checked before it is simulated.
+                    s.terrain->GuardBodies();
                     s.physics.Step(fixedDt);
                     s.scene.SyncFromPhysics();
                     accumulator -= fixedDt;
@@ -263,7 +273,10 @@ namespace vortex {
 
             // Lifetimes and light fades advance after the frame was drawn, so a flash is seen
             // at full intensity on its first frame.
+            // Rubble clean-up runs there too; then whatever lies far below the loaded world goes.
+            s.scene.SetViewer(camera.position);
             s.scene.Update(dt);
+            s.scene.DestroyBelow(static_cast<float>(s.world->WindowOrigin().y) - s.config.fallOutDepth);
 
             Profiler::EndFrame();
             if (lastFrame) break;
@@ -273,7 +286,30 @@ namespace vortex {
         if (s.config.exitAfterFrames != 0) {
             const voxel::WorldStats ws = s.world->Stats();
             Log::Info("World: {} dense, {} uniform, {} empty chunks; store {}/{}", ws.denseChunks, ws.uniformChunks, ws.emptyChunks, s.store.UsedCount(), s.store.Capacity());
-            for (const graphics::PassTiming& pass : s.renderer.Stats().passes) Log::Info("GPU {:<10} {:.2f} ms", pass.name, pass.milliseconds);
+            const physics::TerrainColliderStats ts = s.terrain->Stats();
+            Log::Info("Physics: {} bodies ({} awake, {} frozen), {} terrain colliders; scene: {} voxel objects, {} rubble",
+                      s.physics.BodyCount(), s.physics.ActiveBodyCount(), ts.frozenBodies, ts.colliders, s.scene.VoxelObjectCount(),
+                      s.scene.DebrisCount());
+            // Last frame, plus the median of the profiler's history: a single frame is a noisy
+            // sample (clock scaling of an integrated GPU), the median is what to compare runs by.
+            const std::vector<Profiler::Timer> timers = Profiler::SnapshotTimers();
+            for (const graphics::PassTiming& pass : s.renderer.Stats().passes) {
+                float median = pass.milliseconds;
+                int samples = 0;
+                const std::string timerName = std::format("GPU: {}", pass.name);
+                for (const Profiler::Timer& timer : timers) {
+                    if (timer.name != timerName || timer.samples <= 0) continue;
+                    samples = std::min(timer.samples, Profiler::kHistory);
+                    std::vector<float> sorted(static_cast<size_t>(samples));
+                    for (int i = 0; i < samples; ++i) {
+                        sorted[static_cast<size_t>(i)] =
+                            timer.history[static_cast<size_t>((timer.cursor - 1 - i + 2 * Profiler::kHistory) % Profiler::kHistory)];
+                    }
+                    std::sort(sorted.begin(), sorted.end());
+                    median = sorted[sorted.size() / 2];
+                }
+                Log::Info("GPU {:<10} {:.2f} ms (median {:.2f} ms over {} frames)", pass.name, pass.milliseconds, median, samples);
+            }
         }
         const uint32_t errors = s.device.ValidationErrorCount();
         if (errors > 0) Log::Error("{} Vulkan validation error(s) were reported during the run", errors);
@@ -281,6 +317,8 @@ namespace vortex {
     }
 
     bool Engine::TerrainReady(const glm::dvec3& position) const { return m_Impl->terrain && m_Impl->terrain->IsReady(position); }
+    bool Engine::TerrainReady(const math::AABB& bounds) const { return m_Impl->terrain && m_Impl->terrain->IsReady(bounds); }
+    physics::TerrainColliderStats Engine::TerrainStats() const { return m_Impl->terrain ? m_Impl->terrain->Stats() : physics::TerrainColliderStats{}; }
     float Engine::StepAlpha() const { return m_Impl->stepAlpha; }
     void Engine::RequestExit() { m_Impl->exitRequested = true; }
     const EngineConfig& Engine::Config() const { return m_Impl->config; }

@@ -54,10 +54,84 @@ namespace vortex::scene {
             // Small fragments do not collide with each other: piles of rubble stay cheap.
             body.layer = motion == physics::MotionType::Static ? physics::Layer::Static
                        : (model.SolidCount() < config.debrisBodyVoxels ? physics::Layer::Debris : physics::Layer::Dynamic);
+            // Small or thin bodies pass through the terrain mesh within one step once they are
+            // fast: a 0.1 m slab falling flat is beyond the triangles after a 3 m drop, whatever
+            // its voxel count. Continuous detection costs nothing while a body is slow.
+            bool thin = false;
+            glm::ivec3 solidMin, solidMax;
+            if (model.Volume().SolidBounds(solidMin, solidMax)) {
+                const glm::ivec3 extent = solidMax - solidMin;
+                thin = static_cast<uint32_t>(std::min({extent.x, extent.y, extent.z})) < config.thinBodyVoxels;
+            }
+            body.continuous = motion == physics::MotionType::Dynamic && (body.layer == physics::Layer::Debris || thin);
             body.linearVelocity = linear;
             body.angularVelocity = angular;
             body.userData = ToUserData(entity);
             return physics.CreateBody(body);
+        }
+
+        /// True if a dynamic piece with this many voxels is rubble that Update() cleans up.
+        bool IsSmall(uint32_t solidVoxels) const { return solidVoxels < config.debrisBodyVoxels; }
+
+        /// Particle bursts at up to `bursts` evenly chosen voxels of a volume placed at `transform`.
+        void Crumble(const voxel::VoxelVolume& volume, voxel::PaletteId palette, const math::Transform& transform, uint32_t solid,
+                     uint32_t bursts, const glm::vec3& velocity) {
+            if (bursts == 0 || solid == 0) return;
+            const uint32_t stride = std::max<uint32_t>(1, solid / bursts);
+            const glm::ivec3 size = volume.Size();
+            uint32_t seen = 0, spawned = 0;
+            for (int z = 0; z < size.z && spawned < bursts; ++z)
+                for (int y = 0; y < size.y && spawned < bursts; ++y)
+                    for (int x = 0; x < size.x && spawned < bursts; ++x) {
+                        const uint8_t id = volume.Get(x, y, z);
+                        if (id == 0 || (seen++ % stride) != stride / 2) continue;
+                        const glm::vec3 world = transform.TransformPoint(glm::vec3(x, y, z) + glm::vec3(0.5f));
+                        fx::SpawnVoxelBreak(particles, glm::dvec3(world), materials.Get(palette, id).color, transform.scale, velocity);
+                        ++spawned;
+                    }
+        }
+
+        /// Removes a piece of rubble, leaving a puff of particles where it was.
+        void DespawnDebris(Entity entity) {
+            const VoxelBody* voxels = registry.try_get<VoxelBody>(entity);
+            const Transform* transform = registry.try_get<Transform>(entity);
+            if (voxels && voxels->model && voxels->visible && transform) {
+                Crumble(voxels->model->Volume(), voxels->model->Palette(), transform->current, voxels->model->SolidCount(),
+                        config.debrisDespawnBursts, glm::vec3(0.0f));
+            }
+            registry.destroy(entity);
+        }
+
+        void UpdateDebris(float dt) {
+            struct Aged {
+                Entity entity;
+                float age;
+            };
+            std::vector<Entity> expired;
+            std::vector<Aged> kept;
+            const bool farRule = hasViewer && config.debrisFarDistance > 0.0f;
+            for (const auto [entity, debris] : registry.view<Debris>().each()) {
+                debris.age += dt;
+                bool expire = config.debrisLifetime > 0.0f && debris.age >= config.debrisLifetime;
+                if (!expire && farRule && debris.age >= config.debrisFarLifetime) {
+                    const Transform* transform = registry.try_get<Transform>(entity);
+                    const RigidBody* body = registry.try_get<RigidBody>(entity);
+                    // Frozen bodies are not active either: rubble parked without terrain goes too.
+                    const bool resting = !body || !physics.GetState(body->body).active;
+                    expire = resting && transform &&
+                             glm::distance(glm::dvec3(transform->current.position), viewer) > static_cast<double>(config.debrisFarDistance);
+                }
+                if (expire) expired.push_back(entity);
+                else kept.push_back({entity, debris.age});
+            }
+            if (kept.size() > config.maxDebris) {
+                // Oldest first; pieces of the same age in a fixed order.
+                std::sort(kept.begin(), kept.end(), [](const Aged& a, const Aged& b) {
+                    return a.age != b.age ? a.age > b.age : static_cast<uint32_t>(a.entity) < static_cast<uint32_t>(b.entity);
+                });
+                for (size_t i = 0; i < kept.size() - config.maxDebris; ++i) expired.push_back(kept[i].entity);
+            }
+            for (const Entity entity : expired) DespawnDebris(entity);
         }
 
         voxel::ChunkStore& store;
@@ -66,6 +140,8 @@ namespace vortex::scene {
         fx::ParticleSystem& particles;
         SceneConfig config;
         entt::registry registry;
+        glm::dvec3 viewer{0.0};
+        bool hasViewer = false;
     };
 
     Scene::Scene(voxel::ChunkStore& store, const voxel::MaterialLibrary& materials, physics::PhysicsWorld& physics,
@@ -89,16 +165,27 @@ namespace vortex::scene {
             Log::Error("Scene: voxel object '{}' wants a body but the physics world is not initialised", desc.model->Name());
             return kNoEntity;
         }
-        if (!desc.model->IsBaked() && !desc.model->Bake(s.store)) {
-            Log::Error("Scene: voxel object '{}' could not be baked (chunk store full)", desc.model->Name());
-            return kNoEntity;
-        }
 
         Transform transform;
         transform.current.position = desc.position;
         transform.current.rotation = desc.rotation;
         transform.current.scale = s.config.voxelSize;
         transform.previous = transform.current;
+
+        // Rubble too small to be an object crumbles on the spot (before it costs chunk slots).
+        const bool rubble = desc.debris && desc.withBody && desc.motion == physics::MotionType::Dynamic;
+        if (rubble && desc.model->SolidCount() < s.config.minPieceVoxels) {
+            if (desc.visible) {
+                s.Crumble(desc.model->Volume(), desc.model->Palette(), transform.current, desc.model->SolidCount(),
+                          std::max<uint32_t>(1, desc.model->SolidCount() / s.config.debrisParticleStride), desc.linearVelocity);
+            }
+            return kNoEntity;
+        }
+
+        if (!desc.model->IsBaked() && !desc.model->Bake(s.store)) {
+            Log::Error("Scene: voxel object '{}' could not be baked (chunk store full)", desc.model->Name());
+            return kNoEntity;
+        }
 
         const Entity entity = s.registry.create();
         if (desc.withBody && desc.model->SolidCount() > 0) {
@@ -115,6 +202,7 @@ namespace vortex::scene {
         s.registry.emplace<VoxelBody>(entity, desc.model, desc.visible);
         const std::string& name = desc.name.empty() ? desc.model->Name() : desc.name;
         if (!name.empty()) s.registry.emplace<Name>(entity, name);
+        if (rubble && s.IsSmall(desc.model->SolidCount())) s.registry.emplace<Debris>(entity);
         return entity;
     }
 
@@ -156,6 +244,12 @@ namespace vortex::scene {
         const entt::registry& registry = m_Impl->registry;
         const auto* bodies = registry.storage<VoxelBody>();
         return bodies ? static_cast<size_t>(bodies->size()) : 0;
+    }
+
+    size_t Scene::DebrisCount() const {
+        const entt::registry& registry = m_Impl->registry;
+        const auto* debris = registry.storage<Debris>();
+        return debris ? static_cast<size_t>(debris->size()) : 0;
     }
 
     entt::registry& Scene::Registry() { return m_Impl->registry; }
@@ -301,6 +395,7 @@ namespace vortex::scene {
             placed.previous.position = source.previous.TransformPoint(offset);
 
             auto pieceModel = std::make_shared<voxel::VoxelModel>(std::move(piece.volume), palette, modelName);
+            const bool small = s.IsSmall(pieceModel->SolidCount());
             // Only possible when the old model is shared and the store is full: the piece is
             // simulated but not drawn (Bake logs it and leaves the model unbaked).
             pieceModel->Bake(s.store);
@@ -320,10 +415,15 @@ namespace vortex::scene {
             if (kept) {
                 s.registry.get<Transform>(target) = placed;
                 s.registry.get<VoxelBody>(target).model = std::move(pieceModel);
+                // What is left of the object is itself no more than a lump: rubble like the rest.
+                if (small && s.config.debrisRemnants && pieceMotion == physics::MotionType::Dynamic && !s.registry.all_of<Debris>(target)) {
+                    s.registry.emplace<Debris>(target);
+                }
             } else {
                 s.registry.emplace<Transform>(target, placed);
                 s.registry.emplace<VoxelBody>(target, std::move(pieceModel), visible);
                 if (!name.empty()) s.registry.emplace<Name>(target, name);
+                if (small) s.registry.emplace<Debris>(target);       // rubble: cleaned up by Update()
                 result.pieces.push_back(target);
             }
         }
@@ -358,6 +458,36 @@ namespace vortex::scene {
             }
         }
         for (const Entity entity : expired) s.registry.destroy(entity);
+
+        s.UpdateDebris(dt);
+    }
+
+    void Scene::SetViewer(const glm::dvec3& position) {
+        m_Impl->viewer = position;
+        m_Impl->hasViewer = true;
+    }
+
+    uint32_t Scene::DestroyBelow(float height) {
+        Impl& s = *m_Impl;
+        std::vector<Entity> lost;
+        for (const auto [entity, body] : s.registry.view<const RigidBody>().each()) {
+            if (!s.physics.IsValid(body.body)) continue;
+            const physics::BodyState state = s.physics.GetState(body.body);
+            const math::AABB bounds = s.physics.GetBounds(body.body);
+            const bool finite = std::isfinite(state.position.x) && std::isfinite(state.position.y) && std::isfinite(state.position.z);
+            // Written so that NaN bounds count as lost, too.
+            if (!finite || !std::isfinite(bounds.max.y)) {
+                lost.push_back(entity);
+                continue;
+            }
+            // Only what is on its way down: a body that rests there - placed by the game or the
+            // editor, or left asleep when the world window moved on - was not lost by anybody.
+            const bool falling = body.motion == physics::MotionType::Dynamic && (state.active || state.wantsToMove);
+            if (falling && bounds.max.y < height) lost.push_back(entity);
+        }
+        for (const Entity entity : lost) s.registry.destroy(entity);
+        if (!lost.empty()) Log::Info("Scene: removed {} object(s) that fell out of the world", lost.size());
+        return static_cast<uint32_t>(lost.size());
     }
 
     // --- render data -----------------------------------------------------------------------------

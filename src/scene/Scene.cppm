@@ -26,9 +26,36 @@ export namespace vortex::scene {
     /// @brief Tuning of a scene. The defaults reproduce the engine's destruction behaviour.
     struct SceneConfig {
         float voxelSize = 0.1f;               ///< Metres per voxel of every voxel object (Transform scale). Use the world's.
-        uint32_t minPieceVoxels = 6;          ///< Connected pieces with fewer voxels become particles instead of entities.
-        uint32_t debrisBodyVoxels = 48;       ///< Non-static bodies with fewer solid voxels use physics::Layer::Debris.
+        /// Connected pieces with fewer voxels never become entities: they turn into particles at
+        /// once (Damage, CreateVoxelObject with `debris`). 16 voxels of 0.1 m are a lump the size
+        /// of a fist; anything smaller is not worth a rigid body and chunk memory.
+        uint32_t minPieceVoxels = 16;
+        /// Non-static bodies with fewer solid voxels are "small": they use physics::Layer::Debris
+        /// (no collisions among each other) with continuous collision detection (they are thin
+        /// enough to tunnel through the terrain mesh otherwise), and - if they are rubble - get
+        /// the Debris component.
+        uint32_t debrisBodyVoxels = 48;
+        /// Dynamic bodies whose solid voxels span fewer voxels than this along any axis are
+        /// "thin" and use continuous collision detection as well, whatever their voxel count: a
+        /// slab or plank falling flat passes through the terrain mesh within one step just like a
+        /// small lump. 6 voxels of 0.1 m need 36 m/s (a 66 m fall) to do that.
+        uint32_t thinBodyVoxels = 6;
+        /// When Damage leaves less than `debrisBodyVoxels` of a dynamic object, the remnant - the
+        /// damaged entity itself - becomes rubble like the pieces that came off, and is cleaned
+        /// up. false: the damaged entity never becomes rubble (remnants of every destroyed crate
+        /// then stay for good). To keep one particular entity, remove its Debris component after
+        /// Damage; static and kinematic objects are never affected.
+        bool debrisRemnants = true;
         uint32_t debrisParticleStride = 3;    ///< One debris particle burst per this many carved voxels (>= 1).
+
+        // --- rubble clean-up (entities with the Debris component), applied by Update() ---
+        float debrisLifetime = 15.0f;         ///< Seconds a piece of rubble lives. <= 0: no time limit.
+        /// Rubble that rests (asleep or frozen) farther than this from the viewer (SetViewer) is
+        /// removed as soon as it is older than debrisFarLifetime. <= 0, or no viewer: rule off.
+        float debrisFarDistance = 25.0f;
+        float debrisFarLifetime = 2.0f;       ///< Seconds; see debrisFarDistance.
+        uint32_t maxDebris = 192;             ///< Most rubble entities alive at once; the oldest are removed first.
+        uint32_t debrisDespawnBursts = 3;     ///< Particle bursts (fx::SpawnVoxelBreak) left by removed rubble; 0 = none.
     };
 
     /// @brief What to create with Scene::CreateVoxelObject.
@@ -42,6 +69,11 @@ export namespace vortex::scene {
         glm::vec3 angularVelocity{0.0f};
         bool visible = true;
         std::string name;                               ///< Empty: the model's name. No Name component if both are empty.
+        /// The object is rubble (terrain or wreckage that broke off). A dynamic one with a body
+        /// then follows the debris rules of SceneConfig: below `minPieceVoxels` no entity is
+        /// created at all - the voxels become particles and kNoEntity is returned, which is not
+        /// an error; below `debrisBodyVoxels` it gets the Debris component and is cleaned up.
+        bool debris = false;
     };
 
     /// @brief What to create with Scene::CreateLight.
@@ -93,11 +125,11 @@ export namespace vortex::scene {
      * @code
      *   scene.BeginFrame();                    // previous = current, once per rendered frame
      *   for each fixed step:
-     *       app.OnFixedUpdate(); physics.Step(dt);
+     *       app.OnFixedUpdate(); terrain.GuardBodies(); physics.Step(dt);
      *       scene.SyncFromPhysics();           // bodies -> Transform::current
      *   app.OnUpdate();
      *   scene.GatherInstances(instances); scene.GatherLights(lights);  -> renderer
-     *   scene.Update(frameDt);                 // lifetimes, light fades (after the frame was drawn)
+     *   scene.SetViewer(camera); scene.Update(frameDt);   // lifetimes, light fades, rubble (after the frame was drawn)
      * @endcode
      */
     class Scene {
@@ -142,6 +174,7 @@ export namespace vortex::scene {
 
         size_t EntityCount() const;          ///< Living entities of any kind.
         size_t VoxelObjectCount() const;     ///< Living entities with a VoxelBody (visible or not).
+        size_t DebrisCount() const;          ///< Living entities with the Debris component.
 
         /**
          * @brief Direct access to the registry for game components, views and anything the
@@ -213,6 +246,10 @@ export namespace vortex::scene {
          *    piece's voxel offset, so motion vectors continue seamlessly through the cut.
          *  - Pieces smaller than `minPieceVoxels` turn into particles moving with the object;
          *    carved voxels throw debris particles away from `center`.
+         *  - New pieces smaller than `debrisBodyVoxels` are rubble: they get the Debris component
+         *    and are cleaned up by Update(). So does the damaged entity itself once what is left
+         *    of it is that small and dynamic (`SceneConfig::debrisRemnants`); otherwise it keeps
+         *    its identity and components, Debris included if it had it.
          *  - If nothing big enough is left the entity is destroyed (`destroyed = true`).
          *  - The old model is released before the pieces are baked, so an unshared object never
          *    runs out of chunk slots by being damaged. A piece whose body cannot be created
@@ -232,9 +269,26 @@ export namespace vortex::scene {
         /// physics world into Transform::current. Call after each PhysicsWorld::Step.
         void SyncFromPhysics();
 
-        /// @brief Advances lifetimes by `dt` seconds: fades lights (Lifetime::lightDecay) and
-        /// destroys entities whose time is up.
+        /**
+         * @brief Advances lifetimes by `dt` seconds: fades lights (Lifetime::lightDecay) and
+         * destroys entities whose time is up. Then cleans up rubble (Debris component): pieces
+         * older than `debrisLifetime`, resting pieces far from the viewer, and the oldest pieces
+         * beyond `maxDebris` are destroyed, each leaving `debrisDespawnBursts` particle bursts.
+         */
         void Update(float dt);
+
+        /// @brief Where the player looks from (world metres); enables the SceneConfig::debrisFarDistance rule.
+        void SetViewer(const glm::dvec3& position);
+
+        /**
+         * @brief Destroys the entities that fell out of the world: those whose dynamic body lies
+         * entirely below `height` (world metres, +Y up) and is on its way down - awake, or frozen
+         * by the terrain guard while it was moving - and those whose body has a non-finite
+         * position. Static and kinematic bodies and dynamic ones that rest there (asleep, or
+         * parked asleep by the guard) were put or left there on purpose and stay. Logs the count.
+         * @return Number of entities destroyed.
+         */
+        uint32_t DestroyBelow(float height);
 
         // --- render data -------------------------------------------------------------------------
 

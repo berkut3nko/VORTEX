@@ -19,7 +19,7 @@
 //  and the renderer binds resources BY NAME (u_Frame, u_Grid, ...), so names here matter.
 //
 //  Textures use bindings 16.. and are declared by each pass itself.
-//  Unit tests (tests/core/ShaderContractTests) verify the offsets below against C++.
+//  Unit tests (tests/graphics/ContractTests) verify the offsets and constants below against C++.
 // =============================================================================
 #ifndef VX_COMMON_GLSL
 #define VX_COMMON_GLSL
@@ -79,8 +79,13 @@ bool VxFeature(int flag) { return (u_Frame.settings.x & flag) != 0; }
 // ---- Scene buffers --------------------------------------------------------------------------
 struct VxMaterial {          // mirrors voxel::GpuMaterial (32 bytes)
     vec4 colorEmissive;      // rgb = albedo (linear), a = emissive strength
-    vec4 params;             // x = roughness, y = metallic, z = per-voxel variation, w = unused
+    vec4 params;             // x = roughness, y = metallic, z = per-voxel variation, w = surface kind (VX_MATERIAL_*)
 };
+
+// VxMaterial.params.w (voxel::kGpuMaterialSolid / kGpuMaterialLiquid).
+const float VX_MATERIAL_SOLID  = 0.0;
+const float VX_MATERIAL_LIQUID = 1.0;    // water, lava: animated reflecting surface in the composite pass
+bool VxMaterialIsLiquid(vec4 params) { return params.w > 0.5; }
 
 struct VxInstance {          // mirrors voxel::GpuInstance (224 bytes)
     mat4 localToWorld;       // chunk-local voxel units -> render space

@@ -18,7 +18,8 @@ namespace vortex::voxel {
         GpuMaterial Pack(const Material& m) {
             GpuMaterial g;
             g.colorEmissive = glm::vec4(m.color, m.emissive);
-            g.params = glm::vec4(m.roughness, m.metallic, m.variation, 0.0f);
+            g.params = glm::vec4(m.roughness, m.metallic, m.variation,
+                                 (m.flags & MaterialFlag_Liquid) != 0 ? kGpuMaterialLiquid : kGpuMaterialSolid);
             return g;
         }
 

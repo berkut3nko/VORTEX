@@ -16,7 +16,7 @@ share. If code and document disagree, fix one of them.
 | Testable without a GPU | Everything except `graphics` builds and runs headless; the ray traversal is one source file compiled for both the GPU and the CPU, so unit tests cover the shader logic. |
 
 Not goals (yet): level of detail cascades for very long view distances, transparency /
-refraction, skeletal animation, audio, networking. Section 10 lists what the design already
+refraction, fluid simulation (water is a shaded surface, 5.7), skeletal animation, audio, networking. Section 10 lists what the design already
 does to keep those doors open.
 
 ## 2. Layout and layering
@@ -197,7 +197,7 @@ mirrors the block. Unit tests compare the two through reflection.
 | 1 | `u_Grid` | world grid, `uint[]` | when `World::GridRevision()` changes or uploads are pending |
 | 2 | `u_Occ` | occupancy pyramids, 1042 words per slot | dirty slots |
 | 3 | `u_Ids` | voxel ids, 8192 words per slot | dirty slots |
-| 4 | `u_Materials` | `VxMaterial[]`, 256 per palette | when `MaterialLibrary::Revision()` changes |
+| 4 | `u_Materials` | `VxMaterial[]`, 256 per palette (`params.w` = surface kind: 0 solid, 1 liquid) | when `MaterialLibrary::Revision()` changes |
 | 5 | `u_Instances` | `VxInstance[]` | every frame |
 | 6 | `u_Bvh` | `VxBvhNode[]` | every frame |
 | 7 | `u_DrawList` | instance indices to rasterise: front-facing boxes first, then boxes containing the camera | every frame |
@@ -223,7 +223,7 @@ always-bound buffer is never zero-sized: empty arrays still bind a small valid b
 | gNormal[2] | `A2B10G10R10_UNORM_PACK32` | R | world normal * 0.5 + 0.5 (ping-pong: current / previous frame) |
 | gVelocity | `R16G16_SFLOAT` | R | uv(current) - uv(previous) |
 | depth[2] | `D32_SFLOAT` | R | reverse-Z, 0 = sky (ping-pong) |
-| lighting[2] | `R16G16B16A16_SFLOAT` | R | rgb = accumulated diffuse irradiance, a = accumulated sun specular amount |
+| lighting[2] | `R16G16B16A16_SFLOAT` | R | rgb = accumulated diffuse irradiance, a = accumulated sun specular amount (liquids: accumulated sun visibility) |
 | lightCount[2] | `R8_UNORM` | R | accumulated frame count / 255 |
 | hdr | `R16G16B16A16_SFLOAT` | R | lit scene + particles |
 | taa[2] | `R16G16B16A16_SFLOAT` | R | resolved history |
@@ -260,7 +260,8 @@ current layout per image). All full-screen passes use `fullscreen.vert` (3 verti
 3. **composite** - attachment hdr. Sky for empty pixels; otherwise albedo (material colour
    with per-voxel variation) x filtered lighting + emission + specular, then height fog.
    The lighting is filtered with a small depth / normal aware kernel that widens while the
-   history is short. Debug views are produced here.
+   history is short. Liquids are shaded here as an animated surface (5.7). Debug views are
+   produced here.
 4. **particles** - attachment hdr (load), depth[cur] as read-only test (no write). Instanced
    camera-facing quads from `u_Particles`, premultiplied blending (additive particles have
    opacity 0), sorted back to front on the CPU.
@@ -343,6 +344,62 @@ G-buffer fragment outputs: `layout(location = 0) out uint o_Material; layout(loc
 layout(location = 2) out vec2 o_Velocity;` plus `gl_FragDepth`. Lighting outputs:
 `layout(location = 0) out vec4 o_Lighting; layout(location = 1) out float o_Count;`.
 
+### 5.7 Liquids
+
+There is no water simulation and no transparency: water and lava are ordinary opaque voxels
+(`MaterialFlag_Liquid`), traced, lit and accumulated exactly like stone. `MaterialLibrary` packs
+the flag into `GpuMaterial::params.w` (`kGpuMaterialLiquid` = `VX_MATERIAL_LIQUID`), and the
+composite pass - which reads the material anyway - shades such pixels with `ShadeLiquid` instead
+of the diffuse + specular sum. No extra pass, target, texture or uniform.
+
+* **Animated normal.** On faces that look up, the flat G-buffer normal is replaced by the normal
+  of a procedural height field (`WaterSlope`): one octave of value noise with an analytic gradient
+  for the large, irregular swell, plus four directional sine ripples whose phase is bent by that
+  noise so they never form a regular pattern. Everything drifts with `temporalParams.w` (time).
+  It is evaluated in *world* space: render-space position + `(gridMinChunk.xz & 1023) * chunk
+  size`. Render space jumps by whole chunks when the window moves and `gridMinChunk` jumps with
+  it, so the sum stays put; the wrap keeps float precision (the pattern changes once, in one
+  frame, per 1024 chunks travelled; time wraps once per hour the same way).
+* **No shimmer.** Each octave fades out before its wavelength reaches the pixel's footprint on
+  the surface (distance x pixel angle / sine of the grazing angle), so distant water is a calm
+  mirror rather than sub-pixel noise for TAA to fight. The glint lobe has a minimum width for the
+  same reason.
+* **Colour.** `body x (1 - m) + sky(reflected) x m + sun glint x m`, `m` = Schlick Fresnel
+  (F0 0.02) x smoothness^2. The reflection is the analytic sky (`VxSkyRadiance`, no ray);
+  terrain and objects are not reflected. The body is `albedo x accumulated irradiance`, darker
+  at grazing view angles and lighter looking down - the stand-in for depth, which an opaque
+  liquid does not have - and slightly brighter on ripples tilted towards the sun.
+* **Shadows and lights.** The lighting buffer's rgb is used as it is, so cast shadows, ambient
+  occlusion, point lights and emissive voxels all reach the water through the body term. For
+  liquid pixels the lighting pass stores the plain **sun visibility** in the alpha channel
+  instead of the sun specular (which composite does not use for liquids): `sunVisible` gates the
+  glint and takes a quarter of the reflection away in cast shadows. It comes from the shadow
+  rays alone, so no torch, spell or explosion light can switch a sun glint on, and there is no
+  division by a small sun term at sunrise. `skyVisible`, which scales the reflection (a pool in
+  a cave reflects no sky), is the rest of the lighting - luminance minus the sun's share, which
+  is exact because both were accumulated from the same rays - relative to what an open surface
+  receives (`mix(horizon, zenith, 0.8) x intensity`, the cosine-weighted mean of the sky
+  gradient). Known limit: point lights and emissive light are part of that rest, so enclosed
+  water lit by a strong local light still shows a sky-coloured reflection at grazing angles;
+  telling them apart needs a fifth lighting channel.
+* **Temporal passes.** Depth, normal and motion vectors of a liquid pixel are those of the static
+  flat surface, so the lighting history, the checkerboard and the spatial filter behave as on any
+  other material; only the composite output moves. The waves are slow and low-contrast enough
+  for the TAA neighbourhood clamp to follow them: with and without TAA the image matches.
+* **Cost** (UHD 620, 768x432, median of 120 frames, composite pass): 1.16 ms -> 1.32 ms with
+  water on more than half of the screen, 1.30 ms -> 1.42 ms with about 40 %; a view without
+  liquids is unchanged (1.91 ms -> 1.90 ms looking at grass).
+* **Keep it small.** The Intel compiler builds this pass 8 and 16 pixels wide and the 16-wide
+  variant has no registers to spare. A first version (three noise octaves, debug views after the
+  shading) pushed its register allocation into a fallback schedule and made *every* pixel of the
+  screen 12 % slower, liquid or not. Hence the single noise octave, the debug views as an early
+  exit, and `ShadeLiquid` reducing its inputs before evaluating the waves. Check with
+  `MESA_SHADER_CACHE_DISABLE=true INTEL_DEBUG=fs`: the composite shader's `SIMD16` line must say
+  `scheduled with mode top-down`.
+
+Lava takes the same path; its roughness (0.6) leaves almost no reflection, its emission is added
+on top.
+
 ## 6. Physics
 
 `physics::PhysicsWorld` wraps Jolt: bodies are compounds of boxes (from `BuildColliderBoxes`,
@@ -354,10 +411,80 @@ Every body carries 64 bits of user data, returned by ray casts and contact event
 scene entities store `scene::ToUserData(entity)` (a tag in the upper half, the entity id in the
 lower), terrain colliders store 0, so `Scene::EntityFromUserData` can tell them apart.
 
-`physics::TerrainColliders` streams static meshes for terrain chunks near "focus points"
-(players, moving bodies): it snapshots a chunk and its neighbours' border voxels on the main
-thread, cooks the mesh (`BuildChunkCollisionMesh` + Jolt mesh shape) on a worker thread and
-installs the body on the main thread. It consumes `World::TakeChangedChunks()`.
+`physics::TerrainColliders` streams static meshes for terrain chunks: it snapshots a chunk and
+its neighbours' border voxels on the main thread, cooks the mesh (`BuildChunkCollisionMesh` +
+Jolt mesh shape) on a worker thread and installs the body on the main thread. It consumes
+`World::TakeChangedChunks()`. A chunk gets a collider for one of two reasons:
+
+* it is within `EngineConfig::colliderRadius` of a *focus point* (the camera: the ground the
+  player and things at rest nearby stand on), dropped again at 1.5x that distance;
+* a **body needs it**: every awake dynamic body requests the chunks its bounds touch, swept
+  along its velocity (0.75 s ahead, at most two chunks). These are cooked first and kept for
+  120 updates after the last request. There is no limit on the number of bodies and the camera
+  plays no part, so debris thrown 50 m away lands on real ground.
+
+An edited chunk keeps its old collider until the re-cooked one is installed (removal and
+creation happen in the same call), so there is no frame without ground under a resting body.
+Three rules make this hold under continuous editing (a held brush, a channelled spell):
+
+* A finished mesh is installed whenever it is newer than what is installed, even if the chunk
+  was edited again while it cooked; the newest state is queued behind it. A chunk edited every
+  frame therefore has a collider that is one frame old, instead of never getting one.
+* The mesh of a chunk depends on its neighbours only through the collidability of the touching
+  voxel layers. Each entry remembers those bits: a neighbour edit that leaves them unchanged
+  does not re-cook the chunk at all.
+* Border faces covered by a solid neighbour are not meshed. If carving a neighbour *uncovers*
+  such faces (a shaft dug through the bottom of the chunk above), the collider has a hole
+  there, so the chunk is **not ready** (6.1) until its re-cook is installed: bodies touching it
+  wait a few frames with their velocity kept rather than drop into solid rock.
+
+A changed chunk that has no collider entry (far from the camera) wakes the bodies parked on it
+(`ActivateInBox`), so they ask for colliders and fall if their support was blasted away.
+
+### 6.1 Bodies never simulate without terrain
+
+Terrain collision is not always there: the chunk may be outside the world window, still
+loading, its mesh still cooking, or its collider dropped because nothing needed it. A body
+simulated in such a place falls through the world. `TerrainColliders::GuardBodies()` - run by
+`Update()` and again by the engine right before every `PhysicsWorld::Step()` - therefore checks
+every dynamic body (`PhysicsWorld::GetDynamicBodies`):
+
+* The chunks touched by its bounds, grown by one voxel and by what it travels in 0.05 s, must
+  all be *ready*: loaded, and either with their collider built or needing none (air, liquid,
+  rock enclosed by rock). If one is not, the body is **frozen**; when all are, it is released.
+* `PhysicsWorld::SetFrozen` makes the Jolt body static (keeping its collision layer): it stays
+  exactly where it is, nothing can wake it, other bodies rest on it. **The velocities are kept**
+  and given back on release, so a body frozen in flight continues its flight - zeroing them
+  would make thrown debris drop straight down whenever it outruns the cooking jobs. While
+  frozen, `GetState` reports zero velocity, `active = false` and `frozen = true`.
+* Wake-ups are deferred, not lost: `Activate`, `ActivateInBox`, `AddImpulse`, `SetVelocity` and
+  `SetTransform(activate)` on a frozen body mark it as *wanting to move* (impulses and velocities
+  change what it resumes with). A body that was awake when frozen wants to move from the start.
+* A frozen body that wants to move keeps requesting its colliders, so it resumes within the few
+  frames the cooking takes. One that was asleep - rubble the camera left behind - requests
+  nothing: it is *parked*, costs one static body and no collider, and is released (still asleep)
+  when a focus point brings the terrain back, or when something wakes it.
+* At the edge of the world window a body simply stops: the chunk beyond is not loaded. It
+  continues if the window moves over it. Nothing can leave the loaded world by falling.
+
+Kinematic and static bodies are not guarded. Character controllers are not bodies: a game holds
+its character while `Engine::TerrainReady(bounds)` is false - the box version, given the
+capsule's bounds, applies the same chunks-touched-plus-one-voxel test as for bodies. (The point
+version only looks at the chunk containing the point, which for feet standing on a chunk
+boundary is the empty chunk *above* the ground.)
+
+`Scene::DestroyBelow(windowBottom - EngineConfig::fallOutDepth)` runs once per frame and removes
+what fell out of the world: dynamic bodies far below the window that were *on their way down*
+(awake, or frozen by the guard while moving - `BodyState::wantsToMove`), and bodies with a
+non-finite position. Whatever rests down there - static and kinematic objects, sleeping or
+parked dynamic ones - was put or left there on purpose and is never touched, so flying 80 m up
+in the editor deletes nothing. Removals are logged.
+
+Small bodies (`Layer::Debris`) and **thin** ones (solid extent below
+`SceneConfig::thinBodyVoxels` = 6 voxels along any axis, whatever the voxel count) use
+continuous collision detection: a 0.2 m fragment at 20 m/s, or a 0.1 m slab falling flat from
+3 m, moves further than its own thickness per step and would pass through the terrain mesh
+between two steps.
 
 ## 7. Scene and destruction
 
@@ -378,6 +505,7 @@ Components are plain structs (`scene/Components.cppm`); games add their own to t
 | `RigidBody` | `physics::BodyId` + motion type. The body belongs to the component. |
 | `PointLight` | colour, intensity, radius, source radius, offset in the entity's frame |
 | `Lifetime` | seconds left, optional exponential fade of a light on the same entity |
+| `Debris` | age in seconds; marks a voxel object as rubble that `Scene::Update` cleans up (7.3) |
 
 There are no tag components: an object without a `RigidBody` is visual only (the player figure).
 
@@ -407,12 +535,16 @@ Frame protocol, driven by `Engine::Run`:
 
 ```
 scene.BeginFrame()                 previous = current, once per rendered frame
+world.Update(camera); terrain.Update({camera}, colliderRadius)   streaming, body guard (6.1)
 for each fixed step:
-    app.OnFixedUpdate(); physics.Step(dt)
+    app.OnFixedUpdate()
+    terrain.GuardBodies()          freeze / release, before anything new is simulated
+    physics.Step(dt)
     scene.SyncFromPhysics()        body pose -> Transform::current
 app.OnUpdate()                     game moves body-less entities (Scene::SetTransform)
 scene.GatherInstances / GatherLights -> FrameInput -> Renderer::RenderFrame
-scene.Update(frameDt)              lifetimes and light fades, after the frame was drawn
+scene.SetViewer(camera); scene.Update(frameDt)   lifetimes, light fades, rubble clean-up - after the frame was drawn
+scene.DestroyBelow(window bottom - fallOutDepth)
 ```
 
 `GatherInstances` emits one `graphics::InstanceDesc` per baked chunk of every visible voxel
@@ -441,9 +573,37 @@ voxel objects.
    continue through the cut.
 4. If nothing big enough is left the entity is destroyed.
 
-`Engine::Explode` combines the two: carve the terrain, detach floating islands, damage every
-object whose bounds the blast reaches, push bodies away, wake what rested on the removed
-ground, and add a flash.
+`Engine::Explode` combines the two: carve the terrain, detach floating islands (created with
+`VoxelObjectDesc::debris`, so the rules of 7.3 apply to them), damage every object whose bounds
+the blast reaches, push bodies away, wake what rested on the removed ground, and add a flash.
+
+### 7.3 Rubble
+
+Destruction must not fill the world with tiny rigid bodies: each costs a body, a chunk slot
+(37 KiB on CPU and GPU), an instance and BVH work in every ray. Three sizes, all in
+`scene::SceneConfig` (reachable as `EngineConfig::scene`):
+
+| size (solid voxels) | what it is | default |
+|---|---|---|
+| `< minPieceVoxels` | never an entity: particles on the spot (`Damage` fragments, floating terrain crumbs) | 16 |
+| `< debrisBodyVoxels` | a *small* body: `Layer::Debris` (no collisions among each other), continuous collision detection; rubble of this size gets the `Debris` component | 48 |
+| larger | an ordinary object that stays | |
+
+`Debris` is added to small pieces that `Damage` splits off, to small dynamic objects created
+with `VoxelObjectDesc::debris`, and to the damaged entity itself once what is left of it is
+small and dynamic (`SceneConfig::debrisRemnants`, on by default: otherwise every destroyed crate
+and every large terrain island leaves one fist-sized body behind for good). A small object
+placed by the game or the editor is not rubble until it is damaged; static and kinematic objects
+never are. To keep a particular remnant, remove its `Debris` component after `Damage`.
+`Scene::Update` then removes rubble, oldest first, each piece leaving `debrisDespawnBursts` (3)
+particle bursts in its material's colour:
+
+* older than `debrisLifetime` (15 s);
+* resting - asleep, or frozen by the terrain guard - farther than `debrisFarDistance` (25 m) from
+  the viewer (`Scene::SetViewer`, the camera) and older than `debrisFarLifetime` (2 s);
+* beyond `maxDebris` (192) pieces alive: the oldest go.
+
+The cap is applied once per frame, so one large blast can exceed it until the end of its frame.
 
 ## 8. Editor
 
@@ -519,14 +679,19 @@ World (statistics, save).
 
 * `VortexCoreTests` - chunks, store, traversal vs. a reference DDA, BVH, world streaming /
   editing / persistence, generator determinism, colliders, connectivity, importers, particles.
-* `VortexPhysicsTests` - bodies, shapes, ray casts, characters, terrain colliders.
+* `VortexPhysicsTests` - bodies, shapes, ray casts, characters, terrain colliders; the body guard
+  (a woken body the camera left behind, a body spawned where nothing is cooked, an unloaded
+  chunk, the window edge, 60 bodies spread over the map, velocity kept through a freeze, parked
+  bodies costing no collider, an edited chunk keeping its collider) and frozen bodies.
 * `VortexGraphicsTests` - SPIR-V reflection of the real shader binaries, C++ / GLSL struct
-  layout parity, proxy cube winding, pipeline description validation. No Vulkan device needed.
+  layout parity, the material surface-kind constants (C++ vs. the text of `common.glsl`) and
+  their packing, proxy cube winding, pipeline description validation. No Vulkan device needed.
 * `VortexEngineTests` - the scene on real chunk store / material / physics / particle objects
   (no device, no window): entity lifetime releasing bodies and chunk slots, shared models
   surviving damage, splitting (a cut beam is two entities whose voxels add up and which inherit
   motion), loose fragments, stale ids through every function, instance and light gathering,
-  lifetimes, body <-> entity mapping. The editor logic on the same objects plus a flat-generator
+  lifetimes, body <-> entity mapping; rubble (what is marked, crumbs that never become entities,
+  lifetime, far rule, cap, fast small bodies not tunnelling) and `DestroyBelow`. The editor logic on the same objects plus a flat-generator
   world (no ImGui context either): the cursor ray (screen centre = `Camera::Forward()`, edges at
   the field of view, y not flipped), points of a cursor ray projecting back to the cursor through
   the matrices handed to ImGuizmo, gizmo matrix round trips, brush application and stroke spacing,
@@ -535,7 +700,10 @@ World (statistics, save).
 * `tools/cpu_render` renders a frame on the CPU with the shared shader code and writes a PNG:
   a visual check of world data, traversal and shading that needs no GPU.
 * With a GPU: `Shredborne --headless --frames N --screenshot out.png --validation` exercises
-  the Vulkan path and fails on validation errors. Adding `--editor` opens the editor with every
+  the Vulkan path and fails on validation errors. `--camera x,y,z[,yaw,pitch]` holds the camera
+  at a chosen pose for the run (for example `--camera 60,2.5,-100,-2.23,-0.15`: the sea, towards
+  the sun). The run ends with the GPU time of every pass: last frame and the median of the last
+  120 frames - compare medians. Adding `--editor` opens the editor with every
   panel, cycles the tools each frame and runs its actions (select, spawn, duplicate, brush,
   import, delete), so the editor UI is exercised on every frame of the run.
 

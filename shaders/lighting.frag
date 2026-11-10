@@ -2,7 +2,8 @@
 #extension GL_GOOGLE_include_directive : require
 // Lighting: one sample of the direct and ambient light per pixel and frame, accumulated over
 // time. Output rgb = diffuse irradiance (to be multiplied by the albedo), a = sun specular
-// amount (to be multiplied by the sun radiance and the specular colour).
+// amount (to be multiplied by the sun radiance and the specular colour); for liquid materials
+// a = sun visibility (0..1), from which the composite pass builds its own glint.
 #define VX_NEED_TRACE
 #define VX_NEED_MATERIALS
 #define VX_NEED_LIGHTS
@@ -68,7 +69,8 @@ void main() {
     vec3 rd = VxCameraRay(v_Uv);
     float t = VxRayDistanceFromDepth(rd, depth);
     vec3 pos = u_Frame.cameraPos.xyz + rd * t;
-    float roughness = u_Materials.materials[VxMaterialIndex(packed)].params.x;
+    vec4 materialParams = u_Materials.materials[VxMaterialIndex(packed)].params;
+    float roughness = materialParams.x;
 
     // Secondary rays start slightly off the surface: far enough to clear the voxel they come
     // from at any distance (reconstruction error grows with t), close enough not to skip
@@ -149,7 +151,9 @@ void main() {
             }
         }
         irradiance += u_Frame.sunRadiance.rgb * (ndl * visibility);
-        specular = VxSpecular(n, -rd, sunDir, roughness) * visibility;
+        // Liquids are shaded with an animated normal in the composite pass, which evaluates the
+        // glint itself: for them the channel carries the plain sun visibility instead.
+        specular = VxMaterialIsLiquid(materialParams) ? visibility : VxSpecular(n, -rd, sunDir, roughness) * visibility;
     }
 
     // ---- Ambient: one cosine-weighted ray -----------------------------------------------------

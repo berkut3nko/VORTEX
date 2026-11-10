@@ -125,4 +125,17 @@ export namespace vortex::scene {
         float remaining = 1.0f;       ///< Seconds left; the entity is destroyed once this is <= 0.
         float lightDecay = 0.0f;      ///< Per second; 0 = the light keeps its intensity.
     };
+
+    /**
+     * @brief Marks a voxel object as rubble: a small piece left over by destruction that nobody
+     * will miss. Scene::Update removes rubble (see SceneConfig: debrisLifetime, debrisFarDistance,
+     * maxDebris) and leaves a puff of particles in its place.
+     * @details Added by the scene to small pieces that Scene::Damage splits off, to what is left
+     * of the damaged object once that is small (SceneConfig::debrisRemnants) and to small
+     * objects created with VoxelObjectDesc::debris. Remove the component to keep such a piece
+     * for good; add it to any voxel object to have it cleaned up.
+     */
+    struct Debris {
+        float age = 0.0f;             ///< Seconds since it became rubble. The oldest go first.
+    };
 }

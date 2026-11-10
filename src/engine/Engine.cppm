@@ -32,8 +32,20 @@ export namespace vortex {
         uint32_t chunkCapacity = 8192;
         uint32_t maxParticles = 32768;
         float fixedTimeStep = 1.0f / 60.0f;
-        float colliderRadius = 12.0f;       ///< Metres of terrain collision kept around the camera.
+        /// Metres of terrain collision kept around the camera. Moving bodies get the colliders
+        /// they need wherever they are (physics::TerrainColliders), so this is only what the
+        /// player and things at rest near the camera stand on.
+        float colliderRadius = 12.0f;
+        /// A dynamic body that was falling and is this many metres below the bottom of the world
+        /// window has fallen out of the world and is destroyed (scene::Scene::DestroyBelow).
+        /// Bodies are frozen at the window's edge, so this catches what was stopped there in
+        /// flight and then left behind by the window. Whatever rests below - static objects,
+        /// sleeping ones - is never touched: flying up does not delete the village below.
+        float fallOutDepth = 64.0f;
         voxel::WorldConfig world;
+        /// Scene tuning: piece and rubble thresholds (see scene::SceneConfig). `voxelSize` is
+        /// overwritten with the world's.
+        scene::SceneConfig scene;
         graphics::RenderSettings render;
 
         /// @brief Applies --headless --validation --frames N --screenshot F --width W --height H --scale S
@@ -94,13 +106,20 @@ export namespace vortex {
 
         /// @brief True once terrain collision exists around `position` (wait for it before simulating a character there).
         bool TerrainReady(const glm::dvec3& position) const;
+        /// @brief The same for a box: every chunk the box touches (grown by one voxel) is ready. Use
+        /// this with the bounds of a character - the ground it stands on is often in the chunk
+        /// below the one that contains its feet (physics::TerrainColliders::IsReady).
+        bool TerrainReady(const math::AABB& bounds) const;
+        /// @brief Terrain collider streaming and the number of bodies frozen for lack of terrain.
+        physics::TerrainColliderStats TerrainStats() const;
         /// @brief Fraction (0..1) of a fixed step elapsed since the last simulation step, for interpolation.
         float StepAlpha() const;
 
         /// @brief Blast: removes terrain and object voxels in a sphere (scene::Scene::Damage for
         /// every object in range), throws debris particles, detaches floating terrain as falling
-        /// objects, pushes nearby bodies away and leaves a short flash of light (an entity with
-        /// PointLight + Lifetime).
+        /// objects (rubble: islands below SceneConfig::minPieceVoxels become particles, small ones
+        /// are cleaned up later), pushes nearby bodies away and leaves a short flash of light (an
+        /// entity with PointLight + Lifetime).
         void Explode(const glm::dvec3& center, float radius, float power);
 
     private:

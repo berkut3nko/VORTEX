@@ -69,7 +69,23 @@ export namespace vortex::physics {
         glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
         glm::vec3 linearVelocity{0.0f};
         glm::vec3 angularVelocity{0.0f};
-        bool active = false;                            ///< Awake.
+        bool active = false;                            ///< Awake. Never true while frozen.
+        bool frozen = false;                            ///< Held in place by SetFrozen (velocities read as zero).
+        /// Frozen bodies only: it was awake when it was frozen, or something tried to wake, push or
+        /// move it since (DynamicBodyInfo::wantsToMove). False for a body parked asleep.
+        bool wantsToMove = false;
+    };
+
+    /// @brief One movable body - dynamic, or dynamic and frozen - as listed by PhysicsWorld::GetDynamicBodies.
+    struct DynamicBodyInfo {
+        BodyId body;
+        math::AABB bounds;                              ///< World-space bounds.
+        glm::vec3 linearVelocity{0.0f};                 ///< Frozen bodies: the velocity they resume with.
+        bool active = false;                            ///< Awake (never while frozen).
+        bool frozen = false;
+        /// Frozen bodies only: it was awake when it was frozen, or something tried to wake, push or
+        /// move it since. It will be awake when it resumes.
+        bool wantsToMove = false;
     };
 
     struct RayHit {
@@ -168,6 +184,22 @@ export namespace vortex::physics {
         /// @brief Wakes every body overlapping the box (call after the ground under them changed).
         void ActivateInBox(const math::AABB& box);
 
+        /**
+         * @brief Freezes a dynamic body in place, or lets it continue.
+         * @details A frozen body is not simulated: it does not move, cannot be woken and other
+         * bodies collide with it as with a static object. Its velocities are remembered and given
+         * back when it is released, so a body frozen in flight continues its flight. Attempts to
+         * wake or push it while frozen (Activate, ActivateInBox, AddImpulse, SetVelocity,
+         * SetTransform with `activate`) are not lost: impulses and velocities change what it resumes
+         * with, and it resumes awake. A body that was asleep when it was frozen and was left alone
+         * resumes asleep. No-op for bodies that are not dynamic, and for invalid ids.
+         *
+         * This is what physics::TerrainColliders uses to keep bodies from falling through terrain
+         * that has no collision yet (or no longer).
+         */
+        void SetFrozen(BodyId body, bool frozen);
+        bool IsFrozen(BodyId body) const;
+
         float GetMass(BodyId body) const;
         uint64_t GetUserData(BodyId body) const;
         /// @brief Velocity of the material point of the body at a world position.
@@ -179,10 +211,13 @@ export namespace vortex::physics {
         RayHit Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const;
         /// @brief Ids of all awake dynamic bodies.
         void GetActiveBodies(std::vector<BodyId>& out) const;
+        /// @brief Every dynamic body, awake, asleep or frozen, in ascending id order. Replaces the content of `out`.
+        void GetDynamicBodies(std::vector<DynamicBodyInfo>& out) const;
         /// @brief Contacts that began during the Step() calls since the last call.
         std::vector<ContactEvent> TakeContactEvents();
         uint32_t BodyCount() const;
         uint32_t ActiveBodyCount() const;
+        uint32_t FrozenBodyCount() const;
 
         // --- characters --------------------------------------------------------------------------
         CharacterId CreateCharacter(const CharacterDesc& desc);

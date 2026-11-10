@@ -814,7 +814,9 @@ namespace vortex::editor {
         ImGui::Text("Loading: %u pending, %u jobs", stats.pendingChunks, stats.jobsInFlight);
         ImGui::Text("Chunk store: %u / %u", engine.Chunks().UsedCount(), engine.Chunks().Capacity());
         ImGui::Text("Window: %d x %d x %d chunks, voxel %.2f m", window.x, window.y, window.z, D(world.VoxelSize()));
-        ImGui::Text("Bodies: %u (%u awake)", engine.Physics().BodyCount(), engine.Physics().ActiveBodyCount());
+        ImGui::Text("Bodies: %u (%u awake, %u frozen without terrain)", engine.Physics().BodyCount(), engine.Physics().ActiveBodyCount(),
+                    engine.Physics().FrozenBodyCount());
+        ImGui::Text("Rubble: %zu of %u", engine.Scene().DebrisCount(), engine.Scene().Config().maxDebris);
         ImGui::Text("Entities: %zu   particles: %u", engine.Scene().EntityCount(), engine.Particles().AliveCount());
         const glm::dvec3 eye = engine.camera.position;
         ImGui::Text("Camera: %.1f  %.1f  %.1f", eye.x, eye.y, eye.z);

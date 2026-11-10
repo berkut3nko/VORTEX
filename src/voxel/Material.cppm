@@ -17,7 +17,7 @@ export namespace vortex::voxel {
         MaterialFlag_None           = 0,
         MaterialFlag_Indestructible = 1u << 0,   ///< Ignores carving / explosions (bedrock).
         MaterialFlag_Flammable      = 1u << 1,
-        MaterialFlag_Liquid         = 1u << 2,   ///< Not a collider, rendered as a surface.
+        MaterialFlag_Liquid         = 1u << 2,   ///< Not a collider; shaded as an animated, reflecting surface.
         MaterialFlag_Foliage        = 1u << 3,   ///< Soft: no debris bodies, only particles.
     };
 
@@ -42,10 +42,15 @@ export namespace vortex::voxel {
         uint32_t flags = MaterialFlag_None;
     };
 
+    /// @brief Values of `GpuMaterial::params.w`: how the composite pass shades the surface.
+    /// Mirrored by `VX_MATERIAL_SOLID` / `VX_MATERIAL_LIQUID` in shaders/include/common.glsl.
+    constexpr float kGpuMaterialSolid = 0.0f;
+    constexpr float kGpuMaterialLiquid = 1.0f;    ///< Set for materials with MaterialFlag_Liquid.
+
     /// @brief GPU material record (std430, 32 bytes). Mirrors `VxMaterial` in the shaders.
     struct GpuMaterial {
         glm::vec4 colorEmissive{0.0f};   ///< rgb = albedo, a = emissive strength.
-        glm::vec4 params{0.0f};          ///< x = roughness, y = metallic, z = variation, w = unused.
+        glm::vec4 params{0.0f};          ///< x = roughness, y = metallic, z = variation, w = surface kind (kGpuMaterial*).
     };
     static_assert(sizeof(GpuMaterial) == 32);
 

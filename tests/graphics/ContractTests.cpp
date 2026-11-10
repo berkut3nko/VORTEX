@@ -16,10 +16,15 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <initializer_list>
+#include <iterator>
 #include <map>
+#include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -521,6 +526,82 @@ TEST(LayoutContract, MaterialMatchesVxMaterial) {
     EXPECT_EQ(layout->members.size(), 2u);
     ExpectMember(*layout, "colorEmissive", offsetof(voxel::GpuMaterial, colorEmissive));
     ExpectMember(*layout, "params", offsetof(voxel::GpuMaterial, params));
+}
+
+// composite.frag turns the window's chunk coordinate into metres with its own copy of the chunk
+// size (it does not include the traversal). If the copies disagree the water pattern jumps
+// whenever the streaming window moves.
+TEST(LayoutContract, WaterChunkSizeMatchesTheChunkSize) {
+    auto constant = [](const char* file, const std::string& declaration) -> std::optional<float> {
+        const std::filesystem::path path = std::filesystem::path(VORTEX_TEST_SOURCE_DIR) / "shaders" / file;
+        std::ifstream stream(path);
+        if (!stream.is_open()) return std::nullopt;
+        const std::string text((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+        const size_t at = text.find(declaration);
+        if (at == std::string::npos) return std::nullopt;
+        const size_t value = text.find_first_of("=,", at + declaration.size());
+        if (value == std::string::npos) return std::nullopt;
+        return std::strtof(text.c_str() + value + 1, nullptr);
+    };
+    const std::optional<float> water = constant("composite.frag", "const float VX_WATER_CHUNK_VOXELS");
+    const std::optional<float> trace = constant("shared/trace.glsl", "VX_CONST_INT(VX_CHUNK_SIZE");
+    ASSERT_TRUE(water.has_value());
+    ASSERT_TRUE(trace.has_value());
+    EXPECT_FLOAT_EQ(*water, static_cast<float>(voxel::kChunkSize));
+    EXPECT_FLOAT_EQ(*trace, static_cast<float>(voxel::kChunkSize));
+}
+
+// The surface kind in VxMaterial.params.w is a plain number on both sides: the GLSL constants
+// are read from the source text of common.glsl and compared with the C++ ones.
+TEST(LayoutContract, MaterialSurfaceKindsMatchTheGlslConstants) {
+    const std::filesystem::path path = std::filesystem::path(VORTEX_TEST_SOURCE_DIR) / "shaders" / "include" / "common.glsl";
+    std::ifstream file(path);
+    ASSERT_TRUE(file.is_open()) << path.string();
+    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+
+    auto constant = [&text](const std::string& name) -> std::optional<float> {
+        const std::string declaration = "const float " + name;
+        const size_t at = text.find(declaration);
+        if (at == std::string::npos) return std::nullopt;
+        const size_t equals = text.find('=', at + declaration.size());
+        const size_t end = text.find(';', at);
+        if (equals == std::string::npos || end == std::string::npos || equals > end) return std::nullopt;
+        return std::strtof(text.c_str() + equals + 1, nullptr);
+    };
+
+    const std::optional<float> solid = constant("VX_MATERIAL_SOLID");
+    const std::optional<float> liquid = constant("VX_MATERIAL_LIQUID");
+    ASSERT_TRUE(solid.has_value());
+    ASSERT_TRUE(liquid.has_value());
+    EXPECT_FLOAT_EQ(*solid, voxel::kGpuMaterialSolid);
+    EXPECT_FLOAT_EQ(*liquid, voxel::kGpuMaterialLiquid);
+    // VxMaterialIsLiquid() tests params.w > 0.5.
+    EXPECT_LT(voxel::kGpuMaterialSolid, 0.5f);
+    EXPECT_GT(voxel::kGpuMaterialLiquid, 0.5f);
+
+    // What the library packs: the flag of the material, nothing else, in params.w.
+    voxel::MaterialLibrary library;
+    const voxel::WorldMaterials ids = voxel::RegisterDefaultWorldMaterials(library);
+    const std::span<const voxel::GpuMaterial> gpu = library.GpuData();
+    ASSERT_EQ(gpu.size(), static_cast<size_t>(voxel::kPaletteSize));
+    EXPECT_FLOAT_EQ(gpu[ids.water].params.w, voxel::kGpuMaterialLiquid);
+    EXPECT_FLOAT_EQ(gpu[ids.lava].params.w, voxel::kGpuMaterialLiquid);
+    EXPECT_FLOAT_EQ(gpu[ids.stone].params.w, voxel::kGpuMaterialSolid);
+    EXPECT_FLOAT_EQ(gpu[ids.glass].params.w, voxel::kGpuMaterialSolid);
+    EXPECT_FLOAT_EQ(gpu[0].params.w, voxel::kGpuMaterialSolid);          // air
+    EXPECT_FLOAT_EQ(gpu[255].params.w, voxel::kGpuMaterialSolid);        // unused entry
+    for (uint32_t i = 0; i < voxel::kPaletteSize; ++i) {
+        const bool isLiquid = (library.Get(voxel::kWorldPalette, static_cast<uint8_t>(i)).flags & voxel::MaterialFlag_Liquid) != 0;
+        EXPECT_FLOAT_EQ(gpu[i].params.w, isLiquid ? voxel::kGpuMaterialLiquid : voxel::kGpuMaterialSolid) << "material " << i;
+    }
+
+    // Changing the flag re-packs the entry.
+    voxel::Material mud = library.Get(voxel::kWorldPalette, ids.dirt);
+    mud.flags |= voxel::MaterialFlag_Liquid;
+    const uint64_t revision = library.Revision();
+    library.Set(voxel::kWorldPalette, ids.dirt, mud, "mud");
+    EXPECT_FLOAT_EQ(library.GpuData()[ids.dirt].params.w, voxel::kGpuMaterialLiquid);
+    EXPECT_NE(library.Revision(), revision);
 }
 
 TEST(LayoutContract, LightMatchesVxLight) {

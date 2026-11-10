@@ -48,6 +48,7 @@ module;
 #include <optional>
 #include <span>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -354,8 +355,19 @@ namespace vortex::physics {
             std::vector<uint32_t> freeCharacters;
         };
 
+        /// Bookkeeping of one dynamic body. While `frozen` the Jolt body is static and this holds
+        /// what it resumes with.
+        struct Movable {
+            bool frozen = false;
+            bool wake = false;
+            glm::vec3 linear{0.0f};
+            glm::vec3 angular{0.0f};
+        };
+
         PhysicsConfig config;
         std::unique_ptr<Simulation> sim;
+        std::unordered_map<uint32_t, Movable> movables;   // every body whose motion type is Dynamic (frozen ones included)
+        uint32_t frozenCount = 0;
         std::atomic<bool> initialized{false};     // read by the thread safe shape functions
         std::vector<ContactEvent> events;
         uint32_t reportedUpdateErrors = 0;
@@ -378,6 +390,21 @@ namespace vortex::physics {
             CharacterSlot& slot = sim->characters[index];
             if (!slot.character || slot.generation != (id.value >> kCharacterIndexBits)) return nullptr;
             return &slot;
+        }
+
+        /// The record of a frozen body, or nullptr if the body is not frozen.
+        Movable* FindFrozen(BodyId body) {
+            if (frozenCount == 0) return nullptr;
+            const auto it = movables.find(body.value);
+            return it != movables.end() && it->second.frozen ? &it->second : nullptr;
+        }
+        const Movable* FindFrozen(BodyId body) const { return const_cast<Impl*>(this)->FindFrozen(body); }
+
+        void Forget(BodyId body) {
+            const auto it = movables.find(body.value);
+            if (it == movables.end()) return;
+            if (it->second.frozen) --frozenCount;
+            movables.erase(it);
         }
     };
 
@@ -423,6 +450,8 @@ namespace vortex::physics {
         m_Impl->initialized.store(false);
         m_Impl->sim.reset();
         m_Impl->events.clear();
+        m_Impl->movables.clear();
+        m_Impl->frozenCount = 0;
     }
 
     bool PhysicsWorld::IsInitialized() const { return m_Impl->sim != nullptr; }
@@ -628,12 +657,15 @@ namespace vortex::physics {
         }
         const JPH::BodyID id = body->GetID();
         bodies.AddBody(id, desc.motion == MotionType::Static ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
-        return BodyId{id.GetIndexAndSequenceNumber()};
+        const BodyId created{id.GetIndexAndSequenceNumber()};
+        if (desc.motion == MotionType::Dynamic) m_Impl->movables[created.value] = {};
+        return created;
     }
 
     void PhysicsWorld::DestroyBody(BodyId body) {
         const auto id = m_Impl->Find(body);
         if (!id) return;
+        m_Impl->Forget(body);
         JPH::BodyInterface& bodies = m_Impl->sim->system.GetBodyInterface();
         bodies.RemoveBody(*id);
         bodies.DestroyBody(*id);
@@ -653,6 +685,9 @@ namespace vortex::physics {
         state.linearVelocity = ToGlm(b.GetLinearVelocity());
         state.angularVelocity = ToGlm(b.GetAngularVelocity());
         state.active = b.IsActive();
+        const auto* frozen = m_Impl->FindFrozen(body);
+        state.frozen = frozen != nullptr;
+        state.wantsToMove = frozen && frozen->wake;
         return state;
     }
 
@@ -665,6 +700,9 @@ namespace vortex::physics {
         }
         m_Impl->sim->system.GetBodyInterface().SetPositionAndRotation(
             *id, ToJoltR(position), ToJolt(rotation), activate ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+        if (activate) {
+            if (Impl::Movable* held = m_Impl->FindFrozen(body)) held->wake = true;
+        }
     }
 
     void PhysicsWorld::SetVelocity(BodyId body, const glm::vec3& linear, const glm::vec3& angular) {
@@ -672,6 +710,13 @@ namespace vortex::physics {
         if (!id) return;
         if (!IsFinite(linear) || !IsFinite(angular)) {
             Log::Warn("PhysicsWorld::SetVelocity: ignoring a non-finite velocity");
+            return;
+        }
+        if (Impl::Movable* held = m_Impl->FindFrozen(body)) {
+            // Frozen: this is what it will resume with.
+            held->linear = linear;
+            held->angular = angular;
+            if (linear != glm::vec3(0.0f) || angular != glm::vec3(0.0f)) held->wake = true;
             return;
         }
         m_Impl->sim->system.GetBodyInterface().SetLinearAndAngularVelocity(*id, ToJolt(linear), ToJolt(angular));
@@ -684,6 +729,14 @@ namespace vortex::physics {
             Log::Warn("PhysicsWorld::AddImpulse: ignoring a non-finite impulse");
             return;
         }
+        if (Impl::Movable* held = m_Impl->FindFrozen(body)) {
+            // Frozen: the push is kept as linear velocity for when it resumes (the spin an
+            // off-centre impulse would add is dropped).
+            const float mass = GetMass(body);
+            if (mass > 0.0f) held->linear += impulse / mass;
+            held->wake = true;
+            return;
+        }
         JPH::BodyInterface& bodies = m_Impl->sim->system.GetBodyInterface();
         if (worldPoint) bodies.AddImpulse(*id, ToJolt(impulse), ToJoltR(*worldPoint));
         else bodies.AddImpulse(*id, ToJolt(impulse));
@@ -694,6 +747,16 @@ namespace vortex::physics {
         if (!id) return;
         JPH::PhysicsSystem& system = m_Impl->sim->system;
         const JPH::EMotionType target = ToJolt(motion);
+
+        if (Impl::Movable* held = m_Impl->FindFrozen(body)) {
+            if (motion == MotionType::Dynamic) {     // it already is; the request wakes it once it resumes
+                held->wake = true;
+                return;
+            }
+            // No longer a dynamic body: there is nothing to resume. The Jolt body is static already.
+            m_Impl->Forget(body);
+            if (motion == MotionType::Static) return;
+        }
 
         JPH::ObjectLayer layer = kLayerDynamic;
         {
@@ -713,7 +776,43 @@ namespace vortex::physics {
         // leave that layer or it would drop through the terrain.
         if (target == JPH::EMotionType::Dynamic && layer == kLayerStatic) bodies.SetObjectLayer(*id, kLayerDynamic);
         bodies.SetMotionType(*id, target, JPH::EActivation::Activate);
+        if (motion == MotionType::Dynamic) m_Impl->movables.try_emplace(body.value);
+        else m_Impl->Forget(body);
     }
+
+    void PhysicsWorld::SetFrozen(BodyId body, bool frozen) {
+        const auto id = m_Impl->Find(body);
+        if (!id) return;
+        const auto it = m_Impl->movables.find(body.value);
+        if (it == m_Impl->movables.end() || it->second.frozen == frozen) return;
+        Impl::Movable& movable = it->second;
+        JPH::BodyInterface& bodies = m_Impl->sim->system.GetBodyInterface();
+
+        if (frozen) {
+            {
+                const JPH::BodyLockRead lock(m_Impl->sim->system.GetBodyLockInterface(), *id);
+                if (!lock.Succeeded()) return;
+                const JPH::Body& b = lock.GetBody();
+                movable.linear = ToGlm(b.GetLinearVelocity());
+                movable.angular = ToGlm(b.GetAngularVelocity());
+                movable.wake = b.IsActive();
+            }
+            // A static body cannot be activated by anything, and Jolt stops it. The object layer
+            // is kept, so it still collides with what it collided with before.
+            bodies.SetMotionType(*id, JPH::EMotionType::Static, JPH::EActivation::DontActivate);
+            movable.frozen = true;
+            ++m_Impl->frozenCount;
+            return;
+        }
+
+        const Impl::Movable resume = movable;
+        movable = {};
+        --m_Impl->frozenCount;
+        bodies.SetMotionType(*id, JPH::EMotionType::Dynamic, resume.wake ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+        if (resume.wake) bodies.SetLinearAndAngularVelocity(*id, ToJolt(resume.linear), ToJolt(resume.angular));
+    }
+
+    bool PhysicsWorld::IsFrozen(BodyId body) const { return m_Impl->Find(body).has_value() && m_Impl->FindFrozen(body) != nullptr; }
 
     void PhysicsWorld::SetShape(BodyId body, const ShapeRef& shape) {
         const auto id = m_Impl->Find(body);
@@ -741,6 +840,10 @@ namespace vortex::physics {
     void PhysicsWorld::Activate(BodyId body) {
         const auto id = m_Impl->Find(body);
         if (!id) return;
+        if (Impl::Movable* held = m_Impl->FindFrozen(body)) {
+            held->wake = true;
+            return;
+        }
         JPH::BodyInterface& bodies = m_Impl->sim->system.GetBodyInterface();
         if (bodies.GetMotionType(*id) != JPH::EMotionType::Static) bodies.ActivateBody(*id);
     }
@@ -751,6 +854,16 @@ namespace vortex::physics {
         m_Impl->sim->system.GetBodyInterface().ActivateBodiesInAABox(JPH::AABox(ToJolt(box.min), ToJolt(box.max)),
                                                                      JPH::SpecifiedBroadPhaseLayerFilter(kBroadPhaseMoving),
                                                                      JPH::ObjectLayerFilter());
+        if (m_Impl->frozenCount == 0) return;
+        // Frozen bodies cannot be activated: remember that they should be awake when they resume.
+        const JPH::BodyLockInterfaceNoLock& lookup = m_Impl->sim->system.GetBodyLockInterfaceNoLock();
+        for (auto& [value, movable] : m_Impl->movables) {
+            if (!movable.frozen || movable.wake) continue;
+            const JPH::Body* b = lookup.TryGetBody(JPH::BodyID(value));
+            if (!b) continue;
+            const JPH::AABox& bounds = b->GetWorldSpaceBounds();
+            if (math::AABB(ToGlm(bounds.mMin), ToGlm(bounds.mMax)).Overlaps(box)) movable.wake = true;
+        }
     }
 
     float PhysicsWorld::GetMass(BodyId body) const {
@@ -838,6 +951,28 @@ namespace vortex::physics {
         }
     }
 
+    void PhysicsWorld::GetDynamicBodies(std::vector<DynamicBodyInfo>& out) const {
+        out.clear();
+        if (!m_Impl->sim) return;
+        out.reserve(m_Impl->movables.size());
+        const JPH::BodyLockInterfaceNoLock& lookup = m_Impl->sim->system.GetBodyLockInterfaceNoLock();
+        for (const auto& [value, movable] : m_Impl->movables) {
+            const JPH::Body* b = lookup.TryGetBody(JPH::BodyID(value));
+            if (!b) continue;
+            DynamicBodyInfo info;
+            info.body = BodyId{value};
+            const JPH::AABox& bounds = b->GetWorldSpaceBounds();
+            info.bounds = math::AABB(ToGlm(bounds.mMin), ToGlm(bounds.mMax));
+            info.frozen = movable.frozen;
+            info.wantsToMove = movable.frozen && movable.wake;
+            info.active = b->IsActive();
+            info.linearVelocity = movable.frozen ? movable.linear : ToGlm(b->GetLinearVelocity());
+            out.push_back(info);
+        }
+        // The map's order depends on its history; the callers' decisions should not.
+        std::sort(out.begin(), out.end(), [](const DynamicBodyInfo& a, const DynamicBodyInfo& b) { return a.body.value < b.body.value; });
+    }
+
     std::vector<ContactEvent> PhysicsWorld::TakeContactEvents() {
         std::vector<ContactEvent> out = std::move(m_Impl->events);
         m_Impl->events.clear();
@@ -849,6 +984,8 @@ namespace vortex::physics {
     uint32_t PhysicsWorld::ActiveBodyCount() const {
         return m_Impl->sim ? m_Impl->sim->system.GetNumActiveBodies(JPH::EBodyType::RigidBody) : 0u;
     }
+
+    uint32_t PhysicsWorld::FrozenBodyCount() const { return m_Impl->frozenCount; }
 
     // --- characters ---------------------------------------------------------------------------
 
