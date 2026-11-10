@@ -1,0 +1,300 @@
+# Networking skeleton (M1)
+
+Status: design decision, nothing built or run; revised after two reviews. "Code" = read from the source at commit
+`ac17bcf` and re-checked for this document; "measured" = figure from `docs/ROADMAP.md`; "est." = estimate, replaced by
+a measurement in the stage named under "Stages". Related: `fx-budget.md` (its simulation / presentation split is
+reused), `collapse.md`.
+
+## Decision in brief
+
+One rule decides every case: **the server computes; a client either repeats an integer-exact computation in the
+server's order, or receives the result.** The single exception is the own player, which is predicted through Jolt and
+corrected by the server; its error is measured, not assumed to be zero.
+
+| Thing | How a client gets it | Check | Fallback |
+|---|---|---|---|
+| Pristine terrain | Generates it locally, FP contraction pinned off | Golden hashes per platform; probe hashes at join; sampled hashes near the player | Server sends chunks (RLE) |
+| Terrain edits, island clears | Quantised integer operations in one server order (`opSeq`) | Sampled chunk hashes during play | Server sends the chunk |
+| Falling terrain pieces, damaged objects | Result: occupancy mask or model + entity event, in the same `opSeq` stream | `EntityCheck` | Entity list re-sent |
+| Bodies, other players | Snapshots at 30 Hz with velocity, drawn in the past | - | - |
+| Own player | Prediction with the shared `sim::StepPlayer` | Server state in every snapshot | Restore + replay, error smoothing |
+| Small debris, particles, flashes, lumps under the piece threshold | Local only: never simulated by the server, never hashed | - | - |
+
+- Two new GPU-free libraries, `VortexSim` (scene + sim) and `VortexNet`, plus `vortex_server` and `vortex_bot`. ENet
+  behind `net::ITransport`. 60 Hz simulation on both sides (code: `Engine.cppm:34`), 30 Hz packets.
+- One chunk-sync mechanism (`ChunkData` + a base `opSeq` per chunk + replay from a client event ring) serves late
+  join, a moving client window, chunks still loading, repair and the generator-mismatch fallback.
+- Everything that is sent has a byte budget: snapshots (1200 B at 30 Hz), events (est. 24 kB/s), bulk (paced by the
+  application). Work over budget is delayed or turned into client rubble, never dropped silently.
+- Small stages. Est. 46-53 days without the 1 km stage (was 36-42 before the reviews: stages 2, 3, 4, 6, 7, 8 grew).
+
+## What the code gives us today and what blocks us
+
+| Code fact | Consequence |
+|---|---|
+| Core and Physics are GPU-free targets; `scene` is compiled into `VortexEngine` (`CMakeLists.txt:111-115`) and imports `vortex.graphics` only for `InstanceDesc` / `PointLight` (`Scene.cppm:22`); `GatherInstances` / `GatherLights` read only the public registry (`Scene.cpp:495-519`). | The two functions move to the engine as free functions; the scene then links without Vulkan. |
+| `Engine::Impl` owns simulation and renderer together; `Engine::Explode` does carve, islands, object damage and impulses next to particles and a flash (`Engine.cpp:125-183`). Island extraction clears the island's voxels from the world (`Connectivity.cpp:222-234`). | The simulation half must be extracted. An island is a world edit and needs an event from the first networked stage. |
+| Loop: at most 4 steps per frame, then the accumulator is dropped; no tick counter; a headless run advances one fixed step per rendered frame and still creates a Vulkan device (`Engine.cpp:114-119, 205-206, 226-240`). | Nothing is tick-indexed, and `Shredborne --headless` cannot be a wall-clock network client. |
+| The generator is a pure function of settings and chunk coordinate using only + - * /, floor, abs, lround and compares (`Generator.cpp:124-134`, `Noise.cppm:132-158`). Engine code is built with `-mfma` and no `-ffp-contract` flag (`CMakeLists.txt:45-50`). The only test is same-process (`WorldTests.cpp:302`). | Bit-identical terrain across builds holds today only by accident. One flag removes the cause; a golden test proves it. |
+| Edits visit chunks and voxels in a fixed order and decide per voxel from `(voxel, oldId)` (`World.cpp:450-500`); sphere tests are float. Cells outside the window or not loaded are skipped silently (`:92-95, 461-462`); on a full `ChunkStore` an edit abandons the chunk half-way (`:437-441, 482-485`) and a generated dense chunk is installed as Empty (`:322-331`). No swap edit. | Operations are replayable and can be clipped to one chunk, but need integer parameters, a rule for unready chunks and a visible failure state. |
+| `ExtractFloatingIslands` is integer but returns nothing if any chunk of its box (radius + 24 voxels) is not loaded (`Connectivity.cpp:166-173`). Jolt 5.6.0 is built without `CROSS_PLATFORM_DETERMINISTIC` and steps on a thread pool (`Dependencies.cmake:109-128`). | Islands and object splits are server results. The server window needs a margin. Body poses are never hashed. |
+| `Scene::Damage` uses the body's float transform, spawns particles itself (`Scene.cpp:343-360`), makes an entity and body for every piece of at least `minPieceVoxels` = 16, gives `Debris` to pieces and remnants under 48 voxels (`:419-426`), re-bases the survivor and turns a cut static object dynamic (`:393-405`). Entities die in `UpdateDebris`, `Update` (lifetime), `DestroyBelow` and `Damage`, with no notification. Layer and clean-up follow the voxel count only (`:55-56, 205`). | The piece threshold, the rubble policy and "which entities exist" are not reachable from outside. Scene changes are listed under "Entity replication". |
+| The chunk codec is a canonical RLE (`Region.cpp:30-74`); cells carry a `generation` (`World.cppm:142`). No chunk hash. `TakeChangedChunks` belongs to `TerrainColliders` (`Terrain.cppm:33-34`); integration and recentring have no notification (`World.cpp:130-165, 291-341`); the client window follows the camera inside `Engine::Run` (`Engine.cpp:216`). | A wire format exists. Net code needs its own `World` notifications; the server needs its own "modified" map. |
+| `World` is one window around one focus; the game uses 48 x 8 x 48 chunks = 154 x 26 x 154 m with `chunkCapacity` = 12,288, which is also the GPU chunk buffer size (`src/main.cpp:472-474`, `Engine.cpp:118`). `sizeof(Chunk)` = 36,936 B; 8100 of 18,432 cells are dense (measured). Default terrain rises 55 m and more (`Generator.cppm:52-56`). | A 250 m arena does not fit a client window. A fixed server window must be taller than 8 chunks. The client store can fill where the server's cannot. |
+| `UpdateCharacter` runs outside `PhysicsWorld::Step` but reads the ground body's velocity, keeps Jolt's contact list between calls and pushes dynamic bodies (`PhysicsWorld.cpp:1054-1088`). Jolt's `SaveState` contains process-local `BodyID`s. Only `SetCharacterPosition` and `SetTransform` (teleport, zero velocity, `:694-701`) exist. | Replay is legal but not exact. A server state can be applied only as position + velocity. Moving kinematic bodies need `MoveKinematic`. |
+| `CharacterLayerFilter` is hard-coded: everything but the Character layer (`PhysicsWorld.cpp:191-195`). Debris does not collide with Debris (`:182-189`). | A predicted character would collide with bodies the server does not have. The filter must be configurable. |
+| The player is gated by `TerrainReady(capsule)` before `UpdateCharacter` (`src/main.cpp:92-95`); `ChunkReady` is also false while a carved neighbour waits for a re-cook: `built && installed >= exposed` (`Terrain.cpp:303-306`). | As a shared movement rule this would stop players for a different number of ticks on each side after every blast at a chunk border. |
+| Movement rules are split between `src/main.cpp:86-100, 116-185` and `UpdateCharacter`. Entities are raw, recycled EnTT handles. `BuildPlayground` makes edits, crates, six lights and the player (`src/main.cpp:304-400`). | A shared step function, an input struct, a `NetId` and a split of template set-up are needed. |
+
+## Architecture
+
+```
+VortexSim      scene sim                NEW, GPU-free: Core + Physics + EnTT
+VortexNet      net                      NEW, GPU-free: Sim, PRIVATE enet
+VortexEngine   engine editor            links Sim, Net, Graphics; owns one sim::Simulation
+vortex_server  tools/server/main.cpp    links VortexNet only
+vortex_bot     tools/bot/main.cpp       links VortexNet only: net::Client + Simulation on a wall-clock tick loop
+```
+
+- Core gains `ChunkHash` / `WorldHash`, quantised edits, chunk encode / replace, `World::TakeLoadedChunks()` and
+  `WindowRevision()` (a second notification, independent of `TakeChangedChunks`). Physics gains
+  `SetCharacterState`, `MoveKinematic`, `SetLayer`, `Layer::Rubble`, a character layer mask in `PhysicsConfig` and
+  `TerrainColliders::HasCollider(bounds)`.
+- `sim::Simulation` = today's simulation members of `Engine::Impl` plus `uint32_t tick` and `Step(focusPoints)`. Its
+  world never has a `saveDirectory`. `sim` also holds `RegionDesc`, `WorldOp`, `Blast` and `StepPlayer`; `net` holds
+  transport, byte reader / writer, messages, `Server`, `Client` and the session file.
+- Simulation vs presentation: `sim::Blast` (server or offline) = carve, island extraction, object damage, impulses;
+  it returns the events it produced. `Engine::PresentBlast` (client) = particles and flash made from those events and
+  from the client's own data (ids of the voxels it removes, old and new object model). No particle data is sent.
+- Server scene: `bakeModels = false`, zero-capacity `ParticleSystem`, `debrisRemnants = false`, no `Debris` component.
+  The game owns `net::Client` and drives it from `OnFixedUpdate`, after the engine's streaming step, so it reads the
+  window from `World`. `Engine` gains only a tick number and a tick-rate scale.
+
+## Transport
+
+| Channel | Mode | Carries |
+|---|---|---|
+| 0 state | unreliable | inputs up, snapshots down |
+| 1 events | reliable, ordered, byte budget | handshake, the `opSeq` stream (operations, detach, entity events), window acks, hash and entity checks |
+| 2 bulk | reliable, ordered, paced by the application | chunk data, entity baseline and models |
+
+`net::ITransport` = `Send`, `Poll`, `RoundTripSeconds(peer)`, `ReliableBytesInFlight(peer)`; implemented by
+`EnetTransport`, `LoopbackTransport` and the decorator `ImpairedTransport` (seeded loss, delay, jitter, duplication,
+reordering, rate limit, outage; needs no root). ENet channels separate only ordering: the reliable window and queue are
+per peer. Hence the invariant **at most est. 32 kB of bulk is inside the transport**: `net::Server` hands over the next
+bulk message only below that, and halves the rate when RTT or event latency grows. Events have their own budget (est.
+24 kB/s, burst 16 kB). `Hello{protocolVersion, buildHash, token[16]}`: `buildHash` covers the material table and the
+generator golden hash; the token is compared in plain text with the session file. No encryption: a stub.
+
+## Time and ticks
+
+- Server tick `T`, fixed 1/60 s, never dropped; after a hitch it catches up at most 2 ticks per loop pass. Order:
+  receive -> streaming -> `StepPlayer` per player in slot order -> queued casts within a CPU budget (est. 6 ms) and
+  the event byte budget -> `GuardBodies`, `physics.Step`, `SyncFromPhysics` -> lifetimes -> snapshots on even ticks.
+- The client runs ahead by RTT/2 plus a margin of 2 ticks + measured jitter. Each snapshot reports the margin of the
+  last input. Control is asymmetric: margin below 0 in 3 consecutive snapshots -> the clock jumps forward at once;
+  a surplus is bled off at 2 %; above 8 ticks for 1 s -> hard resync (a server hitch recovers before that).
+- Inputs: every packet carries all inputs the server has not acknowledged (at most 8, est. 2.5 kB/s). The server
+  queue holds 16 per player; inputs further ahead are dropped (also the speed-hack bound). An input for a tick
+  already simulated only refreshes "last input". A missing input repeats the last movement for 6 ticks, then zero.
+  Buttons are levels; the server derives edges, and a repeated input never makes an edge.
+- A cast is captured at its input tick as `{origin, direction, tick, loadout}` from the server's player state, with
+  cooldown and range checked then; raycast and `Blast` run when dequeued. Above 6 ticks in the queue the budget is
+  exceeded instead. The owner block of the snapshot carries `lastCastTick` and `castRejected`.
+
+## Region start-up and terrain agreement
+
+- `RegionDesc{templateId, seed, playBounds, heightRange, TerrainSettings as raw float bits}` travels in `Welcome`.
+  Both sides build the same generator and run memory-only. Template set-up is split (stage 3): edits and objects run
+  **on the server only** (operations 1..k, replicated entities); lights are `EntitySpawn` kind `Light`; the player
+  spawn point comes from the server.
+- Build: `-ffp-contract=off` in `vortex_options` (Jolt keeps its flags); the same Clang major on both platforms.
+- Test: hashes of 64 fixed chunks for 3 seeds, checked in, in `VortexCoreTests`, on both platforms. If this fails
+  on Windows, fixed-point noise is the answer (est. 5-8 days, changes all terrain); it is not built otherwise.
+- Run time: the server sends hashes of 64 probe chunks chosen from the seed. A client that disagrees, or that later
+  fails 3 pristine hash checks, enters **server terrain mode**: every chunk of its window is requested on the bulk
+  channel (est. 8-25 MB for a 154 m window).
+
+## World operations
+
+Unit `q` = 1/16 voxel. Sphere test on every side: `d = 16*v + 8 - c`, inside when `dot(d, d) <= r*r` in int64. Power
+is `u16` in 1/16 hardness units. New `World::CarveSphereQ / FillSphereQ / SwapSphereQ / ClearMask`; the float
+functions quantise and forward. Batch header per tick 10 B.
+
+| Event (all carry `opSeq` order) | Payload | Bytes (est.) |
+|---|---|---|
+| `CarveSphere` / `SwapSphere` | kind, centre 3 x i32 q, radius u16 q, power u16 or from / to u8 | 17 |
+| `FillBox` | kind, min, max voxels, id u8 | 26 |
+| `Detach` | netId u32 (0 = client rubble), origin, dims, RLE **occupancy mask**, velocity | 30 + mask; est. under 200 typical, under 2 KiB at the 60,000-voxel cap |
+| `ObjectModel` | netId, voxel offset 3 x i16, motion type u8, dims, RLE ids | 15 + RLE; est. under 100 for a crate |
+| `EntitySpawn` / `EntityDespawn{reason}` / `EntityRest{tick, pose}` | see "Entity replication" | 10-60 + model |
+
+1. A client never sends an operation. Cast is a button; the client plays the cast effect and changes nothing.
+2. `sim::Blast` on the server: carve; `ExtractFloatingIslands` -> one `Detach` per island; `Scene::Damage` per caught
+   object -> `ObjectModel` for the survivor, `EntitySpawn` per piece; impulses. Casts centred outside `playBounds`
+   are rejected. Island and piece events count against the event budget: over budget, the cast waits.
+3. A client applies events on receipt in `opSeq` order with the same `World::*Q` call. For `Detach` it clears the
+   masked voxels and builds the piece's volume **from the ids it just removed** (worlds are equal at that `opSeq`).
+   If a touched chunk has no base yet, `netId = 0` makes no rubble and `netId != 0` sends `ModelRequest` (answered
+   on bulk). Terrain is never predicted; the price is a hole one round trip after the click.
+4. From stage 2 every island has an event. Until stage 6 all islands are `netId = 0`: the server clears the voxels
+   and keeps no body. Stage 6 adds replicated pieces.
+
+## Chunk sync (late join, moving window, repair)
+
+- Server: map `modified: chunk -> last opSeq`, fed with the chunk range of every event's box, never cleared.
+- The client sends `WindowUpdate{minChunk, size}` at join and when `WindowRevision()` changes. The server answers
+  `WindowAck{asOfOpSeq}` (events) and queues `ChunkData{coord, asOfOpSeq, RLE}` (bulk) for modified chunks, nearest
+  first. **A chunk is encoded when it is dequeued**, so `asOfOpSeq` is current and the ring covers transit, not the
+  queue. `ChunkRequest` answers go to the front.
+- Client state per chunk: **no base** (entered the window, nothing received: accepts no events, not walkable),
+  **based** (`ChunkData.asOfOpSeq`, or `WindowAck.asOfOpSeq` for a pristine one), **unsynced** (no store slot).
+- One rule for both directions: **an event is applied to a chunk only if `opSeq > base`**, live or replayed. A chunk
+  whose base is ahead of the stream ignores events until the stream passes it; a chunk installed
+  (`World::SetChunkEncoded`) or reported by `TakeLoadedChunks` gets the ring events above its base, clipped to it.
+- Ring: last 1024 events or 1 MiB, whichever is less (`Detach` keeps only box + mask). If the ring no longer covers
+  a chunk's base, that chunk becomes a `ChunkRequest`; it is never replayed partially.
+- Full store: a failed `Materialize`, `Adopt` or `SetChunkEncoded` marks the chunk unsynced: logged, counted, left
+  out of `HashCheck`, not requested again until a slot is free. Client capacity = window dense chunks + carved
+  uniform chunks + piece models; today 12,288 slots (433 MiB, bounded by GPU memory) against 8100 dense (measured).
+- Repair: every 2 s `HashCheck` with 8 modified chunks, the chunks of the last operations and est. 4 pristine chunks
+  within 12 m of that client's player, compared at the same stream position. Mismatch -> `ChunkRequest`.
+- Est. after a 5-minute 5v5: 0.5-8 MB per join. Until stage 7 a joiner receives the whole event log instead.
+
+## Player movement
+
+- `PlayerInput{tick, moveX, moveZ (i8), yaw (u16), pitch (i16), buttons (u8)}`. `PlayerState{position, velocity,
+  flags, cooldownTicks}`: 27 B, unquantised to its owner.
+- `sim::StepPlayer(physics, terrain, character, state, input, tuning, dt)` holds every rule now split between
+  `src/main.cpp` and `UpdateCharacter`. Its gate is `HasCollider(capsule)` = chunks loaded and a collider built at
+  least once (no `installed >= exposed` term); on a client the chunks must also be based. The server's window is
+  always loaded, so in practice only the client gates; it still sends the input.
+- `SetCharacterState(id, position, velocity)` = set both, then `RefreshContacts`. Jolt's `SaveState` is not usable
+  across the wire; what does not replay exactly (ground state after a refresh) is absorbed by the threshold and
+  measured in stage 4.
+- The client keeps 128 ticks of `{input, predicted state}`. A snapshot carries `ackInputTick`, the owner's state and
+  `opSeqAtTick`; the client reconciles after it has applied events up to that sequence. If they are not there after
+  250 ms it applies the position error through the visual blend only, skips replay until the events arrive, and
+  counts it.
+- Error under 2 cm (est.): ignored. Above: restore, replay the unacked inputs (13-15 `UpdateCharacter` calls at
+  150 ms RTT, est. under 1.5 ms), blend the visual error out over 100 ms. Above 1.5 m: snap.
+- Character collision in a session (mask in `PhysicsConfig`): Static and Dynamic only. On a client a replicated
+  body is in the Dynamic layer **only while at rest**; moving pieces and all local rubble never block the predicted
+  character. A push or a blocked step from a falling piece is a server result and arrives as a correction.
+- Accepted inexactness, each with a logged metric: stale colliders and missing faces of an exposed neighbour after
+  an edit; a moving piece is seen `interp delay + RTT/2 + buffer` late (175 ms at 150 ms ping = 1.75 m at 10 m/s),
+  so contact with it is corrected, not predicted. Players do not collide in M1.
+
+## Entity replication
+
+- `scene::NetId{uint32_t}`: server-allocated, counting up, never reused; `net` keeps `NetId -> Entity`. Entity
+  events are part of the `opSeq` stream. `EntityDespawn` is emitted from a registry `on_destroy<NetId>` observer, so
+  every destruction path is covered.
+- Server-owned: players, template objects, lights, pieces of at least `replicatedPieceVoxels` (512, est.). Scene
+  changes: `Damage` takes that threshold and returns smaller pieces as volumes without entities;
+  `VoxelObjectDesc` gains a layer and a `clientRubble` flag; `Scene::ReplaceModel(entity, model, offset, motion)`.
+- Below the threshold: `EntitySpawn` with `netId = 0` (object fragments) or `Detach` with `netId = 0`. Each client
+  makes local rubble: always with the `Debris` component and the existing `maxDebris` cap; under 48 voxels in
+  `Layer::Debris` as today, larger in the new `Layer::Rubble` (collides with Static, Dynamic and itself). A survivor
+  that falls below the threshold is despawned `toRubble` (with the start value a crate, 296 voxels, at its first hit).
+- Client copy of a server body: kinematic, moved with `MoveKinematic` (so it has a velocity); in `Layer::Rubble`
+  while moving, `Layer::Dynamic` at rest. `EntityRest{netId, tick, pose}`: samples with `tick <= restTick` are
+  dropped; rest ends only on a newer sample with the awake flag.
+- Caps: 256 live pieces, **64 awake** (est., derived from the snapshot budget). Eviction order: oldest sleeping, then
+  smallest awake, sent as `EntityDespawn{toRubble}`: server and clients lose its collision at the same `opSeq`, each
+  client keeps it as local rubble. A new island over the awake cap is emitted as `netId = 0`.
+- Snapshot (est.; no bit packing, no deltas): header 13 B; own state 27 B; other player 17 B; awake body 31 B (netId,
+  position, quaternion 4 x i16, velocity 3 x i16, flags). 1200 B hold about 36 bodies, by a priority that grows with
+  time since last sent and shrinks with distance; 64 awake = at most 2 snapshots apart without loss.
+- Interpolation: 8 `(tick, pose, velocity)` samples, Hermite; delay per entity = max(67 ms, 2 x its recent update
+  interval), at most 200 ms; extrapolation up to one own update interval, then hold.
+- Joiners: baseline `EntitySpawn`s on bulk, each with its own `asOfOpSeq` (encoded at dequeue). Client rules: a
+  tombstone set of despawned ids for the session; a spawn for a tombstoned id is discarded; an `ObjectModel` for an
+  unknown id waits for its spawn and replaces an older baseline model. `EntityCheck{count, xor of ids, xor of model
+  hashes}` every 2 s; mismatch -> the entity list is re-sent. The player spawns once chunks within 32 m are based.
+- Per player in 5v5 (est.): down 7 kB/s quiet, 24 kB/s with 20 awake bodies, cap 37 kB/s + events 24 kB/s; up 2.5.
+
+## Server world without a camera
+
+- Stages 0-8: the server window never moves. It is `playBounds` plus 2 chunks on all six sides (the largest blast
+  box, radius + 24 voxels, stays loaded), with the vertical extent from the template's `heightRange`, not 8 chunks.
+  `LoadBlocking` at start. Store capacity = dense count after loading x 2 (est.); a failed slot on the server is an
+  error that ends the session, asserted zero in tests. Memory (dense chunks follow the surface, not the height):
+  154 m est. 0.45-0.55 GiB, 250 m est. 1.0-1.2 GiB.
+- `TerrainColliders::Update(playerPositions, 12 m)` every tick; `GuardBodies` already requests ground for every awake
+  body. `scene.Update(fixedDt)` and `DestroyBelow` run on the tick.
+- Stage 9 (1 km): `WorldConfig::loadPolicy = OnDemand`. A cell loads within 24 m of a player, for an event or island
+  box (`World::EnsureLoaded`, blocking) or for an awake body; on eviction a pristine chunk is dropped, a modified one
+  rests as RLE. Est. 0.3-1.5 GiB for 20-40 players.
+
+## Testing
+
+New suite `tests/net` -> `VortexNetTests`, linking `VortexNet` only. Each side is one `Simulation` with a small window
+and physics `threads = 1`; `LoadBlocking` and `TerrainColliders::Flush` remove async timing where a test wants that; a
+manual clock advances all sides. `ImpairedTransport` wraps the loopback. `voxel::ChunkHash` hashes canonical content;
+`WorldHash(box)` sums `mix(coord, ChunkHash)` over non-air chunks. No body poses.
+
+| Test | Asserts |
+|---|---|
+| Golden generator hashes; integer sphere vs brute force; event encode / decode | Same constants on both platforms; boundary voxels; round trip |
+| Same event list on two worlds with different load timing; blast at the region edge and at maximum height | Equal `WorldHash`; same islands as in the middle |
+| **Scripted fight** (M1 acceptance): 2 clients, 600 ticks, 10 casts/s with islands and crates, 5 % loss, 80 +- 30 ms, one 200 ms outage | `WorldHash`, `NetId` sets and model hashes equal on all sides; own position within 5 cm after drain |
+| Late join during 10 casts/s and object splits, bulk limited to 32 kB/s; walk in from outside; chunk still loading | Converges: equal hash, ids and models; event latency p99 under 250 ms during the join |
+| Bulk delivered ahead of events with a carve + swap pair on the same voxels | Equal `WorldHash` |
+| Generator broken on a client: everywhere; in one non-probe chunk | Server terrain mode; repaired before the player reaches it |
+| Client with a deliberately small store receives fills until exhaustion | No repeated request for the same chunk; equal hash once slots are free |
+| Blast at a chunk border beside a walking player; player under a falling replicated piece at 150 ms | Correction rate under a bound set in that stage; no snap |
+| Collapse with 64 awake pieces, 5 % loss; cap reached with nothing asleep; split below threshold; late snapshot after `EntityRest` | Largest sample gap per body; bytes under the caps; ids equal; rest pose kept |
+| +50 ms ping step; 3 lost input packets containing a cast; 150 ms server hitch; forced misprediction; forged packets | Margin recovers within 0.5 s; one cast; no hard resync; converges; no crash |
+
+## Stages
+
+| # | Built | Verified by | Days (est.) |
+|---|---|---|---|
+| 0 | `-ffp-contract=off`; `ChunkHash` / `WorldHash`; golden generator test; `VortexCore` + its tests built once on Windows | Golden test green on Linux (and on Windows if a machine exists); the existing 299 tests pass; generator time before / after recorded | 2 |
+| 1 | `VortexSim`; gather functions moved to the engine; `sim::Simulation` with a numbered tick; server scene config | Existing tests pass; game unchanged; a test steps a `Simulation` 600 ticks in a binary that links no Vulkan or glfw | 4 |
+| 2 | Quantised edits, swap, `ClearMask`, `WorldOp` / `ApplyOp`, skipped / unsynced chunk report, `sim::Blast` (islands as `Detach` with `netId = 0`) + `PresentBlast`, `Scene::Damage` threshold; offline game on this path | Unit tests; two `Simulation`s fed the same events, islands included, have equal hashes; offline blasts look the same | 5-6 |
+| 3 | `VortexNet`: loopback + `ImpairedTransport`, messages, `Server` / `Client`, `RegionDesc`, fixed server window with margin, probe hashes, event stream with byte budget, session file, `vortex_server`; split template set-up; join = full event log | In-process server + 2 clients, 200 server-side blasts that free islands, 5 % loss: hashes equal | 5-6 |
+| 4 | `StepPlayer` with `HasCollider`, `SetCharacterState`, inputs, snapshots, time sync, prediction, reconciliation with the timeout branch, remote players | No correction above 2 cm on flat ground; border-blast, ping-step, lost-cast and hitch tests; correction rate logged | 7-9 |
+| 5 | `EnetTransport` with `ReliableBytesInFlight`; game `--connect` / `--token`; cast capture, cooldown, cast queue | **Two people on two machines walk and see each other and each other's holes** (est. day 26-30) | 3 |
+| 6 | `NetId`, despawn observer, replicated `Detach`, `ObjectModel`, `MoveKinematic`, `Layer::Rubble`, character mask, velocity snapshots with priority, `EntityRest`, both caps, `toRubble`, client rubble | Fight test with islands and crates; the collapse, cap, split, rest and falling-piece tests | 9-11 |
+| 7 | Chunk sync: modified map, encode at dequeue, bases, ring, `TakeLoadedChunks` / `WindowRevision`, paced bulk, `HashCheck`, entity baseline + `EntityCheck`, server terrain mode; region larger than the client window | The whole test table on a 250 m region | 7-8 |
+| 8 | Soak: `vortex_server` + two `vortex_bot` over real UDP through `ImpairedTransport` (incl. a 100 kB/s downlink during a join), hashes written at exit; one manual session with the real game client; every est. replaced; cast queue delay histogram | Hashes equal after a 10-minute run; numbers filled in | 4 |
+| 9 | On-demand server world, `EnsureLoaded`, eviction; may move behind M2 | 1 km region, 20 bots: RSS and tick-time histogram; p99 tick under 16.6 ms | 5-8 |
+
+## Out of scope for M1
+
+Hit detection, damage, lag compensation, player proxy bodies and player-player collision (M2); the spell framework
+and conjured matter; predicted carving; interest management; delta-compressed or bit-packed snapshots; encryption,
+real tickets, NAT traversal, matchmaking; reconnect that resumes state; support-graph collapse (M3); fixed-point
+noise; deterministic Jolt; ARM or non-AVX2 hosts; a wall-clock headless mode of `Engine`; a full Windows client build,
+CI and the Windows-client / Linux-server correction-rate measurement (M6; in M1 only the Core golden test runs there).
+
+## Rejected alternatives and why
+
+| Rejected | Reason |
+|---|---|
+| Fixed-point noise now | Contraction is the only hazard and one flag removes it. A rewrite changes all terrain, and M4 replaces the generator anyway. Kept as the answer to a failed Windows golden test. |
+| Server always sends terrain | Est. 8-25 MB per join and a continuous stream while walking. Kept as the fallback. |
+| Per-sector operation logs; own reliability layer; GameNetworkingSockets; yojimbo | One global order with a base per chunk gives the same voxels. Reliability, fragmentation and congestion are est. 2-3 weeks; the others bring protobuf + OpenSSL or a second message framework. Reconsidered if question 2 is answered "public test". |
+| Clients re-run island extraction or object splits | Needs identical, fully loaded voxels in the whole box; one missing chunk yields no island, silently. |
+| Sending piece voxel ids in `Detach`; a fixed bulk rate | The client already holds the ids, a mask is several times smaller. A fixed rate queues megabytes in ENet's per-peer window ahead of live events. |
+| Client character collides with moving replicated pieces | The piece is shown 175-300 ms late: guaranteed corrections and snaps inside a collapse. |
+| Local rubble of 48-511 voxels in `Layer::Debris`; client store sized to the window cell count; evicting far chunks on a full store | Half-metre lumps would pass through each other. 649 MiB of CPU and GPU memory. Eviction is the memory milestone's work; "unsynced" is enough to stop the repair loop. |
+| Predicted carving; lockstep or predicted bodies; 30 Hz simulation | Needs rollback of terrain, colliders and islands. Jolt is not cross-platform deterministic here. Movement is tuned at 1/60. |
+
+## Open questions for the project owner
+
+1. **Is a 1 km zone part of the M1 acceptance?** (a) M1 is accepted on a 250 m arena and stage 9 moves behind M2;
+   (b) stage 9 is required. Recommendation: (a); the protocol is the same, only server memory and loading change.
+2. **Will strangers connect before M7?** (a) Trusted testers only: ENet and a plain token; (b) a public test:
+   encrypted transport with connect tokens (est. +8-12 days, replaces the transport of stage 5). Recommendation: (a).
+3. **Is a Windows machine with Clang available now?** (a) Yes: the golden test runs there in stage 0; (b) no: terrain
+   agreement stays unproven until M6, with server terrain mode as the safety net. Recommendation: (a), Core tests only.
+4. **Will servers always be x86-64 with AVX2?** If ARM or older hosts are wanted, fixed-point noise is needed and
+   belongs in stage 0, before terrain content exists. Recommendation: x86-64 with AVX2 only.
+5. **Is a hole one round trip after the click acceptable in the first playable?** (a) Yes, predicted carving is
+   judged in M2 playtests; (b) no: predicted carving with rollback joins M1 (est. +6-10 days). Recommendation: (a).
+6. **Is it acceptable that lumps under about 0.8 m (512 voxels) are not shared?** Each client sees its own rubble; it
+   blocks nobody and is not cover. (a) Yes, the threshold is tuned in stage 6; (b) no: a lower threshold costs server
+   bodies and snapshot bytes (64 awake pieces is the budget). Recommendation: (a).
