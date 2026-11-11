@@ -283,7 +283,18 @@ CI and the Windows-client / Linux-server correction-rate measurement (M6; in M1 
 | Local rubble of 48-511 voxels in `Layer::Debris`; client store sized to the window cell count; evicting far chunks on a full store | Half-metre lumps would pass through each other. 649 MiB of CPU and GPU memory. Eviction is the memory milestone's work; "unsynced" is enough to stop the repair loop. |
 | Predicted carving; lockstep or predicted bodies; 30 Hz simulation | Needs rollback of terrain, colliders and islands. Jolt is not cross-platform deterministic here. Movement is tuned at 1/60. |
 
-## Open questions for the project owner
+## Owner decisions (2026-11-11)
+
+The owner accepted the recommended answer to every question below:
+1. M1 is accepted on a 250 m arena; the on-demand server world for 1 km zones moves behind M2.
+2. Trusted testers only before M7: ENet with a plain token, no encrypted transport.
+3. A Windows machine with Clang is to be used in stage 0 for the Core golden terrain test only
+   (if none turns out to be available, server terrain mode is the safety net until M6).
+4. Servers are x86-64 with AVX2 only; no fixed-point noise.
+5. A hole appearing one round trip after the click is acceptable; predicted carving is judged in M2.
+6. Pieces under the replicated threshold (start 512 voxels) are client-only rubble; tuned in stage 6.
+
+## Questions as they were put to the owner
 
 1. **Is a 1 km zone part of the M1 acceptance?** (a) M1 is accepted on a 250 m arena and stage 9 moves behind M2;
    (b) stage 9 is required. Recommendation: (a); the protocol is the same, only server memory and loading change.

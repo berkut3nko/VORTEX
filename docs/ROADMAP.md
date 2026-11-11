@@ -124,7 +124,7 @@ Goal: one server and two clients walk in the same region and see each other's de
   session file from M1.
 
 ### Still open
-- Player caps per region type, and whether big zones need interest management in M1 or later.
+- Player caps per region type. (M1 is accepted on a 250 m arena; owner answers are in design/networking.md.)
 - Regrowth rules (what regrows, how fast, visible or only when unobserved).
 - How much the client is trusted (anti-cheat depth) for PvP.
 - Largest conjured object, and the limit of conjured matter per player.
