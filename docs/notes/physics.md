@@ -22,9 +22,14 @@ search for the symbol if they have drifted.
 - `tests/physics/TerrainColliderTests.cpp` - suite `TerrainColliders` (streaming, edits, focus, unload, character on terrain).
 - `tests/physics/TerrainGuardTests.cpp` - suites `TerrainGuard` (freeze/park/resume, re-cook rules) and
   `FrozenBodies` (`SetFrozen` alone, fixture `Bare`).
+- The guard as `sim::Simulation` calls it is pinned in `tests/sim/SimulationTests.cpp`:
+  `StepFreezesABodyWhoseGroundHasNoColliderYet` (a tick freezes a crate with no collider under it, then it resumes
+  and lands) and `StepPhysicsGuardsWhatGameCodeCreatedAfterTheStreamingPhase` (fails if `SimulateBodies` stops
+  calling `GuardBodies`: the guard inside `TerrainColliders::Update` does not see a body made after it).
 - All three build into one executable, `VortexPhysicsTests` (`tests/CMakeLists.txt:31`, sources globbed).
-- Callers outside the module: `src/engine/internal/Engine.cpp:213-240` (frame order), `:81-87` (teardown),
-  `:290` (log line); the game's character in `src/main.cpp:86-99`. `scene` owns entity bodies.
+- Callers outside the module (since M1 stage 1 the physics world and the terrain colliders belong to `sim::Simulation`):
+  `src/sim/internal/Simulation.cpp:50-60` (streaming, guard + step + sync), `:108-115` (teardown);
+  `src/engine/internal/Engine.cpp:203-230` (frame order: which phase is called when), `:279` (log line); the game's character in `src/main.cpp:86-99`. `scene` owns entity bodies.
 
 ## 2. Invariants
 
@@ -38,7 +43,7 @@ search for the symbol if they have drifted.
 - Jolt runs on its own thread pool (`JPH::JobSystemThreadPool` inside `Simulation`, `PhysicsConfig::threads`,
   0 = hardware - 1 clamped to 1..8), not on the engine `JobSystem`. Only collider cooking uses the latter.
 - `Shutdown()` destroys every body and character and clears `movables`/`frozenCount`/events (PW.cpp:448).
-  `Engine` resets `terrain` before `physics.Shutdown()` (Engine.cpp:81, :87); the scene must be cleared first
+  `sim::Simulation::Shutdown` resets `terrain` before `physics.Shutdown()` (Simulation.cpp:108-115); the scene must be cleared first
   (ARCHITECTURE "Destruction order"). Every `BodyId`/`CharacterId` is dead after `Shutdown()`; a new
   `Initialize()` builds a fresh `Simulation` whose ids start over, so an id kept across it can match a
   different body or character. Drop all ids on shutdown.
@@ -62,7 +67,11 @@ search for the symbol if they have drifted.
 - `UpdateCharacter`, `CreateCharacter`, `SetCharacterPosition` use `sim->tempAllocator`, the same allocator
   `Step` uses: never call them concurrently with `Step`.
 
-### Order within a frame (Engine.cpp:213-240)
+### Order within a frame (Engine.cpp:203-230, Simulation.cpp:50-60)
+`Engine::Run` reaches these calls through `sim::Simulation`: `UpdateStreaming(camera, {camera})` is the first two,
+`StepPhysics()` is the bracket without `OnFixedUpdate`. `Simulation::Step` (a server tick) runs the same calls once
+each, with the window held in place and no `OnFixedUpdate`; there `terrain.Update` runs once per tick, so everything
+counted in `Update()` calls (`kBodyKeepUpdates`, the scan) is counted in ticks on a server and in frames in the engine.
 `world.Update` -> `terrain.Update` (consume changed chunks, scan, drop, `InstallResults`, `GuardBodies`,
 `ProcessDirty`) -> up to 4 x [`OnFixedUpdate`, `terrain.GuardBodies`, `physics.Step(fixedDt)`,
 `scene.SyncFromPhysics`]. Inside `Update` the order install -> guard -> process is deliberate (T.cpp:600-604):

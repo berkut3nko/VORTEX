@@ -73,6 +73,7 @@ namespace {
         {"u_DrawList", 7, BindingType::StorageBuffer, "DrawListBuffer"},
         {"u_Lights", 8, BindingType::StorageBuffer, "LightBuffer"},
         {"u_Particles", 9, BindingType::StorageBuffer, "ParticleBuffer"},
+        {"u_Hud", 10, BindingType::StorageBuffer, "HudBuffer"},
     };
     constexpr uint32_t kFirstTextureBinding = 16;
 
@@ -117,6 +118,7 @@ namespace {
             {"taa", "fullscreen.vert", "taa.frag", {"u_Frame"},
              {{16, "u_Color"}, {17, "u_History"}, {18, "u_GVelocity"}, {19, "u_GDepth"}}},
             {"present", "fullscreen.vert", "present.frag", {"u_Frame"}, {{16, "u_Color"}}},
+            {"hud", "hud.vert", "hud.frag", {"u_Frame", "u_Hud"}, {}},
         };
         return pipelines;
     }
@@ -124,7 +126,7 @@ namespace {
     const char* const kShaderFiles[] = {
         "fullscreen.vert", "gbuffer_world.frag", "gbuffer_object.vert", "gbuffer_object_front.frag",
         "gbuffer_object_inside.frag", "lighting.frag", "composite.frag", "particles.vert",
-        "particles.frag", "taa.frag", "present.frag",
+        "particles.frag", "taa.frag", "present.frag", "hud.vert", "hud.frag",
     };
 
     bool IsFragment(std::string_view file) { return file.ends_with(".frag"); }
@@ -416,7 +418,7 @@ TEST(ShaderContract, LightingWritesIrradianceAndCount) {
 }
 
 TEST(ShaderContract, SingleTargetPassesWriteOneFloatColour) {
-    for (const char* file : {"composite.frag", "particles.frag", "taa.frag", "present.frag"}) {
+    for (const char* file : {"composite.frag", "particles.frag", "taa.frag", "present.frag", "hud.frag"}) {
         LOAD_SHADER(r, file);
         ASSERT_EQ(r.outputs.size(), 1u) << file;
         EXPECT_EQ(r.outputs[0].location, 0u) << file;
@@ -424,7 +426,7 @@ TEST(ShaderContract, SingleTargetPassesWriteOneFloatColour) {
         EXPECT_EQ(r.outputs[0].components, 4u) << file;
     }
     // These passes render without a depth attachment, so they cannot write depth.
-    for (const char* file : {"composite.frag", "taa.frag", "present.frag"}) {
+    for (const char* file : {"composite.frag", "taa.frag", "present.frag", "hud.frag"}) {
         LOAD_SHADER(r, file);
         EXPECT_FALSE(r.writesDepth) << file;
     }
@@ -623,9 +625,46 @@ TEST(LayoutContract, ParticleMatchesVxParticle) {
     ExpectMember(*layout, "params", offsetof(fx::GpuParticle, params));
 }
 
+TEST(LayoutContract, HudQuadMatchesVxHudQuad) {
+    const BlockLayout* layout = FindBlockInAnyShader("VxHudQuad", true);
+    ASSERT_NE(layout, nullptr) << "no shader declares VxHudQuad quads[]";
+    EXPECT_EQ(layout->arrayStride, sizeof(HudQuad));
+    EXPECT_EQ(layout->members.size(), 2u);
+    ExpectMember(*layout, "rect", offsetof(HudQuad, x));
+    ExpectMember(*layout, "data", offsetof(HudQuad, color));
+    // data.y / data.z are bitsLo / bitsHi, read as a uvec4 after the colour.
+    EXPECT_EQ(offsetof(HudQuad, bitsLo), offsetof(HudQuad, color) + 4);
+    EXPECT_EQ(offsetof(HudQuad, bitsHi), offsetof(HudQuad, color) + 8);
+}
+
+// hud.frag finds a glyph cell's bit with the grid size from common.glsl; the CPU font packs the
+// bits with BitmapFont's. Read from the source text, like the material constants below.
+TEST(LayoutContract, HudCellGridMatchesTheFont) {
+    const std::filesystem::path path = std::filesystem::path(VORTEX_TEST_SOURCE_DIR) / "shaders" / "include" / "common.glsl";
+    std::ifstream file(path);
+    ASSERT_TRUE(file.is_open()) << path.string();
+    const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    auto constant = [&text](const std::string& name) -> std::optional<long> {
+        const std::string declaration = "const int " + name;
+        const size_t at = text.find(declaration);
+        if (at == std::string::npos) return std::nullopt;
+        const size_t equals = text.find('=', at + declaration.size());
+        const size_t end = text.find(';', at);
+        if (equals == std::string::npos || end == std::string::npos || equals > end) return std::nullopt;
+        return std::strtol(text.c_str() + equals + 1, nullptr, 10);
+    };
+    const std::optional<long> cellsX = constant("VX_HUD_CELLS_X");
+    const std::optional<long> cellsY = constant("VX_HUD_CELLS_Y");
+    ASSERT_TRUE(cellsX.has_value());
+    ASSERT_TRUE(cellsY.has_value());
+    EXPECT_EQ(*cellsX, BitmapFont::kGlyphWidth);
+    EXPECT_EQ(*cellsY, BitmapFont::kGlyphHeight);
+    EXPECT_LE(BitmapFont::kGlyphWidth * BitmapFont::kGlyphHeight, 64) << "the bits must fit data.y and data.z";
+}
+
 TEST(LayoutContract, StructLayoutsAgreeAcrossShaders) {
     // The same struct must not be laid out differently by two shaders.
-    for (const std::string_view name : {"VxInstance", "VxBvhNode", "VxMaterial", "VxLight", "VxParticle", "FrameUniforms"}) {
+    for (const std::string_view name : {"VxInstance", "VxBvhNode", "VxMaterial", "VxLight", "VxParticle", "VxHudQuad", "FrameUniforms"}) {
         const BlockLayout* reference = nullptr;
         for (const char* file : kShaderFiles) {
             LOAD_SHADER(r, file);

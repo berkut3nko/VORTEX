@@ -339,6 +339,13 @@ namespace vortex::editor {
 
     // --- per frame: input ----------------------------------------------------------------------------
 
+    void Editor::ReleaseInput(Engine& engine) {
+        Impl& s = *m_Impl;
+        s.EndLook(engine.Window());
+        EndStroke();
+        s.hoverValid = false;
+    }
+
     void Editor::OnUpdate(Engine& engine, float dt) {
         Impl& s = *m_Impl;
         Input& in = engine.GetInput();
@@ -367,11 +374,13 @@ namespace vortex::editor {
         if (hasUi) {
             // imgui_impl_glfw keeps reporting the position of a disabled cursor: without this the
             // panels would react to the invisible cursor while the camera turns.
+            // Set every frame of the look, not only at its start: the UI layer shares the flag
+            // (play mode) and clears its own bits when the game re-enables ImGui input.
             ImGuiIO& io = ImGui::GetIO();
-            if (s.looking && !s.noMouseSet) {
+            if (s.looking) {
                 io.ConfigFlags |= ImGuiConfigFlags_NoMouse;
                 s.noMouseSet = true;
-            } else if (!s.looking && s.noMouseSet) {
+            } else if (s.noMouseSet) {
                 io.ConfigFlags &= ~ImGuiConfigFlags_NoMouse;
                 s.noMouseSet = false;
             }

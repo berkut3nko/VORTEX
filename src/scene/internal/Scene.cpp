@@ -2,7 +2,6 @@ module;
 
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
@@ -182,7 +181,7 @@ namespace vortex::scene {
             return kNoEntity;
         }
 
-        if (!desc.model->IsBaked() && !desc.model->Bake(s.store)) {
+        if (s.config.bakeModels && !desc.model->IsBaked() && !desc.model->Bake(s.store)) {
             Log::Error("Scene: voxel object '{}' could not be baked (chunk store full)", desc.model->Name());
             return kNoEntity;
         }
@@ -202,7 +201,7 @@ namespace vortex::scene {
         s.registry.emplace<VoxelBody>(entity, desc.model, desc.visible);
         const std::string& name = desc.name.empty() ? desc.model->Name() : desc.name;
         if (!name.empty()) s.registry.emplace<Name>(entity, name);
-        if (rubble && s.IsSmall(desc.model->SolidCount())) s.registry.emplace<Debris>(entity);
+        if (rubble && s.config.markDebris && s.IsSmall(desc.model->SolidCount())) s.registry.emplace<Debris>(entity);
         return entity;
     }
 
@@ -398,7 +397,7 @@ namespace vortex::scene {
             const bool small = s.IsSmall(pieceModel->SolidCount());
             // Only possible when the old model is shared and the store is full: the piece is
             // simulated but not drawn (Bake logs it and leaves the model unbaked).
-            pieceModel->Bake(s.store);
+            if (s.config.bakeModels) pieceModel->Bake(s.store);
 
             const bool kept = i == 0;
             const Entity target = kept ? entity : s.registry.create();
@@ -416,14 +415,15 @@ namespace vortex::scene {
                 s.registry.get<Transform>(target) = placed;
                 s.registry.get<VoxelBody>(target).model = std::move(pieceModel);
                 // What is left of the object is itself no more than a lump: rubble like the rest.
-                if (small && s.config.debrisRemnants && pieceMotion == physics::MotionType::Dynamic && !s.registry.all_of<Debris>(target)) {
+                if (small && s.config.markDebris && s.config.debrisRemnants && pieceMotion == physics::MotionType::Dynamic &&
+                    !s.registry.all_of<Debris>(target)) {
                     s.registry.emplace<Debris>(target);
                 }
             } else {
                 s.registry.emplace<Transform>(target, placed);
                 s.registry.emplace<VoxelBody>(target, std::move(pieceModel), visible);
                 if (!name.empty()) s.registry.emplace<Name>(target, name);
-                if (small) s.registry.emplace<Debris>(target);       // rubble: cleaned up by Update()
+                if (small && s.config.markDebris) s.registry.emplace<Debris>(target);       // rubble: cleaned up by Update()
                 result.pieces.push_back(target);
             }
         }
@@ -488,41 +488,5 @@ namespace vortex::scene {
         for (const Entity entity : lost) s.registry.destroy(entity);
         if (!lost.empty()) Log::Info("Scene: removed {} object(s) that fell out of the world", lost.size());
         return static_cast<uint32_t>(lost.size());
-    }
-
-    // --- render data -----------------------------------------------------------------------------
-
-    void Scene::GatherInstances(std::vector<graphics::InstanceDesc>& out) const {
-        const entt::registry& registry = m_Impl->registry;
-        for (const auto [entity, transform, voxels] : registry.view<const Transform, const VoxelBody>().each()) {
-            if (!voxels.visible || !voxels.model) continue;
-            const glm::mat4 current = transform.current.ToMatrix();
-            const glm::mat4 previous = transform.previous.ToMatrix();
-            for (const voxel::ModelPart& part : voxels.model->Parts()) {
-                const glm::mat4 offset = glm::translate(glm::mat4(1.0f), glm::vec3(part.offset));
-                graphics::InstanceDesc instance;
-                instance.localToWorld = current * offset;
-                instance.prevLocalToWorld = previous * offset;
-                instance.slot = part.slot;
-                instance.boundsMin = part.boundsMin;
-                instance.boundsMax = part.boundsMax;
-                instance.palette = voxels.model->Palette();
-                out.push_back(instance);
-            }
-        }
-    }
-
-    void Scene::GatherLights(std::vector<graphics::PointLight>& out) const {
-        const entt::registry& registry = m_Impl->registry;
-        for (const auto [entity, transform, light] : registry.view<const Transform, const PointLight>().each()) {
-            if (!(light.intensity > 0.0f)) continue;
-            graphics::PointLight gathered;
-            gathered.position = glm::dvec3(transform.current.position + transform.current.rotation * light.offset);
-            gathered.color = light.color;
-            gathered.intensity = light.intensity;
-            gathered.radius = light.radius;
-            gathered.sourceRadius = light.sourceRadius;
-            out.push_back(gathered);
-        }
     }
 }

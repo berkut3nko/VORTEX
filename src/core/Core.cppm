@@ -11,3 +11,4 @@ export import :profiler;
 export import :paths;
 export import :args;
 export import :input;
+export import :hud;

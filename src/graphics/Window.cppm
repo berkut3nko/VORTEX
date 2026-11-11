@@ -51,7 +51,23 @@ export namespace vortex::graphics {
         bool ConsumeResized();
         bool IsMinimized() const;
 
-        /// @brief Hides the cursor and delivers unbounded relative motion (mouse look).
+        /// @brief Window size in screen coordinates (the unit of Input::MouseX/Y); differs from
+        /// FramebufferSize() on scaled (HiDPI) outputs.
+        glm::ivec2 WindowSize() const;
+        /// @brief The window has the keyboard focus.
+        bool IsFocused() const;
+        /// @brief The pointer is over the content area (GLFW_HOVERED). On Wayland a pointer
+        /// lock only starts once this is true.
+        bool IsHovered() const;
+
+        /**
+         * @brief Hides the cursor and delivers unbounded relative motion (mouse look):
+         * GLFW_CURSOR_DISABLED plus raw (unaccelerated) motion where supported. On Wayland GLFW
+         * locks the pointer (pointer-constraints + relative-pointer); the lock starts when the
+         * pointer is over the window. On X11 the pointer is grabbed and warped to the centre.
+         * Motion arrives through the cursor callback as a virtual position: use
+         * Input::MouseDelta*, never absolute positions. The delta is reset on every change.
+         */
         void SetCursorCaptured(bool captured);
         bool IsCursorCaptured() const { return m_CursorCaptured; }
         void SetTitle(const std::string& title);
@@ -66,6 +82,7 @@ export namespace vortex::graphics {
         Input* m_Input = nullptr;
         bool m_Resized = false;
         bool m_CursorCaptured = false;
+        bool m_CaptureLogged = false;
         bool m_OwnsGlfw = false;
     };
 }

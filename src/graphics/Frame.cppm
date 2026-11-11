@@ -8,6 +8,7 @@ module;
 
 export module vortex.graphics:frame;
 
+import vortex.core;
 import vortex.voxel;
 import vortex.fx;
 
@@ -43,7 +44,7 @@ export namespace vortex::graphics {
         glm::ivec4 gridSize{0};
         glm::ivec4 gridMinChunk{0};
         glm::ivec4 counts{0};
-        glm::ivec4 settings{0};
+        glm::ivec4 settings{0};          ///< x features, y debug view, z front-face draw count, w HUD backdrop dim 0..255
     };
     static_assert(sizeof(FrameUniforms) == 3 * 64 + 21 * 16);
 
@@ -143,6 +144,12 @@ export namespace vortex::graphics {
         std::span<const PointLight> lights;
         /// Particles relative to the render origin (see ParticleSystem::BuildRenderData and Renderer::RenderOrigin).
         std::span<const fx::GpuParticle> particles;
+        /// HUD quads in output pixels (HudCanvas::Quads), drawn in order after tone mapping and
+        /// before the ImGui layer. May be empty.
+        std::span<const HudQuad> hud;
+        /// Darkens the tone-mapped image under the HUD (0 = unchanged, 1 = black), e.g. behind a
+        /// menu. Free: the present pass applies it while it writes every pixel anyway.
+        float hudDim = 0.0f;
 
         double time = 0.0;          ///< Seconds since start.
         float deltaTime = 0.016f;

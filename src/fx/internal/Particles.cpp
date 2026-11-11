@@ -86,7 +86,7 @@ namespace vortex::fx {
 
         bool Spawn(const ParticleDesc& desc) {
             if (alive >= capacity) {
-                if (!warnedFull) {
+                if (!warnedFull && capacity > 0) {    // a pool of 0 is "no particles" on purpose (a session server)
                     warnedFull = true;
                     Log::Warn("ParticleSystem: pool of {} particles is full, new particles are dropped", capacity);
                 }

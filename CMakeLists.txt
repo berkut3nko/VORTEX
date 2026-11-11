@@ -7,8 +7,10 @@ cmake_minimum_required(VERSION 3.28)
 #    Vortex::Core      core / math / voxel / fx    (no GPU, no window: usable by
 #                                                    tools, tests, dedicated servers)
 #    Vortex::Physics   Jolt integration
+#    Vortex::Sim       scene (ECS) + the simulation: world, physics, entities on a
+#                      numbered fixed tick (no GPU, no window: what a session server runs)
 #    Vortex::Graphics  Vulkan renderer, window, UI
-#    Vortex::Engine    scene (ECS), application loop, editor  <- games link this
+#    Vortex::Engine    application loop, editor                <- games link this
 #    VortexShaders     GLSL -> SPIR-V
 # =============================================================================
 project(VORTEX VERSION 0.2.0 LANGUAGES CXX C)
@@ -118,6 +120,11 @@ vortex_add_module_library(VortexPhysics physics)
 target_link_libraries(VortexPhysics PUBLIC VortexCore PRIVATE Jolt)
 add_library(Vortex::Physics ALIAS VortexPhysics)
 
+# --- Simulation: scene + sim, still no GPU and no window --------------------------
+vortex_add_module_library(VortexSim scene sim)
+target_link_libraries(VortexSim PUBLIC VortexCore VortexPhysics EnTT::EnTT)
+add_library(Vortex::Sim ALIAS VortexSim)
+
 # --- Graphics ------------------------------------------------------------------
 vortex_add_module_library(VortexGraphics graphics)
 target_link_libraries(VortexGraphics
@@ -127,13 +134,68 @@ target_link_libraries(VortexGraphics
 add_library(Vortex::Graphics ALIAS VortexGraphics)
 
 # --- Engine (what games link) ----------------------------------------------------
-vortex_add_module_library(VortexEngine scene engine editor)
+vortex_add_module_library(VortexEngine engine editor)
 target_link_libraries(VortexEngine
-    PUBLIC  VortexCore VortexPhysics VortexGraphics EnTT::EnTT vortex_imgui
+    PUBLIC  VortexCore VortexPhysics VortexSim VortexGraphics EnTT::EnTT vortex_imgui
     PRIVATE vortex_imguizmo glfw
 )
 add_dependencies(VortexEngine VortexShaders)
 add_library(Vortex::Engine ALIAS VortexEngine)
+
+# -----------------------------------------------------------------------------
+#  The GPU-free libraries must stay GPU-free: a session server and its tests are
+#  built from them (docs/design/networking.md). This walks everything a target
+#  links, directly or through its dependencies, and stops the configure step if
+#  a renderer, window or UI library has crept in.
+# -----------------------------------------------------------------------------
+function(vortex_collect_link_closure target out_var)
+    set(_seen "")
+    set(_queue ${target})
+    while(_queue)
+        list(POP_FRONT _queue _item)
+        # $<LINK_ONLY:x> is how a static library records its PRIVATE dependencies.
+        string(REGEX REPLACE "^\\$<LINK_ONLY:(.*)>$" "\\1" _item "${_item}")
+        if(_item IN_LIST _seen)
+            continue()
+        endif()
+        list(APPEND _seen "${_item}")
+        if(NOT TARGET "${_item}")
+            continue()
+        endif()
+        get_target_property(_aliased "${_item}" ALIASED_TARGET)
+        if(_aliased)
+            list(APPEND _queue "${_aliased}")
+            continue()
+        endif()
+        get_target_property(_type "${_item}" TYPE)
+        if(NOT _type STREQUAL "INTERFACE_LIBRARY")
+            get_target_property(_direct "${_item}" LINK_LIBRARIES)
+            if(_direct)
+                list(APPEND _queue ${_direct})
+            endif()
+        endif()
+        get_target_property(_interface "${_item}" INTERFACE_LINK_LIBRARIES)
+        if(_interface)
+            list(APPEND _queue ${_interface})
+        endif()
+    endwhile()
+    set(${out_var} "${_seen}" PARENT_SCOPE)
+endfunction()
+
+function(vortex_assert_gpu_free target)
+    vortex_collect_link_closure(${target} _closure)
+    foreach(_item ${_closure})
+        if(_item MATCHES "^(VortexGraphics|VortexEngine|Vortex::Graphics|Vortex::Engine|Vulkan.*|vortex_vulkan|glfw.*|vk-bootstrap.*|vortex_vma|vortex_imgui|vortex_imguizmo)$"
+           OR _item MATCHES "lib(vulkan|glfw)")
+            message(FATAL_ERROR "VORTEX: ${target} must not link '${_item}': it has to build and run "
+                                "without a GPU or a window (docs/design/networking.md, stage 1).")
+        endif()
+    endforeach()
+endfunction()
+
+vortex_assert_gpu_free(VortexCore)
+vortex_assert_gpu_free(VortexPhysics)
+vortex_assert_gpu_free(VortexSim)
 
 # --- Tools & tests ---------------------------------------------------------------
 if(VORTEX_BUILD_TOOLS)

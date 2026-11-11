@@ -15,6 +15,7 @@
 //      VX_NEED_DRAW_LIST   instance draw list (object rasterisation)
 //      VX_NEED_LIGHTS      point lights
 //      VX_NEED_PARTICLES   particle instances
+//      VX_NEED_HUD         HUD quads (game interface, drawn after tone mapping)
 //  Only declared resources end up in the pipeline layout (layouts are reflected from SPIR-V),
 //  and the renderer binds resources BY NAME (u_Frame, u_Grid, ...), so names here matter.
 //
@@ -53,7 +54,7 @@ layout(set = 0, binding = 0, std140) uniform FrameUniforms {
     ivec4 gridSize;              // xyz = window size in chunks
     ivec4 gridMinChunk;          // xyz = absolute chunk coordinate of the window minimum
     ivec4 counts;                // x = instance count, y = BVH node count, z = light count, w = frame index
-    ivec4 settings;              // x = feature flags (VX_FEATURE_*), y = debug view (VX_DEBUG_*), z = front-face draw count, w = unused
+    ivec4 settings;              // x = feature flags (VX_FEATURE_*), y = debug view (VX_DEBUG_*), z = front-face draw count, w = HUD backdrop dim (0..255, present pass)
 } u_Frame;
 
 const int VX_FEATURE_SUN_SHADOWS      = 1;
@@ -111,6 +112,16 @@ struct VxParticle {          // mirrors fx::GpuParticle (48 bytes)
     vec4 params;             // x = emissive multiplier, y = shape (0 square, 1 soft disc), z = unlit
 };
 
+struct VxHudQuad {           // mirrors vortex::HudQuad (32 bytes)
+    vec4 rect;               // xy = top-left corner, zw = size (output pixels, y down)
+    uvec4 data;              // x = colour (RGBA8, red in the low byte, display values), y = cells 0..31, z = cells 32..44
+};
+// A HUD quad is covered by VX_HUD_CELLS_X x VX_HUD_CELLS_Y cells (row-major from the top-left,
+// bit = row * VX_HUD_CELLS_X + column); a cell is drawn when its bit is set. Mirrors
+// vortex::BitmapFont::kGlyphWidth / kGlyphHeight.
+const int VX_HUD_CELLS_X = 5;
+const int VX_HUD_CELLS_Y = 9;
+
 const uint VX_OCC_STRIDE = 1042u;    // uint32 words per chunk in u_Occ (voxel::kOccupancyWords)
 const uint VX_ID_STRIDE  = 8192u;    // uint32 words per chunk in u_Ids (32768 ids, 4 per word)
 
@@ -140,6 +151,10 @@ layout(set = 0, binding = 8, std430) readonly buffer LightBuffer     { VxLight l
 
 #ifdef VX_NEED_PARTICLES
 layout(set = 0, binding = 9, std430) readonly buffer ParticleBuffer  { VxParticle particles[]; } u_Particles;
+#endif
+
+#ifdef VX_NEED_HUD
+layout(set = 0, binding = 10, std430) readonly buffer HudBuffer      { VxHudQuad quads[]; } u_Hud;
 #endif
 
 // ---- Accessors for shared/trace.glsl ---------------------------------------------------------

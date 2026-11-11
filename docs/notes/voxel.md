@@ -69,7 +69,7 @@ do not bounds-check (0..31 only); `GetSafe` does. A `Chunk` is 36 KB: keep it on
   never touch `m_Cells`, `m_Grid` or the `ChunkStore`.
 - Jobs hold `shared_ptr<Shared>`, so a `World` may die with jobs queued; generator and `RegionStore` live until the last
   job ends. `JobSystem` and `ChunkStore` are held by reference and must outlive the `World` (member order
-  `Engine.cpp:50-55`: jobs, store, world).
+  `src/sim/internal/Simulation.cpp:67-72`: jobs, store, world; `sim::Simulation` owns them since M1 stage 1).
 - Order inside `Update` (`:104`): `Recenter` (only when the window minimum changed) -> `IntegrateResults` (budget
   `maxIntegrationsPerUpdate`) -> `SubmitJobs` (while `inFlight < m_MaxJobs`), nearest cells first.
 - Cell lifecycle: `Unloaded -> Loading` (`SubmitJobs`) `-> Empty | Uniform | Dense` (`IntegrateResults`);
@@ -183,6 +183,9 @@ the `VX_*` accessor macros defined there and, with the same names, in the shader
 - `CarveSphere`: a voxel survives when `hardness > power` (equal is removed) or it is `Indestructible`. Water and lava
   have hardness 0 and are protected only by the flag. With `materials == nullptr` everything is removed.
 - `World::Save()` has exactly two callers: the editor (`Editor.cpp:833`) and `~World` when `saveDirectory` is set.
+  `sim::Simulation` passes `saveDirectory` through (the engine's world, and with it the editor's button, persists when
+  `EngineConfig::world.saveDirectory` is set); only `sim::ServerConfig` clears it, because a session world is memory
+  only. A network client (stage 3) must leave it empty too: nothing enforces that yet.
   There is no autosave: a crash loses all edits since the last save. `Save()` writes every dirty region file on the
   calling (main) thread.
 - A region file with a bad header is ignored with a warning; a truncated one keeps the chunks read before the break
@@ -191,7 +194,7 @@ the `VX_*` accessor macros defined there and, with the same names, in the shader
 - `RegionStore::Load` reads the region file from disk while holding the mutex and `Flush` writes under it: the main
   thread's `PersistCell -> Save` can stall behind a worker's disk read. Regions are never evicted from memory.
 - `TerrainSettings::voxelSize` and `WorldConfig::voxelSize` are separate fields and nothing checks that they agree (the
-  engine copies one into the other, `Engine.cpp:96`).
+  simulation copies one into the other when it builds the default generator, `Simulation.cpp:93`).
 - `IWorldGenerator::Generate` runs on workers, concurrently, repeatedly for the same chunk. The terrain tile cache is
   mutex-guarded and cleared at 4096 tiles (`Generator.cpp:160-163`). Generators write `ids` only; `LoadJob` rebuilds
   the pyramid and demotes trivial Dense results; a `Uniform` result with id 0 becomes `Empty`.

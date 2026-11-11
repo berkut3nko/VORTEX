@@ -218,6 +218,7 @@ namespace vortex::graphics {
             io.DeltaTime = deltaTime > kMinDeltaTime ? deltaTime : kMinDeltaTime;
         }
 
+        ApplyInputFlags();
         ImGui::NewFrame();
         m_FrameOpen = true;
     }
@@ -238,7 +239,8 @@ namespace vortex::graphics {
         }
         ImGui::SetCurrentContext(g_Context);
         ImDrawData* drawData = ImGui::GetDrawData();
-        if (drawData == nullptr || !drawData->Valid || drawData->CmdListsCount <= 0) {
+        // Play mode with the debug overlay hidden submits no window: nothing to record.
+        if (drawData == nullptr || !drawData->Valid || drawData->CmdListsCount <= 0 || drawData->TotalVtxCount <= 0) {
             return;
         }
         if (drawData->DisplaySize.x <= 0.0f || drawData->DisplaySize.y <= 0.0f) {
@@ -248,7 +250,33 @@ namespace vortex::graphics {
     }
 
     void UiLayer::UpdateInputCapture(Input& input) const {
+        if (!m_InputEnabled) {
+            input.SetUiCapture(false, false);
+            return;
+        }
         input.SetUiCapture(WantsMouse(), WantsKeyboard());
+    }
+
+    void UiLayer::SetInputEnabled(bool enabled) {
+        m_InputEnabled = enabled;
+        ApplyInputFlags();
+    }
+
+    void UiLayer::ApplyInputFlags() {
+        if (!m_Initialized || g_Context == nullptr) return;
+        ImGui::SetCurrentContext(g_Context);
+        // Two owners share ImGuiConfigFlags_NoMouse: this layer (play mode) and the editor (its
+        // right-button look). Each clears only what it set. While disabled, a bit someone else
+        // cleared is set again and from then on owned here.
+        ImGuiIO& io = ImGui::GetIO();
+        constexpr ImGuiConfigFlags kFlags = ImGuiConfigFlags_NoMouse | ImGuiConfigFlags_NoMouseCursorChange;
+        if (!m_InputEnabled) {
+            m_AddedFlags |= kFlags & ~io.ConfigFlags;
+            io.ConfigFlags |= kFlags;
+        } else if (m_AddedFlags != 0) {
+            io.ConfigFlags &= ~m_AddedFlags;
+            m_AddedFlags = 0;
+        }
     }
 
     bool UiLayer::WantsMouse() const {

@@ -19,7 +19,6 @@ import vortex.math;
 import vortex.voxel;
 import vortex.fx;
 import vortex.physics;
-import vortex.graphics;
 
 export namespace vortex::scene {
 
@@ -46,6 +45,18 @@ export namespace vortex::scene {
         /// then stay for good). To keep one particular entity, remove its Debris component after
         /// Damage; static and kinematic objects are never affected.
         bool debrisRemnants = true;
+        /// false: the scene never adds the Debris component by itself - not to small pieces that
+        /// Damage splits off, not to the remnant, not to objects created with
+        /// VoxelObjectDesc::debris - so Update() removes nothing as rubble (a Debris component
+        /// the game adds by hand still works). Pieces below `minPieceVoxels` still never become
+        /// entities. This is the scene of a session server (sim::ServerConfig): which entities
+        /// exist there is decided by the server's rules, never by a viewer-dependent clean-up.
+        bool markDebris = true;
+        /// false: the scene never bakes a model into the chunk store (CreateVoxelObject, the
+        /// pieces made by Damage). Models keep their voxels and get their bodies; they just hold
+        /// no chunk slots, because nothing is drawn or ray traced: a session server. A model
+        /// that somebody else baked is used as it is.
+        bool bakeModels = true;
         uint32_t debrisParticleStride = 3;    ///< One debris particle burst per this many carved voxels (>= 1).
 
         // --- rubble clean-up (entities with the Debris component), applied by Update() ---
@@ -60,7 +71,7 @@ export namespace vortex::scene {
 
     /// @brief What to create with Scene::CreateVoxelObject.
     struct VoxelObjectDesc {
-        std::shared_ptr<voxel::VoxelModel> model;       ///< Required. Baked into the scene's store if it is not baked yet.
+        std::shared_ptr<voxel::VoxelModel> model;       ///< Required. Baked into the scene's store if it is not baked yet (SceneConfig::bakeModels).
         glm::vec3 position{0.0f};                       ///< World metres: where the model origin (minimum corner) goes.
         glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
         physics::MotionType motion = physics::MotionType::Dynamic;
@@ -72,7 +83,8 @@ export namespace vortex::scene {
         /// The object is rubble (terrain or wreckage that broke off). A dynamic one with a body
         /// then follows the debris rules of SceneConfig: below `minPieceVoxels` no entity is
         /// created at all - the voxels become particles and kNoEntity is returned, which is not
-        /// an error; below `debrisBodyVoxels` it gets the Debris component and is cleaned up.
+        /// an error; below `debrisBodyVoxels` it gets the Debris component and is cleaned up
+        /// (unless SceneConfig::markDebris is off).
         bool debris = false;
     };
 
@@ -103,8 +115,10 @@ export namespace vortex::scene {
      * models, rigid bodies, lights and lifetimes together.
      * @details
      *  - The scene only *references* the chunk store, material library, physics world and
-     *    particle system it is constructed from. It has no dependency on a GPU device or a
-     *    window, so everything here runs in unit tests.
+     *    particle system it is constructed from. The module imports nothing of the renderer
+     *    (it is part of the GPU-free library Vortex::Sim), so everything here runs in unit
+     *    tests and on a session server. What the renderer needs is read from the registry by
+     *    vortex::GatherInstances / vortex::GatherLights in vortex.engine.
      *  - **Destruction order**: a Scene must be destroyed (or `Clear()`ed) before the ChunkStore
      *    and before `PhysicsWorld::Shutdown()` / destruction, because entities own bodies and
      *    model references (chunk slots). `~Scene` calls `Clear()`.
@@ -121,16 +135,19 @@ export namespace vortex::scene {
      *    snapshot; entries that died in the meantime are harmless because stale ids are safe.
      *  - Main-thread only.
      *
-     * Frame protocol (what vortex::Engine does):
+     * Frame protocol (what vortex::Engine does; the physics and lifetime steps are
+     * sim::Simulation::StepPhysics and UpdateLifetimes):
      * @code
      *   scene.BeginFrame();                    // previous = current, once per rendered frame
      *   for each fixed step:
      *       app.OnFixedUpdate(); terrain.GuardBodies(); physics.Step(dt);
      *       scene.SyncFromPhysics();           // bodies -> Transform::current
      *   app.OnUpdate();
-     *   scene.GatherInstances(instances); scene.GatherLights(lights);  -> renderer
+     *   GatherInstances(scene, instances); GatherLights(scene, lights);  -> renderer (vortex.engine)
      *   scene.SetViewer(camera); scene.Update(frameDt);   // lifetimes, light fades, rubble (after the frame was drawn)
      * @endcode
+     * Without a renderer (sim::Simulation::Step, a session server) there is no BeginFrame and no
+     * viewer: every tick is SyncFromPhysics, then Update(fixed step).
      */
     class Scene {
     public:
@@ -151,6 +168,7 @@ export namespace vortex::scene {
          * (mass and inertia are real); layer Static for static bodies, Debris below
          * `debrisBodyVoxels` solid voxels, Dynamic otherwise. A model without solid voxels gets
          * no body. Requesting a body before the physics world is initialised is an error.
+         * With SceneConfig::bakeModels off the model is not baked and no chunk slot is used.
          * @return kNoEntity (and a log line) if the model is null, could not be baked because
          * the store ran out of slots, or the requested body could not be created; nothing is
          * leaked in that case (a model that could not be baked is left unbaked and holds no
@@ -249,7 +267,9 @@ export namespace vortex::scene {
          *  - New pieces smaller than `debrisBodyVoxels` are rubble: they get the Debris component
          *    and are cleaned up by Update(). So does the damaged entity itself once what is left
          *    of it is that small and dynamic (`SceneConfig::debrisRemnants`); otherwise it keeps
-         *    its identity and components, Debris included if it had it.
+         *    its identity and components, Debris included if it had it. With
+         *    `SceneConfig::markDebris` off nothing is marked: every piece of at least
+         *    `minPieceVoxels` stays until somebody destroys it.
          *  - If nothing big enough is left the entity is destroyed (`destroyed = true`).
          *  - The old model is released before the pieces are baked, so an unshared object never
          *    runs out of chunk slots by being damaged. A piece whose body cannot be created
@@ -289,17 +309,6 @@ export namespace vortex::scene {
          * @return Number of entities destroyed.
          */
         uint32_t DestroyBelow(float height);
-
-        // --- render data -------------------------------------------------------------------------
-
-        /// @brief Appends one InstanceDesc per baked chunk (ModelPart) of every visible voxel
-        /// object: localToWorld / prevLocalToWorld = current / previous transform x part offset,
-        /// plus the part's slot, tight bounds and the model's palette.
-        void GatherInstances(std::vector<graphics::InstanceDesc>& out) const;
-
-        /// @brief Appends the point lights of all entities with Transform + PointLight and a
-        /// positive intensity, in world space.
-        void GatherLights(std::vector<graphics::PointLight>& out) const;
 
     private:
         struct Impl;

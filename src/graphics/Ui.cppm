@@ -42,7 +42,19 @@ export namespace vortex::graphics {
         void Draw(VkCommandBuffer cmd);
 
         /// @brief Copies ImGui's capture state into the input object (call after BeginFrame).
+        /// With input disabled both capture flags are false.
         void UpdateInputCapture(Input& input) const;
+        /**
+         * @brief Whether ImGui gets the mouse at all (default true). Disabled: ImGui ignores
+         * the mouse and leaves the cursor shape alone (ImGuiConfigFlags_NoMouse |
+         * NoMouseCursorChange) and UpdateInputCapture never hides input from the game. Play mode
+         * disables it so a hidden or locked cursor can neither hover a window nor have its
+         * keys swallowed. While disabled the flags are re-applied at every BeginFrame; enabling
+         * clears only the bits this function added, so the editor's own NoMouse (right-button
+         * look) is neither removed by an enable nor kept by a disable.
+         */
+        void SetInputEnabled(bool enabled);
+        bool InputEnabled() const { return m_InputEnabled; }
         bool WantsMouse() const;
         bool WantsKeyboard() const;
 
@@ -52,5 +64,9 @@ export namespace vortex::graphics {
         bool m_HasBackends = false;
         bool m_FrameOpen = false;
         bool m_HasDrawData = false;
+        void ApplyInputFlags();
+
+        bool m_InputEnabled = true;
+        int m_AddedFlags = 0;      ///< ImGuiConfigFlags bits SetInputEnabled(false) set and must clear
     };
 }

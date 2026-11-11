@@ -31,6 +31,9 @@ void main() {
         color = VxLinearToSrgb(color);
     }
 
+    // Backdrop of a HUD menu: darkening here costs nothing, a full-screen blended quad would not.
+    color *= 1.0 - float(clamp(u_Frame.settings.w, 0, 255)) * (1.0 / 255.0);
+
     // +- half an 8-bit step.
     color += (Dither(gl_FragCoord.xy) - 0.5) * (1.0 / 255.0);
     o_Color = vec4(clamp(color, vec3(0.0), vec3(1.0)), 1.0);

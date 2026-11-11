@@ -36,33 +36,33 @@ namespace vortex {
     }
 
     struct Engine::Impl {
-        explicit Impl(const EngineConfig& c)
-            : config(c), store(c.chunkCapacity), particles(c.maxParticles),
-              scene(store, materials, physics, particles, SceneConfigFor(c)) {}
+        explicit Impl(const EngineConfig& c) : config(c), sim(SimulationConfigFor(c)) {}
 
-        static scene::SceneConfig SceneConfigFor(const EngineConfig& c) {
-            scene::SceneConfig config = c.scene;
-            config.voxelSize = c.world.voxelSize;
+        /// The simulation of an offline game: the engine's own settings, everything else default.
+        static sim::SimulationConfig SimulationConfigFor(const EngineConfig& c) {
+            sim::SimulationConfig config;
+            config.chunkCapacity = c.chunkCapacity;
+            config.maxParticles = c.maxParticles;
+            config.fixedTimeStep = c.fixedTimeStep;
+            config.colliderRadius = c.colliderRadius;
+            config.fallOutDepth = c.fallOutDepth;
+            config.world = c.world;
+            config.scene = c.scene;
             return config;
         }
 
         EngineConfig config;
-        JobSystem jobs;
         Input input;
-        voxel::MaterialLibrary materials;
-        voxel::WorldMaterials worldMaterials;
-        voxel::ChunkStore store;
-        std::unique_ptr<voxel::World> world;
-        physics::PhysicsWorld physics;
-        std::unique_ptr<physics::TerrainColliders> terrain;
-        fx::ParticleSystem particles;
-        // After everything it references: entities own bodies and model chunk slots.
-        scene::Scene scene;
+        // World, physics, terrain colliders, scene and the tick counter. Declared before the
+        // renderer, which draws from its chunk store.
+        sim::Simulation sim;
 
         graphics::Window window;
         graphics::Device device;
         graphics::Renderer renderer;
         graphics::UiLayer ui;
+        HudCanvas hud;
+        bool hudOverflowReported = false;
 
         std::vector<graphics::InstanceDesc> instances;
         std::vector<graphics::PointLight> lights;
@@ -77,30 +77,17 @@ namespace vortex {
     Engine::~Engine() {
         Impl& s = *m_Impl;
         if (s.device.IsInitialized()) s.device.WaitIdle();
-        s.scene.Clear();            // releases bodies and model chunk slots before physics and the store go away
-        s.terrain.reset();
-        s.world.reset();
+        s.sim.Shutdown();           // entities (bodies, model chunk slots), terrain colliders, world, physics
         s.ui.Shutdown();
         s.renderer.Shutdown();
         s.device.Shutdown();
         s.window.Shutdown();
-        s.physics.Shutdown();
     }
 
     bool Engine::Initialize(std::shared_ptr<voxel::IWorldGenerator> generator) {
         Impl& s = *m_Impl;
         Log::Init();
-        s.worldMaterials = voxel::RegisterDefaultWorldMaterials(s.materials);
-        if (!generator) {
-            voxel::TerrainSettings terrain;
-            terrain.voxelSize = s.config.world.voxelSize;
-            terrain.materials = s.worldMaterials;
-            generator = voxel::CreateTerrainGenerator(terrain);
-        }
-        s.world = std::make_unique<voxel::World>(s.config.world, s.store, s.jobs, std::move(generator), &s.materials);
-
-        if (!s.physics.Initialize()) return false;
-        s.terrain = std::make_unique<physics::TerrainColliders>(s.physics, *s.world, s.jobs, s.materials);
+        if (!s.sim.Initialize(std::move(generator))) return false;
 
         graphics::Window* window = nullptr;
         if (!s.config.headless) {
@@ -115,7 +102,7 @@ namespace vortex {
         dc.appName = s.config.title;
         dc.validation = s.config.validation;
         if (!s.device.Initialize(dc, window)) return false;
-        if (!s.renderer.Initialize(s.device, window, s.config.width, s.config.height, s.store.Capacity(), s.config.render)) return false;
+        if (!s.renderer.Initialize(s.device, window, s.config.width, s.config.height, s.sim.Chunks().Capacity(), s.config.render)) return false;
         if (!s.ui.Initialize(s.device, window, s.renderer.BackbufferFormat(), s.renderer.BackbufferImageCount())) return false;
         s.renderer.SetUiLayer(&s.ui);
         s.initialized = true;
@@ -124,7 +111,11 @@ namespace vortex {
 
     void Engine::Explode(const glm::dvec3& center, float radius, float power) {
         Impl& s = *m_Impl;
-        voxel::World& world = *s.world;
+        voxel::World& world = s.sim.World();
+        voxel::MaterialLibrary& materials = s.sim.Materials();
+        physics::PhysicsWorld& physics = s.sim.Physics();
+        fx::ParticleSystem& particles = s.sim.Particles();
+        scene::Scene& scene = s.sim.Scene();
         const float vs = world.VoxelSize();
         const glm::vec3 centerVoxel = glm::vec3(center / static_cast<double>(vs));
         const float radiusVoxels = radius / vs;
@@ -137,38 +128,38 @@ namespace vortex {
         for (size_t i = 0; i < removed.size(); i += stride) {
             const glm::dvec3 p = world.VoxelCenter(removed[i].voxel);
             const glm::vec3 away = glm::normalize(glm::vec3(p - center) + glm::vec3(0.0f, 0.2f, 0.0f)) * 3.0f;
-            fx::SpawnVoxelBreak(s.particles, p, s.materials.Get(voxel::kWorldPalette, removed[i].oldId).color, vs, away);
+            fx::SpawnVoxelBreak(particles, p, materials.Get(voxel::kWorldPalette, removed[i].oldId).color, vs, away);
         }
-        fx::SpawnExplosion(s.particles, center, radius);
+        fx::SpawnExplosion(particles, center, radius);
 
         // Terrain that lost its support becomes falling objects.
         const glm::ivec3 margin(static_cast<int>(radiusVoxels) + 24);
         const glm::ivec3 c = glm::ivec3(glm::floor(centerVoxel));
         for (voxel::FloatingIsland& island :
-             voxel::ExtractFloatingIslands(world, &s.materials, c - margin, c + margin, 60000)) {
+             voxel::ExtractFloatingIslands(world, &materials, c - margin, c + margin, 60000)) {
             // Rubble: crumbs become particles right here, small lumps are cleaned up by the scene.
             auto model = std::make_shared<voxel::VoxelModel>(std::move(island.volume), voxel::kWorldPalette, "debris");
-            s.scene.CreateVoxelObject({.model = std::move(model), .position = glm::vec3(world.VoxelToWorld(island.origin)), .debris = true});
+            scene.CreateVoxelObject({.model = std::move(model), .position = glm::vec3(world.VoxelToWorld(island.origin)), .debris = true});
         }
 
         // Objects caught in the blast lose voxels and may fall apart. The list is a snapshot:
         // the pieces created here are not damaged a second time.
         std::vector<scene::Entity> caught;
-        s.scene.QueryBodies(math::AABB(glm::vec3(center) - glm::vec3(radius), glm::vec3(center) + glm::vec3(radius)), caught);
-        for (const scene::Entity entity : caught) s.scene.Damage(entity, center, radius);
+        scene.QueryBodies(math::AABB(glm::vec3(center) - glm::vec3(radius), glm::vec3(center) + glm::vec3(radius)), caught);
+        for (const scene::Entity entity : caught) scene.Damage(entity, center, radius);
 
         // Push nearby bodies outwards (the new pieces included).
-        for (const auto [entity, body] : s.scene.Registry().view<const scene::RigidBody>().each()) {
-            if (!s.physics.IsValid(body.body)) continue;
-            const physics::BodyState state = s.physics.GetState(body.body);
+        for (const auto [entity, body] : scene.Registry().view<const scene::RigidBody>().each()) {
+            if (!physics.IsValid(body.body)) continue;
+            const physics::BodyState state = physics.GetState(body.body);
             const glm::vec3 d = state.position - glm::vec3(center);
             const float dist = glm::length(d);
             if (dist > radius * 3.0f) continue;
             const float falloff = 1.0f - dist / (radius * 3.0f);
-            s.physics.AddImpulse(body.body, (dist > 1e-3f ? d / dist : glm::vec3(0, 1, 0)) * (s.physics.GetMass(body.body) * 6.0f * falloff));
+            physics.AddImpulse(body.body, (dist > 1e-3f ? d / dist : glm::vec3(0, 1, 0)) * (physics.GetMass(body.body) * 6.0f * falloff));
         }
         math::AABB wake(glm::vec3(center) - glm::vec3(radius * 2.0f), glm::vec3(center) + glm::vec3(radius * 2.0f));
-        s.physics.ActivateInBox(wake);
+        physics.ActivateInBox(wake);
 
         // A flash of light that fades out quickly and removes itself once it is too dim to see.
         constexpr float kFlashDecay = 9.0f, kFlashCutoff = 0.05f;
@@ -179,7 +170,7 @@ namespace vortex {
         flash.radius = radius * 8.0f;
         flash.decay = kFlashDecay;
         flash.lifetime = std::log(flash.intensity / kFlashCutoff) / kFlashDecay;
-        if (flash.lifetime > 0.0f) s.scene.CreateLight(flash);
+        if (flash.lifetime > 0.0f) scene.CreateLight(flash);
     }
 
     int Engine::Run(Application& app) {
@@ -187,7 +178,8 @@ namespace vortex {
         if (!s.initialized) return 1;
         app.OnInit(*this);
 
-        const float fixedDt = s.config.fixedTimeStep;
+        sim::Simulation& sim = s.sim;
+        const float fixedDt = sim.FixedTimeStep();
         double last = NowSeconds();
         double accumulator = 0.0;
         uint32_t frame = 0;
@@ -207,17 +199,18 @@ namespace vortex {
             last = now;
 
             const glm::uvec2 size = s.renderer.OutputSize();
+            s.hud.Begin(glm::vec2(size));
             s.ui.BeginFrame(size, dt);
             s.ui.UpdateInputCapture(s.input);
 
             // --- streaming -------------------------------------------------------------------
             {
                 ProfileScope scope("CPU: world");
-                s.world->Update(camera.position);
-                // The camera keeps the ground around the player. Bodies ask for their own
-                // colliders and are frozen while they have none (TerrainColliders::GuardBodies).
+                // The world window follows the camera, and the camera keeps the ground around
+                // the player. Bodies ask for their own colliders and are frozen while they have
+                // none (TerrainColliders::GuardBodies).
                 const glm::dvec3 focus[] = {camera.position};
-                s.terrain->Update(focus, s.config.colliderRadius);
+                sim.UpdateStreaming(camera.position, focus);
             }
 
             // --- fixed-step simulation -------------------------------------------------------
@@ -225,14 +218,13 @@ namespace vortex {
                 ProfileScope scope("CPU: simulation");
                 accumulator += dt;
                 int steps = 0;
-                s.scene.BeginFrame();       // what was drawn last frame becomes "previous"
+                sim.Scene().BeginFrame();   // what was drawn last frame becomes "previous"
                 while (accumulator >= fixedDt && steps < 4) {
                     app.OnFixedUpdate(*this, fixedDt);
-                    // Whatever the game or the last frame's update created or moved since the
-                    // last guard is checked before it is simulated.
-                    s.terrain->GuardBodies();
-                    s.physics.Step(fixedDt);
-                    s.scene.SyncFromPhysics();
+                    // Guard, physics step, pose sync; the tick is counted. Whatever the game or
+                    // the last frame's update created or moved since the last guard is checked
+                    // before it is simulated.
+                    sim.StepPhysics();
                     accumulator -= fixedDt;
                     ++steps;
                 }
@@ -241,28 +233,34 @@ namespace vortex {
             }
 
             app.OnUpdate(*this, dt);
-            s.particles.Update(dt, [&world = *s.world](const glm::dvec3& p) { return world.IsSolidAt(p); });
+            sim.Particles().Update(dt, [&world = sim.World()](const glm::dvec3& p) { return world.IsSolidAt(p); });
             app.OnGui(*this);
             s.ui.EndFrame();
 
             // --- render ----------------------------------------------------------------------
             s.instances.clear();
-            s.scene.GatherInstances(s.instances);
+            GatherInstances(sim.Scene(), s.instances);
             s.lights.clear();
-            s.scene.GatherLights(s.lights);
-            s.particles.BuildRenderData(s.world->WindowOrigin(), camera.position, s.gpuParticles);
+            GatherLights(sim.Scene(), s.lights);
+            sim.Particles().BuildRenderData(sim.World().WindowOrigin(), camera.position, s.gpuParticles);
 
             graphics::FrameInput in;
             in.camera = camera;
             in.sun = sun;
             in.sky = sky;
             in.fog = fog;
-            in.world = s.world.get();
-            in.store = &s.store;
-            in.materials = &s.materials;
+            in.world = &sim.World();
+            in.store = &sim.Chunks();
+            in.materials = &sim.Materials();
             in.instances = s.instances;
             in.lights = s.lights;
             in.particles = s.gpuParticles;
+            in.hud = s.hud.Quads();
+            in.hudDim = s.hud.BackgroundDim();
+            if (s.hud.Overflowed() && !s.hudOverflowReported) {
+                s.hudOverflowReported = true;
+                Log::Warn("HUD: more than {} quads in one frame; the rest were dropped", HudCanvas::kMaxQuads);
+            }
             in.time = now;
             in.deltaTime = dt;
 
@@ -274,9 +272,8 @@ namespace vortex {
             // Lifetimes and light fades advance after the frame was drawn, so a flash is seen
             // at full intensity on its first frame.
             // Rubble clean-up runs there too; then whatever lies far below the loaded world goes.
-            s.scene.SetViewer(camera.position);
-            s.scene.Update(dt);
-            s.scene.DestroyBelow(static_cast<float>(s.world->WindowOrigin().y) - s.config.fallOutDepth);
+            sim.Scene().SetViewer(camera.position);
+            sim.UpdateLifetimes(dt);
 
             Profiler::EndFrame();
             if (lastFrame) break;
@@ -284,12 +281,13 @@ namespace vortex {
 
         app.OnShutdown(*this);
         if (s.config.exitAfterFrames != 0) {
-            const voxel::WorldStats ws = s.world->Stats();
-            Log::Info("World: {} dense, {} uniform, {} empty chunks; store {}/{}", ws.denseChunks, ws.uniformChunks, ws.emptyChunks, s.store.UsedCount(), s.store.Capacity());
-            const physics::TerrainColliderStats ts = s.terrain->Stats();
+            const voxel::WorldStats ws = sim.World().Stats();
+            Log::Info("World: {} dense, {} uniform, {} empty chunks; store {}/{}", ws.denseChunks, ws.uniformChunks, ws.emptyChunks,
+                      sim.Chunks().UsedCount(), sim.Chunks().Capacity());
+            const physics::TerrainColliderStats ts = sim.Terrain().Stats();
             Log::Info("Physics: {} bodies ({} awake, {} frozen), {} terrain colliders; scene: {} voxel objects, {} rubble",
-                      s.physics.BodyCount(), s.physics.ActiveBodyCount(), ts.frozenBodies, ts.colliders, s.scene.VoxelObjectCount(),
-                      s.scene.DebrisCount());
+                      sim.Physics().BodyCount(), sim.Physics().ActiveBodyCount(), ts.frozenBodies, ts.colliders,
+                      sim.Scene().VoxelObjectCount(), sim.Scene().DebrisCount());
             // Last frame, plus the median of the profiler's history: a single frame is a noisy
             // sample (clock scaling of an integrated GPU), the median is what to compare runs by.
             const std::vector<Profiler::Timer> timers = Profiler::SnapshotTimers();
@@ -310,27 +308,51 @@ namespace vortex {
                 }
                 Log::Info("GPU {:<10} {:.2f} ms (median {:.2f} ms over {} frames)", pass.name, pass.milliseconds, median, samples);
             }
+            Log::Info("HUD: {} quads drawn on the last frame", s.renderer.Stats().hudQuads);
         }
         const uint32_t errors = s.device.ValidationErrorCount();
         if (errors > 0) Log::Error("{} Vulkan validation error(s) were reported during the run", errors);
         return errors > 0 ? 2 : 0;
     }
 
-    bool Engine::TerrainReady(const glm::dvec3& position) const { return m_Impl->terrain && m_Impl->terrain->IsReady(position); }
-    bool Engine::TerrainReady(const math::AABB& bounds) const { return m_Impl->terrain && m_Impl->terrain->IsReady(bounds); }
-    physics::TerrainColliderStats Engine::TerrainStats() const { return m_Impl->terrain ? m_Impl->terrain->Stats() : physics::TerrainColliderStats{}; }
+    bool Engine::TerrainReady(const glm::dvec3& position) const {
+        return m_Impl->sim.IsInitialized() && m_Impl->sim.Terrain().IsReady(position);
+    }
+    bool Engine::TerrainReady(const math::AABB& bounds) const {
+        return m_Impl->sim.IsInitialized() && m_Impl->sim.Terrain().IsReady(bounds);
+    }
+    physics::TerrainColliderStats Engine::TerrainStats() const {
+        return m_Impl->sim.IsInitialized() ? m_Impl->sim.Terrain().Stats() : physics::TerrainColliderStats{};
+    }
     float Engine::StepAlpha() const { return m_Impl->stepAlpha; }
     void Engine::RequestExit() { m_Impl->exitRequested = true; }
     const EngineConfig& Engine::Config() const { return m_Impl->config; }
-    JobSystem& Engine::Jobs() { return m_Impl->jobs; }
+    sim::Simulation& Engine::Simulation() { return m_Impl->sim; }
+    uint32_t Engine::Tick() const { return m_Impl->sim.Tick(); }
+    JobSystem& Engine::Jobs() { return m_Impl->sim.Jobs(); }
     Input& Engine::GetInput() { return m_Impl->input; }
-    voxel::MaterialLibrary& Engine::Materials() { return m_Impl->materials; }
-    const voxel::WorldMaterials& Engine::WorldMaterialIds() const { return m_Impl->worldMaterials; }
-    voxel::ChunkStore& Engine::Chunks() { return m_Impl->store; }
-    voxel::World& Engine::World() { return *m_Impl->world; }
-    physics::PhysicsWorld& Engine::Physics() { return m_Impl->physics; }
-    fx::ParticleSystem& Engine::Particles() { return m_Impl->particles; }
+    voxel::MaterialLibrary& Engine::Materials() { return m_Impl->sim.Materials(); }
+    const voxel::WorldMaterials& Engine::WorldMaterialIds() const { return m_Impl->sim.WorldMaterialIds(); }
+    voxel::ChunkStore& Engine::Chunks() { return m_Impl->sim.Chunks(); }
+    voxel::World& Engine::World() { return m_Impl->sim.World(); }
+    physics::PhysicsWorld& Engine::Physics() { return m_Impl->sim.Physics(); }
+    fx::ParticleSystem& Engine::Particles() { return m_Impl->sim.Particles(); }
     graphics::Renderer& Engine::Renderer() { return m_Impl->renderer; }
     graphics::Window* Engine::Window() { return m_Impl->config.headless ? nullptr : &m_Impl->window; }
-    scene::Scene& Engine::Scene() { return m_Impl->scene; }
+    HudCanvas& Engine::Hud() { return m_Impl->hud; }
+
+    glm::vec2 Engine::HudCursor() const {
+        const Impl& s = *m_Impl;
+        const glm::vec2 cursor(static_cast<float>(s.input.MouseX()), static_cast<float>(s.input.MouseY()));
+        if (s.config.headless) return cursor;
+        // Input reports screen coordinates; the HUD is laid out in framebuffer pixels.
+        const glm::ivec2 window = s.window.WindowSize();
+        const glm::ivec2 framebuffer = s.window.FramebufferSize();
+        if (window.x <= 0 || window.y <= 0) return cursor;
+        return cursor * glm::vec2(framebuffer) / glm::vec2(window);
+    }
+
+    bool Engine::WindowFocused() const { return !m_Impl->config.headless && m_Impl->window.IsFocused(); }
+    void Engine::SetImGuiInput(bool enabled) { m_Impl->ui.SetInputEnabled(enabled); }
+    scene::Scene& Engine::Scene() { return m_Impl->sim.Scene(); }
 }

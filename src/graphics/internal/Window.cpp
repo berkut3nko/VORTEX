@@ -176,14 +176,43 @@ namespace vortex::graphics {
         return size.x == 0 || size.y == 0;
     }
 
+    glm::ivec2 Window::WindowSize() const {
+        if (m_Window == nullptr) return glm::ivec2(0, 0);
+        int width = 0;
+        int height = 0;
+        glfwGetWindowSize(m_Window, &width, &height);
+        return glm::ivec2(std::max(width, 0), std::max(height, 0));
+    }
+
+    bool Window::IsFocused() const {
+        return m_Window != nullptr && glfwGetWindowAttrib(m_Window, GLFW_FOCUSED) != GLFW_FALSE;
+    }
+
+    bool Window::IsHovered() const {
+        return m_Window != nullptr && glfwGetWindowAttrib(m_Window, GLFW_HOVERED) != GLFW_FALSE;
+    }
+
     void Window::SetCursorCaptured(bool captured) {
         if (m_Window == nullptr || captured == m_CursorCaptured) return;
 
+        const bool raw = glfwRawMouseMotionSupported() == GLFW_TRUE;
+        // Raw motion first, so the very first relative event after the lock is already raw.
+        if (raw && captured) glfwSetInputMode(m_Window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
         glfwSetInputMode(m_Window, GLFW_CURSOR, captured ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
-        if (glfwRawMouseMotionSupported() == GLFW_TRUE) {
-            glfwSetInputMode(m_Window, GLFW_RAW_MOUSE_MOTION, captured ? GLFW_TRUE : GLFW_FALSE);
-        }
+        if (raw && !captured) glfwSetInputMode(m_Window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
         m_CursorCaptured = captured;
+
+        if (captured && !m_CaptureLogged) {
+            // A compositor without pointer locking reports a GLFW error right above this line.
+            m_CaptureLogged = true;
+            const int platform = glfwGetPlatform();
+            const char* name = platform == GLFW_PLATFORM_WAYLAND ? "Wayland (pointer lock)"
+                             : platform == GLFW_PLATFORM_X11     ? "X11 (pointer grab)"
+                             : platform == GLFW_PLATFORM_WIN32   ? "Win32"
+                             : platform == GLFW_PLATFORM_COCOA   ? "Cocoa"
+                                                                 : "other";
+            Log::Info("Window: cursor captured for mouse look on {}, raw motion {}", name, raw ? "on" : "not supported");
+        }
 
         // The cursor position jumps when the mode changes; do not report that as motion.
         if (m_Input != nullptr) m_Input->ResetCursorDelta();

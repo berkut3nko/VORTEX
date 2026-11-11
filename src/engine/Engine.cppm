@@ -18,6 +18,7 @@ export import vortex.fx;
 export import vortex.physics;
 export import vortex.graphics;
 export import vortex.scene;
+export import vortex.sim;
 
 export namespace vortex {
 
@@ -42,6 +43,9 @@ export namespace vortex {
         /// flight and then left behind by the window. Whatever rests below - static objects,
         /// sleeping ones - is never touched: flying up does not delete the village below.
         float fallOutDepth = 64.0f;
+        /// The terrain (sim::SimulationConfig::world). With a `saveDirectory` edits are kept:
+        /// loaded from there, saved on shutdown and by the editor's "Save world". Leave it empty
+        /// for a networked session, whose world must be memory only.
         voxel::WorldConfig world;
         /// Scene tuning: piece and rubble thresholds (see scene::SceneConfig). `voxelSize` is
         /// overwritten with the world's.
@@ -52,6 +56,20 @@ export namespace vortex {
         /// --ao-distance M --no-shadows --no-ao --no-emissive --no-taa.
         void ApplyCommandLine(const CommandLine& args);
     };
+
+    // --- render data of a scene --------------------------------------------------------------------
+    //  The scene module knows nothing of the renderer (it is part of the GPU-free Vortex::Sim);
+    //  these two functions read its registry and produce what graphics::FrameInput takes.
+
+    /// @brief Appends one InstanceDesc per baked chunk (ModelPart) of every visible voxel
+    /// object: localToWorld / prevLocalToWorld = current / previous transform x part offset,
+    /// plus the part's slot, tight bounds and the model's palette. A model that is not baked
+    /// (SceneConfig::bakeModels off, or a full chunk store) has no parts and gives nothing.
+    void GatherInstances(const scene::Scene& scene, std::vector<graphics::InstanceDesc>& out);
+
+    /// @brief Appends the point lights of all entities with Transform + PointLight and a
+    /// positive intensity, in world space.
+    void GatherLights(const scene::Scene& scene, std::vector<graphics::PointLight>& out);
 
     class Engine;
 
@@ -69,9 +87,13 @@ export namespace vortex {
     /**
      * @brief Owns every subsystem and runs the frame: input, fixed-step simulation, world
      * streaming, scene, particles, rendering.
-     * @details Everything that is drawn or simulated besides the terrain is an entity of
-     * Scene(): voxel objects, lights, explosion flashes. The engine drives the scene's frame
-     * protocol (see scene::Scene) and renders what it gathers.
+     * @details Everything that is simulated - terrain, physics, terrain colliders, the scene,
+     * the tick counter - lives in one sim::Simulation (Simulation()); the accessors below
+     * (World(), Physics(), Scene() ...) are shortcuts into it. The engine adds input, the
+     * window, the renderer and the loop that decides how many ticks a frame simulates.
+     * Everything that is drawn or simulated besides the terrain is an entity of Scene(): voxel
+     * objects, lights, explosion flashes. The engine drives the scene's frame protocol (see
+     * scene::Scene) and renders what it gathers.
      */
     class Engine {
     public:
@@ -86,6 +108,12 @@ export namespace vortex {
         void RequestExit();
 
         const EngineConfig& Config() const;
+        /// @brief The simulated half of the game (world, physics, scene, tick). The engine steps
+        /// it from Run(): do not call its Step / StepPhysics yourself while the engine runs.
+        sim::Simulation& Simulation();
+        /// @brief Number of fixed steps simulated so far (sim::Simulation::Tick). Inside
+        /// Application::OnFixedUpdate it is the number of the tick being simulated.
+        uint32_t Tick() const;
         JobSystem& Jobs();
         Input& GetInput();
         voxel::MaterialLibrary& Materials();
@@ -96,6 +124,20 @@ export namespace vortex {
         fx::ParticleSystem& Particles();
         graphics::Renderer& Renderer();
         graphics::Window* Window();          ///< nullptr when headless.
+
+        // --- game interface (docs/design/game-ui.md) ----------------------------------------------
+        /// @brief The HUD of this frame: cleared and sized to the output by the engine at the
+        /// start of every frame, filled by the game (OnUpdate), drawn after tone mapping and
+        /// before ImGui. Works headless (it is part of the screenshot).
+        HudCanvas& Hud();
+        /// @brief The cursor in HUD (framebuffer) pixels. Meaningless while the cursor is captured.
+        glm::vec2 HudCursor() const;
+        /// @brief The window has the keyboard focus (false when headless).
+        bool WindowFocused() const;
+        /// @brief Whether ImGui receives the mouse and may hide input from the game
+        /// (graphics::UiLayer::SetInputEnabled). Default true; play mode turns it off so that a
+        /// locked cursor never hovers an ImGui window. Takes effect from the next frame.
+        void SetImGuiInput(bool enabled);
         /// @brief The entities of the game: voxel objects, lights, lifetimes (see scene::Scene).
         scene::Scene& Scene();
 

@@ -18,7 +18,8 @@ of commit ac17bcf (all re-checked against the code at 7a95975); search for the s
 | `internal/Pipeline.cpp` | `Pipeline::Create` (layout from reflection + validation of outputs), `DescriptorWriter` |
 | `src/graphics/Frame.cppm` | `FrameUniforms`, `FeatureFlags`, `DebugView`, `GpuLight`, `Camera`, `FrameInput` and its parts |
 | `src/graphics/Renderer.cppm`, `R.cpp` | `RenderSettings`, `RenderStats`, the whole frame: targets, GPU voxel mirror, passes, timers, screenshot |
-| `src/graphics/Ui.cppm`, `internal/Ui.cpp` | Dear ImGui context + backends; `Draw` is called inside the present pass |
+| `src/graphics/Ui.cppm`, `internal/Ui.cpp` | Dear ImGui context + backends; `Draw` is called inside the present pass; `SetInputEnabled` (play mode: no mouse for ImGui) |
+| `shaders/hud.vert`, `shaders/hud.frag` | game HUD: instanced quads from `u_Hud` (binding 10), 5 x 9 cell bits, premultiplied, after tone mapping |
 | `shaders/include/common.glsl` | `FrameUniforms` block, buffer binding table 0..9, G-buffer packing, camera helpers |
 | `shaders/include/gbuffer_object.glsl` | shared body of the two object fragment shaders (`VX_OBJECT_FRONT` switch) |
 | `shaders/shared/*.glsl`, `vx_cpp.h` | code compiled as GLSL and C++ (`trace`, `shading`, `cube`) |
@@ -112,8 +113,9 @@ Spaces, units, ranges
   relies on the per-tap depth/normal rejection in `lighting.frag:88-121` and the colour clamp in `taa.frag:77`.
 - `Frame.cppm:144` mentions `Renderer::RenderOrigin`; no such function exists. The origin is
   `World::WindowOrigin()`.
-- Spare fields, written but read by no shader: `outputSize`, `jitter.zw`, `settings.z` (front count),
-  `settings.w`. `FrameInput::deltaTime` is not read by the renderer. Reuse them before adding fields.
+- Spare fields, written but read by no shader: `jitter.zw`, `settings.z` (front count). `outputSize` is read by
+  `hud.vert` (pixels -> NDC) and `settings.w` by `present.frag` (HUD backdrop dim, 0..255). `FrameInput::deltaTime` is
+  not read by the renderer. Reuse spare fields before adding new ones.
 - `FrameUniforms` may only contain mat4 / vec4 / ivec4 (`Frame.cppm:22`); a vec3 or float breaks the
   "C++ layout == std140" assumption silently on the C++ side (the contract test catches the offsets).
 - A shader that declares a buffer it does not use still gets it in the layout, and `BindPipeline`
@@ -143,7 +145,8 @@ Spaces, units, ranges
   swapchain format (`ChooseSurfaceFormat`, Swapchain.cpp:40 only accepts two UNORM formats).
 - Pass timers: results belong to the frame this slot submitted two frames ago (`CollectTimings`,
   R.cpp:600). Timestamps are taken at `BOTTOM_OF_PIPE`; `SyncVoxelData` copies and `ClearHistoryTargets`
-  are outside every interval; the UI is inside `present`. `kPassNames` must stay in `Pass` enum order
+  are outside every interval. `present`, `hud` and `imgui` are three intervals *inside* the one backbuffer rendering
+  scope (`PassPresent`); a new draw there gets its own `Pass` or goes into one of them, never between them. `kPassNames` must stay in `Pass` enum order
   (R.cpp:64-67); the engine finds the median by the profiler name `"GPU: <name>"` (Engine.cpp:299).
 - Chunk uploads per frame = min(`maxChunkUploadsPerFrame`, what fits in the staging buffer after the
   material and grid bytes). Staging is 8 MiB (about 227 chunks of 36 936 bytes) and only grows to
@@ -153,6 +156,10 @@ Spaces, units, ranges
 - Resize / vsync change skip that frame (`PrepareSurface` returns false, R.cpp:781); a render-scale change
   does not. A pending screenshot stays requested until a frame is actually rendered, but the engine asks
   for it only once, on the last frame (Engine.cpp:271), and does not check the result of `RenderFrame`.
+- HUD: one `vkCmdDraw(6, hudCount)` with no vertex buffer; nothing is drawn (both timestamps still written) when the
+  canvas is empty. Quad colours are display values written into the UNORM backbuffer after the sRGB curve: do not
+  tone map them. The backdrop of a menu is dimmed in `present.frag`, not with a full-screen quad (that cost 0.15 ms
+  on the UHD 620). `UiLayer::Draw` returns early when ImGui produced no vertices (play mode, overlay hidden).
 - If the swapchain format changes on recreate, the renderer rebuilds its pipelines (R.cpp:769) but `UiLayer`
   was initialised once with the old format (Engine.cpp:119, Ui.cpp:107). Weak spot, never exercised headless.
   If that rebuild fails `pipelines` is null and every later frame is skipped with no further log.
@@ -240,7 +247,8 @@ F. Change temporal accumulation or the checkerboard
 - Start-up line `Renderer: headless mode, output WxH, render WxH, N chunk slots, X MiB GPU memory`
   (R.cpp:1729) confirms sizes; `Screenshot saved: file (WxH)` confirms the readback.
 - End-of-run lines `GPU <pass> a ms (median b ms over n frames)` for gbuffer, lighting, composite,
-  particles, taa, present: compare medians before and after (reference on the UHD 620 is in CLAUDE.md).
+  particles, taa, present, hud, imgui (always 0 headless: no ImGui backend), then `HUD: N quads drawn on the last
+  frame`: compare medians before and after (reference on the UHD 620 is in CLAUDE.md).
   All zero means timestamps are unsupported or too few frames ran.
 - `store a/b` in the `World:` line and `chunkUploadsPending` in `RenderStats` show an upload backlog; holes
   in terrain in an early screenshot that fill later are the upload budget, not a tracing bug.

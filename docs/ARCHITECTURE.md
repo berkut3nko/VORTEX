@@ -9,7 +9,7 @@ share. If code and document disagree, fix one of them.
 
 | Goal | Consequence in the design |
 |---|---|
-| Huge, streaming, persistent world | Sparse chunk storage, a toroidal window that moves with the player, generation on worker threads, region files that store only what players changed. |
+| Huge, streaming, persistent world | Sparse chunk storage, a toroidal window that moves with the player, generation on worker threads, region files that store only what players changed. (Persistence is a feature of `voxel::World`, used by the offline game and the map editor; a networked session's world is memory only, 7.4.) |
 | Everything destructible | Voxels are the single source of truth for rendering, collision and gameplay queries; edits are local and cheap (one 37 KiB chunk re-upload). |
 | Teardown-style image | Geometry is ray marched (no meshing); lighting is ray traced through the same data (soft sun shadows, ambient occlusion, emissive voxels) and accumulated over time. |
 | Runs on integrated GPUs | Rendering at a fraction of the output resolution, one ray of each kind per pixel per frame, every feature can be switched off. |
@@ -29,15 +29,17 @@ engine/
     include/             GPU-only includes; common.glsl is the C++ <-> GLSL contract
     *.vert *.frag        one SPIR-V module each
   src/
-    core/     vortex.core      log, jobs, profiler, input state, paths, rng, args
+    core/     vortex.core      log, jobs, profiler, input state, paths, rng, args, game HUD
+                               (canvas, bitmap font, menu, cursor capture: data only)
     math/     vortex.math      AABB / frustum / transform, reverse-Z projection, simplex noise
     voxel/    vortex.voxel     chunks, chunk store, world streaming, generator, regions, models,
                                ray queries, colliders, connectivity, .vox / glTF import
     fx/       vortex.fx        particle simulation and effect presets
     physics/  vortex.physics   Jolt behind an engine interface, terrain collider streaming
+    scene/    vortex.scene     entities (EnTT): components, object lifetime, destruction
+    sim/      vortex.sim       the simulation: world + physics + terrain colliders + scene on a numbered tick
     graphics/ vortex.graphics  Vulkan device, window, renderer, UI layer
-    scene/    vortex.scene     entities (EnTT): components, object lifetime, destruction, render data
-    engine/   vortex.engine    application loop, explosions, glue
+    engine/   vortex.engine    application loop, render data of the scene, explosions, glue
     editor/   vortex.editor    in-game editor: tool logic (no ImGui), panels, gizmo
   tests/                 GoogleTest suites, none of which need a GPU
   tools/                 cpu_render: software renderer built on the shared shader code
@@ -48,17 +50,25 @@ Libraries and what they may depend on (a lower layer never imports a higher one)
 ```
 Vortex::Core      core, math, voxel, fx        -> spdlog, glm, tinygltf      (no GPU, no window)
 Vortex::Physics   physics                      -> Core, Jolt
+Vortex::Sim       scene, sim                   -> Core, Physics, EnTT        (no GPU, no window)
 Vortex::Graphics  graphics                     -> Core, Vulkan, VMA, vk-bootstrap, GLFW, ImGui
-Vortex::Engine    scene, engine, editor        -> all of the above, EnTT, ImGuizmo
+Vortex::Engine    engine, editor               -> all of the above, ImGuizmo
 ```
 
-A dedicated server or a tool links `Vortex::Core` (+ `Vortex::Physics`) and never sees Vulkan.
+A dedicated server or a tool links `Vortex::Sim` (or less) and never sees Vulkan. This is checked
+when the build is configured: `vortex_assert_gpu_free` (`CMakeLists.txt`) walks everything that
+`VortexCore`, `VortexPhysics`, `VortexSim` and the test binary `VortexSimTests` link, directly or
+through their dependencies, and stops with an error if Graphics, Engine, Vulkan, GLFW, VMA or
+ImGui is among it.
 
-Inside `Vortex::Engine`, `scene` is the lower layer: it imports voxel, fx, physics and only the
-plain frame description types of graphics (`InstanceDesc`, `PointLight`), never a device, a
-window or `vortex.engine`. `engine` owns a `scene::Scene` and drives it. `editor` is the top
-layer: it imports `vortex.engine`, and nothing in `engine` or below knows it exists - a game
-that wants the editor owns an `editor::Editor` and forwards two callbacks to it (section 8).
+Inside `Vortex::Sim`, `scene` is the lower layer: it imports voxel, fx and physics, nothing of
+graphics and not `vortex.sim`. `sim` owns the scene together with the world, physics and the
+terrain colliders (`sim::Simulation`, 7.4). In `Vortex::Engine`, `engine` owns one
+`sim::Simulation`, steps it and draws it; the two functions that turn a scene into render data
+(`GatherInstances`, `GatherLights`) live there because their result types are graphics types.
+`editor` is the top layer: it imports `vortex.engine`, and nothing in `engine` or below knows it
+exists - a game that wants the editor owns an `editor::Editor` and forwards two callbacks to it
+(section 8).
 
 ## 3. Conventions
 
@@ -71,7 +81,8 @@ that wants the editor owns an `editor::Editor` and forwards two callbacks to it 
   * Interfaces are contracts: implementation work must not change exported signatures.
 * **Naming**: `PascalCase` types and functions, `m_PascalCase` private members, `camelCase`
   public fields and locals, `kPascalCase` constants. Namespaces `vortex`, `vortex::math`,
-  `vortex::voxel`, `vortex::fx`, `vortex::physics`, `vortex::graphics`, `vortex::scene`, `vortex::editor`.
+  `vortex::voxel`, `vortex::fx`, `vortex::physics`, `vortex::graphics`, `vortex::scene`, `vortex::sim`,
+  `vortex::editor`.
 * **Errors**: no exceptions across engine APIs. Functions that can fail return `bool` /
   `optional` / an invalid handle and log the reason (`Log::Error("... {}", x)`, std::format
   syntax). `Verify(cond, msg)` is for invariants whose violation would corrupt memory.
@@ -203,6 +214,7 @@ mirrors the block. Unit tests compare the two through reflection.
 | 7 | `u_DrawList` | instance indices to rasterise: front-facing boxes first, then boxes containing the camera | every frame |
 | 8 | `u_Lights` | `VxLight[]` | every frame |
 | 9 | `u_Particles` | `VxParticle[]` | every frame |
+| 10 | `u_Hud` | `VxHudQuad[]` (= `vortex::HudQuad`, 32 bytes: rect in output pixels, RGBA8 colour, 45 cell bits) | every frame |
 | 16+ | per-pass textures | declared by each shader | |
 
 `u_Occ`, `u_Ids`, `u_Grid`, `u_Materials` are device-local and filled through a per-frame
@@ -211,7 +223,7 @@ written while a frame in flight reads them). Chunk uploads are budgeted per fram
 (`RenderSettings::maxChunkUploadsPerFrame`); the GPU copy of the grid only exposes a dense
 chunk once its data has been uploaded (until then the entry is written as empty), so the GPU
 never traverses a slot it has not received. Per-frame data (uniforms, instances, BVH, draw
-list, lights, particles) lives in host-visible buffers owned by each frame-in-flight; they grow
+list, lights, particles, HUD quads) lives in host-visible buffers owned by each frame-in-flight; they grow
 (power of two) when needed and the old buffer goes to that frame's deletion queue. An
 always-bound buffer is never zero-sized: empty arrays still bind a small valid buffer.
 
@@ -269,7 +281,16 @@ current layout per image). All full-screen passes use `fullscreen.vert` (3 verti
    depth in a 3x3 neighbourhood, clamps it to the neighbourhood colour box, blends with weight
    `temporalParams.y`. Pass-through when TAA is off or the history is invalid.
 6. **present** - attachment backbuffer (O). Bilinear upscale, exposure, tone mapping, sRGB
-   curve, dither; then the UI (`UiLayer::Draw`) in the same rendering scope.
+   curve, the HUD backdrop dim (`settings.w`, section 11), dither; then in the same rendering
+   scope:
+7. **hud** - the game interface (section 11): `hud.vert` / `hud.frag`, one instanced draw
+   `vkCmdDraw(6, quadCount, 0, 0)` of `u_Hud`, premultiplied blending, display-space colours, no
+   texture: each quad is a 5 x 9 cell grid and a cell is drawn when its bit is set (solid
+   rectangles have all 45 bits, glyphs their bitmap). Works headless (it is in screenshots).
+8. **imgui** - `UiLayer::Draw` (debug overlay and editor; records nothing when no window was
+   submitted).
+
+Passes 6..8 are three timestamp intervals inside one rendering scope.
 
 After the frame the `cur` / `prev` indices swap. History is invalidated (`temporalParams.z = 0`)
 on the first frame, after a resize and after a camera cut.
@@ -284,7 +305,7 @@ RenderFrame(input)
   sync voxel data: staged copies for dirty slots (budgeted), grid, materials
   build frame data in render space: uniforms, instances (+ frustum culling into the draw list,
     front / inside classification), BVH, lights, particles
-  passes 1..6 with GPU timestamps
+  passes 1..8 with GPU timestamps (6..8 share the backbuffer rendering scope)
   screenshot copy if requested
   submit, present (windowed); out-of-date -> recreate
 ```
@@ -313,11 +334,12 @@ renderer binds (both clamp-to-edge); G-buffer inputs are read with `texelFetch`.
 | particles | `particles.vert` / `particles.frag` | RGBA16F | D32, test GREATER, no write | none | premultiplied |
 | taa | `fullscreen.vert` / `taa.frag` | RGBA16F | - | none | opaque |
 | present | `fullscreen.vert` / `present.frag` | backbuffer format | - | none | opaque |
+| hud | `hud.vert` / `hud.frag` | backbuffer format | - | none | premultiplied |
 
 Draw calls: full-screen passes `vkCmdDraw(3, 1, 0, 0)`; object boxes `vkCmdDraw(36, count, 0, firstInstance)`
 where the vertex shader reads `u_DrawList.indices[gl_InstanceIndex]` (in Vulkan `gl_InstanceIndex`
 includes `firstInstance`); particles `vkCmdDraw(6, particleCount, 0, 0)` (two triangles per
-instance, corner derived from `gl_VertexIndex`).
+instance, corner derived from `gl_VertexIndex`); HUD `vkCmdDraw(6, quadCount, 0, 0)` the same way.
 
 `fullscreen.vert` outputs `layout(location = 0) out vec2 v_Uv` with (0,0) at the top-left.
 
@@ -333,6 +355,7 @@ Resources per shader (set 0):
 | `particles.vert` / `.frag` | `u_Frame`, `u_Particles` | - |
 | `taa.frag` | `u_Frame` | 16 `u_Color` sampler2D nearest; 17 `u_History` sampler2D linear; 18 `u_GVelocity` sampler2D nearest; 19 `u_GDepth` sampler2D nearest |
 | `present.frag` | `u_Frame` | 16 `u_Color` sampler2D linear |
+| `hud.vert` / `.frag` | `u_Frame`, `u_Hud` | - |
 
 A shader that includes the trace buffers but does not use all of them still declares them
 (the reflected layout then contains them and the renderer binds them): the renderer binds
@@ -404,8 +427,9 @@ on top.
 
 `physics::PhysicsWorld` wraps Jolt: bodies are compounds of boxes (from `BuildColliderBoxes`,
 densities from materials, so mass and inertia are real) or static triangle meshes. It is
-stepped with a fixed time step by the engine loop; after every step the scene copies body poses
-into the entities' transforms (`Scene::SyncFromPhysics`).
+stepped with a fixed time step by `sim::Simulation` (7.4), as often as the engine loop or a
+server asks; after every step the scene copies body poses into the entities' transforms
+(`Scene::SyncFromPhysics`).
 
 Every body carries 64 bits of user data, returned by ray casts and contact events. Bodies of
 scene entities store `scene::ToUserData(entity)` (a tag in the upper half, the entity id in the
@@ -493,7 +517,9 @@ between two steps.
 `scene::Scene` is the list of things in the game besides the terrain: an `entt::registry` plus
 the few systems that tie voxel models, rigid bodies, lights and lifetimes together. It is
 constructed from references to a `ChunkStore`, `MaterialLibrary`, `PhysicsWorld` and
-`ParticleSystem` - not from `Engine` - so it runs, and is unit tested, without a GPU or a window.
+`ParticleSystem` - not from `Engine` - and imports nothing of the renderer, so it runs, and is
+unit tested, without a GPU or a window. In a running game those four belong to a
+`sim::Simulation` (7.4), which owns the scene as well.
 
 Components are plain structs (`scene/Components.cppm`); games add their own to the same registry.
 
@@ -526,30 +552,39 @@ Rules everything relies on:
   list; `Explode` is the model. New pieces are not in the snapshot, so nothing is hit twice.
 * **Destruction order.** A scene must be cleared before `PhysicsWorld::Shutdown()` and before the
   chunk store goes away; `~Scene` calls `Clear()` (the registry's own destructor fires no signals),
-  and `Engine` declares the scene after the subsystems it references and clears it explicitly.
+  and `sim::Simulation` declares the scene after the subsystems it references and clears it
+  first in `Shutdown()`.
 * **EnTT is an implementation detail for most code.** `scene::Entity`, `kNoEntity`, `TryGet<>`
   and views obtained from `Registry()` work without including EnTT; only code that spells
   `entt::` names includes `<entt/entt.hpp>` (in its global module fragment).
 
-Frame protocol, driven by `Engine::Run`:
+Frame protocol, driven by `Engine::Run` through the three phases of `sim::Simulation` (7.4):
 
 ```
+sim.UpdateStreaming(camera, {camera})        once per frame:
+    world.Update(camera)                         the window follows the camera
+    terrain.Update({camera}, colliderRadius)     collider streaming, body guard (6.1)
 scene.BeginFrame()                 previous = current, once per rendered frame
-world.Update(camera); terrain.Update({camera}, colliderRadius)   streaming, body guard (6.1)
 for each fixed step:
     app.OnFixedUpdate()
-    terrain.GuardBodies()          freeze / release, before anything new is simulated
-    physics.Step(dt)
-    scene.SyncFromPhysics()        body pose -> Transform::current
+    sim.StepPhysics()                        one tick:
+        terrain.GuardBodies()                    freeze / release, before anything new is simulated
+        physics.Step(fixedDt)
+        scene.SyncFromPhysics()                  body pose -> Transform::current
+        ++tick
 app.OnUpdate()                     game moves body-less entities (Scene::SetTransform)
-scene.GatherInstances / GatherLights -> FrameInput -> Renderer::RenderFrame
-scene.SetViewer(camera); scene.Update(frameDt)   lifetimes, light fades, rubble clean-up - after the frame was drawn
-scene.DestroyBelow(window bottom - fallOutDepth)
+particles.Update(frameDt)
+GatherInstances(scene) / GatherLights(scene) -> FrameInput -> Renderer::RenderFrame
+scene.SetViewer(camera)
+sim.UpdateLifetimes(frameDt)                 once per frame, after the frame was drawn:
+    scene.Update(frameDt)                        lifetimes, light fades, rubble clean-up
+    scene.DestroyBelow(window bottom - fallOutDepth)
 ```
 
-`GatherInstances` emits one `graphics::InstanceDesc` per baked chunk of every visible voxel
-object (transform x chunk offset, slot, tight bounds, palette); `GatherLights` one
-`graphics::PointLight` per light with a positive intensity. All lights are entities: persistent
+`vortex::GatherInstances` (in `vortex.engine`; the scene does not know graphics types) emits one
+`graphics::InstanceDesc` per baked chunk of every visible voxel object (transform x chunk offset,
+slot, tight bounds, palette); `vortex::GatherLights` one `graphics::PointLight` per light with a
+positive intensity. Both only read the scene's public registry. All lights are entities: persistent
 ones have no `Lifetime`, an explosion flash is `Transform + PointLight + Lifetime`.
 
 ### 7.2 Destruction
@@ -605,6 +640,54 @@ particle bursts in its material's colour:
 
 The cap is applied once per frame, so one large blast can exceed it until the end of its frame.
 
+With `SceneConfig::markDebris = false` the scene adds the `Debris` component to nothing, so none
+of the three rules ever fires (a component the game adds by hand is still honoured). That is the
+scene of a session server (7.4): what exists there must not depend on a viewer, an age or a cap.
+
+### 7.4 Simulation
+
+`sim::Simulation` (`vortex.sim`, library `Vortex::Sim`) is the simulated half of a game without
+anything that draws it: job system, material library, chunk store, `voxel::World`,
+`physics::PhysicsWorld`, `physics::TerrainColliders`, the particle pool and the `scene::Scene`,
+plus a tick counter. It is what `vortex::Engine` owns and renders (every `Engine` accessor such as
+`World()`, `Physics()`, `Scene()` is a shortcut into it), what a session server runs and what a
+network client will predict with (`docs/design/networking.md`).
+
+* **Tick.** A tick is one fixed step of `SimulationConfig::fixedTimeStep` (1/60 s). `Tick()` is
+  the number of ticks simulated so far, which is the number of the tick simulated next; it starts
+  at 0 and only a physics phase advances it. Inside `Application::OnFixedUpdate`, `Engine::Tick()`
+  is the tick being simulated.
+* **`Step(focusPoints)`** is one whole tick in the order a server uses:
+  `UpdateStreaming(focusPoints)` -> guard, physics step, pose sync -> `UpdateLifetimes(fixedDt)`
+  -> `++tick`. `focusPoints` are the positions that need terrain collision around them (the
+  players) and may be empty.
+* **Phases.** `UpdateStreaming`, `StepPhysics` (which counts the tick) and `UpdateLifetimes(dt)`
+  are public so that an owner can interleave its own work; the engine does (frame protocol in
+  7.1: streaming and lifetimes once per frame, 0 to 4 physics phases). Game code that changes the
+  simulation in a tick runs after the streaming phase and before the physics phase, so the body
+  guard sees what it made.
+* **World window.** `Step` and `UpdateStreaming(focusPoints)` advance loading but never move the
+  window: a server places it once (`World().LoadBlocking(centre)`). Only
+  `UpdateStreaming(windowFocus, focusPoints)` recentres it; the engine passes the camera. A world
+  whose window was never placed gets it with the minimum corner at chunk (0, 0, 0).
+* **Persistence.** `WorldConfig::saveDirectory` is passed to the world as given: an offline game
+  or the map editor (`EngineConfig::world.saveDirectory`, the editor's "Save world" button) keeps
+  its edits. A session world is memory only - it is `template + seed`, and a world that loaded
+  saved chunks would not be the one the other side generated - so `ServerConfig` clears the
+  directory, and a network client must leave it empty (stage 3).
+* **Not stepped: presentation.** `Step` neither advances particles nor calls
+  `Scene::BeginFrame()`; the owner that draws does both. Lifetimes run per tick in `Step` but per
+  rendered frame, with the frame time, in the engine - nothing a server and a client must agree
+  on may depend on `Lifetime` or on rubble clean-up.
+* **Server configuration.** `sim::ServerConfig(config)` returns the configuration with
+  `maxParticles = 0` (every effect is dropped silently), `scene.bakeModels = false` (models keep
+  their voxels and bodies but hold no chunk slots: the store belongs to the terrain),
+  `scene.markDebris = false` and `scene.debrisRemnants = false` (nothing is rubble).
+* **Lifetime.** `Initialize(generator)` registers the default world materials, creates the world,
+  starts physics and the terrain colliders; `Shutdown()` (also the destructor) destroys entities,
+  colliders, world and bodies in that order. Outside of that span `World()` and `Terrain()` must
+  not be called and the stepping functions do nothing. Main-thread only.
+
 ## 8. Editor
 
 `vortex.editor` is an in-game editor: it runs inside the game's own frame, on the live world.
@@ -636,7 +719,9 @@ and the tool overlays. Closed, the editor makes no ImGui call and only watches t
 Without a window (headless) both run unchanged and nothing is drawn, so
 `Shredborne --headless --editor` is a smoke test of every panel.
 
-**Input**, in priority order: ImGui (the `Input` object already hides what ImGui wants) ->
+**Input**, in priority order: the game's pause menu (while it is open the game does not call
+`editor.OnUpdate` at all, and releases a cursor the editor holds; section 11) -> ImGui (the
+`Input` object already hides what ImGui wants) ->
 camera look (right button, latched; the cursor is captured and ImGui is told to ignore the
 mouse) -> gizmo (left button while `ImGuizmo::IsOver()`) -> active tool -> game. While
 `CapturesInput()` is true the game must not react to mouse or keyboard, move the camera or touch
@@ -678,16 +763,28 @@ World (statistics, save).
 ## 9. Testing
 
 * `VortexCoreTests` - chunks, store, traversal vs. a reference DDA, BVH, world streaming /
-  editing / persistence, generator determinism, colliders, connectivity, importers, particles.
+  editing / persistence, generator determinism, colliders, connectivity, importers, particles;
+  the HUD: font bitmaps and measuring, anchors, canvas quads, menu input, cursor capture.
 * `VortexPhysicsTests` - bodies, shapes, ray casts, characters, terrain colliders; the body guard
   (a woken body the camera left behind, a body spawned where nothing is cooked, an unloaded
   chunk, the window edge, 60 bodies spread over the map, velocity kept through a freeze, parked
   bodies costing no collider, an edited chunk keeping its collider) and frozen bodies.
+* `VortexSimTests` - links `Vortex::Sim` only (no Vulkan, GLFW or ImGui in the binary; checked
+  at configure time). `sim::Simulation`: 600 ticks with the offline and with the server
+  configuration on flat ground (crates land on the terrain collider and fall asleep, a timed
+  light fades and expires on its tick, model chunk slots and particles only offline), 240 ticks
+  on the built-in terrain, what counts a tick, lifetimes per tick vs per phase, fall-out, the
+  window held by `Step` and moved only by the other streaming call, the body guard
+  (inside `Step` and inside `StepPhysics`), fall-out only in the lifetime phase, the persistent
+  offline world and the memory-only server world, `ServerConfig`, calls before `Initialize` and after `Shutdown`. The server scene on its own:
+  unbaked models through creation and damage (also with a full chunk store), nothing marked as
+  rubble, effects dropped by an empty particle pool.
 * `VortexGraphicsTests` - SPIR-V reflection of the real shader binaries, C++ / GLSL struct
-  layout parity, the material surface-kind constants (C++ vs. the text of `common.glsl`) and
+  layout parity (`VxHudQuad` included), the material surface-kind and HUD cell-grid constants
+  (C++ vs. the text of `common.glsl`) and
   their packing, proxy cube winding, pipeline description validation. No Vulkan device needed.
-* `VortexEngineTests` - the scene on real chunk store / material / physics / particle objects
-  (no device, no window): entity lifetime releasing bodies and chunk slots, shared models
+* `VortexEngineTests` - the scene with its offline configuration on real chunk store / material /
+  physics / particle objects (no device, no window): entity lifetime releasing bodies and chunk slots, shared models
   surviving damage, splitting (a cut beam is two entities whose voxels add up and which inherit
   motion), loose fragments, stale ids through every function, instance and light gathering,
   lifetimes, body <-> entity mapping; rubble (what is marked, crumbs that never become entities,
@@ -705,7 +802,9 @@ World (statistics, save).
   the sun). The run ends with the GPU time of every pass: last frame and the median of the last
   120 frames - compare medians. Adding `--editor` opens the editor with every
   panel, cycles the tools each frame and runs its actions (select, spawn, duplicate, brush,
-  import, delete), so the editor UI is exercised on every frame of the run.
+  import, delete), so the editor UI is exercised on every frame of the run. The log ends with
+  `HUD: N quads drawn on the last frame`; `--pause-menu` starts with the pause menu open and
+  `--no-hud` draws no HUD (screenshot comparison, GPU time of the hud pass).
 
 ## 10. Where the design leaves room
 
@@ -714,8 +813,39 @@ World (statistics, save).
 * **Bigger worlds**: world positions are already `double` / integer voxels; only render space
   is `float`. Physics is single precision and would need Jolt's double precision build far
   from the origin.
-* **Networking / dedicated server**: `Vortex::Core` + `Vortex::Physics` have no GPU or window
-  dependency, the simulation runs on a fixed step, generation is a pure function of the seed
-  and world state is stored as chunk deltas.
+* **Networking / dedicated server**: `Vortex::Core`, `Vortex::Physics` and `Vortex::Sim` have no
+  GPU or window dependency, `sim::Simulation` runs the whole simulation on a numbered fixed tick
+  (7.4), generation is a pure function of the seed (pinned bit for bit by golden tests) and world
+  state is stored as chunk deltas. The plan is `docs/design/networking.md`.
 * **Memory**: chunks are dense; palette-compressed or brick-sparse chunk payloads can replace
   `ids[]` behind `VX_VOXEL_ID` without touching traversal.
+
+## 11. Game interface and cursor capture
+
+Design and judged decisions: `docs/design/game-ui.md`. ImGui is for debugging and the editor
+only; what a player sees is drawn by the HUD.
+
+* **Data (Core, `vortex.core:hud`, no GPU, no GLFW).** `HudCanvas` - the quads of one frame
+  (cap 8192, overflow dropped and reported), `Rect`, `Frame`, `Text` (built-in 5 x 9 bitmap font,
+  ASCII 32..126, integer scale, `TextScale()` = max(1, height / 360)), `Crosshair`,
+  `DimBackground`. `PlaceRect` anchors. `Menu` (layout, `HandleInput(MenuInput) -> MenuEvent`,
+  `Draw`; the pointer counts only once it moves after `Open()`). `CursorCapture` (captured =
+  !headless && focused && !editorOpen && !paused && !freeCursor, started only with the pointer
+  over the window; Escape pauses; edges; `clicks` once the capturing click is over). All unit tested.
+* **Engine.** `Engine::Hud()` is cleared and sized to the output at the start of every frame and
+  handed to the renderer as `FrameInput::hud` / `hudDim`. `HudCursor()` converts the cursor to
+  framebuffer pixels (HiDPI), `WindowFocused()`, `SetImGuiInput(bool)` (`UiLayer::SetInputEnabled`:
+  `ImGuiConfigFlags_NoMouse | NoMouseCursorChange` and no input capture flags; it clears only
+  the bits it added, so it does not fight the editor's own `NoMouse` during its right-button look).
+* **Contracts.** `HudQuad` == `VxHudQuad` (layout test), `BitmapFont::kGlyphWidth/Height` ==
+  `VX_HUD_CELLS_X/Y` (source-text test), bit = row * 5 + column. `FrameUniforms::settings.w` = HUD
+  backdrop dim 0..255, applied by `present.frag` (a full-screen blended quad cost 0.15 ms on the
+  UHD 620; this costs nothing). HUD colours are display values (after tone mapping).
+* **Cursor (game side, `src/main.cpp`).** The game owns a `CursorCapture` and applies its edges
+  with `Window::SetCursorCaptured` (GLFW_CURSOR_DISABLED + raw motion; Wayland: pointer lock +
+  relative pointer, X11: grab + warp). Mouse look uses `Input::MouseDelta*` only, and only while
+  captured and not on the frame the capture started; terrain clicks only with
+  `CursorCapture::Result::clicks`. Escape opens the pause menu (it does not stop the
+  simulation: sessions are networked); the menu owns input while open and the editor's look is
+  ended with `Editor::ReleaseInput`.
+

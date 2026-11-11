@@ -54,6 +54,7 @@ export namespace vortex::graphics {
         uint32_t chunkUploadsPending = 0;
         uint32_t lights = 0;
         uint32_t particles = 0;
+        uint32_t hudQuads = 0;               ///< HUD quads drawn this frame.
         uint64_t gpuMemoryBytes = 0;         ///< Buffers + images owned by the renderer.
         uint64_t frameIndex = 0;
         std::vector<PassTiming> passes;

@@ -112,7 +112,9 @@ export namespace vortex::editor {
      *     frame's hover and any drag in progress); no pick happens.
      *  4. *Tool* - otherwise the left button drives the active tool along the cursor ray.
      *  The *game* comes last: while CapturesInput() is true it must not react to mouse or
-     *  keyboard, must not move `engine.camera` and must not touch the cursor capture. Shortcuts
+     *  keyboard, must not move `engine.camera` and must not touch the cursor capture. One
+     *  exception: a game pause menu may skip OnUpdate while it is open; it calls ReleaseInput()
+     *  when it opens, which ends the look (cursor and ImGui mouse given back) and a stroke. Shortcuts
      *  (keyboard free): toggle key, 1 / 2 / 3 choose the tool, G / R gizmo translate / rotate,
      *  Delete removes the selection.
      *
@@ -170,6 +172,12 @@ export namespace vortex::editor {
         /// @brief Toggle key, editor camera, cursor capture, shortcuts and the active tool's mouse
         /// action. Call first thing in Application::OnUpdate, every frame, open or not.
         void OnUpdate(Engine& engine, float dt);
+
+        /// @brief The game takes mouse and keyboard away (its pause menu opens and OnUpdate will
+        /// not run until it closes): ends the right-button look - releases the cursor and clears
+        /// the editor's ImGuiConfigFlags_NoMouse - ends a brush stroke and drops the tool's hover
+        /// preview. The editor stays open; the next OnUpdate starts a look only on a new press.
+        void ReleaseInput(Engine& engine);
 
         /// @brief ImGuizmo frame, menu bar, panels, gizmo and tool overlays. Call from
         /// Application::OnGui, every frame; does nothing while closed.

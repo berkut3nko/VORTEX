@@ -59,6 +59,12 @@ export namespace vortex {
         /// @brief Scroll wheel movement accumulated during this frame.
         double ScrollY() const { return m_MouseCaptured ? 0.0 : m_ScrollY; }
 
+        /// @brief The physical key / button state, whatever the UI captures. For the few game
+        /// decisions that must not flip while an ImGui widget is active (holding a key to free
+        /// the cursor, waiting for a button to be let go); never for actions.
+        bool KeyDownRaw(Key k) const { return Get(m_Keys, static_cast<int>(k)); }
+        bool MouseDownRaw(MouseButton b) const { return GetButton(m_Buttons, static_cast<int>(b)); }
+
         bool MouseCapturedByUi() const { return m_MouseCaptured; }
         bool KeyboardCapturedByUi() const { return m_KeyboardCaptured; }
 

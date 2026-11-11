@@ -17,6 +17,10 @@ Line numbers drift: when one no longer matches, trust the symbol name and fix th
 - `Paths.cppm` + `internal/Paths.cpp` - executable directory, asset root (`<exe dir>/assets`).
 - `Args.cppm` - `CommandLine` (header only): `--flag`, `--key=value`, `--key value`.
 - `Input.cppm` - `Key` / `MouseButton` (GLFW codes), `Input` per-frame state with UI capture masking.
+- `Hud.cppm` + `internal/Hud.cpp` + `internal/HudFont.inc` - the game HUD as data (`docs/design/game-ui.md`):
+  `Rgba`, `HudRect`, `PlaceRect`, `HudQuad` (GPU layout), `BitmapFont` (5 x 9, ASCII 32..126, glyph art parsed at
+  compile time), `HudCanvas`, `Menu` / `MenuInput` / `MenuEvent`, `CursorCapture`. No GPU, no GLFW. Tests:
+  `tests/core/HudTests.cpp` (suites `BitmapFont`, `HudLayout`, `HudCanvas`, `HudMenu`, `CursorCapture`).
 
 **math** (`vortex.math`, header only, namespace `vortex::math`)
 - `Util.cppm` - `FloorDiv/FloorMod`, `Saturate/Lerp/SmoothStep`, `Transform` (position, quat, uniform scale).
@@ -28,7 +32,8 @@ Line numbers drift: when one no longer matches, trust the symbol name and fix th
 - `Particles.cppm` + `internal/Particles.cpp` - `ParticleSystem`: fixed SoA pool, emitters, collision callback, `BuildRenderData`; `GpuParticle`.
 - `Effects.cppm` + `internal/Effects.cpp` - `effects::*` recipes, `SpawnExplosion`, `SpawnVoxelBreak`.
 
-**editor** (`vortex.editor`, part of `VortexEngine`)
+**editor** (`vortex.editor`, part of `VortexEngine`; the "Save world" button of its World panel is enabled only when
+`EngineConfig::world.saveDirectory` is set - the game sets none, so in Shredborne it is disabled)
 - `View.cppm` + `internal/View.cpp` - screen <-> world, ImGuizmo matrices, sun angles, fly camera. No ImGui.
 - `Tools.cppm` + `internal/Tools.cpp` - picking, brush, primitives, palettes, import, entity helpers. No ImGui.
 - `Editor.cppm` + `internal/Editor.cpp` - `Editor` class: state, actions, input (`OnUpdate`), all ImGui/ImGuizmo code (`OnGui`).
@@ -36,7 +41,8 @@ Line numbers drift: when one no longer matches, trust the symbol name and fix th
 **build**
 - `../CMakeLists.txt` - game exe `Shredborne` (globs `src/*.cpp`, `src/*.cppm`), forces `VORTEX_BUILD_TESTS`.
 - `../CMakePresets.json` - `dev` (`build/`, RelWithDebInfo), `debug` (`build-debug/`), `release` (`build-release/`, tests off).
-- `CMakeLists.txt` - options, `vortex_options`, `vortex_warnings`, `vortex_add_module_library`, the four libraries.
+- `CMakeLists.txt` - options, `vortex_options`, `vortex_warnings`, `vortex_add_module_library`, the five libraries (Core, Physics, Sim, Graphics, Engine),
+  `vortex_assert_gpu_free` (configure-time check that Core, Physics, Sim and `VortexSimTests` link no renderer, window or UI library).
 - `cmake/Dependencies.cmake` - every FetchContent dependency, pinned. `cmake/VortexShaders.cmake` - GLSL -> SPIR-V, `vortex_deploy_assets`.
 - `tests/CMakeLists.txt` - `vortex_add_tests`: one test exe per `tests/<dir>`. `tools/CMakeLists.txt` - adds every subdirectory that has a CMakeLists.txt.
 
@@ -45,9 +51,9 @@ Line numbers drift: when one no longer matches, trust the symbol name and fix th
 ### Job system (`src/core/internal/Jobs.cpp`)
 - `Submit`, `PendingJobs`, `ThreadCount` are thread safe. Default thread count is `hardware_concurrency - 1`, at least 1 (`Jobs.cpp:61-64`).
 - The destructor does **not** drop queued jobs: workers leave only when `stop` is set and the queue is empty (`Jobs.cpp:34-35`).
-  Every queued job therefore runs, possibly after its owner is gone. In `Engine::Impl` `jobs` is declared before `world` / `terrain`
-  (`src/engine/internal/Engine.cpp:50-57`) and `~Engine` resets those first (`Engine.cpp:81-82`), so load and cook jobs do run after
-  `World` and `TerrainColliders` are destroyed.
+  Every queued job therefore runs, possibly after its owner is gone. In `sim::Simulation::Impl` (which holds what `Engine::Impl` held
+  before M1 stage 1) `jobs` is declared before `world` / `terrain` (`src/sim/internal/Simulation.cpp:67-77`) and `Simulation::Shutdown`
+  resets those first (`:114`), so load and cook jobs do run after `World` and `TerrainColliders` are destroyed.
 - Hence the rule: a job captures a `shared_ptr` to state that outlives the owner, never `this` or a reference into the owner.
   Patterns to copy: `World::Shared` (`src/voxel/internal/World.cpp:25-44`, lambda at `:285`) and `TerrainColliders` `Shared` with a
   `cancelled` flag under a `shared_mutex` (`src/physics/internal/Terrain.cpp:88-100`, `:524`).
@@ -72,9 +78,32 @@ Line numbers drift: when one no longer matches, trust the symbol name and fix th
   (`src/graphics/internal/Window.cpp:146`), a headless run does it in `Engine::Run` (`Engine.cpp:201`).
 - Edges (`KeyPressed`, `MousePressed`, `*Released`) are true for one **frame**, not one fixed step.
 - UI capture is set once per frame by `UiLayer::UpdateInputCapture` (`src/graphics/internal/Ui.cpp:250-252`, called at `Engine.cpp:211`)
-  and masks `KeyDown/KeyPressed/MouseDown/MousePressed/ScrollY`. It does **not** mask `KeyReleased`, `MouseReleased`, `MouseX/Y`, `MouseDeltaX/Y`.
+  and masks `KeyDown/KeyPressed/MouseDown/MousePressed/ScrollY`. With ImGui input switched off (`Engine::SetImGuiInput(false)`, play
+  mode) both capture flags are false. It does **not** mask `KeyReleased`, `MouseReleased`, `MouseX/Y`, `MouseDeltaX/Y`,
+  `KeyDownRaw`, `MouseDownRaw`. The raw queries are for state that must not flip while an ImGui widget is active (the
+  F3 overlay's held Left Alt: ImGui has the keyboard during a slider drag) and for `CursorCapture::Inputs::leftButtonDown`;
+  never use them for actions.
 - `Key` values are GLFW key codes, passed through unchanged (`Window.cpp:97-98`); GLFW repeat events are ignored there. Keys outside `[0, 512)` and buttons outside `[0, 8)` are dropped.
 - Cursor units are window pixels, y down. `ResetCursorDelta` is called on every cursor-capture change (`Window.cpp:189`).
+
+### HUD (`src/core/Hud.cppm`)
+- `HudQuad` is mirrored by `VxHudQuad` (`shaders/include/common.glsl`); `BitmapFont::kGlyphWidth/Height` by
+  `VX_HUD_CELLS_X/Y`. Both are contract-tested (`LayoutContract.HudQuadMatchesVxHudQuad`, `.HudCellGridMatchesTheFont`).
+  Cell bit = row * 5 + column, row 0 at the top; at most 64 cells (two words).
+- A glyph in `HudFont.inc` is 5-character rows of `.` / `#`, up to 9 rows (missing rows are empty), in ASCII order.
+  `BuildGlyphs` is `consteval`: a wrong row length, a stray character or a character out of order is a compile error.
+  `BitmapFont.EveryPrintableGlyphIsDistinctAndFitsTheGrid` fails if two glyphs are identical.
+- HUD coordinates are framebuffer pixels; `Input::MouseX/Y` are window coordinates. Convert with
+  `Engine::HudCursor()` (HiDPI / Wayland scaling), never compare them directly.
+- Text and `PlaceRect` floor positions to whole pixels; quads of fractional size are allowed (rasterised by pixel centres).
+- `Menu::HandleInput` order: Back wins, then a click (on an item: activate; elsewhere: nothing, and the frame's keys
+  are ignored), then Up / Down, then Enter / Space. The pointer counts only once it has moved since `Open()` (or since a
+  frame without `hasMouse`): a just-released cursor's position is stale. Hover takes the focus only on a frame with
+  `mouseMoved`, so a resting pointer does not undo Up / Down. Call `Open()` when the menu is shown.
+- `CursorCapture` owns the pause flag. Escape pauses only when not paused; resuming is the game's call (menu Back or
+  Resume), so the game must pass `escape = false` on a frame the menu already handled. A capture starts only with
+  `pointerInside` (Wayland locks on pointer entry) and is then kept while wanted. `Result::clicks` stays false after a
+  capture until the left button has been up and `kClickGrace` (0.15 s) has passed: game clicks use it, look does not.
 
 ### Command line
 - Engine flags are all in `EngineConfig::ApplyCommandLine` (`Engine.cpp:22-36`): `--headless --validation --frames N --screenshot F --width W
@@ -102,9 +131,14 @@ Line numbers drift: when one no longer matches, trust the symbol name and fix th
 
 ### Editor
 - Split: logic is free functions in `:view` / `:tools` (no ImGui, no GPU, unit tested); `Editor` adds input and widgets. ImGui / ImGuizmo headers appear only in `internal/Editor.cpp`.
-- `Editor` is main-thread only and holds no engine pointer between calls. The game calls `OnUpdate` first in its `OnUpdate` and `OnGui` from its `OnGui`
-  (`../src/main.cpp:109,242`), then skips its own input while `CapturesInput()` (`main.cpp:110`; a headless run keeps the game's
-  automation going even with the editor open).
+- `Editor` is main-thread only and holds no engine pointer between calls. The game calls `OnUpdate` first in its `OnUpdate` (after
+  its pause menu) and `OnGui` from its `OnGui`, then skips its own input while `CapturesInput()` (a headless run keeps the game's
+  automation going even with the editor open). While the game's pause menu is open the game does not call `Editor::OnUpdate`
+  (F1 and the tools do nothing); when the menu opens it calls `Editor::ReleaseInput`, which ends the right-button look (cursor
+  released, the editor's `NoMouse` cleared), a brush stroke and the hover preview. A look after resume needs a new press.
+- ImGui `NoMouse` has two writers: the editor (during its look, `noMouseSet`) and `UiLayer::SetInputEnabled` (play mode). Each
+  clears only what it set: the UI layer remembers the bits it added (`m_AddedFlags`) and re-applies them at every `BeginFrame`
+  while disabled; the editor sets `NoMouse` on every frame of its look, so a clear by the other owner is repaired next frame.
 - Selection is a `scene::Entity` value validated on every read (`Editor::Selection`, `Editor.cpp:191-193`). Never cache component pointers across a call
   that can create or destroy entities (`Tools.cpp:330`, inspector buttons last at `Editor.cpp:700-706`).
 - Every path that changes the selection or the tool, or closes the editor, sets `cancelGizmo` (`Editor.cpp:169,183,199`); `Impl::Gizmo` then resets ImGuizmo with `Enable(false/true)` (`:848-853`).
@@ -115,8 +149,10 @@ Line numbers drift: when one no longer matches, trust the symbol name and fix th
 - ImGui window names end in `##vortex.editor`; widget labels carry a `##<group>` suffix to stay unique.
 
 ### Build
-- Layering is enforced by which directories each `vortex_add_module_library` call lists (`CMakeLists.txt:92,98,103,111`) and its link line.
-- Everything importing engine modules must link a `Vortex::*` target so it inherits `vortex_options` (PUBLIC, `CMakeLists.txt:88`). `vortex_warnings` is PRIVATE to the libraries; tests add it themselves (`tests/CMakeLists.txt:20`).
+- Layering is enforced by which directories each `vortex_add_module_library` call lists (`CMakeLists.txt:113,119,124,129,137`) and its link line,
+  and for the GPU-free libraries by `vortex_assert_gpu_free` (`CMakeLists.txt:185-198`, `tests/CMakeLists.txt:35`): the configure step fails if
+  `VortexCore`, `VortexPhysics`, `VortexSim` or `VortexSimTests` reach Graphics, Engine, Vulkan, GLFW, VMA or ImGui through any chain of link libraries.
+- Everything importing engine modules must link a `Vortex::*` target so it inherits `vortex_options` (PUBLIC, `CMakeLists.txt:109`). `vortex_warnings` is PRIVATE to the libraries; tests add it themselves (`tests/CMakeLists.txt:22`).
 - Dependencies are declared between the `CMAKE_CXX_SCAN_FOR_MODULES OFF` / restore lines (`Dependencies.cmake:18-19,208`).
 
 ## 3. Traps
@@ -193,14 +229,15 @@ and `Effects.PresetsCarryTheDocumentedCharacter` in `tests/core/ParticleTests.cp
 - Call the new action from `ExerciseEditor` (`../src/main.cpp:250-299`) so the headless `--editor` run covers it (mind the frame count, see traps).
 
 **4.5 Add a test.** Put `TEST(Suite, Name)` in an existing file, or a new `.cpp` under `tests/core` (links `VortexCore`), `tests/physics`, `tests/graphics` or `tests/engine`
-(`tests/CMakeLists.txt:30-33`); new files are globbed. Includes first, then `import vortex.<module>;`. Suite and helper names must not collide with engine types.
-Core utilities have no file yet: `tests/core/JobTests.cpp` etc. would be new. `VORTEX_TEST_SHADER_DIR` and `VORTEX_TEST_SOURCE_DIR` are predefined. Update the test count in `docs/ROADMAP.md` (299 at the time of writing).
+(`tests/CMakeLists.txt:32-37`); new files are globbed. Includes first, then `import vortex.<module>;`. Suite and helper names must not collide with engine types.
+Core utilities have no file yet: `tests/core/JobTests.cpp` etc. would be new. `VORTEX_TEST_SHADER_DIR` and `VORTEX_TEST_SOURCE_DIR` are predefined. Update the test count in `docs/ROADMAP.md` (329 after M1 stage 1).
 
 **4.6 Add a module, a shader, a dependency.**
 - Module partition: new `src/<dir>/Foo.cppm` with `export module vortex.<dir>:foo;`, add `export import :foo;` to the primary interface (e.g. `Core.cppm`), implementation in
   `src/<dir>/internal/Foo.cpp` starting with the global fragment and `module vortex.<dir>;`. No CMake edit (glob).
 - New module directory: primary interface `src/<name>/<Name>.cppm` with `export module vortex.<name>;`, then add `<name>` to the right `vortex_add_module_library` call
-  (`CMakeLists.txt:92-111`) according to the layering; add `export import vortex.<name>;` to `src/engine/Engine.cppm:14-20` if games should get it; add tests in the matching `tests/<dir>`.
+  (`CMakeLists.txt:113-137`) according to the layering; add `export import vortex.<name>;` to `src/engine/Engine.cppm:14-21` if games should get it; add tests in the matching `tests/<dir>`.
+  A module that a session server needs goes into `VortexSim` or below and must pass `vortex_assert_gpu_free`; `sim` was added this way in M1 stage 1.
 - Shader: add `shaders/<name>.vert|.frag|.comp`; it is compiled to `<build>/vortex_assets/shaders/<name>.<ext>.spv` and copied to `<exe dir>/assets/shaders` by
   `vortex_deploy_assets`. Includes are relative to `shaders/` (`-I` is the shader directory, `VortexShaders.cmake:72`). A shader used by a pipeline must also be
   listed in `kShaderFiles` in `tests/graphics/ContractTests.cpp:124` or `ShaderContract.EveryPipelineShaderIsListed` fails. Loading it is the renderer's side (see `graphics.md` section 4).

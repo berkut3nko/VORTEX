@@ -25,6 +25,7 @@ import vortex.fx;
 import vortex.physics;
 import vortex.graphics;
 import vortex.scene;
+import vortex.engine;      // GatherInstances / GatherLights: the scene's render data
 
 using namespace vortex;
 using scene::Entity;
@@ -291,7 +292,7 @@ TEST(Scene, ModelWhoseBakeFailedCanBeUsedOnceTheStoreHasRoom) {
     EXPECT_EQ(plank->Parts().size(), 2u);                                                   // complete, not a leftover half
     EXPECT_EQ(f.store.UsedCount(), 2u);
     std::vector<graphics::InstanceDesc> instances;
-    f.scene.GatherInstances(instances);
+    GatherInstances(f.scene, instances);
     EXPECT_EQ(instances.size(), 4u);
 }
 
@@ -335,7 +336,7 @@ TEST(Scene, StaleAndNullEntitiesAreSafeEverywhere) {
     f.scene.SyncFromPhysics();
     f.scene.Update(kStep);
     std::vector<graphics::InstanceDesc> instances;
-    f.scene.GatherInstances(instances);
+    GatherInstances(f.scene, instances);
     EXPECT_EQ(instances.size(), 1u);
 }
 
@@ -539,7 +540,7 @@ TEST(Scene, GatherLightsUsesTransformAndOffset) {
     ASSERT_NE(dark, kNoEntity);
 
     std::vector<graphics::PointLight> lights(1);          // appended to
-    f.scene.GatherLights(lights);
+    GatherLights(f.scene, lights);
     ASSERT_EQ(lights.size(), 2u);
     EXPECT_NEAR(lights[1].position.x, 1.0, 1e-6);
     EXPECT_NEAR(lights[1].position.y, 2.0, 1e-6);
@@ -557,7 +558,7 @@ TEST(Scene, GatherLightsUsesTransformAndOffset) {
     carried.offset = {1.0f, 0.5f, 0.0f};
     f.scene.Registry().emplace<scene::PointLight>(lamp, carried);
     lights.clear();
-    f.scene.GatherLights(lights);
+    GatherLights(f.scene, lights);
     ASSERT_EQ(lights.size(), 1u);
     ExpectVecNear(glm::vec3(lights[0].position), {10.0f, 0.5f, -1.0f}, 1e-5f);     // +X turned a quarter around +Y is -Z
 }
@@ -583,7 +584,7 @@ TEST(Scene, GatherInstancesDescribesEveryPartOfVisibleObjects) {
     f.scene.SetTransform(entity, moved, rotation, false);        // moved since the last frame
 
     std::vector<graphics::InstanceDesc> instances(1);            // appended to
-    f.scene.GatherInstances(instances);
+    GatherInstances(f.scene, instances);
     ASSERT_EQ(instances.size(), 1u + model->Parts().size());
 
     math::Transform current;
@@ -614,7 +615,7 @@ TEST(Scene, GatherInstancesDescribesEveryPartOfVisibleObjects) {
     // The next frame without movement has no motion left.
     f.scene.BeginFrame();
     instances.clear();
-    f.scene.GatherInstances(instances);
+    GatherInstances(f.scene, instances);
     ASSERT_EQ(instances.size(), 2u);
     ExpectMatNear(instances[0].prevLocalToWorld, instances[0].localToWorld, 0.0f);
 
@@ -623,7 +624,7 @@ TEST(Scene, GatherInstancesDescribesEveryPartOfVisibleObjects) {
     ASSERT_NE(other, kNoEntity);
     f.scene.TryGet<scene::VoxelBody>(entity)->visible = false;
     instances.clear();
-    f.scene.GatherInstances(instances);
+    GatherInstances(f.scene, instances);
     ASSERT_EQ(instances.size(), 1u);
     EXPECT_EQ(instances[0].palette, voxel::kWorldPalette);
     EXPECT_EQ(f.scene.VoxelObjectCount(), 2u);                   // hidden still counts
@@ -631,7 +632,7 @@ TEST(Scene, GatherInstancesDescribesEveryPartOfVisibleObjects) {
     const Entity hidden = f.scene.CreateVoxelObject({.model = f.Box({4, 4, 4}), .withBody = false, .visible = false});
     ASSERT_NE(hidden, kNoEntity);
     instances.clear();
-    f.scene.GatherInstances(instances);
+    GatherInstances(f.scene, instances);
     EXPECT_EQ(instances.size(), 1u);
 }
 
@@ -952,7 +953,7 @@ TEST(SceneDamage, WorksInAFullChunkStore) {
     EXPECT_EQ(model->SolidCount(), 512u - result.removed);
     EXPECT_EQ(f.store.UsedCount(), 1u);
     std::vector<graphics::InstanceDesc> instances;
-    f.scene.GatherInstances(instances);
+    GatherInstances(f.scene, instances);
     EXPECT_EQ(instances.size(), 1u);              // still drawn
 }
 

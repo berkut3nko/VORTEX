@@ -9,18 +9,20 @@ What exists today, and what was designed for but is not built yet. See
 |---|---|
 | Build | Pinned dependencies, Vulkan headers fetched, shaders compiled to SPIR-V at build time, `cmake --preset dev`. |
 | Core | Logging, job system, profiler, input state, RNG, command line. |
-| Voxel world | Streaming window of sparse 32^3 chunks, generation on worker threads, editing (set / fill / carve with material hardness), region-file persistence of modified chunks. |
+| Game UI | Play mode locks the mouse (GLFW_CURSOR_DISABLED + raw motion; pointer lock on Wayland, grab on X11) and looks around without a button; Escape opens a pause menu (Resume / Quit). A HUD drawn without ImGui (`vortex.core:hud` data + one instanced draw after tone mapping, built-in 5 x 9 bitmap font): crosshair, mode, tool, frame rate, key hints, menu. ImGui is only the F3 debug overlay (hidden by default) and the F1 editor. Windowed behaviour (lock on Wayland / X11, focus, menu clicks) is not confirmed yet: headless runs cannot exercise it. |
+| Voxel world | Streaming window of sparse 32^3 chunks, generation on worker threads, editing (set / fill / carve with material hardness), region-file persistence of modified chunks (offline game and map editor, when `saveDirectory` is set; a session server's world is memory only). |
 | Terrain | Built-in generator: hills, mountains, beaches, sea, caves, trees. Custom generators through `IWorldGenerator`. |
 | Ray queries | One traversal shared by GPU and CPU (`shaders/shared/trace.glsl`), world + dynamic objects through a BVH. |
 | Objects | Voxel models of any size shared between instances, collider boxes, mass from material density. |
-| Scene | `vortex.scene`: EnTT entities with transform, voxel body, rigid body, point light and lifetime components; destroying an entity releases its body and chunk slots; usable and tested without a GPU. |
+| Scene | `vortex.scene`: EnTT entities with transform, voxel body, rigid body, point light and lifetime components; destroying an entity releases its body and chunk slots; part of the GPU-free `Vortex::Sim` and tested without a GPU. |
 | Destruction | Terrain carving with floating-terrain detection; objects lose voxels and split into pieces (`Scene::Damage`, `Engine::Explode`). Fragments below 16 voxels are particles, small pieces are rubble with a lifetime, a distance rule and a global cap. |
 | Import | MagicaVoxel `.vox` read / write, glTF voxelisation. |
 | Physics | Jolt behind an engine interface, fixed time step, character controller. Terrain colliders streamed around the camera and requested by every moving body; bodies without ready terrain are frozen in place and resume when it is there, so nothing falls through unloaded or uncooked terrain. |
 | Particles | CPU pool with emitters, voxel collision, effect presets. |
 | Renderer | Ray-marched G-buffer, ray-traced sun shadows, ambient occlusion, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping, ImGui. Headless mode with screenshots. Validation-clean on Intel UHD 620. |
 | Editor | `vortex.editor`: in-game editor toggled with F1 - fly camera, entity selection with a translate / rotate gizmo, inspector, terrain brush, primitive spawning, `.vox` / glTF import, environment / render / profiler / world panels. Tool logic is separate from the widgets and unit tested. |
-| Tests | 310 unit tests, none needing a GPU. |
+| Simulation | `vortex.sim`: `sim::Simulation` owns world, physics, terrain colliders and scene and steps them on a numbered fixed tick; library `Vortex::Sim` links no renderer or window. `Engine` owns one and draws it. |
+| Tests | 363 unit tests, none needing a GPU. |
 
 ## Performance (Intel UHD 620, 1280x720 output, 768x432 internal)
 
@@ -29,6 +31,7 @@ What exists today, and what was designed for but is not built yet. See
 | gbuffer (primary rays) | ~9-11 ms |
 | lighting (sun shadow + ambient ray, tile checkerboard) | ~9-10 ms |
 | composite, TAA, present | ~2.5 ms |
+| HUD (play: ~150 quads; pause menu: ~70 quads, backdrop dimmed in the present pass) | 0.01 ms (median of 120 frames, measured headless at 1280x720) |
 
 World window 48 x 8 x 48 chunks (154 m across at 0.1 m voxels), about 8100 dense chunks, 473 MiB
 of GPU memory. Measured cost of the lighting features: sun shadows ~4.7 ms, ambient occlusion
@@ -66,8 +69,8 @@ has to live under server authority.
 
 ### M1 - Networking skeleton
 Goal: one server and two clients walk in the same region and see each other's destruction.
-- `vortex_server`: an executable built from `Vortex::Core`, `Vortex::Physics` and the scene
-  only (they already build and are tested without a GPU). Fixed tick; the client renders
+- `vortex_server`: an executable built from `Vortex::Core`, `Vortex::Physics` and `Vortex::Sim`
+  (scene + simulation) only; they build and are tested without a GPU. Fixed tick; the client renders
   between ticks as today.
 - Region start-up from `template + seed`: both sides generate the same terrain, so the
   server never sends terrain, only changes.
@@ -99,7 +102,30 @@ State (stages are those of [design/networking.md](design/networking.md)):
   **Not done:** `VortexCore` and `VortexCoreTests` have not been built or run on Windows (the
   clang-cl flag was checked with the compiler driver only); until the golden tests are green there,
   terrain agreement across platforms is unproven. Known risks: `design/networking.md`.
-- Stages 1-9: not started.
+- **Stage 1, simulation without a renderer - done.** New library `Vortex::Sim` = `vortex.scene` + `vortex.sim`
+  (Core + Physics + EnTT; a configure-time check, `vortex_assert_gpu_free`, fails the build if Vulkan, GLFW or ImGui
+  get into it). `sim::Simulation` holds what used to be the simulation members of `Engine::Impl` - job system,
+  materials, chunk store, world, physics, terrain colliders, particle pool, scene - plus a `uint32_t` tick.
+  `Step(focusPoints)` is one server tick (streaming without moving the window, body guard, physics, pose sync,
+  lifetimes, fall-out); the engine calls its three phases (`UpdateStreaming`, `StepPhysics`, `UpdateLifetimes`) where
+  it called the parts before, so the frame loop and the game are unchanged. The scene no longer imports
+  `vortex.graphics`: `GatherInstances` / `GatherLights` are free functions of `vortex.engine`.
+  `sim::ServerConfig` gives the server scene: no particles, `SceneConfig::bakeModels = false` (models hold no chunk
+  slots), `markDebris = false` and `debrisRemnants = false` (nothing is rubble). `ServerConfig` also makes the
+  world memory only (clears `saveDirectory`); any other simulation, the engine's included, keeps it, so the
+  editor's "Save world" works whenever the app sets a directory.
+  Verified: the 310 earlier tests pass; 22 new tests in `VortexSimTests`, which links `VortexSim`, Jolt, glm, spdlog
+  and GoogleTest only, step a `Simulation` 600 ticks with the offline and with the server configuration (crates
+  land and fall asleep on the terrain collider, a timed light expires on its tick) and 240 ticks on the built-in
+  terrain; both headless game runs exit 0 with the expected log lines. "Game unchanged" was checked against a build of
+  the previous commit: same blast (7 -> 7 objects), same beam cut (37 voxels, 1 new object), player on the ground, the
+  same picture; chunk and body counts vary between runs of either build by a few percent (streaming timing).
+  **Not done / open:** the tick-rate scale of `Engine` (stage 4, with time sync); nothing yet stops a network client
+  from running with a `saveDirectory` (stage 3: `net::Client` must refuse or clear it); on a server scene pieces of
+  16 voxels and more stay for good until `Scene::Damage` gets its threshold (stage 2 / 6); lifetimes run per tick
+  in `Step` but per rendered frame in the engine, so nothing replicated may depend on them. The choices made where
+  the design was open are in `design/networking.md`, "Stage 1 as built".
+- Stages 2-9: not started.
 
 ### M2 - Fight feel under authority
 - Spell framework: data-driven casts (projectile, beam, area) producing world operations,
@@ -166,8 +192,8 @@ State (stages are those of [design/networking.md](design/networking.md)):
    import by path; environment, render, profiler and world panels; an editor fly camera. Still
    missing: undo / redo; a voxel brush for objects (the brush edits terrain only); a scale gizmo
    and snapping; a file dialog (paths are typed); reusing or freeing palettes (every import adds
-   one of 256 GPU materials and nothing removes it); saving / loading entities (only terrain
-   edits persist, through World::Save); pausing the simulation while editing; picking entities
+   one of 256 GPU materials and nothing removes it); saving / loading entities (terrain is saved by "Save world" when
+   `EngineConfig::world.saveDirectory` is set; the game sets none, so the button is disabled there); pausing the simulation while editing; picking entities
    without a body (the player figure and lights are only selectable from the scene list);
    changing an entity's motion type, name or material from the inspector; a material editor.
 5. **Memory**: skip unseen underground chunks, then palette-compressed chunks; then view distance
@@ -220,9 +246,12 @@ State (stages are those of [design/networking.md](design/networking.md)):
 - **Animation**: rigs made of voxel parts, skeletal animation, inverse kinematics for characters.
 - **Audio**: impact and break sounds per material (ids are reserved in the material).
 - **Fire, fluids, structural stress** simulation.
-- **Game UI** layer separate from the debug UI; input action mapping and gamepad support.
-- **Networking**: server-authoritative simulation. `Vortex::Core` and `Vortex::Physics` already build
-  without GPU or window, the simulation runs on a fixed step and the world is stored as chunk deltas.
+- **Game UI**: the HUD layer exists (ARCHITECTURE.md section 11). Still missing: input action mapping and
+  key rebinding, a settings menu (mouse sensitivity is a constant), gamepad navigation, Unicode / TTF text,
+  textured widgets, in-game chat (M1).
+- **Networking**: server-authoritative simulation (M1, stages 2-9). `Vortex::Core`, `Vortex::Physics` and
+  `Vortex::Sim` build without GPU or window, the simulation runs on a numbered fixed tick and the world is stored
+  as chunk deltas.
 - **Double-precision physics** for worlds far from the origin (rendering is already origin-relative).
 
 ### Tooling

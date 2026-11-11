@@ -61,13 +61,15 @@ namespace vortex::graphics {
         constexpr VkDeviceSize kStagingBytes = 8u * 1024u * 1024u;
         constexpr VkDeviceSize kMinGridBytes = 64;                                              // never bind a zero-sized buffer
 
-        enum class Pass : uint32_t { GBuffer, Lighting, Composite, Particles, Taa, Present, Count };
+        // Present, Hud and Imgui are three intervals inside the one rendering scope of the backbuffer.
+        enum class Pass : uint32_t { GBuffer, Lighting, Composite, Particles, Taa, Present, Hud, Imgui, Count };
         constexpr uint32_t kPassCount = static_cast<uint32_t>(Pass::Count);
         constexpr uint32_t kQueryCount = kPassCount * 2;
-        constexpr std::array<const char*, kPassCount> kPassNames = {"gbuffer", "lighting", "composite", "particles", "taa", "present"};
+        constexpr std::array<const char*, kPassCount> kPassNames = {"gbuffer", "lighting", "composite", "particles",
+                                                                    "taa",     "present",  "hud",       "imgui"};
 
         enum class PipelineId : size_t {
-            GBufferWorld, GBufferObjectFront, GBufferObjectInside, Lighting, Composite, Particles, Taa, Present, Count
+            GBufferWorld, GBufferObjectFront, GBufferObjectInside, Lighting, Composite, Particles, Taa, Present, Hud, Count
         };
         constexpr size_t kPipelineCount = static_cast<size_t>(PipelineId::Count);
 
@@ -254,6 +256,14 @@ namespace vortex::graphics {
 
             fullscreen(PipelineId::Taa, "taa", "taa.frag.spv", {kHdrFormat});
             fullscreen(PipelineId::Present, "present", "present.frag.spv", {backbufferFormat});
+
+            PipelineDesc& hud = descs[static_cast<size_t>(PipelineId::Hud)];
+            hud.name = "hud";
+            hud.vertexShader = "hud.vert.spv";
+            hud.fragmentShader = "hud.frag.spv";
+            hud.colorFormats = {backbufferFormat};
+            hud.blend = {BlendMode::Premultiplied};
+            hud.cullMode = VK_CULL_MODE_NONE;
             return descs;
         }
 
@@ -284,6 +294,7 @@ namespace vortex::graphics {
             Buffer drawList;
             Buffer lights;
             Buffer particles;
+            Buffer hud;
             Buffer staging;
             DeletionQueue deletions;
         };
@@ -349,6 +360,7 @@ namespace vortex::graphics {
             uint32_t frontCount = 0;
             uint32_t insideCount = 0;
             uint32_t particleCount = 0;
+            uint32_t hudCount = 0;
             bool drawWorld = false;
         };
     }
@@ -511,7 +523,7 @@ namespace vortex::graphics {
 
                 if (!CreateSyncObjects(frame)) return false;
 
-                // Eight pipelines bind one set each per frame; sized with generous headroom.
+                // Nine pipelines bind one set each per frame; sized with generous headroom.
                 const std::array<VkDescriptorPoolSize, 3> sizes = {
                     VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 32},
                     VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 160},
@@ -545,9 +557,10 @@ namespace vortex::graphics {
                                             std::format("Frame {} lights", i));
                 frame.particles = CreateBuffer(*device, 256 * sizeof(fx::GpuParticle), storage, BufferKind::CpuToGpu,
                                                std::format("Frame {} particles", i));
+                frame.hud = CreateBuffer(*device, 256 * sizeof(HudQuad), storage, BufferKind::CpuToGpu, std::format("Frame {} hud", i));
                 frame.staging = CreateBuffer(*device, kStagingBytes, 0, BufferKind::Staging, std::format("Frame {} staging", i));
                 if (!frame.uniforms || !frame.instances || !frame.bvh || !frame.drawList || !frame.lights || !frame.particles ||
-                    !frame.staging) {
+                    !frame.hud || !frame.staging) {
                     return false;
                 }
             }
@@ -559,6 +572,7 @@ namespace vortex::graphics {
             for (FrameContext& frame : frames) {
                 frame.deletions.Flush();
                 DestroyBuffer(*device, frame.staging);
+                DestroyBuffer(*device, frame.hud);
                 DestroyBuffer(*device, frame.particles);
                 DestroyBuffer(*device, frame.lights);
                 DestroyBuffer(*device, frame.drawList);
@@ -1181,6 +1195,7 @@ namespace vortex::graphics {
 
             // --- particles (already relative to the render origin) -------------------------------
             data.particleCount = Upload<fx::GpuParticle>(frame, frame.particles, input.particles, "particles");
+            data.hudCount = Upload<HudQuad>(frame, frame.hud, input.hud, "hud");
 
             // --- uniforms ------------------------------------------------------------------------
             int features = 0;
@@ -1194,7 +1209,9 @@ namespace vortex::graphics {
             if (settings.checkerboardLighting) features |= Feature_Checkerboard;
             u.counts = glm::ivec4(static_cast<int>(instanceCount), static_cast<int>(bvhCount), static_cast<int>(lightCount),
                                   static_cast<int>(frameIndex & 0x7FFFFFFFu));
-            u.settings = glm::ivec4(features, static_cast<int>(settings.debugView), static_cast<int>(frontCount), 0);
+            const float hudDim = std::isfinite(input.hudDim) ? std::clamp(input.hudDim, 0.0f, 1.0f) : 0.0f;
+            u.settings = glm::ivec4(features, static_cast<int>(settings.debugView), static_cast<int>(frontCount),
+                                    static_cast<int>(std::lround(hudDim * 255.0f)));
             std::memcpy(frame.uniforms.mapped, &u, sizeof(u));
             Flush(frame.uniforms);
 
@@ -1203,6 +1220,7 @@ namespace vortex::graphics {
             stats.instancesDrawn = frontCount + insideCount;
             stats.lights = lightCount;
             stats.particles = data.particleCount;
+            stats.hudQuads = data.hudCount;
             return data;
         }
 
@@ -1220,6 +1238,7 @@ namespace vortex::graphics {
             if (name == "u_DrawList") return &frame.drawList;
             if (name == "u_Lights") return &frame.lights;
             if (name == "u_Particles") return &frame.particles;
+            if (name == "u_Hud") return &frame.hud;
             return nullptr;
         }
 
@@ -1398,8 +1417,9 @@ namespace vortex::graphics {
             EndPass(frame, Pass::Taa);
         }
 
-        /// The backbuffer must already be in COLOR_ATTACHMENT_OPTIMAL.
-        void PassPresent(FrameContext& frame, VkImageView backbufferView) {
+        /// The backbuffer must already be in COLOR_ATTACHMENT_OPTIMAL. Tone-mapped image, then the
+        /// HUD quads, then ImGui, in one rendering scope; each has its own timestamp interval.
+        void PassPresent(FrameContext& frame, const FrameData& data, VkImageView backbufferView) {
             const VkCommandBuffer cmd = frame.cmd;
             const uint32_t cur = parity;
             BeginPass(frame, Pass::Present);
@@ -1412,12 +1432,19 @@ namespace vortex::graphics {
             const std::array<TextureBinding, 1> textures = {TextureBinding{"u_Color", targets.taa[cur].view, linearSampler}};
             BeginRendering(cmd, targets.output, colors, nullptr);
             if (BindPipeline(frame, PipelineId::Present, targets.output, textures)) vkCmdDraw(cmd, 3, 1, 0, 0);
+            EndPass(frame, Pass::Present);
+
+            BeginPass(frame, Pass::Hud);
+            if (data.hudCount != 0 && BindPipeline(frame, PipelineId::Hud, targets.output, {})) vkCmdDraw(cmd, 6, data.hudCount, 0, 0);
+            EndPass(frame, Pass::Hud);
+
+            BeginPass(frame, Pass::Imgui);
             if (ui != nullptr) {
                 SetViewportScissor(cmd, targets.output);
                 ui->Draw(cmd);
             }
+            EndPass(frame, Pass::Imgui);
             vkCmdEndRendering(cmd);
-            EndPass(frame, Pass::Present);
         }
 
         // -----------------------------------------------------------------------------------------
@@ -1470,7 +1497,7 @@ namespace vortex::graphics {
             uint64_t bytes = voxels.occ.size + voxels.ids.size + voxels.grid.size + voxels.materials.size;
             for (const FrameContext& frame : frames) {
                 bytes += frame.uniforms.size + frame.instances.size + frame.bvh.size + frame.drawList.size + frame.lights.size +
-                         frame.particles.size + frame.staging.size;
+                         frame.particles.size + frame.hud.size + frame.staging.size;
             }
             targets.ForEach([&bytes](Image& image) {
                 if (image) bytes += static_cast<uint64_t>(image.extent.width) * image.extent.height * BytesPerPixel(image.format);
@@ -1564,7 +1591,7 @@ namespace vortex::graphics {
             }
             if (headless) {
                 TransitionImage(cmd, targets.backbuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-                PassPresent(frame, targets.backbuffer.view);
+                PassPresent(frame, data, targets.backbuffer.view);
                 if (readback) {
                     TransitionImage(cmd, targets.backbuffer, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
                     RecordScreenshotCopy(cmd, targets.backbuffer.handle, readback);
@@ -1573,7 +1600,7 @@ namespace vortex::graphics {
                 const VkImage image = swapchain.Image(imageIndex);
                 VkImageLayout layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
                 TransitionImage(cmd, image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, layout);
-                PassPresent(frame, swapchain.View(imageIndex));
+                PassPresent(frame, data, swapchain.View(imageIndex));
                 if (readback) {
                     TransitionImage(cmd, image, VK_IMAGE_ASPECT_COLOR_BIT, layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
                     layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
