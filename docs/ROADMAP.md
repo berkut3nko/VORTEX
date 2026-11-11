@@ -20,7 +20,7 @@ What exists today, and what was designed for but is not built yet. See
 | Particles | CPU pool with emitters, voxel collision, effect presets. |
 | Renderer | Ray-marched G-buffer, ray-traced sun shadows, ambient occlusion, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping, ImGui. Headless mode with screenshots. Validation-clean on Intel UHD 620. |
 | Editor | `vortex.editor`: in-game editor toggled with F1 - fly camera, entity selection with a translate / rotate gizmo, inspector, terrain brush, primitive spawning, `.vox` / glTF import, environment / render / profiler / world panels. Tool logic is separate from the widgets and unit tested. |
-| Tests | 299 unit tests, none needing a GPU. |
+| Tests | 310 unit tests, none needing a GPU. |
 
 ## Performance (Intel UHD 620, 1280x720 output, 768x432 internal)
 
@@ -82,6 +82,24 @@ Goal: one server and two clients walk in the same region and see each other's de
   with packet loss and delay; the world hash of every side must match after a scripted fight.
 - To decide in a design document first: transport library, tick rate, how generation is kept
   bit-identical across Windows and Linux (integer or fixed-point noise).
+
+State (stages are those of [design/networking.md](design/networking.md)):
+- **Stage 0, determinism floor - done on Linux, Windows run still open.** Engine code is compiled
+  with `-ffp-contract=off` (`vortex_options`; spelled `/clang:-ffp-contract=off` for clang-cl, which
+  ignores the bare flag; Jolt keeps its own flags). `voxel::ChunkHash` / `voxel::WorldHash`
+  (`src/voxel/Hash.cppm`) hash canonical chunk content. Three golden tests pin the built-in
+  generator for 3 seeds: `Terrain.GoldenChunkHashes` (64 chunks per seed, incl. snow columns and
+  chunks 1 km out), `Terrain.GoldenNoiseBits` and `Terrain.GoldenHeightBits` (raw float bits). Checked
+  by building once without the flag: both float-bit tests fail and 1 of 192 chunk hashes differs, so
+  the float-bit tests are the ones that detect a differently rounding build.
+  `voxel::TerrainHeight` and `voxel::IsValid(TerrainSettings)` are new; nothing calls `IsValid` yet.
+  Measured on the owner's laptop (5184 chunks, best of 7, three runs each): 1.57 ms per chunk before the
+  flag, 1.59-1.65 ms after, and 1.60-1.64 ms with the flag removed again in the same session, so the
+  cost is inside the run-to-run noise (about 5 %).
+  **Not done:** `VortexCore` and `VortexCoreTests` have not been built or run on Windows (the
+  clang-cl flag was checked with the compiler driver only); until the golden tests are green there,
+  terrain agreement across platforms is unproven. Known risks: `design/networking.md`.
+- Stages 1-9: not started.
 
 ### M2 - Fight feel under authority
 - Spell framework: data-driven casts (projectile, beam, area) producing world operations,

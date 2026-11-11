@@ -48,6 +48,25 @@ get_target_property(_VORTEX_JOLT_OPTIONS Jolt INTERFACE_COMPILE_OPTIONS)
 if(_VORTEX_JOLT_OPTIONS)
     target_compile_options(vortex_options INTERFACE ${_VORTEX_JOLT_OPTIONS})
 endif()
+# Determinism floor (docs/design/networking.md, stage 0): Jolt's flags include -mfma, and Clang
+# by default contracts a*b+c into one fused operation where it sees fit, which rounds differently
+# from the two separate operations. With contraction off every engine TU computes the same floats
+# on every build, so generated terrain is bit-identical between server and clients. Jolt itself
+# is not touched (it does not link vortex_options).
+# clang-cl reports the compiler id "Clang" too but silently ignores a bare -ffp-contract=off
+# (only a warning), so it gets the flag through /clang: and an unknown argument is made an error.
+# Tests Noise.GoldenFloatBits and Terrain.GoldenHeightBits fail on a build that contracts.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
+    target_compile_options(vortex_options INTERFACE /clang:-ffp-contract=off -Werror=unknown-argument)
+elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    target_compile_options(vortex_options INTERFACE -ffp-contract=off -Werror=unknown-argument)
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(vortex_options INTERFACE -ffp-contract=off)
+else()
+    message(WARNING "VORTEX: no floating-point contraction flag is known for ${CMAKE_CXX_COMPILER_ID}. "
+                    "Generated terrain may differ from other builds; do not use this build as a "
+                    "network server or client unless the golden tests in VortexCoreTests pass.")
+endif()
 target_compile_definitions(vortex_options INTERFACE
     GLM_FORCE_RADIANS
     GLM_FORCE_DEPTH_ZERO_TO_ONE

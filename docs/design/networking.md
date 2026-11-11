@@ -109,11 +109,32 @@ generator golden hash; the token is compared in plain text with the session file
   **on the server only** (operations 1..k, replicated entities); lights are `EntitySpawn` kind `Light`; the player
   spawn point comes from the server.
 - Build: `-ffp-contract=off` in `vortex_options` (Jolt keeps its flags); the same Clang major on both platforms.
-- Test: hashes of 64 fixed chunks for 3 seeds, checked in, in `VortexCoreTests`, on both platforms. If this fails
-  on Windows, fixed-point noise is the answer (est. 5-8 days, changes all terrain); it is not built otherwise.
+  Under clang-cl the flag must be spelled `/clang:-ffp-contract=off`: the bare form is ignored with a warning only
+  (checked with Clang 23 and `--driver-mode=cl`; the build now makes an unknown argument an error).
+- Test, in `VortexCoreTests`, on both platforms, all checked in: (1) hashes of 64 fixed chunks for 3 seeds
+  (`Terrain.GoldenChunkHashes`); (2) the raw float bit patterns of the noise functions and of the terrain height at
+  4096 points per seed out to 1 km (`Terrain.GoldenNoiseBits`, `Terrain.GoldenHeightBits`). (2) is the one with
+  power: (1) sees floats only after `floor` and threshold compares. If this fails on Windows, fixed-point noise is
+  the answer (est. 5-8 days, changes all terrain); it is not built otherwise.
+- `RegionDesc` is input from the network: the receiver checks `voxel::IsValid(TerrainSettings)` before building a
+  generator (stage 3). Out-of-range settings make float-to-int conversions in the generator undefined.
 - Run time: the server sends hashes of 64 probe chunks chosen from the seed. A client that disagrees, or that later
   fails 3 pristine hash checks, enters **server terrain mode**: every chunk of its window is requested on the bulk
   channel (est. 8-25 MB for a 154 m window).
+
+### Known risks of terrain agreement after stage 0
+
+Stage 0 was built and run on one Linux machine only. What is and is not established:
+
+| Risk | State |
+|---|---|
+| The Windows build has not been made or run. | **Open.** Terrain agreement across platforms is unproven until the three golden tests are green there. Server terrain mode (stage 7) is the safety net. |
+| The chunk-hash golden has little power against last-bit differences. Measured: built without `-ffp-contract=off`, every noise and height golden fails, but only 1 of 192 chunk hashes differs (a 1 km probe), and the first probe set (all within 131 m, 64 of them air) did not differ at all. | Closed by the float-bit goldens. The run-time check (64 probe chunk hashes from the seed) has the same weakness: it can pass while a few voxels per square kilometre differ. Such a client is caught only by `HashCheck` on a chunk it touches (stage 7). The float-bit goldens are therefore a release gate for every client build, not only a unit test. |
+| clang-cl drops a bare `-ffp-contract=off`; MSVC and other compilers get no flag. | Handled in `CMakeLists.txt` for clang-cl (verified with the driver only, not with a full Windows build). Other compilers: configure warning; the goldens decide. |
+| libm. The path from seed to voxel ids calls only `std::floor`, `std::ceil`, `std::abs`, `std::lround`, `std::min/max` (exact in IEEE 754, no rounding choice) and + - * /. No `sin`, `pow`, `exp`, `sqrt`. | No libm risk today. Any future generator (M4) that calls a transcendental function re-opens it; the goldens only cover the default settings. |
+| Compiler freedom other than contraction: x87 excess precision, reassociation, `-ffast-math`, a different rounding mode set by a host application or driver. | Not possible on x86-64 with SSE and without fast-math flags, by the language rules; not measured on a second compiler version. The goldens would show it. |
+| The goldens pin the **default** `TerrainSettings` and three seeds. A region with other settings (other scales, `voxelSize`) runs the same code on other inputs. | Accepted: the float operations are the same, so a build that passes is expected to agree for other settings too, but that is an inference, not a test. |
+| Float-to-int conversion out of range (settings near zero or NaN, chunk coordinates beyond +-2^25). | `voxel::IsValid` exists and is tested; nothing calls it yet (stage 3 must, see above). |
 
 ## World operations
 
@@ -251,7 +272,7 @@ manual clock advances all sides. `ImpairedTransport` wraps the loopback. `voxel:
 
 | # | Built | Verified by | Days (est.) |
 |---|---|---|---|
-| 0 | `-ffp-contract=off`; `ChunkHash` / `WorldHash`; golden generator test; `VortexCore` + its tests built once on Windows | Golden test green on Linux (and on Windows if a machine exists); the existing 299 tests pass; generator time before / after recorded | 2 |
+| 0 | `-ffp-contract=off`; `ChunkHash` / `WorldHash`; golden generator tests (chunk hashes and float bits); `VortexCore` + its tests built once on Windows | Golden tests green on Linux (and on Windows if a machine exists) and red in a build without the flag; the existing 299 tests pass; generator time before / after recorded | 2 |
 | 1 | `VortexSim`; gather functions moved to the engine; `sim::Simulation` with a numbered tick; server scene config | Existing tests pass; game unchanged; a test steps a `Simulation` 600 ticks in a binary that links no Vulkan or glfw | 4 |
 | 2 | Quantised edits, swap, `ClearMask`, `WorldOp` / `ApplyOp`, skipped / unsynced chunk report, `sim::Blast` (islands as `Detach` with `netId = 0`) + `PresentBlast`, `Scene::Damage` threshold; offline game on this path | Unit tests; two `Simulation`s fed the same events, islands included, have equal hashes; offline blasts look the same | 5-6 |
 | 3 | `VortexNet`: loopback + `ImpairedTransport`, messages, `Server` / `Client`, `RegionDesc`, fixed server window with margin, probe hashes, event stream with byte budget, session file, `vortex_server`; split template set-up; join = full event log | In-process server + 2 clients, 200 server-side blasts that free islands, 5 % loss: hashes equal | 5-6 |

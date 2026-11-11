@@ -12,6 +12,7 @@ Line numbers are as of engine commit `ec073a8`; if a number no longer matches, s
 | `Chunk.cppm` (header-only) | `Chunk`, `ChunkOccupancy`, index maths, `VoxelToChunk/Local`, `ChunkToVoxel`. |
 | `Store.cppm`, `internal/Store.cpp` | `ChunkStore`: slot pool, LIFO free list, dirty list, high-water mark. |
 | `World.cppm`, `internal/World.cpp` | Window, cells, grid encoding, load jobs, edits, raycast, change list. |
+| `Hash.cppm`, `internal/Hash.cpp` | `ChunkHash`, `UniformChunkHash`, `kAirChunkHash`, `WorldHashTerm`, `WorldHash`: content hashes for terrain agreement. |
 | `Region.cppm`, `internal/Region.cpp` | Chunk RLE codec (`EncodeChunk`/`DecodeChunk`), `RegionStore` (`r.x.y.z.vxr`). |
 | `Generator.cppm`, `internal/Generator.cpp` | `IWorldGenerator`, `TerrainGenerator` (height tiles, caves, trees), `FlatGenerator`. |
 | `Volume.cppm`, `internal/Volume.cpp` | `VoxelVolume`: dense x/y/z array, the authoring form of objects. |
@@ -26,7 +27,7 @@ Line numbers are as of engine commit `ec073a8`; if a number no longer matches, s
 | `internal/ThirdPartyImpl.cpp` | The one non-module TU with the tinygltf / stb implementations. |
 | `shaders/shared/trace.glsl` | Traversal compiled as GLSL and C++: `VxTraceChunk/World/Instances/Scene`. |
 | `shaders/shared/shading.glsl`, `cube.glsl`, `vx_cpp.h`, `vx_glsl.glsl` | Shared shading helpers, proxy-cube corners, and the two language shims (rules: `vx_cpp.h:22-27`). |
-| `tests/core/*.cpp` | `VortexCoreTests`: Chunk (+ChunkStore), World (+Region, Terrain), Trace (+Bvh), Collider, Connectivity, VoxFormat, MeshImport. `ParticleTests.cpp` in the same binary belongs to `fx`, not to this module. |
+| `tests/core/*.cpp` | `VortexCoreTests`: Chunk (+ChunkStore), World (+Region, Terrain), Hash (+golden terrain), Trace (+Bvh), Collider, Connectivity, VoxFormat, MeshImport. `ParticleTests.cpp` in the same binary belongs to `fx`, not to this module. |
 
 Who compiles the shared files as C++ today: `trace.glsl` in `Trace.cpp`, `cube.glsl` in
 `tests/graphics/ContractTests.cpp`. `shading.glsl` says it is C++-compatible but no C++ file includes it, so nothing
@@ -109,6 +110,43 @@ do not bounds-check (0..31 only); `GetSafe` does. A `Chunk` is 36 KB: keep it on
 - Saved ids are world-palette indices handed out by `MaterialLibrary::Add` in call order (`Material.cpp:136-155`:
   grass = 1 ... bedrock = 20). Reordering or inserting inside `RegisterDefaultWorldMaterials` silently re-materials
   every existing save. Append only.
+
+**Determinism and hashes** (`Hash.cpp`, `CMakeLists.txt` `vortex_options`; networking stage 0).
+- Every engine TU and everything importing engine modules is compiled with `-ffp-contract=off` through
+  `vortex_options`: no fused multiply-add is formed from `a * b + c`, although `-mfma` is on. Do not add `-ffast-math`,
+  `-ffp-contract=fast` or `#pragma STDC FP_CONTRACT ON` to a target or a file, and do not call `std::fma` or a libm
+  function whose result is not exactly specified (`sin`, `pow`, `exp` ...) on the path from seed to voxel ids. Do not
+  count on a BMI mismatch to catch a target built without the flag (not verified); the golden tests are the check.
+  clang-cl ignores the bare flag with a warning, so `CMakeLists.txt` passes `/clang:-ffp-contract=off` there and
+  `-Werror=unknown-argument` on every Clang; compilers other than Clang and GCC only get a configure warning.
+- `ChunkHash` is defined over the 32768 ids in `Chunk::VoxelIndex` order as maximal runs `(id, length)`, each absorbed
+  with a splitmix64 step. It reads `ids` bytes only: not the pyramid, not slots, pointers, padding or host byte order.
+  Empty cell == Uniform 0 == cleared Dense == `kAirChunkHash`; Uniform `id` == Dense filled with `id` ==
+  `UniformChunkHash(id)`. The storage kind is therefore never part of what two machines compare.
+- `WorldHash(world, min, max)` is the wrapping sum of `WorldHashTerm(coord, hash)` over the box `[min, max)` in chunk
+  coordinates. An air chunk's term is 0, so the box may hold any amount of sky; the sum is order independent and
+  additive over disjoint boxes. Chunks that are `Unloaded`/`Loading` add nothing and are counted in `notLoaded`: compare
+  two results only when both are `Complete()`. Main thread only (it reads cells and the store).
+- The hash function, `kAirChunkHash`, the run order and the constants in `Hash.cpp` are a wire contract: values are
+  compared between machines and checked in (`ChunkHash.DependsOnlyOnMaterialIds` pins two chunk hashes,
+  `WorldHash.TermDependsOnChunkPosition` two terms, `Terrain.GoldenChunkHashes` 192). Changing `Chunk::VoxelIndex`
+  order changes every hash.
+- `Terrain.GoldenChunkHashes` pins the built-in generator with **default** `TerrainSettings` and the default world
+  materials for seeds 1337, 77 and 0x9e3779b9. Any change to the generator, to a `TerrainSettings` default or to the
+  order of `RegisterDefaultWorldMaterials` fails it. If the change was meant, paste the table the failure prints over
+  `kGoldenHashes` (`tests/core/HashTests.cpp`); if it was not, two builds no longer generate the same terrain. The
+  test calls `Generate` directly, so it does not depend on job threads. The probe coordinates (`kGoldenCoords`, 64 per
+  seed) are fixed and were picked from the generated heights: surface, underground, tree tops, snow columns, and 16
+  chunks 1 km out. The test also requires every seed's probes to contain grass, dirt, stone, dark stone, sand, snow,
+  water, wood, leaves and a cave; after a generator change that fails this, pick new coordinates, do not drop the check.
+- **The chunk hashes alone do not prove equal floats**: they see them after `floor` and compares. Measured: a build
+  without `-ffp-contract=off` changes 1 of the 192 hashes. `Terrain.GoldenNoiseBits` (7 noise expressions x 3 seeds)
+  and `Terrain.GoldenHeightBits` (`voxel::TerrainHeight`, 3 seeds) hash raw float bit patterns at 4096 points out to
+  1 km and all fail in such a build. A failure there with green chunk hashes is still a real disagreement.
+- `voxel::IsValid(TerrainSettings)` gives the supported range (finite, `voxelSize` 0.01-10 m, `horizontalScale`
+  0.01-1000, `treeSpacing` >= 0.5 m ...). Outside it `static_cast<int>` of an out-of-range float in `Noise.cppm`
+  `FastFloor` and in the generator is undefined behaviour, and `coord * kChunkSize` overflows beyond +-2^25 chunks.
+  `CreateTerrainGenerator` does not check; settings from a file or the network must be checked by the caller.
 
 **Model / Instances.**
 - `VoxelModel::Volume()` is the source of truth; parts are derived. Change voxels only through `SetVolume` (re-bakes).
@@ -214,7 +252,8 @@ border, an edit on an unloaded chunk.
 **C. Change or add a generator.** Implement `IWorldGenerator` in `Generator.cpp` (anonymous namespace, factory declared
 in `Generator.cppm`): a pure function of (seed, coord), thread safe, writing only `chunk.ids` via `Chunk::VoxelIndex`.
 Return `Empty`/`Uniform` early where possible (no slot). Anything crossing chunk borders must be derivable by each chunk
-on its own. Extend `Terrain.GenerationIsDeterministicAndSeamless` and `Terrain.StreamsThroughTheWorld`. Changing an
+on its own. Extend `Terrain.GenerationIsDeterministicAndSeamless` and `Terrain.StreamsThroughTheWorld`. A change to the
+built-in terrain also needs new constants in `Terrain.GoldenChunkHashes` (the failure prints them). Changing an
 existing generator does not touch saved (modified) chunks, so old saves show seams.
 
 **D. Change the chunk layout or grid encoding.** Touch together: `Chunk.cppm`, `trace.glsl` (offsets, index maths),
@@ -233,7 +272,7 @@ with `--validation`, and compare screenshots from a fixed `--camera` before and 
 Binary: `build/engine/tests/VortexCoreTests` (gtest; ctest discovers the tests as `Suite.Name`).
 
 ```
-ctest --test-dir build -R '^(Chunk|ChunkStore|World|Region|Terrain|Trace|Bvh)\.'
+ctest --test-dir build -R '^(Chunk|ChunkStore|ChunkHash|World|WorldHash|Region|Terrain|Trace|Bvh)\.'
 ctest --test-dir build -R '^(ColliderBoxes|MassProperties|CollisionFilter|ChunkCollisionMesh)\.'
 ctest --test-dir build -R '^(Connectivity|SplitComponents|FloatingIslands|VoxFormat|Voxelize|MeshImport)\.'
 build/engine/tests/VortexCoreTests --gtest_filter='World.*'      # one suite, full output
@@ -244,6 +283,7 @@ build/engine/tests/VortexCoreTests --gtest_filter='World.*'      # one suite, fu
 | Store / lifetime | `ChunkStore.AllocFreeAndDirtyTracking`, `World.WindowMovementKeepsEditsAndFreesMemory`, `World.StoreExhaustionDegradesGracefully` |
 | Window / streaming | `World.LoadsWindowAndClassifiesChunks`, `World.SmallStepsOnlyReloadTheNewSlab`, `World.WindowSizeNeedNotBePowerOfTwo` |
 | Persistence | `World.PersistsEditsToDisk`, `Region.ChunkCodecRoundTrip` |
+| Hashes / determinism | `ChunkHash.*`, `WorldHash.*`, `Terrain.GoldenChunkHashes` |
 
 Then the whole suite (scene, physics terrain and the renderer contract tests consume these types) and both headless
 runs from CLAUDE.md. In the headless game log:

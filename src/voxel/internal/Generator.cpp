@@ -43,6 +43,19 @@ namespace vortex::voxel {
                   m_CaveA(settings.seed * 7919u + 6u),
                   m_CaveB(settings.seed * 7919u + 7u) {}
 
+            /// Terrain height in metres at a world position (metres).
+            float HeightMeters(float x, float z) const {
+                const float s = 1.0f / m_S.horizontalScale;
+                const float continent = m_Continent.Fbm(x * s / 420.0f, z * s / 420.0f, 3);
+                const float hills = m_Hills.Fbm(x * s / 95.0f, z * s / 95.0f, 4);
+                const float ridge = m_Mountain.Ridged(x * s / 300.0f, z * s / 300.0f, 5);
+                const float detail = m_Detail.Fbm(x * s / 11.0f, z * s / 11.0f, 2);
+                const float inland = math::SmoothStep(0.05f, 0.55f, continent);     // mountains only rise inland
+                return m_S.baseHeight + continent * m_S.continentHeight +
+                       hills * m_S.hillHeight * (0.35f + 0.65f * (continent * 0.5f + 0.5f)) +
+                       ridge * ridge * m_S.mountainHeight * inland + detail * 0.35f;
+            }
+
             ChunkContent Generate(const glm::ivec3& coord, Chunk& chunk) const override {
                 const std::shared_ptr<const HeightTile> tile = Tile(coord.x, coord.z);
                 const WorldMaterials& mat = m_S.materials;
@@ -120,19 +133,6 @@ namespace vortex::voxel {
             }
 
         private:
-            /// Terrain height in metres at a world position (metres).
-            float HeightMeters(float x, float z) const {
-                const float s = 1.0f / m_S.horizontalScale;
-                const float continent = m_Continent.Fbm(x * s / 420.0f, z * s / 420.0f, 3);
-                const float hills = m_Hills.Fbm(x * s / 95.0f, z * s / 95.0f, 4);
-                const float ridge = m_Mountain.Ridged(x * s / 300.0f, z * s / 300.0f, 5);
-                const float detail = m_Detail.Fbm(x * s / 11.0f, z * s / 11.0f, 2);
-                const float inland = math::SmoothStep(0.05f, 0.55f, continent);     // mountains only rise inland
-                return m_S.baseHeight + continent * m_S.continentHeight +
-                       hills * m_S.hillHeight * (0.35f + 0.65f * (continent * 0.5f + 0.5f)) +
-                       ridge * ridge * m_S.mountainHeight * inland + detail * 0.35f;
-            }
-
             std::shared_ptr<const HeightTile> Tile(int cx, int cz) const {
                 const uint64_t key = static_cast<uint64_t>(static_cast<uint32_t>(cx)) | (static_cast<uint64_t>(static_cast<uint32_t>(cz)) << 32);
                 {
@@ -321,6 +321,20 @@ namespace vortex::voxel {
 
     std::shared_ptr<IWorldGenerator> CreateTerrainGenerator(const TerrainSettings& settings) {
         return std::make_shared<TerrainGenerator>(settings);
+    }
+
+    float TerrainHeight(const TerrainSettings& settings, float x, float z) {
+        return TerrainGenerator(settings).HeightMeters(x, z);
+    }
+
+    bool IsValid(const TerrainSettings& s) {
+        auto in = [](float v, float lo, float hi) { return v >= lo && v <= hi; };   // false for NaN
+        return in(s.voxelSize, 0.01f, 10.0f) && in(s.horizontalScale, 0.01f, 1000.0f) &&
+               in(s.seaLevel, -10000.0f, 10000.0f) && in(s.baseHeight, -10000.0f, 10000.0f) &&
+               in(s.continentHeight, -10000.0f, 10000.0f) && in(s.hillHeight, -10000.0f, 10000.0f) &&
+               in(s.mountainHeight, -10000.0f, 10000.0f) && in(s.snowLine, -10000.0f, 10000.0f) &&
+               in(s.caveMaxDepth, 0.0f, 10000.0f) && in(s.treeSpacing, 0.5f, 10000.0f) &&
+               in(s.treeDensity, 0.0f, 1.0f);
     }
 
     std::shared_ptr<IWorldGenerator> CreateFlatGenerator(int groundVoxelHeight, uint8_t surfaceId, uint8_t groundId) {

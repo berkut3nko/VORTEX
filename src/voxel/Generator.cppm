@@ -71,6 +71,23 @@ export namespace vortex::voxel {
      */
     std::shared_ptr<IWorldGenerator> CreateTerrainGenerator(const TerrainSettings& settings);
 
+    /**
+     * @brief Surface height in metres of the built-in terrain at a world position in metres.
+     * @details Exactly the float the generator computes before it is turned into voxels: the
+     * determinism tests pin its bit pattern, and a server can use it to place things on the ground
+     * without loading chunks. Trees and caves are not included.
+     */
+    float TerrainHeight(const TerrainSettings& settings, float x, float z);
+
+    /**
+     * @brief True when every tunable is finite and inside the range the generator supports.
+     * @details Outside it float-to-int conversions in the generator can overflow (undefined
+     * behaviour, so two builds may disagree) or loops become unbounded. Settings that come from a
+     * file or from the network must pass this before CreateTerrainGenerator. Chunk coordinates
+     * must also stay inside +-2^25 (voxel coordinates are 32-bit).
+     */
+    bool IsValid(const TerrainSettings& settings);
+
     /// @brief Generator producing an infinite flat slab; useful for tests and tech demos.
     std::shared_ptr<IWorldGenerator> CreateFlatGenerator(int groundVoxelHeight, uint8_t surfaceId, uint8_t groundId);
 }
