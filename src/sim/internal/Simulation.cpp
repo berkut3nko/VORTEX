@@ -32,6 +32,7 @@ namespace vortex::sim {
         config.scene.bakeModels = false;
         config.scene.debrisRemnants = false;
         config.scene.markDebris = false;
+        config.scene.replicatedPieceVoxels = kServerReplicatedPieceVoxels;
         return config;
     }
 

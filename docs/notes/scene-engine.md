@@ -13,18 +13,27 @@ here. Line numbers in `src/scene`, `src/sim` and `src/engine` are as of M1 stage
   `DamageResult`, the `Scene` interface. Its doc comments are the contract.
 - `src/scene/internal/Scene.cpp` - `Impl::CreateBody` (layer, CCD, density), `Crumble`, `DespawnDebris`,
   `UpdateDebris`, `Damage`, `DestroyBelow`. No render data: the module imports nothing of `vortex.graphics`.
-- `src/sim/Sim.cppm` - primary unit of `vortex.sim`; re-exports `:simulation`. Later stages add partitions here
-  (`RegionDesc`, `WorldOp`, `Blast`, `StepPlayer`; `docs/design/networking.md`).
+- `src/sim/Sim.cppm` - primary unit of `vortex.sim`; re-exports `:simulation`, `:worldop`, `:blast`. Later stages add
+  partitions here (`RegionDesc`, `StepPlayer`; `docs/design/networking.md`).
+- `src/sim/WorldOp.cppm`, `internal/WorldOp.cpp` - `WorldOpKind` (wire values), `WorldOp` + factories + `Bounds`,
+  `OpResult`, `ApplyOp`, `BuildDetachedPiece`.
+- `src/sim/Blast.cppm`, `internal/Blast.cpp` - `BlastDesc`, `AppliedOp`, `BlastResult`, `BlastPush`, `Blast` (the
+  simulation half of a blast), `kMaxIslandVoxels`, `kIslandSearchMargin`.
 - `src/sim/Simulation.cppm` - `SimulationConfig`, `ServerConfig`, the `Simulation` interface. Its doc comment is the
   contract (tick, phases, what is not stepped).
 - `src/sim/internal/Simulation.cpp` - `Resolve` (the two config overrides), `Impl` (member order), `HeldWindowFocus`,
   `Stream` / `SimulateBodies` / `Lifetimes` (the three phases), `Initialize`, `Shutdown`.
 - `src/engine/Engine.cppm` - `EngineConfig`, `GatherInstances` / `GatherLights` (free functions), `Application`
-  (5 callbacks), `Engine` accessors (shortcuts into its `Simulation()`), `Tick`, `TerrainReady`, `StepAlpha`, `Explode`.
+  (5 callbacks), `Engine` accessors (shortcuts into its `Simulation()`), `Tick`, `TerrainReady`, `StepAlpha`, `Explode`,
+  `PresentBlast`.
 - `src/engine/internal/Engine.cpp` - `ApplyCommandLine`, `Impl` (config, input, the simulation, then the graphics
-  objects), `Initialize`, `Explode`, `Run` (the only frame loop), exit statistics, exit code.
+  objects), `Initialize`, `Explode` (= `PresentBlast(sim::Blast(...))`), `PresentBlast`, `Run` (the only frame loop),
+  exit statistics, exit code.
 - `src/engine/internal/Gather.cpp` - the two gather functions; they read `Scene::Registry()` only.
 - Libraries: `scene` + `sim` are `VortexSim` (Core + Physics + EnTT, no GPU); `engine` + `editor` are `VortexEngine`.
+- `tests/sim/BlastTests.cpp` - suites `WorldOps` and `Blast` (stage 2, incl. the two-simulation hash acceptance);
+  helpers `Arena` (simulation on flat ground, window loaded), `Mushrooms` (set-up operations with two islands to be),
+  `StemCut`.
 - `tests/sim/SimulationTests.cpp` - suite `Simulation`; helpers `FlatWorld` (a simulation on flat ground, window
   loaded) and `Playground` (crates, a static block, a lamp, a flash). `tests/sim/ServerSceneTests.cpp` - suite
   `ServerScene`; helper `Bench` (store + materials + physics + particles + scene, no world). Both are
@@ -36,8 +45,8 @@ here. Line numbers in `src/scene`, `src/sim` and `src/engine` are as of M1 stage
 - `main.cpp` - `ShredborneGame`: playground, player controller, headless self-test, `--camera` / `--editor` /
   `--pause-menu` / `--no-hud` parsing, play-mode cursor (`CursorCapture`), pause menu, HUD (`DrawHud`), the F3 ImGui
   debug overlay (`DebugOverlay`).
-- `Engine` has no unit test (needs a device): `Run`, `Explode` and the game are checked only by the two headless
-  runs. What `Run` does to the simulation is three `Simulation` calls, and those are unit tested.
+- `Engine` has no unit test (needs a device): `Run`, `PresentBlast` and the game are checked only by the headless
+  runs. `sim::Blast`, the half that changes the simulation, is unit tested in `tests/sim/BlastTests.cpp`. What `Run` does to the simulation is three `Simulation` calls, and those are unit tested.
 
 ## 2. Invariants
 
@@ -128,8 +137,9 @@ Units, spaces, ranges
   voxel size; the body's position is that same corner (Scene.cpp:51), not the centre of mass.
 - Transforms are float. `LightDesc::position` and `Damage`'s `center` are `dvec3` but are cast to `vec3`
   (Scene.cpp:211, 323), as in `Explode`: far from the origin precision is float precision.
-- `Explode(center, radius, power)`: metres, metres, material hardness. `power` applies to terrain only
-  (`World::CarveSphere`); `Damage` ignores hardness, respecting only `MaterialFlag_Indestructible` (Scene.cpp:340).
+- `Explode(center, radius, power)` / `sim::BlastDesc`: metres, metres, material hardness, quantised by `sim::Blast` to
+  1/16 voxel and 1/16 hardness (`BlastResult::center` / `radius` are the quantised values in metres). `power` applies
+  to terrain only (`World::CarveSphereQ`); `Damage` ignores hardness, respecting only `MaterialFlag_Indestructible`.
 - `Damage` does nothing for `radius <= 0` or NaN (Scene.cpp:298). `debrisParticleStride` is a divisor, clamped to >= 1
   (Scene.cpp:24). Density is clamped to >= 1 (Scene.cpp:44).
 - CCD only for Dynamic bodies that are `Layer::Debris` (< `debrisBodyVoxels`) or whose smallest solid extent is <
@@ -152,8 +162,13 @@ Scene
   cope with an unbaked one (it already had to: the full-store case above). A model baked by its creator stays baked.
 - `SceneConfig::markDebris = false` (server) switches off all three places that add `Debris` (Scene.cpp:204, 418, 426).
   Layers do not change: a small body is still `Layer::Debris` with CCD. Pieces below `minPieceVoxels` still never
-  become entities. Until `Damage` takes a piece threshold (networking stage 2 / 6) such a scene keeps every piece of
-  16 voxels and more for good.
+  become entities.
+- `SceneConfig::replicatedPieceVoxels` (0 = off, the default; 512 from `sim::ServerConfig`): in `Damage` a piece below
+  it that would be Dynamic gets no entity, body or slot and is returned in `DamageResult::fragments` (model unbaked,
+  pose, velocities sampled from the old body). If that is the kept piece the entity is destroyed (`destroyed`,
+  `toRubble`) before later pieces are created. A Static / Kinematic object only dented keeps its entity whatever its
+  size (`pieceMotion` must be Dynamic). The test sits before the bake, so fragments never take chunk slots. Damage's
+  own particles are still spawned. On a server the game's crate (296 voxels) is client rubble at its first hit.
 - A Static / Kinematic object cut apart becomes Dynamic as a whole; the kept entity's `RigidBody::motion` changes.
 - Rubble marking is asymmetric by design: new small pieces always get `Debris`; the damaged entity only if small,
   Dynamic and `debrisRemnants`; an existing `Debris` keeps its age
@@ -176,28 +191,36 @@ Scene
   index a stale id is valid again. Nothing in the scene guards against it; rubble churn is how it would happen.
 
 Engine
-- `Explode` order (Engine.cpp:110-172): carve terrain -> particles -> islands -> snapshot (`QueryBodies`) -> `Damage`
-  each -> impulses -> `ActivateInBox` -> flash. The snapshot is taken after the islands exist, so a fresh island whose
-  bounds touch the blast box is damaged as well, without a hardness check. Pieces made by `Damage` are not in the
-  snapshot.
-- `ExtractFloatingIslands` removes the island from the world (`removeFromWorld = true`). If `CreateVoxelObject` then
-  fails (store full, no body) that terrain is simply gone; only the scene's error line shows it.
+- Blast order. `sim::Blast` (Blast.cpp): carve (`ApplyOp(WorldOp::Carve)`) -> island search with
+  `removeFromWorld = false` -> per island `WorldOp::Detach` applied with `ApplyOp` (no entity) -> snapshot
+  (`QueryBodies`) -> `Damage` each (fragments get `BlastPush` added) -> impulses -> `ActivateInBox`.
+  `Engine::PresentBlast` (Engine.cpp): per carve the debris particles, per Detach with netId 0 a rubble object from
+  the removed voxels with `op.velocity` -> explosion particles -> fragment rubble -> flash. Rubble made by
+  `PresentBlast` is created after the snapshot, so a fresh island is **not** damaged by the blast that freed it
+  (before stage 2 it was, without a hardness check); it still gets the same push, as initial velocity
+  (impulse = mass x `BlastPush`, so `Detach::velocity = BlastPush` at the island's corner - the old impulse sampled the
+  body position, which is that same corner, not the centre of mass).
+- `ExtractFloatingIslands` no longer removes anything itself: the Detach clears the voxels (`World::ClearMask`) and
+  `BuildDetachedPiece` makes the piece from what was removed. If `CreateVoxelObject` then fails (store full, no body)
+  that terrain is simply gone; only the scene's error line shows it.
 - Impulse distance is measured to `BodyState::position` = the model corner, so big objects are pushed off-centre.
-  Impulse = mass x 6 x linear falloff over 3 x radius. The loop visits Static and Kinematic bodies too: `GetMass`
-  returns their shape mass, but Jolt's `AddImpulse` ignores bodies that are not dynamic, so nothing happens. A frozen
-  body keeps the push as velocity for when it resumes (PhysicsWorld.cpp:725-743).
-- The impulse loop runs inside a registry view (Engine.cpp:150-158): only physics calls belong there.
-- Budgets: 400 to 799 terrain debris bursts per blast (stride = removed / 400, rounded down, Engine.cpp:125),
-  islands up to 60 000 voxels, search box radius + 24 voxels. Flash lifetime `ln(40*radius / 0.05) / 9` s (0.7 s
-  for 0.7 m). Call `Explode` from `OnUpdate` / `OnFixedUpdate`, never inside a registry view.
+  Impulse = mass x `BlastPush` (6 m/s x linear falloff over 3 x radius, straight up at the centre). The loop visits
+  Static and Kinematic bodies too: `GetMass` returns their shape mass, but Jolt's `AddImpulse` ignores bodies that are
+  not dynamic, so nothing happens. A frozen body keeps the push as velocity for when it resumes
+  (PhysicsWorld.cpp:725-743).
+- The impulse loop runs inside a registry view (Blast.cpp): only physics calls belong there.
+- Budgets: 400 to 799 terrain debris bursts per blast (stride = removed / 400, rounded down, in `PresentBlast`),
+  islands up to `kMaxIslandVoxels` (60 000), search box radius + `kIslandSearchMargin` (24) voxels. Flash lifetime
+  `ln(40*radius / 0.05) / 9` s (0.7 s for 0.7 m). Call `Explode` / `Blast` from `OnUpdate` / `OnFixedUpdate`, never
+  inside a registry view.
 - Before `Initialize()` succeeds `World()` and `Explode` dereference a null `world`; the other accessors return
   subsystems that exist but are not initialised. Only `TerrainReady` / `TerrainStats` check. `Run` returns 1 if not
   initialised, 2 on validation errors, else 0; `OnInit` is called at the start of `Run`, not by `Initialize`.
 - `ApplyCommandLine` also takes `--no-checkerboard` (Engine.cpp:35), missing from the comment at `Engine.cppm:54-55`.
   `--camera` and `--editor` are game flags (main.cpp:481-489).
-- `Explode` is still engine code that mixes simulation (carve, islands, damage, impulses) with presentation
-  (particles, flash). Networking stage 2 splits it into `sim::Blast` and `Engine::PresentBlast`; until then a
-  `Simulation` without an engine has no blast.
+- A `Simulation` without an engine blasts with `sim::Blast` and gets no particles, no flash and no island rubble:
+  islands are `Detach` operations, whoever draws makes the rubble (`Engine::PresentBlast` offline, a client later).
+  `BlastResult::Report()` lists chunks an operation could not apply to; nothing reads it yet (stage 7).
 - `EngineConfig::world.saveDirectory` reaches the simulation's world unchanged: with it, edits are loaded from there,
   saved on shutdown and by the editor's "Save world" button (which reads `World::Config().saveDirectory`). The game
   sets none. A networked client must keep it empty (stage 3). `EngineConfig` has no physics or job-thread settings: the engine's simulation uses the defaults.
@@ -261,10 +284,14 @@ Change what `Damage` does to pieces
    proves no voxel moved or was duplicated.
 3. Headless run: `Beam cut: ... 1 new object(s)` must not change.
 
-Add an effect to `Explode`
-1. Insert at the right stage (order above). Spawned entities need a `Lifetime` or `debris = true` (snapshot rule).
-2. `Explode` has no unit test: put the logic into `Scene` with a test, keep `Explode` as glue.
-3. Headless run (`Blast at the crates: A -> B objects`) and a `--camera` screenshot of the plaza.
+Add an effect to a blast
+1. Decide the half. Changes to the simulation (world, bodies, entities that exist on a server) go into `sim::Blast`
+   and must be returned in `BlastResult` if a client needs them; terrain changes only as `WorldOp`s through `ApplyOp`.
+   Pictures (particles, lights, local rubble) go into `Engine::PresentBlast`, made from the result and the client's
+   own world. Spawned entities need a `Lifetime` or `debris = true`.
+2. `sim::Blast` is unit tested (`tests/sim/BlastTests.cpp`); `PresentBlast` has no test: keep it glue.
+3. Headless run (`Blast at the crates: A -> B objects (T terrain voxels, I island(s), V object voxels in N
+   object(s))`) and a `--camera` screenshot of the plaza (`--camera 14.3,7.0,-4.5,3.1416,-0.2` frames the crates).
 
 Add an `Application` callback or move a loop step
 1. Virtual with an empty default (`Engine.cppm:76-84`), call site in `Run`, keeping the order rules of section 2.
@@ -292,8 +319,8 @@ Change the player controller or the self-test script
 ## 5. Verifying a change here
 
 Unit tests, no GPU: `./build/engine/tests/VortexEngineTests --gtest_filter='Scene*'` (40 tests in `SceneTests.cpp`),
-then the whole binary because `EditorTests.cpp` uses the scene; and `./build/engine/tests/VortexSimTests` (19 tests:
-`Simulation.*` 12, `ServerScene.*` 7), about 3 s.
+then the whole binary because `EditorTests.cpp` uses the scene; and `./build/engine/tests/VortexSimTests` (32 tests:
+`Simulation.*` 15, `ServerScene.*` 9, `WorldOps.*` 3, `Blast.*` 5), about 5 s.
 - Simulation: `Steps600TicksWithoutARenderer` and `ServerConfigurationSteps600Ticks...` are the stage-1 acceptance
   (crates at rest on the terrain collider, flash gone, tick = 600); `StepHoldsTheWorldWindowWhereverItWasPlaced`,
   `WorldIsMemoryOnlyWhateverTheConfigurationAsks`, `TickCountsFixedStepsAndNothingElse` pin the three rules of
@@ -309,7 +336,9 @@ then the whole binary because `EditorTests.cpp` uses the scene; and `./build/eng
   `DestroyBelowRemovesWhatFellOutOfTheWorld`. `SceneDamage.*` (14) and `SceneDebris.*` (9): see the recipes.
 
 Headless game run (commands in `CLAUDE.md`); in the log:
-- `Blast at the crates: A -> B objects`; `Beam cut: N voxels removed, 1 new object(s)`.
+- `Blast at the crates: A -> B objects (T terrain voxels, I island(s), V object voxels in N object(s))`; since stage 2
+  `7 -> 7 objects (0 terrain voxels, 0 island(s), 558 object voxels in 5 object(s))`. `Beam cut: N voxels removed, 1
+  new object(s)`.
 - `Player feet at (x, y, z), on the ground`, logged by `main` after `Run`. It must not say `in the air` (run without
   `--camera`), and x / z must differ from the spawn point.
 - `Physics: B bodies (A awake, F frozen), T terrain colliders; scene: V voxel objects, R rubble`: R at or below

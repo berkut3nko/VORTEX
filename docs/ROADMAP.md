@@ -15,14 +15,14 @@ What exists today, and what was designed for but is not built yet. See
 | Ray queries | One traversal shared by GPU and CPU (`shaders/shared/trace.glsl`), world + dynamic objects through a BVH. |
 | Objects | Voxel models of any size shared between instances, collider boxes, mass from material density. |
 | Scene | `vortex.scene`: EnTT entities with transform, voxel body, rigid body, point light and lifetime components; destroying an entity releases its body and chunk slots; part of the GPU-free `Vortex::Sim` and tested without a GPU. |
-| Destruction | Terrain carving with floating-terrain detection; objects lose voxels and split into pieces (`Scene::Damage`, `Engine::Explode`). Fragments below 16 voxels are particles, small pieces are rubble with a lifetime, a distance rule and a global cap. |
+| Destruction | Terrain carving with floating-terrain detection; objects lose voxels and split into pieces (`Scene::Damage`). A blast is `sim::Blast` (integer-exact world operations: carve, one `Detach` per floating island; object damage, impulses) plus `Engine::PresentBlast` (particles, local rubble, flash); `Engine::Explode` does both. Fragments below 16 voxels are particles, small pieces are rubble with a lifetime, a distance rule and a global cap. |
 | Import | MagicaVoxel `.vox` read / write, glTF voxelisation. |
 | Physics | Jolt behind an engine interface, fixed time step, character controller. Terrain colliders streamed around the camera and requested by every moving body; bodies without ready terrain are frozen in place and resume when it is there, so nothing falls through unloaded or uncooked terrain. |
 | Particles | CPU pool with emitters, voxel collision, effect presets. |
 | Renderer | Ray-marched G-buffer, ray-traced sun shadows, ambient occlusion, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping, ImGui. Headless mode with screenshots. Validation-clean on Intel UHD 620. |
 | Editor | `vortex.editor`: in-game editor toggled with F1 - fly camera, entity selection with a translate / rotate gizmo, inspector, terrain brush, primitive spawning, `.vox` / glTF import, environment / render / profiler / world panels. Tool logic is separate from the widgets and unit tested. |
-| Simulation | `vortex.sim`: `sim::Simulation` owns world, physics, terrain colliders and scene and steps them on a numbered fixed tick; library `Vortex::Sim` links no renderer or window. `Engine` owns one and draws it. |
-| Tests | 363 unit tests, none needing a GPU. |
+| Simulation | `vortex.sim`: `sim::Simulation` owns world, physics, terrain colliders and scene and steps them on a numbered fixed tick; `sim::WorldOp` / `ApplyOp` replay terrain changes exactly; `sim::Blast`. Library `Vortex::Sim` links no renderer or window. `Engine` owns one and draws it. |
+| Tests | 385 unit tests, none needing a GPU. |
 
 ## Performance (Intel UHD 620, 1280x720 output, 768x432 internal)
 
@@ -125,7 +125,25 @@ State (stages are those of [design/networking.md](design/networking.md)):
   16 voxels and more stay for good until `Scene::Damage` gets its threshold (stage 2 / 6); lifetimes run per tick
   in `Step` but per rendered frame in the engine, so nothing replicated may depend on them. The choices made where
   the design was open are in `design/networking.md`, "Stage 1 as built".
-- Stages 2-9: not started.
+- **Stage 2, world operations and the blast split - done.** Replicated terrain edits take integer parameters only:
+  `voxel::SphereQ` (centre and radius in 1/16 voxel, int64 sphere test), power in 1/16 hardness units, and
+  `World::CarveSphereQ / FillSphereQ / SwapSphereQ / ClearMask` (the float `CarveSphere` / `FillSphere` quantise and
+  forward). Every edit can report the chunks it could not apply to (`voxel::EditReport`: `skipped` = not loaded,
+  `unsynced` = no store slot; all-or-nothing per chunk). `sim::WorldOp` (carve, fill, swap, box, detach) and
+  `sim::ApplyOp` are what server and clients run. `sim::Blast` = carve, island search, one `Detach` per island (an
+  occupancy mask, netId 0, the blast's push as velocity; no entity), `Scene::Damage` per object, impulses; it spawns
+  no particles. `Engine::PresentBlast` makes the particles, the island rubble (from the voxels the Detach removed)
+  and the flash; `Engine::Explode` = both, and the game runs on it. `SceneConfig::replicatedPieceVoxels` (0 offline,
+  512 from `ServerConfig`): smaller object pieces - and a dynamic survivor below it - come back as fragments
+  without an entity (client rubble). Verified: 22 new tests (385 in all); two simulations with different worker
+  counts fed the same operations, two islands included, end with equal `WorldHash`, and a stream with one carve
+  1/16 voxel larger or one Detach missing does not; headless game, editor and pause-menu runs exit 0 with the same
+  crate blast (5 objects lose 558 voxels, no terrain) and the same beam cut (37 voxels, 1 new object) as before,
+  and the crate area looks the same before and after. One offline change: a fresh island is no longer damaged by
+  the blast that freed it (it is still pushed the same way). **Not done / open:** nothing acts on the skipped /
+  unsynced report yet (stage 7); object particles are still spawned inside `Damage`; no `opSeq` or encoding
+  (stage 3). Choices where the design was open: `design/networking.md`, "Stage 2 as built".
+- Stages 3-9: not started.
 
 ### M2 - Fight feel under authority
 - Spell framework: data-driven casts (projectile, beam, area) producing world operations,
@@ -178,8 +196,8 @@ State (stages are those of [design/networking.md](design/networking.md)):
 1. ~~**Player**: character controller on the terrain~~ - done in the game (walk, run, jump,
    first / third person, free flight). Still missing: a proper character model and animation.
 2. ~~**Object destruction**~~ - done: `Scene::Damage` carves an object, splits it into
-   connected pieces that inherit its motion and turns small fragments into particles; `Explode`
-   applies it to every object in range. Still missing: damage from impacts (contact events).
+   connected pieces that inherit its motion and turns small fragments into particles; `sim::Blast`
+   (behind `Engine::Explode`) applies it to every object in range. Still missing: damage from impacts (contact events).
 3. ~~**Scene / ECS**~~ - done: `vortex.scene` replaced `Engine`'s object list. Objects, lights and
    explosion flashes are entities; destroyed objects give their body and chunk slots back;
    physics bodies map back to entities. Still missing: an emitter component (particle emitters

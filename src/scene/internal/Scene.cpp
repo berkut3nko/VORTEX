@@ -395,13 +395,26 @@ namespace vortex::scene {
 
             auto pieceModel = std::make_shared<voxel::VoxelModel>(std::move(piece.volume), palette, modelName);
             const bool small = s.IsSmall(pieceModel->SolidCount());
+            const bool kept = i == 0;
+            const physics::MotionType pieceMotion = kept && !splitApart ? motion : physics::MotionType::Dynamic;
+
+            // Below the replicated-piece threshold: no entity, the caller makes local rubble.
+            if (s.config.replicatedPieceVoxels > 0 && piece.voxelCount < s.config.replicatedPieceVoxels &&
+                pieceMotion == physics::MotionType::Dynamic) {
+                result.fragments.push_back({std::move(pieceModel), placed.current, linear[i], angular});
+                if (kept) {
+                    s.registry.destroy(entity);
+                    result.destroyed = true;
+                    result.toRubble = true;
+                }
+                continue;
+            }
+
             // Only possible when the old model is shared and the store is full: the piece is
             // simulated but not drawn (Bake logs it and leaves the model unbaked).
             if (s.config.bakeModels) pieceModel->Bake(s.store);
 
-            const bool kept = i == 0;
             const Entity target = kept ? entity : s.registry.create();
-            const physics::MotionType pieceMotion = kept && !splitApart ? motion : physics::MotionType::Dynamic;
             const physics::BodyId body = s.CreateBody(target, *pieceModel, placed.current, pieceMotion, linear[i], angular);
             if (!body.IsValid()) {
                 // Out of bodies: a piece that cannot be simulated would hang in the air, drop it.

@@ -70,10 +70,17 @@ export namespace vortex::voxel {
      * rip out a hillside just because the box was small. Voxels whose material has any of
      * `ignoreFlags` (liquids by default) neither support nor belong to islands.
      * @param maxIslandVoxels Larger floating components are left in place.
+     *
+     * The result depends only on the voxels of the box: components are found by a single-threaded
+     * scan in VoxelVolume::Index order and returned in the order of their first voxel, so two
+     * worlds with equal voxels in the box give equal islands in equal order.
      * @param removeFromWorld Clear the island voxels in the world (World::SetVoxel).
+     * @param searched If not null: set to true when the box was examined, false when the search
+     * was refused (box empty or larger than 192 voxels per axis, or a chunk of it not loaded) -
+     * an empty result then proves nothing.
      */
     std::vector<FloatingIsland> ExtractFloatingIslands(World& world, const MaterialLibrary* materials,
                                                        const glm::ivec3& regionMin, const glm::ivec3& regionMax,
                                                        uint32_t maxIslandVoxels, bool removeFromWorld = true,
-                                                       uint32_t ignoreFlags = MaterialFlag_Liquid);
+                                                       uint32_t ignoreFlags = MaterialFlag_Liquid, bool* searched = nullptr);
 }

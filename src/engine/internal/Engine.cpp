@@ -110,59 +110,56 @@ namespace vortex {
     }
 
     void Engine::Explode(const glm::dvec3& center, float radius, float power) {
+        PresentBlast(sim::Blast(m_Impl->sim, sim::BlastDesc{center, radius, power}));
+    }
+
+    void Engine::PresentBlast(const sim::BlastResult& blast) {
         Impl& s = *m_Impl;
         voxel::World& world = s.sim.World();
         voxel::MaterialLibrary& materials = s.sim.Materials();
-        physics::PhysicsWorld& physics = s.sim.Physics();
         fx::ParticleSystem& particles = s.sim.Particles();
         scene::Scene& scene = s.sim.Scene();
         const float vs = world.VoxelSize();
-        const glm::vec3 centerVoxel = glm::vec3(center / static_cast<double>(vs));
-        const float radiusVoxels = radius / vs;
+        const glm::dvec3 center = blast.center;
+        const float radius = blast.radius;
 
-        std::vector<voxel::VoxelEdit> removed;
-        world.CarveSphere(centerVoxel, radiusVoxels, power, &removed);
-
-        // Debris for a bounded sample of the removed voxels, in their material's colour.
-        const size_t stride = std::max<size_t>(1, removed.size() / 400);
-        for (size_t i = 0; i < removed.size(); i += stride) {
-            const glm::dvec3 p = world.VoxelCenter(removed[i].voxel);
-            const glm::vec3 away = glm::normalize(glm::vec3(p - center) + glm::vec3(0.0f, 0.2f, 0.0f)) * 3.0f;
-            fx::SpawnVoxelBreak(particles, p, materials.Get(voxel::kWorldPalette, removed[i].oldId).color, vs, away);
+        for (const sim::AppliedOp& applied : blast.ops) {
+            if (applied.op.kind == sim::WorldOpKind::CarveSphere) {
+                // Debris for a bounded sample of the removed voxels, in their material's colour.
+                const std::vector<voxel::VoxelEdit>& removed = applied.edits;
+                const size_t stride = std::max<size_t>(1, removed.size() / 400);
+                for (size_t i = 0; i < removed.size(); i += stride) {
+                    const glm::dvec3 p = world.VoxelCenter(removed[i].voxel);
+                    const glm::vec3 away = glm::normalize(glm::vec3(p - center) + glm::vec3(0.0f, 0.2f, 0.0f)) * 3.0f;
+                    fx::SpawnVoxelBreak(particles, p, materials.Get(voxel::kWorldPalette, removed[i].oldId).color, vs, away);
+                }
+            } else if (applied.op.kind == sim::WorldOpKind::Detach && applied.op.netId == 0) {
+                // Terrain that broke off, made from the voxels this world just removed. Rubble:
+                // crumbs become particles right here, small lumps are cleaned up by the scene.
+                voxel::VoxelVolume piece = sim::BuildDetachedPiece(applied.op, applied.edits);
+                if (piece.IsEmpty()) continue;
+                auto model = std::make_shared<voxel::VoxelModel>(std::move(piece), voxel::kWorldPalette, "debris");
+                scene.CreateVoxelObject({.model = std::move(model),
+                                         .position = glm::vec3(world.VoxelToWorld(applied.op.min)),
+                                         .linearVelocity = applied.op.velocity,
+                                         .debris = true});
+            }
         }
         fx::SpawnExplosion(particles, center, radius);
 
-        // Terrain that lost its support becomes falling objects.
-        const glm::ivec3 margin(static_cast<int>(radiusVoxels) + 24);
-        const glm::ivec3 c = glm::ivec3(glm::floor(centerVoxel));
-        for (voxel::FloatingIsland& island :
-             voxel::ExtractFloatingIslands(world, &materials, c - margin, c + margin, 60000)) {
-            // Rubble: crumbs become particles right here, small lumps are cleaned up by the scene.
-            auto model = std::make_shared<voxel::VoxelModel>(std::move(island.volume), voxel::kWorldPalette, "debris");
-            scene.CreateVoxelObject({.model = std::move(model), .position = glm::vec3(world.VoxelToWorld(island.origin)), .debris = true});
+        // Object pieces below the replicated threshold (none offline unless it is set).
+        for (const scene::DamageFragment& fragment : blast.fragments) {
+            scene.CreateVoxelObject({.model = fragment.model,
+                                     .position = fragment.pose.position,
+                                     .rotation = fragment.pose.rotation,
+                                     .linearVelocity = fragment.linearVelocity,
+                                     .angularVelocity = fragment.angularVelocity,
+                                     .debris = true});
         }
-
-        // Objects caught in the blast lose voxels and may fall apart. The list is a snapshot:
-        // the pieces created here are not damaged a second time.
-        std::vector<scene::Entity> caught;
-        scene.QueryBodies(math::AABB(glm::vec3(center) - glm::vec3(radius), glm::vec3(center) + glm::vec3(radius)), caught);
-        for (const scene::Entity entity : caught) scene.Damage(entity, center, radius);
-
-        // Push nearby bodies outwards (the new pieces included).
-        for (const auto [entity, body] : scene.Registry().view<const scene::RigidBody>().each()) {
-            if (!physics.IsValid(body.body)) continue;
-            const physics::BodyState state = physics.GetState(body.body);
-            const glm::vec3 d = state.position - glm::vec3(center);
-            const float dist = glm::length(d);
-            if (dist > radius * 3.0f) continue;
-            const float falloff = 1.0f - dist / (radius * 3.0f);
-            physics.AddImpulse(body.body, (dist > 1e-3f ? d / dist : glm::vec3(0, 1, 0)) * (physics.GetMass(body.body) * 6.0f * falloff));
-        }
-        math::AABB wake(glm::vec3(center) - glm::vec3(radius * 2.0f), glm::vec3(center) + glm::vec3(radius * 2.0f));
-        physics.ActivateInBox(wake);
 
         // A flash of light that fades out quickly and removes itself once it is too dim to see.
         constexpr float kFlashDecay = 9.0f, kFlashCutoff = 0.05f;
+        if (!(radius > 0.0f)) return;
         scene::LightDesc flash;
         flash.position = center;
         flash.color = glm::vec3(1.0f, 0.7f, 0.35f);

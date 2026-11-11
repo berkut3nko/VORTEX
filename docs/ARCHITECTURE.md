@@ -138,9 +138,21 @@ Loading runs on the job system (`RegionStore` first, generator second), nearest 
 first; results are installed on the main thread with a per-frame budget. Cells carry a
 generation counter so results for a chunk that has left the window are dropped.
 
-Editing (`SetVoxel`, `FillBox`, `FillSphere`, `CarveSphere`) materialises Empty / Uniform
-cells on demand, marks slots dirty, flags the cell as modified (it will be saved when it
-leaves the window or on `Save()`), and records the chunk in `TakeChangedChunks()` for physics.
+Editing (`SetVoxel`, `FillBox`, `FillSphere`, `CarveSphere` and the quantised `FillSphereQ`,
+`CarveSphereQ`, `SwapSphereQ`, `ClearMask`) materialises Empty / Uniform cells on demand, marks
+slots dirty, flags the cell as modified (it will be saved when it leaves the window or on
+`Save()`), and records the chunk in `TakeChangedChunks()` for physics.
+
+**Replicated edits are integer-exact** (`docs/design/networking.md`, "World operations"). A
+`voxel::SphereQ` has its centre and radius in q = 1/16 voxel; a voxel is inside when
+`d = 16 v + 8 - centre` gives `dot(d, d) <= radius^2` in int64. Carve power is in 1/16 hardness
+units and compared as `hardness * 16 > power` (exact). The float `FillSphere` / `CarveSphere`
+quantise (`QuantizeSphere`, `QuantizePower`: round to nearest, halves away from zero) and forward,
+so every sphere edit is the same integer operation. Every edit visits chunks in (y, z, x) and
+voxels in (z, y, x) order and decides from (voxel, old id) only. Given a `voxel::EditReport` it lists
+the chunks it touches but could not change: `skipped` (outside the window, Unloaded, Loading) and
+`unsynced` (Empty / Uniform with no free store slot); a chunk is changed completely or not at all.
+`sim::WorldOp` / `sim::ApplyOp` (7.4) wrap these calls as the unit that travels.
 
 **Render space.** World positions are `double`. Everything a ray or the GPU touches is
 expressed relative to `World::WindowOrigin()` (the window's minimum corner): *render space*.
@@ -549,7 +561,7 @@ Rules everything relies on:
 * **Snapshot before you create.** `Damage` and the `Create*` functions add entities and
   components, which invalidates references and iterators of registry views. Code that does
   something to "everything near a point" collects ids first (`QueryBodies`) and then walks the
-  list; `Explode` is the model. New pieces are not in the snapshot, so nothing is hit twice.
+  list; `sim::Blast` is the model. New pieces are not in the snapshot, so nothing is hit twice.
 * **Destruction order.** A scene must be cleared before `PhysicsWorld::Shutdown()` and before the
   chunk store goes away; `~Scene` calls `Clear()` (the registry's own destructor fires no signals),
   and `sim::Simulation` declares the scene after the subsystems it references and clears it
@@ -608,9 +620,24 @@ voxel objects.
    continue through the cut.
 4. If nothing big enough is left the entity is destroyed.
 
-`Engine::Explode` combines the two: carve the terrain, detach floating islands (created with
-`VoxelObjectDesc::debris`, so the rules of 7.3 apply to them), damage every object whose bounds
-the blast reaches, push bodies away, wake what rested on the removed ground, and add a flash.
+A blast is split into simulation and presentation:
+
+* `sim::Blast(simulation, sphereQ, power)` (or `BlastDesc` in metres, quantised first): apply
+  `WorldOp::Carve`; search the box `floor(centre) +- (radius + 24)` voxels for floating terrain
+  (`ExtractFloatingIslands` without removing) and turn each island into a `WorldOp::Detach` (an
+  occupancy mask, `netId = 0`, the blast's push at its corner as velocity) applied with
+  `ApplyOp` = `World::ClearMask`; `Scene::Damage` for every body in range (a snapshot first);
+  push every body within three radii (`sim::BlastPush` x mass) and wake what is within two. No
+  particles, no light, no entity for an island. Returns the applied operations in order, the
+  voxels each one changed, the object fragments (below the replicated threshold, 7.3) and the
+  quantised centre / radius.
+* `Engine::PresentBlast(result)`: debris particles for a sample of the carved voxels, local rubble
+  for every `Detach` with `netId = 0` built from the voxels it removed (`sim::BuildDetachedPiece`,
+  `VoxelObjectDesc::debris`, so 7.3 applies, started with the operation's velocity), rubble for the
+  object fragments, the explosion burst and a flash.
+
+`Engine::Explode` is `PresentBlast(sim::Blast(...))`. A server runs only the first half and sends
+the operations; a client applies them with `ApplyOp` and runs the second half.
 
 ### 7.3 Rubble
 
@@ -623,6 +650,7 @@ Destruction must not fill the world with tiny rigid bodies: each costs a body, a
 | `< minPieceVoxels` | never an entity: particles on the spot (`Damage` fragments, floating terrain crumbs) | 16 |
 | `< debrisBodyVoxels` | a *small* body: `Layer::Debris` (no collisions among each other), continuous collision detection; rubble of this size gets the `Debris` component | 48 |
 | larger | an ordinary object that stays | |
+| `< replicatedPieceVoxels` | a piece `Damage` makes no entity for: returned in `DamageResult::fragments` (model, pose, velocities) for whoever draws to create as local rubble; also the damaged entity itself when it is that small and Dynamic (`toRubble`). Off (0) offline; 512 on a server (`sim::ServerConfig`) | 0 |
 
 `Debris` is added to small pieces that `Damage` splits off, to small dynamic objects created
 with `VoxelObjectDesc::debris`, and to the damaged entity itself once what is left of it is
@@ -682,7 +710,14 @@ network client will predict with (`docs/design/networking.md`).
 * **Server configuration.** `sim::ServerConfig(config)` returns the configuration with
   `maxParticles = 0` (every effect is dropped silently), `scene.bakeModels = false` (models keep
   their voxels and bodies but hold no chunk slots: the store belongs to the terrain),
-  `scene.markDebris = false` and `scene.debrisRemnants = false` (nothing is rubble).
+  `scene.markDebris = false` and `scene.debrisRemnants = false` (nothing is rubble), and
+  `scene.replicatedPieceVoxels = 512` (smaller object pieces are client rubble, no entity).
+* **World operations.** `sim::WorldOp` is one replicated terrain change with integer parameters
+  only: `CarveSphere`, `FillSphere`, `SwapSphere`, `FillBox`, `Detach` (kind values are wire
+  format). `sim::ApplyOp(world, op, edits)` makes the matching `World` call and returns the voxels
+  changed plus the skipped / unsynced chunks (4.3). The same operations in the same order on two
+  worlds that were equal give equal voxels, whatever the job-thread timing (tested with
+  `voxel::WorldHash`). `sim::Blast` (7.2) produces them.
 * **Lifetime.** `Initialize(generator)` registers the default world materials, creates the world,
   starts physics and the terrain colliders; `Shutdown()` (also the destructor) destroys entities,
   colliders, world and bodies in that order. Outside of that span `World()` and `Terrain()` must
@@ -763,7 +798,9 @@ World (statistics, save).
 ## 9. Testing
 
 * `VortexCoreTests` - chunks, store, traversal vs. a reference DDA, BVH, world streaming /
-  editing / persistence, generator determinism, colliders, connectivity, importers, particles;
+  editing / persistence, quantised edits (rounding, the int64 sphere test on its boundary and at
+  the int limits, spheres vs. a reference across chunk borders and negative coordinates, exact
+  hardness compare, swap, `ClearMask`, the skipped / unsynced report), generator determinism, colliders, connectivity, importers, particles;
   the HUD: font bitmaps and measuring, anchors, canvas quads, menu input, cursor capture.
 * `VortexPhysicsTests` - bodies, shapes, ray casts, characters, terrain colliders; the body guard
   (a woken body the camera left behind, a body spawned where nothing is cooked, an unloaded
@@ -778,7 +815,13 @@ World (statistics, save).
   (inside `Step` and inside `StepPhysics`), fall-out only in the lifetime phase, the persistent
   offline world and the memory-only server world, `ServerConfig`, calls before `Initialize` and after `Shutdown`. The server scene on its own:
   unbaked models through creation and damage (also with a full chunk store), nothing marked as
-  rubble, effects dropped by an empty particle pool.
+  rubble, effects dropped by an empty particle pool, the replicated-piece threshold (fragments,
+  a survivor going to rubble, an anchored one staying). World operations: `ApplyOp` per kind,
+  the skipped report for chunks outside the window and still loading, a detached piece built from
+  the removed voxels; `sim::Blast`: islands as `Detach` without entities, an island box that is
+  not loaded, objects damaged and pushed, fragments on a server; and the stage-2 acceptance: two
+  simulations with different worker counts fed the same operations (islands included) have equal
+  world hashes, a slightly different stream does not.
 * `VortexGraphicsTests` - SPIR-V reflection of the real shader binaries, C++ / GLSL struct
   layout parity (`VxHudQuad` included), the material surface-kind and HUD cell-grid constants
   (C++ vs. the text of `common.glsl`) and

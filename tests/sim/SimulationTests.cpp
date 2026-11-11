@@ -177,16 +177,21 @@ TEST(Simulation, ServerConfigurationSteps600TicksWithoutParticlesOrBakedModels) 
     const Playground p(w);
     for (const Entity crate : p.crates) ASSERT_NE(crate, kNoEntity);
 
-    // A blast-sized hole in the first crate while it falls: it loses voxels and stays one piece.
+    // A blast-sized hole in the first crate while it falls. What is left (under 512 voxels) is
+    // below the replicated-piece threshold: on a server it is no entity, it is client rubble.
     scene::Scene& scene = w.simulation.Scene();
     const glm::vec3 corner = scene.TryGet<scene::Transform>(p.crates[0])->current.position;
     const scene::DamageResult hit = scene.Damage(p.crates[0], glm::dvec3(corner), 0.35f);
     EXPECT_GT(hit.removed, 0u);
-    EXPECT_FALSE(hit.destroyed);
+    EXPECT_TRUE(hit.destroyed);
+    EXPECT_TRUE(hit.toRubble);
+    ASSERT_EQ(hit.fragments.size(), 1u);
+    EXPECT_EQ(hit.fragments[0].model->SolidCount() + hit.removed + hit.loose, 512u);
+    EXPECT_FALSE(scene.IsValid(p.crates[0]));
 
     w.Ticks(600);
     EXPECT_EQ(w.simulation.Tick(), 600u);
-    for (const Entity crate : p.crates) {
+    for (const Entity crate : {p.crates[1], p.crates[2]}) {
         ASSERT_TRUE(scene.IsValid(crate));
         const physics::BodyState state = w.StateOf(crate);
         EXPECT_LT(state.position.y, kGround + 0.9f);             // landed (the damaged one may lie tilted)
@@ -512,6 +517,8 @@ TEST(Simulation, ServerConfigChangesOnlyWhatAServerMustNotHave) {
     EXPECT_FALSE(server.scene.bakeModels);
     EXPECT_FALSE(server.scene.debrisRemnants);
     EXPECT_FALSE(server.scene.markDebris);
+    EXPECT_EQ(server.scene.replicatedPieceVoxels, sim::kServerReplicatedPieceVoxels);
+    EXPECT_EQ(sim::kServerReplicatedPieceVoxels, 512u);
     // Everything else is kept.
     EXPECT_EQ(server.chunkCapacity, base.chunkCapacity);
     EXPECT_EQ(server.scene.minPieceVoxels, 20u);
@@ -526,6 +533,7 @@ TEST(Simulation, ServerConfigChangesOnlyWhatAServerMustNotHave) {
     EXPECT_TRUE(offline.scene.bakeModels);
     EXPECT_TRUE(offline.scene.markDebris);
     EXPECT_TRUE(offline.scene.debrisRemnants);
+    EXPECT_EQ(offline.scene.replicatedPieceVoxels, 0u);           // every piece is an entity
 }
 
 TEST(Simulation, DoesNothingBeforeInitializeAndAfterShutdown) {

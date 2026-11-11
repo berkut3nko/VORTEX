@@ -57,6 +57,16 @@ export namespace vortex::scene {
         /// no chunk slots, because nothing is drawn or ray traced: a session server. A model
         /// that somebody else baked is used as it is.
         bool bakeModels = true;
+        /**
+         * Replicated-piece threshold (docs/design/networking.md, "Entity replication"). 0 = off:
+         * Damage makes an entity of every piece of at least `minPieceVoxels` (an offline game).
+         * Otherwise a piece with fewer solid voxels is not made into an entity: Damage returns it
+         * in DamageResult::fragments (model, pose, velocities) for whoever shows rubble - a
+         * client, or Engine::PresentBlast offline - to create locally. The damaged entity itself
+         * goes the same way when what is left of it is below the threshold and Dynamic (a
+         * Static / Kinematic object only dented stays). sim::ServerConfig sets 512.
+         */
+        uint32_t replicatedPieceVoxels = 0;
         uint32_t debrisParticleStride = 3;    ///< One debris particle burst per this many carved voxels (>= 1).
 
         // --- rubble clean-up (entities with the Debris component), applied by Update() ---
@@ -99,6 +109,16 @@ export namespace vortex::scene {
         float decay = 0.0f;                   ///< Lifetime::lightDecay; only used when lifetime > 0.
     };
 
+    /// @brief A piece of a damaged object below SceneConfig::replicatedPieceVoxels: no entity
+    /// was made for it. Everything needed to create it as local rubble (VoxelObjectDesc with
+    /// `debris = true`, `position` / `rotation` from `pose`, the two velocities).
+    struct DamageFragment {
+        std::shared_ptr<voxel::VoxelModel> model;   ///< The piece, cropped; never baked.
+        math::Transform pose;                       ///< World pose of the model's minimum corner (scale = voxel size).
+        glm::vec3 linearVelocity{0.0f};             ///< Of the original body at the piece's centre.
+        glm::vec3 angularVelocity{0.0f};
+    };
+
     /// @brief Outcome of Scene::Damage.
     struct DamageResult {
         uint32_t removed = 0;             ///< Voxels carved out by the sphere. 0 = nothing happened at all.
@@ -108,6 +128,11 @@ export namespace vortex::scene {
         /// can still list entities that did get one, so do not read this as "nothing remains".
         bool destroyed = false;
         std::vector<Entity> pieces;       ///< NEW entities split off (largest first). The largest piece overall keeps the damaged entity and is not listed.
+        /// Pieces below SceneConfig::replicatedPieceVoxels, largest first (empty while it is 0).
+        std::vector<DamageFragment> fragments;
+        /// The damaged entity itself was below the threshold: it was destroyed (`destroyed`) and
+        /// its remaining voxels are the first entry of `fragments`.
+        bool toRubble = false;
     };
 
     /**
@@ -271,6 +296,10 @@ export namespace vortex::scene {
          *    `SceneConfig::markDebris` off nothing is marked: every piece of at least
          *    `minPieceVoxels` stays until somebody destroys it.
          *  - If nothing big enough is left the entity is destroyed (`destroyed = true`).
+         *  - With `SceneConfig::replicatedPieceVoxels` > 0, pieces below it get no entity and are
+         *    returned in `fragments` instead; so is the damaged entity's own piece when it is that
+         *    small and Dynamic (`toRubble`, `destroyed`). The particles of this call are spawned
+         *    as before (into an empty pool on a server).
          *  - The old model is released before the pieces are baked, so an unshared object never
          *    runs out of chunk slots by being damaged. A piece whose body cannot be created
          *    (PhysicsConfig::maxBodies reached) is dropped with a log line.

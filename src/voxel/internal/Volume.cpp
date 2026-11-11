@@ -3,6 +3,7 @@ module;
 #include <glm/glm.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <vector>
@@ -65,5 +66,33 @@ namespace vortex::voxel {
                     const glm::vec3 d = glm::vec3(static_cast<float>(x) + 0.5f, static_cast<float>(y) + 0.5f, static_cast<float>(z) + 0.5f) - center;
                     if (glm::dot(d, d) <= r2) m_Data[Index(x, y, z)] = id;
                 }
+    }
+
+    // --- VoxelMask -----------------------------------------------------------------------------
+
+    VoxelMask::VoxelMask(const glm::ivec3& size) : m_Size(glm::max(size, glm::ivec3(0))) {
+        m_Bits.assign((VoxelCount() + 7) / 8, 0);
+    }
+
+    VoxelMask VoxelMask::FromVolume(const VoxelVolume& volume) {
+        VoxelMask mask(volume.Size());
+        const std::vector<uint8_t>& data = volume.Data();
+        for (size_t i = 0; i < data.size(); ++i) {
+            if (data[i] != 0) mask.m_Bits[i >> 3] = static_cast<uint8_t>(mask.m_Bits[i >> 3] | (1u << (i & 7u)));
+        }
+        return mask;
+    }
+
+    void VoxelMask::Set(int x, int y, int z, bool on) {
+        if (!InBounds(x, y, z)) return;
+        const size_t i = Index(x, y, z);
+        const uint8_t bit = static_cast<uint8_t>(1u << (i & 7u));
+        m_Bits[i >> 3] = static_cast<uint8_t>(on ? (m_Bits[i >> 3] | bit) : (m_Bits[i >> 3] & ~bit));
+    }
+
+    uint32_t VoxelMask::Count() const {
+        uint32_t n = 0;
+        for (const uint8_t b : m_Bits) n += static_cast<uint32_t>(std::popcount(b));
+        return n;
     }
 }

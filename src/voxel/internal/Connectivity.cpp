@@ -147,8 +147,9 @@ namespace vortex::voxel {
     std::vector<FloatingIsland> ExtractFloatingIslands(World& world, const MaterialLibrary* materials,
                                                        const glm::ivec3& regionMin, const glm::ivec3& regionMax,
                                                        uint32_t maxIslandVoxels, bool removeFromWorld,
-                                                       uint32_t ignoreFlags) {
+                                                       uint32_t ignoreFlags, bool* searched) {
         std::vector<FloatingIsland> islands;
+        if (searched) *searched = false;
 
         // 64 bit: the difference of two arbitrary voxel coordinates may not fit an int.
         int64_t extent[3];
@@ -171,6 +172,7 @@ namespace vortex::voxel {
                 for (int cx = chunkMin.x; cx <= chunkMax.x; ++cx) {
                     if (!world.IsChunkLoaded(glm::ivec3(cx, cy, cz))) return islands;
                 }
+        if (searched) *searched = true;
 
         std::array<bool, 256> ignored{};
         if (materials != nullptr && ignoreFlags != 0) {

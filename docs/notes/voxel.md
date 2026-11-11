@@ -11,11 +11,11 @@ Line numbers are as of engine commit `ec073a8`; if a number no longer matches, s
 | `src/voxel/Voxel.cppm` | Primary interface; re-exports every partition. A new partition must be added here. |
 | `Chunk.cppm` (header-only) | `Chunk`, `ChunkOccupancy`, index maths, `VoxelToChunk/Local`, `ChunkToVoxel`. |
 | `Store.cppm`, `internal/Store.cpp` | `ChunkStore`: slot pool, LIFO free list, dirty list, high-water mark. |
-| `World.cppm`, `internal/World.cpp` | Window, cells, grid encoding, load jobs, edits, raycast, change list. |
+| `World.cppm`, `internal/World.cpp` | Window, cells, grid encoding, load jobs, edits, raycast, change list. Quantised edits (M1 stage 2): `SphereQ`, `QuantizeSphere`, `QuantizePower`, `InSphereQ`, `SphereVoxelBounds`, `EditReport`, `CarveSphereQ`/`FillSphereQ`/`SwapSphereQ`/`ClearMask`. |
 | `Hash.cppm`, `internal/Hash.cpp` | `ChunkHash`, `UniformChunkHash`, `kAirChunkHash`, `WorldHashTerm`, `WorldHash`: content hashes for terrain agreement. |
 | `Region.cppm`, `internal/Region.cpp` | Chunk RLE codec (`EncodeChunk`/`DecodeChunk`), `RegionStore` (`r.x.y.z.vxr`). |
 | `Generator.cppm`, `internal/Generator.cpp` | `IWorldGenerator`, `TerrainGenerator` (height tiles, caves, trees), `FlatGenerator`. |
-| `Volume.cppm`, `internal/Volume.cpp` | `VoxelVolume`: dense x/y/z array, the authoring form of objects. |
+| `Volume.cppm`, `internal/Volume.cpp` | `VoxelVolume`: dense x/y/z array, the authoring form of objects. `VoxelMask`: one bit per voxel of a box, packed 8 per byte in `VoxelVolume::Index` order (the `Detach` mask). |
 | `Model.cppm`, `internal/Model.cpp` | `VoxelModel`: volume + baked `ModelPart`s (one slot per non-empty 32^3 piece), `Revision()`. |
 | `Instances.cppm`, `internal/Instances.cpp` | `GpuInstance` (224 B), `GpuBvhNode` (32 B), `BuildBvh`. |
 | `Trace.cppm`, `internal/Trace.cpp` | `TraceScene`, `Trace`/`TraceWorld`/`TraceChunk`; `TraceKernel` includes `shared/trace.glsl`. |
@@ -27,7 +27,7 @@ Line numbers are as of engine commit `ec073a8`; if a number no longer matches, s
 | `internal/ThirdPartyImpl.cpp` | The one non-module TU with the tinygltf / stb implementations. |
 | `shaders/shared/trace.glsl` | Traversal compiled as GLSL and C++: `VxTraceChunk/World/Instances/Scene`. |
 | `shaders/shared/shading.glsl`, `cube.glsl`, `vx_cpp.h`, `vx_glsl.glsl` | Shared shading helpers, proxy-cube corners, and the two language shims (rules: `vx_cpp.h:22-27`). |
-| `tests/core/*.cpp` | `VortexCoreTests`: Chunk (+ChunkStore), World (+Region, Terrain), Hash (+golden terrain), Trace (+Bvh), Collider, Connectivity, VoxFormat, MeshImport. `ParticleTests.cpp` in the same binary belongs to `fx`, not to this module. |
+| `tests/core/*.cpp` | `VortexCoreTests`: Chunk (+ChunkStore), World (+Region, Terrain), WorldOps (`QuantizedEdits.*`), Hash (+golden terrain), Trace (+Bvh), Collider, Connectivity, VoxFormat, MeshImport. `ParticleTests.cpp` in the same binary belongs to `fx`, not to this module. |
 
 Who compiles the shared files as C++ today: `trace.glsl` in `Trace.cpp`, `cube.glsl` in
 `tests/graphics/ContractTests.cpp`. `shading.glsl` says it is C++-compatible but no C++ file includes it, so nothing
@@ -179,9 +179,26 @@ the `VX_*` accessor macros defined there and, with the same names, in the shader
   function-static, once per process. If the player then edits such a cell it is materialised from *empty*, marked
   modified and saved - the generated terrain of that chunk is lost for good (read from the code, no test).
 - `SetVoxel` returns `true` when the voxel already has that id, `false` for an unloaded chunk or a full store.
-  `EditRegion` silently skips `Unloaded`/`Loading` chunks; compare the returned count.
-- `CarveSphere`: a voxel survives when `hardness > power` (equal is removed) or it is `Indestructible`. Water and lava
-  have hardness 0 and are protected only by the flag. With `materials == nullptr` everything is removed.
+  `EditRegion` skips `Unloaded`/`Loading` chunks and chunks outside the window; it says so only through an
+  `EditReport` (`skipped`), and lists a chunk whose `Materialize` failed under `unsynced`. Without a report both are
+  silent; compare the returned count. Only chunks the edit really touches are listed (`touches` predicate of
+  `EditRegion`: exact sphere / box / mask test), so a skipped chunk always means "this chunk now differs".
+- **Replicated edits must stay integer.** `CarveSphereQ` / `FillSphereQ` / `SwapSphereQ` / `ClearMask` / `FillBox`
+  decide which voxels change from integers only (`InSphereQ`: int64; carvability from `hardness * 16 > power`, exact
+  in float). Do not add a float test to these paths, and do not make `EditRegion` visit chunks or voxels in another
+  order: the `VoxelEdit` order is what `sim::BuildDetachedPiece` and the particle sampling read, and two machines must
+  agree on it. The float `CarveSphere` / `FillSphere` quantise first (`llround(x * 16)`, halves away from zero), so a
+  sphere 1/32 voxel off a voxel centre can differ from the pre-stage-2 float test; whole and half voxel values are
+  exact.
+- `SphereQ::center` is an int32 in 1/16 voxel: +-2^27 voxels (13 400 km at 0.1 m). `QuantizeSphere` clamps there;
+  every edit box is clipped to +-`kMaxEditVoxel` (2^30) voxels, `FillBox` included. `SphereVoxelBounds` is the
+  per-axis box, up to one voxel larger than the tight bounds per side; the voxel test decides.
+- A failed `Materialize` happens at the first changed voxel of an Empty / Uniform cell, before anything was written,
+  so an edit is all-or-nothing per chunk. Keep it that way (the `unsynced` state relies on it).
+- `CarveSphere`: a voxel survives when `hardness > power` (equal is removed) or it is `Indestructible`; in the
+  integer form `hardness * 16 > power` with `power` in 1/16 units (`QuantizePower(6.0f)` = 96; a hardness of 0.6 is
+  9.6 units: power 9 leaves it, 10 removes it). Water and lava have hardness 0 and are protected only by the flag.
+  With `materials == nullptr` everything is removed.
 - `World::Save()` has exactly two callers: the editor (`Editor.cpp:833`) and `~World` when `saveDirectory` is set.
   `sim::Simulation` passes `saveDirectory` through (the engine's world, and with it the editor's button, persists when
   `EngineConfig::world.saveDirectory` is set); only `sim::ServerConfig` clears it, because a session world is memory
@@ -220,7 +237,8 @@ the `VX_*` accessor macros defined there and, with the same names, in the shader
   triangle to claim a voxel wins; interior voxels take the id of the nearest solid voxel towards -X.
   `FillInterior` allocates `(size + 2)^3` bytes on top of the volume (about 270 MB together at 512^3).
 - `ExtractFloatingIslands` refuses regions over 192 voxels per axis and returns nothing if any chunk of the region is
-  not loaded. A component touching the region boundary counts as attached - the safety that stops it ripping out
+  not loaded; the optional `searched` out-parameter tells a refusal from "no island" (`sim::Blast` reports it as
+  `islandsSearched`). `sim::Blast` calls it with `removeFromWorld = false` and clears each island with `ClearMask`. A component touching the region boundary counts as attached - the safety that stops it ripping out
   hillsides; do not relax it. Ignored (liquid) voxels neither support nor belong to an island and stay in the world.
 - `BuildColliderBoxes`: with `mergeMaterials = true`, `box.material` is only the first voxel's id; mass code uses
   `false` (`Scene.cpp:41`). `ComputeMassProperties` returns the centre of mass in voxel units from the volume origin;
@@ -246,11 +264,15 @@ behaviour: `Liquid` (no terrain collision, liquid shading via `GpuMaterial::para
 shader side (`VxMaterial`, `VX_MATERIAL_*` in `shaders/include/common.glsl`). Tests:
 `CollisionFilter.FromMaterialsExcludesFlaggedMaterials`, `World.CarveRespectsHardness`.
 
-**B. Add a world edit operation** (capsule, replace-material ...). Write it as a lambda over `EditRegion`
-(`World.cpp:451`): return the new id, or `-1` to leave the voxel. `EditRegion` already materialises, calls `MarkDirty`,
-sets `modified`, queues the change and fills the `VoxelEdit` list; do not duplicate that. Declare it in `World.cppm`.
-Test next to `World.EditsMaterializeAndReportChanges`: count, old/new ids, `TakeChangedChunks`, an edit across a chunk
-border, an edit on an unloaded chunk.
+**B. Add a world edit operation** (capsule, replace-material ...). Write it as two lambdas over `EditRegion`
+(`World.cpp`): `decide(voxel, oldId)` returns the new id, or `-1` to leave the voxel; `touches(lo, hi)` says whether
+the operation reaches any voxel of that box (used only to report skipped chunks). `EditRegion` already materialises,
+calls `MarkDirty`, sets `modified`, queues the change, fills the `VoxelEdit` list and the `EditReport`; do not
+duplicate that. Declare it in `World.cppm`. If it is to be replicated: integer parameters only (q units, see traps), a
+new `sim::WorldOpKind` value at the end (values are wire format), a factory and a case in `sim::ApplyOp`
+(`src/sim/internal/WorldOp.cpp`). Test next to `QuantizedEdits.*` (`tests/core/WorldOpsTests.cpp`): count, old/new ids,
+a reference set, an edit across a chunk border and at negative coordinates, the skipped report on an unloaded chunk;
+and an `ApplyOp` case in `WorldOps.ApplyOpIsTheWorldCallOfEachKind` (`tests/sim/BlastTests.cpp`).
 
 **C. Change or add a generator.** Implement `IWorldGenerator` in `Generator.cpp` (anonymous namespace, factory declared
 in `Generator.cppm`): a pure function of (seed, coord), thread safe, writing only `chunk.ids` via `Chunk::VoxelIndex`.
@@ -275,7 +297,7 @@ with `--validation`, and compare screenshots from a fixed `--camera` before and 
 Binary: `build/engine/tests/VortexCoreTests` (gtest; ctest discovers the tests as `Suite.Name`).
 
 ```
-ctest --test-dir build -R '^(Chunk|ChunkStore|ChunkHash|World|WorldHash|Region|Terrain|Trace|Bvh)\.'
+ctest --test-dir build -R '^(Chunk|ChunkStore|ChunkHash|World|WorldHash|QuantizedEdits|Region|Terrain|Trace|Bvh)\.'
 ctest --test-dir build -R '^(ColliderBoxes|MassProperties|CollisionFilter|ChunkCollisionMesh)\.'
 ctest --test-dir build -R '^(Connectivity|SplitComponents|FloatingIslands|VoxFormat|Voxelize|MeshImport)\.'
 build/engine/tests/VortexCoreTests --gtest_filter='World.*'      # one suite, full output
@@ -286,7 +308,7 @@ build/engine/tests/VortexCoreTests --gtest_filter='World.*'      # one suite, fu
 | Store / lifetime | `ChunkStore.AllocFreeAndDirtyTracking`, `World.WindowMovementKeepsEditsAndFreesMemory`, `World.StoreExhaustionDegradesGracefully` |
 | Window / streaming | `World.LoadsWindowAndClassifiesChunks`, `World.SmallStepsOnlyReloadTheNewSlab`, `World.WindowSizeNeedNotBePowerOfTwo` |
 | Persistence | `World.PersistsEditsToDisk`, `Region.ChunkCodecRoundTrip` |
-| Hashes / determinism | `ChunkHash.*`, `WorldHash.*`, `Terrain.GoldenChunkHashes` |
+| Hashes / determinism | `ChunkHash.*`, `WorldHash.*`, `Terrain.GoldenChunkHashes`; `QuantizedEdits.*`; in `VortexSimTests` `Blast.TwoSimulationsFedTheSameOperationsHaveEqualHashes` |
 
 Then the whole suite (scene, physics terrain and the renderer contract tests consume these types) and both headless
 runs from CLAUDE.md. In the headless game log:

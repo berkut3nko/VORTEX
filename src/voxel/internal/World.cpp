@@ -3,6 +3,7 @@ module;
 #include <glm/glm.hpp>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -447,8 +448,9 @@ namespace vortex::voxel {
         return true;
     }
 
-    template <typename Fn>
-    uint32_t World::EditRegion(const glm::ivec3& min, const glm::ivec3& max, Fn&& decide, std::vector<VoxelEdit>* edits) {
+    template <typename Fn, typename Touches>
+    uint32_t World::EditRegion(const glm::ivec3& min, const glm::ivec3& max, Fn&& decide, Touches&& touches,
+                               std::vector<VoxelEdit>* edits, EditReport* report) {
         if (max.x <= min.x || max.y <= min.y || max.z <= min.z) return 0;
         uint32_t changedTotal = 0;
         const glm::ivec3 cmin = VoxelToChunk(min);
@@ -458,14 +460,17 @@ namespace vortex::voxel {
             for (int cz = cmin.z; cz <= cmax.z; ++cz)
                 for (int cx = cmin.x; cx <= cmax.x; ++cx) {
                     const glm::ivec3 coord(cx, cy, cz);
-                    Cell* cell = FindCell(coord);
-                    if (!cell) continue;
-                    if (cell->state != CellState::Dense && cell->state != CellState::Empty && cell->state != CellState::Uniform) continue;
-                    const uint32_t index = CellIndex(coord);
-
                     const glm::ivec3 origin = ChunkToVoxel(coord);
                     const glm::ivec3 lo = glm::max(min, origin) - origin;
                     const glm::ivec3 hi = glm::min(max, origin + glm::ivec3(kChunkSize)) - origin;
+
+                    Cell* cell = FindCell(coord);
+                    if (!cell || (cell->state != CellState::Dense && cell->state != CellState::Empty && cell->state != CellState::Uniform)) {
+                        // Not loaded: outside the window, Unloaded or Loading.
+                        if (report && touches(origin + lo, origin + hi)) report->skipped.push_back(coord);
+                        continue;
+                    }
+                    const uint32_t index = CellIndex(coord);
                     uint32_t changed = 0;
                     bool failed = false;
 
@@ -480,6 +485,8 @@ namespace vortex::voxel {
                                 const int newId = decide(voxel, oldId);
                                 if (newId < 0 || newId == oldId) continue;
 
+                                // A non-dense cell is materialised at its first change, so a
+                                // failure leaves the chunk exactly as it was.
                                 if (cell->state != CellState::Dense && !Materialize(index)) {
                                     failed = true;
                                     break;
@@ -489,6 +496,7 @@ namespace vortex::voxel {
                                 ++changed;
                             }
 
+                    if (failed && report) report->unsynced.push_back(coord);
                     if (changed > 0) {
                         m_Store.MarkDirty(cell->slot);
                         cell->modified = true;
@@ -499,40 +507,174 @@ namespace vortex::voxel {
         return changedTotal;
     }
 
+    // --- quantised edits ----------------------------------------------------------------------
+
+    namespace {
+        constexpr int64_t kQ = kQuantaPerVoxel;
+        // The centre is an int32 in q: +-2^27 voxels.
+        constexpr double kMaxCenterQ = 2147483647.0;
+
+        int32_t QuantizeCoordinate(double voxels) {
+            if (!std::isfinite(voxels)) return 0;
+            const double q = std::clamp(voxels * static_cast<double>(kQ), -kMaxCenterQ, kMaxCenterQ);
+            return static_cast<int32_t>(std::llround(q));
+        }
+
+        /// floor(a / b) and ceil(a / b) for b > 0, any sign of a.
+        int64_t FloorDiv64(int64_t a, int64_t b) { return a / b - ((a % b != 0) && (a < 0) ? 1 : 0); }
+        int64_t CeilDiv64(int64_t a, int64_t b) { return a / b + ((a % b != 0) && (a > 0) ? 1 : 0); }
+
+        /// Smallest squared distance (q^2) from the sphere centre to the centre of a voxel of the
+        /// voxel range [lo, hi) along one axis; -1 if it exceeds radius^2 already.
+        int64_t AxisDistance2(int64_t center, int64_t radius, int32_t lo, int32_t hi) {
+            // The voxel whose centre is nearest: 16 v + 8 closest to `center`.
+            const int64_t nearest = std::clamp<int64_t>(FloorDiv64(center, kQ), lo, static_cast<int64_t>(hi) - 1);
+            const int64_t d = kQ * nearest + kQ / 2 - center;
+            const int64_t a = d < 0 ? -d : d;
+            if (a > radius) return -1;
+            return a * a;
+        }
+
+        /// True if some voxel of the box [lo, hi) is inside the sphere (exact).
+        bool SphereTouchesBox(const SphereQ& s, const glm::ivec3& lo, const glm::ivec3& hi) {
+            const int64_t r = s.radius;
+            int64_t sum = 0;
+            for (int a = 0; a < 3; ++a) {
+                const int64_t d2 = AxisDistance2(s.center[a], r, lo[a], hi[a]);
+                if (d2 < 0) return false;
+                sum += d2;
+            }
+            return sum <= r * r;
+        }
+
+        /// Builds the per-material "may be carved" table of one carve.
+        std::array<bool, 256> CarvableIds(const MaterialLibrary* materials, uint16_t power) {
+            std::array<bool, 256> carvable{};
+            for (uint32_t id = 1; id < 256; ++id) {
+                if (!materials) {
+                    carvable[id] = true;
+                    continue;
+                }
+                const Material& m = materials->Get(kWorldPalette, static_cast<uint8_t>(id));
+                // hardness * 16 is exact in float (a power of two), and so is the conversion of
+                // a 16-bit integer: this compare has no rounding.
+                const bool tooHard = m.hardness * static_cast<float>(kPowerQuantaPerHardness) > static_cast<float>(power);
+                carvable[id] = (m.flags & MaterialFlag_Indestructible) == 0 && !tooHard;
+            }
+            return carvable;
+        }
+    }
+
+    SphereQ QuantizeSphere(const glm::dvec3& centerVoxels, double radiusVoxels) {
+        SphereQ s;
+        s.center = glm::ivec3(QuantizeCoordinate(centerVoxels.x), QuantizeCoordinate(centerVoxels.y), QuantizeCoordinate(centerVoxels.z));
+        if (!std::isfinite(radiusVoxels) || !std::isfinite(centerVoxels.x) || !std::isfinite(centerVoxels.y) ||
+            !std::isfinite(centerVoxels.z)) {
+            s.radius = 0;
+            return s;
+        }
+        const double r = std::clamp(radiusVoxels * static_cast<double>(kQ), 0.0, 65535.0);
+        s.radius = static_cast<uint16_t>(std::llround(r));
+        return s;
+    }
+
+    uint16_t QuantizePower(float power) {
+        if (!(power > 0.0f)) return 0;      // also NaN
+        const double p = std::min(static_cast<double>(power) * kPowerQuantaPerHardness, 65535.0);
+        return static_cast<uint16_t>(std::llround(p));
+    }
+
+    bool InSphereQ(const SphereQ& s, const glm::ivec3& v) {
+        const int64_t r = s.radius;
+        int64_t sum = 0;
+        for (int a = 0; a < 3; ++a) {
+            const int64_t d = kQ * static_cast<int64_t>(v[a]) + kQ / 2 - static_cast<int64_t>(s.center[a]);
+            const int64_t m = d < 0 ? -d : d;
+            if (m > r) return false;           // also keeps the squares below 2^34
+            sum += m * m;
+        }
+        return sum <= r * r;
+    }
+
+    void SphereVoxelBounds(const SphereQ& s, glm::ivec3& min, glm::ivec3& max) {
+        for (int a = 0; a < 3; ++a) {
+            const int64_t c = s.center[a];
+            const int64_t r = s.radius;
+            // 16 v + 8 >= c - r  and  16 v + 8 <= c + r
+            int64_t lo = CeilDiv64(c - r - kQ / 2, kQ);
+            int64_t hi = FloorDiv64(c + r - kQ / 2, kQ) + 1;
+            lo = std::clamp<int64_t>(lo, -kMaxEditVoxel, kMaxEditVoxel);
+            hi = std::clamp<int64_t>(hi, lo, kMaxEditVoxel);
+            min[a] = static_cast<int32_t>(lo);
+            max[a] = static_cast<int32_t>(hi);
+        }
+    }
+
     bool World::SetVoxel(const glm::ivec3& v, uint8_t id) {
         if (!IsChunkLoaded(VoxelToChunk(v))) return false;
         if (GetVoxel(v) == id) return true;
-        return EditRegion(v, v + glm::ivec3(1), [id](const glm::ivec3&, uint8_t) { return static_cast<int>(id); }, nullptr) == 1;
+        return EditRegion(v, v + glm::ivec3(1), [id](const glm::ivec3&, uint8_t) { return static_cast<int>(id); },
+                          [](const glm::ivec3&, const glm::ivec3&) { return true; }, nullptr, nullptr) == 1;
     }
 
-    uint32_t World::FillBox(const glm::ivec3& min, const glm::ivec3& max, uint8_t id, std::vector<VoxelEdit>* edits) {
-        return EditRegion(min, max, [id](const glm::ivec3&, uint8_t) { return static_cast<int>(id); }, edits);
+    uint32_t World::FillBox(const glm::ivec3& min, const glm::ivec3& max, uint8_t id, std::vector<VoxelEdit>* edits, EditReport* report) {
+        // Clipped to the editable range: no integer overflow at chunk borders near the int limits.
+        const glm::ivec3 lo = glm::clamp(min, glm::ivec3(-kMaxEditVoxel), glm::ivec3(kMaxEditVoxel));
+        const glm::ivec3 hi = glm::clamp(max, glm::ivec3(-kMaxEditVoxel), glm::ivec3(kMaxEditVoxel));
+        return EditRegion(lo, hi, [id](const glm::ivec3&, uint8_t) { return static_cast<int>(id); },
+                          [](const glm::ivec3&, const glm::ivec3&) { return true; }, edits, report);
+    }
+
+    uint32_t World::FillSphereQ(const SphereQ& sphere, uint8_t id, std::vector<VoxelEdit>* edits, EditReport* report) {
+        glm::ivec3 mn, mx;
+        SphereVoxelBounds(sphere, mn, mx);
+        return EditRegion(mn, mx, [&sphere, id](const glm::ivec3& v, uint8_t) { return InSphereQ(sphere, v) ? static_cast<int>(id) : -1; },
+                          [&sphere](const glm::ivec3& lo, const glm::ivec3& hi) { return SphereTouchesBox(sphere, lo, hi); }, edits, report);
+    }
+
+    uint32_t World::CarveSphereQ(const SphereQ& sphere, uint16_t power, std::vector<VoxelEdit>* removed, EditReport* report) {
+        glm::ivec3 mn, mx;
+        SphereVoxelBounds(sphere, mn, mx);
+        const std::array<bool, 256> carvable = CarvableIds(m_Materials, power);
+        return EditRegion(mn, mx, [&sphere, &carvable](const glm::ivec3& v, uint8_t oldId) {
+            if (oldId == 0 || !carvable[oldId] || !InSphereQ(sphere, v)) return -1;
+            return 0;
+        }, [&sphere](const glm::ivec3& lo, const glm::ivec3& hi) { return SphereTouchesBox(sphere, lo, hi); }, removed, report);
+    }
+
+    uint32_t World::SwapSphereQ(const SphereQ& sphere, uint8_t from, uint8_t to, std::vector<VoxelEdit>* edits, EditReport* report) {
+        if (from == to) return 0;
+        glm::ivec3 mn, mx;
+        SphereVoxelBounds(sphere, mn, mx);
+        return EditRegion(mn, mx, [&sphere, from, to](const glm::ivec3& v, uint8_t oldId) {
+            return oldId == from && InSphereQ(sphere, v) ? static_cast<int>(to) : -1;
+        }, [&sphere](const glm::ivec3& lo, const glm::ivec3& hi) { return SphereTouchesBox(sphere, lo, hi); }, edits, report);
+    }
+
+    uint32_t World::ClearMask(const glm::ivec3& origin, const VoxelMask& mask, std::vector<VoxelEdit>* removed, EditReport* report) {
+        const glm::ivec3 size = mask.Size();
+        if (size.x <= 0 || size.y <= 0 || size.z <= 0) return 0;
+        // The box must stay inside the editable range (no integer overflow of origin + size).
+        for (int a = 0; a < 3; ++a) {
+            if (origin[a] < -kMaxEditVoxel || static_cast<int64_t>(origin[a]) + size[a] > kMaxEditVoxel) return 0;
+        }
+        return EditRegion(origin, origin + size, [&mask, origin](const glm::ivec3& v, uint8_t oldId) {
+            return oldId != 0 && mask.Get(v - origin) ? 0 : -1;
+        }, [&mask, origin](const glm::ivec3& lo, const glm::ivec3& hi) {
+            for (int z = lo.z; z < hi.z; ++z)
+                for (int y = lo.y; y < hi.y; ++y)
+                    for (int x = lo.x; x < hi.x; ++x) {
+                        if (mask.Get(glm::ivec3(x, y, z) - origin)) return true;
+                    }
+            return false;
+        }, removed, report);
     }
 
     uint32_t World::FillSphere(const glm::vec3& center, float radius, uint8_t id, std::vector<VoxelEdit>* edits) {
-        const glm::ivec3 mn = glm::ivec3(glm::floor(center - glm::vec3(radius)));
-        const glm::ivec3 mx = glm::ivec3(glm::ceil(center + glm::vec3(radius))) + glm::ivec3(1);
-        const float r2 = radius * radius;
-        return EditRegion(mn, mx, [center, r2, id](const glm::ivec3& v, uint8_t) {
-            const glm::vec3 d = glm::vec3(v) + glm::vec3(0.5f) - center;
-            return glm::dot(d, d) <= r2 ? static_cast<int>(id) : -1;
-        }, edits);
+        return FillSphereQ(QuantizeSphere(glm::dvec3(center), static_cast<double>(radius)), id, edits);
     }
 
     uint32_t World::CarveSphere(const glm::vec3& center, float radius, float power, std::vector<VoxelEdit>* removed) {
-        const glm::ivec3 mn = glm::ivec3(glm::floor(center - glm::vec3(radius)));
-        const glm::ivec3 mx = glm::ivec3(glm::ceil(center + glm::vec3(radius))) + glm::ivec3(1);
-        const float r2 = radius * radius;
-        const MaterialLibrary* materials = m_Materials;
-        return EditRegion(mn, mx, [center, r2, power, materials](const glm::ivec3& v, uint8_t oldId) {
-            if (oldId == 0) return -1;
-            const glm::vec3 d = glm::vec3(v) + glm::vec3(0.5f) - center;
-            if (glm::dot(d, d) > r2) return -1;
-            if (materials) {
-                const Material& m = materials->Get(kWorldPalette, oldId);
-                if ((m.flags & MaterialFlag_Indestructible) != 0 || m.hardness > power) return -1;
-            }
-            return 0;
-        }, removed);
+        return CarveSphereQ(QuantizeSphere(glm::dvec3(center), static_cast<double>(radius)), QuantizePower(power), removed);
     }
 }

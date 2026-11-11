@@ -41,6 +41,10 @@ export namespace vortex::sim {
         physics::PhysicsConfig physics;
     };
 
+    /// SceneConfig::replicatedPieceVoxels of a server: object pieces below it are client rubble
+    /// (start value of docs/design/networking.md, owner decision 6; tuned in stage 6).
+    inline constexpr uint32_t kServerReplicatedPieceVoxels = 512;
+
     /**
      * @brief Turns a configuration into the one a session server runs: nothing is drawn there
      * and nobody looks at it.
@@ -48,8 +52,9 @@ export namespace vortex::sim {
      * (`maxParticles = 0`), models are not baked into the chunk store
      * (`scene.bakeModels = false`), and the scene never marks anything as rubble
      * (`scene.debrisRemnants = false`, `scene.markDebris = false`): which entities exist on a
-     * server must not depend on a viewer, an age or a cap that clients do not share. Everything
-     * else is kept.
+     * server must not depend on a viewer, an age or a cap that clients do not share. Object
+     * pieces below `kServerReplicatedPieceVoxels` get no entity (`scene.replicatedPieceVoxels`):
+     * they are client rubble. Everything else is kept.
      */
     SimulationConfig ServerConfig(SimulationConfig config = {});
 

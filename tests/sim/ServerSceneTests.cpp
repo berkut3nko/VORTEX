@@ -62,10 +62,19 @@ namespace {
     };
 
     scene::SceneConfig ServerScene() { return sim::ServerConfig().scene; }
+
+    /// The server scene with the replicated-piece threshold off, for the tests of the other
+    /// switches: their small beams and crates would otherwise not be entities at all. The
+    /// threshold has its own tests (ReplicatedPieceThreshold*).
+    scene::SceneConfig ServerSceneEveryPiece() {
+        scene::SceneConfig config = ServerScene();
+        config.replicatedPieceVoxels = 0;
+        return config;
+    }
 }
 
 TEST(ServerScene, ModelsAreNeverBakedAndUseNoChunkSlots) {
-    Bench b(ServerScene());
+    Bench b(ServerSceneEveryPiece());
     ASSERT_TRUE(b.initialized);
     const std::shared_ptr<voxel::VoxelModel> model = b.Box({24, 3, 3}, "beam");
     const Entity beam = b.scene.CreateVoxelObject({.model = model, .position = {0.0f, 5.0f, 0.0f}});
@@ -102,7 +111,7 @@ TEST(ServerScene, ModelsAreNeverBakedAndUseNoChunkSlots) {
 
 TEST(ServerScene, WorksWithAChunkStoreThatHasNoRoomAtAll) {
     // What "no chunk slots" buys: the store of a server belongs to the terrain alone.
-    Bench b(ServerScene());
+    Bench b(ServerSceneEveryPiece());
     ASSERT_TRUE(b.initialized);
     while (b.store.Alloc() != voxel::ChunkStore::kInvalidSlot) {}
     ASSERT_EQ(b.store.UsedCount(), b.store.Capacity());
@@ -128,7 +137,7 @@ TEST(ServerScene, ModelBakedBySomebodyElseIsUsedAsItIs) {
 }
 
 TEST(ServerScene, NothingIsEverMarkedAsRubble) {
-    Bench b(ServerScene());
+    Bench b(ServerSceneEveryPiece());
     ASSERT_TRUE(b.initialized);
     ASSERT_GT(b.scene.Config().debrisLifetime, 0.0f);
 
@@ -212,4 +221,77 @@ TEST(ServerScene, EffectsAskedOfAnEmptyParticlePoolAreDropped) {
     EXPECT_EQ(b.scene.CreateVoxelObject({.model = b.Box({2, 2, 1}, "crumb"), .position = {7.0f, 2.0f, 0.0f}, .debris = true}), kNoEntity);
     b.particles.Update(1.0f / 60.0f);
     EXPECT_EQ(b.particles.AliveCount(), 0u);
+}
+
+// --- the replicated-piece threshold (SceneConfig::replicatedPieceVoxels) -----------------------
+
+TEST(ServerScene, ReplicatedPieceThresholdReturnsSmallPiecesInsteadOfEntities) {
+    Bench b(ServerScene());
+    ASSERT_TRUE(b.initialized);
+    ASSERT_EQ(b.scene.Config().replicatedPieceVoxels, 512u);
+    // A 64 x 4 x 4 beam (1024 voxels), cut 7.5 voxels from its left end.
+    const Entity beam = b.scene.CreateVoxelObject({.model = b.Box({64, 4, 4}, "beam"), .position = {0.0f, 5.0f, 0.0f}});
+    ASSERT_NE(beam, kNoEntity);
+    const scene::DamageResult cut = b.scene.Damage(beam, glm::dvec3(0.75, 5.2, 0.2), 0.3f);
+    EXPECT_GT(cut.removed, 0u);
+    // The long part keeps the entity; the short end is no entity but a fragment.
+    EXPECT_FALSE(cut.destroyed);
+    EXPECT_FALSE(cut.toRubble);
+    EXPECT_TRUE(cut.pieces.empty());
+    ASSERT_EQ(cut.fragments.size(), 1u);
+    const scene::DamageFragment& end = cut.fragments[0];
+    ASSERT_NE(end.model, nullptr);
+    EXPECT_LT(end.model->SolidCount(), 512u);
+    EXPECT_FALSE(end.model->IsBaked());
+    EXPECT_NEAR(end.pose.position.x, 0.0f, 1.0e-5f);           // where its voxels were
+    EXPECT_NEAR(end.pose.position.y, 5.0f, 1.0e-5f);
+    EXPECT_FLOAT_EQ(end.pose.scale, b.scene.Config().voxelSize);
+    EXPECT_EQ(b.scene.VoxelObjectCount(), 1u);
+    EXPECT_EQ(b.physics.BodyCount(), 1u);
+    const uint32_t kept = b.scene.TryGet<scene::VoxelBody>(beam)->model->SolidCount();
+    EXPECT_GE(kept, 512u);
+    EXPECT_EQ(kept + end.model->SolidCount() + cut.removed + cut.loose, 1024u);
+
+    // The same cut with the threshold off (an offline scene): two entities, no fragment.
+    scene::SceneConfig offline = ServerScene();
+    offline.replicatedPieceVoxels = 0;
+    Bench o(offline);
+    ASSERT_TRUE(o.initialized);
+    const Entity same = o.scene.CreateVoxelObject({.model = o.Box({64, 4, 4}, "beam"), .position = {0.0f, 5.0f, 0.0f}});
+    const scene::DamageResult whole = o.scene.Damage(same, glm::dvec3(0.75, 5.2, 0.2), 0.3f);
+    EXPECT_EQ(whole.pieces.size(), 1u);
+    EXPECT_TRUE(whole.fragments.empty());
+    EXPECT_EQ(o.physics.BodyCount(), 2u);
+}
+
+TEST(ServerScene, SurvivorBelowTheThresholdGoesToRubbleUnlessItIsAnchored) {
+    Bench b(ServerScene());
+    ASSERT_TRUE(b.initialized);
+    // A dynamic crate of exactly 512 voxels loses a corner: what is left is client rubble.
+    const Entity crate = b.scene.CreateVoxelObject({.model = b.Box({8, 8, 8}, "crate"), .position = {0.0f, 5.0f, 0.0f}});
+    ASSERT_NE(crate, kNoEntity);
+    const scene::DamageResult hit = b.scene.Damage(crate, glm::dvec3(0.0, 5.0, 0.0), 0.25f);
+    EXPECT_GT(hit.removed, 0u);
+    EXPECT_TRUE(hit.destroyed);
+    EXPECT_TRUE(hit.toRubble);
+    ASSERT_EQ(hit.fragments.size(), 1u);
+    EXPECT_EQ(hit.fragments[0].model->Name(), "crate");
+    EXPECT_FALSE(b.scene.IsValid(crate));
+    EXPECT_EQ(b.physics.BodyCount(), 0u);
+
+    // A static block only dented keeps its entity, however small: it does not move, so it is
+    // no rubble.
+    const Entity block = b.scene.CreateVoxelObject(
+        {.model = b.Box({4, 4, 4}, "block"), .position = {5.0f, 5.0f, 0.0f}, .motion = physics::MotionType::Static});
+    ASSERT_NE(block, kNoEntity);
+    const scene::DamageResult dent = b.scene.Damage(block, glm::dvec3(5.0, 5.0, 0.0), 0.15f);
+    EXPECT_GT(dent.removed, 0u);
+    EXPECT_FALSE(dent.destroyed);
+    EXPECT_FALSE(dent.toRubble);
+    EXPECT_TRUE(dent.fragments.empty());
+    EXPECT_TRUE(b.scene.IsValid(block));
+    EXPECT_EQ(b.scene.TryGet<scene::RigidBody>(block)->motion, physics::MotionType::Static);
+    b.scene.Clear();
+    EXPECT_EQ(b.physics.BodyCount(), 0u);
+    EXPECT_EQ(b.store.UsedCount(), 0u);
 }
