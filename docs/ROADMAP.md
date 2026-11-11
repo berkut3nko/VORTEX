@@ -11,7 +11,7 @@ What exists today, and what was designed for but is not built yet. See
 | Core | Logging, job system, profiler, input state, RNG, command line. |
 | Game UI | Play mode locks the mouse (GLFW_CURSOR_DISABLED + raw motion; pointer lock on Wayland, grab on X11) and looks around without a button; Escape opens a pause menu (Resume / Quit). A HUD drawn without ImGui (`vortex.core:hud` data + one instanced draw after tone mapping, built-in 5 x 9 bitmap font): crosshair, mode, tool, frame rate, key hints, menu. ImGui is only the F3 debug overlay (hidden by default) and the F1 editor. Windowed behaviour (lock on Wayland / X11, focus, menu clicks) is not confirmed yet: headless runs cannot exercise it. |
 | Voxel world | Streaming window of sparse 32^3 chunks, generation on worker threads, editing (set / fill / carve with material hardness), region-file persistence of modified chunks (offline game and map editor, when `saveDirectory` is set; a session server's world is memory only). The game's window is **full height** (view distance stage 1): a fixed -48..128 m (55 rows) that follows the camera in x / z only, so climbing never unloads anything; a column pass installs sky and rock without jobs; buried chunks farther than 16 m stay **Packed** (RLE bytes, no slot); a build ceiling at 128 m. |
-| Terrain | Built-in generator: hills, mountains, beaches, sea, caves, trees. Custom generators through `IWorldGenerator`. |
+| Terrain | Built-in generator: hills, mountains, beaches, sea, caves, trees. Custom generators through `IWorldGenerator`. The voxel size is a world setting (0.1 m by default; the game's `--voxel-size` previews 0.125 / 0.15 m). |
 | Ray queries | One traversal shared by GPU and CPU (`shaders/shared/trace.glsl`), world + dynamic objects through a BVH. |
 | Objects | Voxel models of any size shared between instances, collider boxes, mass from material density. |
 | Scene | `vortex.scene`: EnTT entities with transform, voxel body, rigid body, point light and lifetime components; destroying an entity releases its body and chunk slots; part of the GPU-free `Vortex::Sim` and tested without a GPU. |
@@ -251,8 +251,15 @@ State (stages are those of [design/networking.md](design/networking.md)):
   island searches, near-sphere slack, pending pixels out of the lighting filter, renderer fallback words) in "Review
   fixes". Open in it: recentre p90 0.35 ms (gate 0.2 ms, met at the median), the carve of a blast into cave rows not
   loaded yet is skipped (its island search runs later), session `heightRange` not wired, windowed climbing and the
-  streaming look (no dark halos, no see-through flashes) not confirmed by the owner. Next: stage 2 (voxel-size preview), then 0.125 m voxels and the LOD levels (stage 6) that
-  give the 2x view distance.
+  streaming look (no dark halos, no see-through flashes) not confirmed by the owner. Stage 2 (voxel preview) is
+  **done**: `--voxel-size` (0.1-0.15 m, offline only) in the game, a furniture probe beside the plaza built on request
+  (`--probe`, `--camera probe` / `probe-far`, `--probe-blast`), generation chunks/s logged; per-size numbers and
+  screenshots in its "Stage 2 as built" (0.1 / 0.125 / 0.15 m: view radius 73.6 / 92 / 110 m, far-view gbuffer
+  10.6 / 12.2 / 11.5 ms; at 0.15 m thin boards merge and shelf pitches go uneven). Found there: a terrain piece that
+  breaks off loses its blast push when its first physics step is not frozen (stale terrain collider, open).
+  Waiting for the owner's choice of size; next: stage 3 (switch to 0.125 m: debris thresholds, tree rule, goldens),
+  then the LOD levels (stage 6) that give the 2x view distance. Not checked at other sizes: windowed play, `--climb` /
+  `--fly`.
 - **Level of detail**: clip-map cascades with doubled voxel size for long view distances. The current
   view radius is 73.6 m (the 48-chunk window at 0.1 m voxels).
 - **Chunk memory**: chunks are dense (37 KiB each). Palette-compressed or brick-sparse payloads.

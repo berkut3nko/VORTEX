@@ -109,7 +109,9 @@ do not bounds-check (0..31 only); `GetSafe` does. A `Chunk` is 36 KB: keep it on
 - Counters (`WorldStats`): `unloadsInsideRadius` counts re-targeted cells with content whose column is within
   `ViewRadius()` of the focus horizontally (`RetargetCell`, by distance, whatever moved the window);
   `retargetedColumns`, `reveals`, `repacks`; `storeFullLoads` (a Dense result installed Packed for want of a slot)
-  and `storeFullDecodes` (a decode refused) must stay 0.
+  and `storeFullDecodes` (a decode refused) must stay 0. `generatedChunks` / `generatedDense` / `generateMs` are
+  counted by the worker in `LoadJob` (atomics in `Shared`, saved chunks not counted, stale results counted: it is
+  generation work) and read by `Stats()`.
 - `modified` = "differs from generator output": set by edits, cleared by `PersistCell` and by integrating a load. Only
   modified cells reach the `RegionStore`.
 - `TakeChangedChunks()` lists chunks that loaded as Dense/Uniform/Packed, were edited, or were unloaded with content

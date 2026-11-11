@@ -178,6 +178,14 @@ export namespace vortex::voxel {
         /// Decodes (near the focus, newly visible, next to an edit) refused because the store was
         /// full. Must stay 0. Cumulative.
         uint32_t storeFullDecodes = 0;
+        /// Chunks the generator produced on worker threads (saved chunks that were loaded are not
+        /// counted), and how many of them were Dense. Includes results the window had moved away
+        /// from before they arrived: this is generation work, not what is shown. Cumulative.
+        uint32_t generatedChunks = 0;
+        uint32_t generatedDense = 0;
+        /// Worker time spent inside IWorldGenerator::Generate for them (summed over threads):
+        /// generatedChunks / generateMs is the generator's own speed, whatever the frame rate.
+        double generateMs = 0.0;
     };
 
     /**

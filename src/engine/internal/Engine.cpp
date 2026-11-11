@@ -118,6 +118,10 @@ namespace vortex {
     int Engine::Run(Application& app) {
         Impl& s = *m_Impl;
         if (!s.initialized) return 1;
+        // Generation throughput is measured from here: OnInit usually loads the start blocking.
+        const double generationStart = NowSeconds();
+        voxel::WorldStats generationAtFill;
+        double generationSeconds = 0.0;
         app.OnInit(*this);
 
         sim::Simulation& sim = s.sim;
@@ -167,6 +171,8 @@ namespace vortex {
                 if (!windowFilled && world.IsFilled(voxel::LoadScope::Everything)) {
                     windowFilled = true;
                     Log::Info("World: window filled in {} frames ({:.1f} s)", frame, NowSeconds() - streamStart);
+                    generationAtFill = world.Stats();
+                    generationSeconds = NowSeconds() - generationStart;
                 }
             }
 
@@ -252,6 +258,17 @@ namespace vortex {
             Log::Info("World: {} window moves, recentre {:.3f} ms last, {:.3f} ms max; {} packed decodes in {:.2f} ms ({} revealed), "
                       "{} packed again", ws.recenters, ws.lastRecenterMs, ws.maxRecenterMs, ws.decodes, ws.decodeMs, ws.reveals, ws.repacks);
             if (!windowFilled) Log::Info("World: window not filled after {} frames ({} unfilled columns)", frame, ws.unfilledColumns);
+            // Chunks generated from the start of the run until the window was filled (or until now).
+            const voxel::WorldStats& gen = windowFilled ? generationAtFill : ws;
+            const double genSeconds = std::max(windowFilled ? generationSeconds : NowSeconds() - generationStart, 1.0e-6);
+            // The wall rate is capped by the integration budget per frame (maxIntegrationsPerUpdate
+            // Dense results); the rate per worker-second is the generator's own speed.
+            Log::Info("World: generation {} chunks ({} dense) in {:.2f} s {}: {:.0f} chunks/s, {:.0f} dense chunks/s; "
+                      "{:.0f} chunks per worker-second in the generator; voxel {:.3f} m, view radius {:.1f} m",
+                      gen.generatedChunks, gen.generatedDense, genSeconds, windowFilled ? "until the window was filled" : "(window not filled)",
+                      static_cast<double>(gen.generatedChunks) / genSeconds, static_cast<double>(gen.generatedDense) / genSeconds,
+                      gen.generateMs > 0.0 ? static_cast<double>(gen.generatedChunks) * 1000.0 / gen.generateMs : 0.0,
+                      static_cast<double>(world.VoxelSize()), world.ViewRadius());
             const physics::TerrainColliderStats ts = sim.Terrain().Stats();
             Log::Info("Physics: {} bodies ({} awake, {} frozen), {} terrain colliders; scene: {} voxel objects, {} rubble",
                       sim.Physics().BodyCount(), sim.Physics().ActiveBodyCount(), ts.frozenBodies, ts.colliders,

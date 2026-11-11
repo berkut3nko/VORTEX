@@ -55,6 +55,10 @@ namespace vortex::voxel {
         std::vector<Result> results;
         std::vector<ColumnResult> columnResults;
         std::atomic<uint32_t> inFlight{0};
+        // Chunks the generator produced (not loaded from a save), counted by the worker that made them.
+        std::atomic<uint32_t> generated{0};
+        std::atomic<uint32_t> generatedDense{0};
+        std::atomic<uint64_t> generateNs{0};   // worker time spent in IWorldGenerator::Generate
     };
 
     namespace {
@@ -790,7 +794,11 @@ namespace vortex::voxel {
         }
         if (!loaded) {
             scratch->Clear();
+            const auto generateStart = std::chrono::steady_clock::now();
             const ChunkContent content = shared->generator->Generate(coord, *scratch);
+            shared->generateNs.fetch_add(static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                             std::chrono::steady_clock::now() - generateStart).count()),
+                                         std::memory_order_relaxed);
             result.kind = content.kind;
             result.uniformId = content.uniformId;
             if (result.kind == ChunkKind::Dense) {
@@ -813,6 +821,10 @@ namespace vortex::voxel {
             }
         }
         if (result.kind == ChunkKind::Uniform && result.uniformId == 0) result.kind = ChunkKind::Empty;
+        if (!loaded) {
+            shared->generated.fetch_add(1, std::memory_order_relaxed);
+            if (result.kind == ChunkKind::Dense) shared->generatedDense.fetch_add(1, std::memory_order_relaxed);
+        }
 
         {
             std::scoped_lock lock(shared->mutex);
@@ -1259,6 +1271,9 @@ namespace vortex::voxel {
             }
         }
         stats.jobsInFlight = m_Shared->inFlight.load();
+        stats.generatedChunks = m_Shared->generated.load(std::memory_order_relaxed);
+        stats.generatedDense = m_Shared->generatedDense.load(std::memory_order_relaxed);
+        stats.generateMs = static_cast<double>(m_Shared->generateNs.load(std::memory_order_relaxed)) * 1.0e-6;
         return stats;
     }
 

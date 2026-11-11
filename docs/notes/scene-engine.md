@@ -378,3 +378,35 @@ look, jump feel, editor focus) cannot be checked headless: say so.
   surface and everything within 16 m; caves stream in afterwards, 23-26 s for the whole window in the `dev` build),
   and `BuildPlayground` loads around the plaza the same way before it edits it. `--climb` and `--fly` are the
   headless measurements of the design (`docs/design/view-distance.md`, "Stage 1 as built").
+- At exit `Engine::Run` also logs `World: generation N chunks (D dense) in T s ...`: from just before `OnInit`
+  until the window was filled (or the run ended), the wall rate, and the generator's own rate per worker-second
+  (`WorldStats::generateMs`). The wall rate is capped by `maxIntegrationsPerUpdate` Dense results per frame.
+
+## Voxel preview (view distance stage 2)
+
+- `--voxel-size <m>` (game, 0.1-0.15, offline only: a session takes the server's size, `networking.md`) sets
+  `EngineConfig::world.voxelSize`; `sim::Simulation` passes it to the terrain generator and the scene (`Resolve`),
+  physics and the renderer read the world's. Nothing in the engine hard-codes 0.1 m except defaults (`WorldConfig`,
+  `TerrainSettings`, `SceneConfig`, `ImportSettings`) and the debris thresholds in voxels (`kMinPieceVoxels` 16,
+  `debrisBodyVoxels` 48, `thinBodyVoxels` 6: stage 3 rescales them); `fx` presets scale particle sizes from a 0.1 m
+  reference voxel, and the generator's trunk rule gives 1-voxel trunks above 0.1 m (stage 3 rewrites it in metres).
+  Above 0.2 m the standard run's beam is 1 voxel thick and its cut leaves two 4-voxel particle crumbs (no
+  `1 new object(s)`): the accepted range stops at what was run.
+- The playground is authored in voxels of 0.1 m and scaled by `S()` (`0.1 / voxelSize`, exactly 1 at 0.1 m, so the
+  default world is unchanged); the figure, the crate and the beam too. The furniture probe (`BuildProbe`) is built
+  only with `--probe` (implied by `--camera probe`, `--camera probe-far`, `--probe-blast`): the default run builds
+  the old world and logs no `Probe:` line. It is authored in metres on the 1/8 m grid and voxelised by voxel
+  centres, **both ends included**: on an exact tie (a centre on a boundary) both boxes that meet there get that
+  voxel. With half-open boxes the top board of the 25 cm shelf at 0.15 m (ending on a tie, 12.5 voxels) lost the row
+  its sides got and floated one row above them. The log line counts middle-voxel fallbacks (a box with no centre on
+  an axis; 0 at 0.1 / 0.125 / 0.15 m) and floating islands over the pad (must be 0). The cost of the rule: a box whose
+  upper end is on a tie is one voxel longer (at 0.1 m ties are the x.25 / x.75 m boundaries).
+- `--probe-blast` blasts the chair's legs at frame 30 and logs islands, crumbs and each new piece (voxels, layer,
+  mass, position from the probe corner, velocity, awake / frozen) at +0, 1, 5, 15, 30, 60, 119 frames.
+- **A detached piece loses its blast push when its first step is not frozen.** Most likely cause (from the code,
+  not isolated in a test): the piece is created over the terrain collider that still holds its own former voxels: `Apply` keeps the old collider until the rebuilt one is
+  installed, and `ChunkReady` counts a built (stale) collider as ready, so the guard does not freeze the piece.
+  Measured: velocity (-2.4, 1.2, -2.4) m/s at +0 frames, about 0 at +1 at 0.1 m (Dynamic layer) and at 0.125 m
+  (Debris layer); at 0.15 m the piece was frozen in its first step, kept its velocity and slid about 0.9 m. Which
+  happens depends on collider timing, not on the voxel size or the layer (an earlier run at 0.125 m threw the piece
+  about 2 m). Not fixed (physics contract; affects every terrain Detach, M1 included).

@@ -65,6 +65,10 @@ TEST(World, LoadsWindowAndClassifiesChunks) {
     EXPECT_GT(stats.uniformChunks, 0u);     // solid rock below needs no storage
     EXPECT_GT(stats.emptyChunks, 0u);       // air above neither
     EXPECT_EQ(f.store.UsedCount(), stats.denseChunks);
+    // The column pass decides every row but the surface one: one generated chunk per column.
+    EXPECT_EQ(stats.generatedChunks, 8u * 8u);
+    EXPECT_EQ(stats.generatedDense, stats.denseChunks);
+    EXPECT_GT(stats.generateMs, 0.0);
 
     EXPECT_EQ(f.world->GetVoxel({0, kGround - 1, 0}), kSurface);
     EXPECT_EQ(f.world->GetVoxel({0, kGround - 2, 0}), kRock);
@@ -254,6 +258,8 @@ TEST(World, PersistsEditsToDisk) {
         EXPECT_EQ(f.world->GetVoxel(marker), kRock);
         EXPECT_EQ(f.world->GetVoxel({0, kGround - 1, 0}), 0);
         EXPECT_EQ(f.world->GetVoxel({1, kGround - 1, 0}), kSurface);
+        // The two edited chunks came from the save: they are not counted as generated.
+        EXPECT_EQ(f.world->Stats().generatedChunks, 8u * 8u - 2u);
     }
     std::filesystem::remove_all(dir);
 }

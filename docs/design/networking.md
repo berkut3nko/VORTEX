@@ -107,7 +107,12 @@ generator golden hash; the token is compared in plain text with the session file
 ## Region start-up and terrain agreement
 
 - `RegionDesc{templateId, seed, playBounds, heightRange, TerrainSettings as raw float bits}` travels in `Welcome`.
-  Both sides build the same generator and run memory-only. Template set-up is split (stage 3): edits and objects run
+  Both sides build the same generator and run memory-only. The **voxel size is a session parameter**: the server
+  sets it (`TerrainSettings::voxelSize`, raw bits), and the client builds its `World` (`WorldConfig::voxelSize`, and
+  the window size / full-height range derived for it) from `Welcome`, never from its own settings or command line.
+  The integer operations (q = 1/16 voxel, island boxes in voxels) mean nothing between two different sizes, and
+  `buildHash` does not cover it. The game's `--voxel-size` (view-distance stage 2) is an offline preview only: a
+  session mode must refuse it or override it with the server's value. Template set-up is split (stage 3): edits and objects run
   **on the server only** (operations 1..k, replicated entities); lights are `EntitySpawn` kind `Light`; the player
   spawn point comes from the server.
 - Build: `-ffp-contract=off` in `vortex_options` (Jolt keeps its flags); the same Clang major on both platforms.
