@@ -15,6 +15,18 @@ cmake_minimum_required(VERSION 3.28)
 # =============================================================================
 project(VORTEX VERSION 0.2.0 LANGUAGES CXX C)
 
+# An optimised build type whose flags carry no -O level builds at -O0 without a word (a build
+# directory whose first configure failed early cached empty CMAKE_CXX_FLAGS_<CONFIG>). Every
+# CPU timing from such a build is wrong, so refuse it.
+if(CMAKE_BUILD_TYPE MATCHES "^(Release|RelWithDebInfo|MinSizeRel)$")
+    string(TOUPPER "${CMAKE_BUILD_TYPE}" _vortex_config)
+    if(NOT "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${_vortex_config}}" MATCHES "(^| )[-/]O[1-3sz]")
+        message(FATAL_ERROR "VORTEX: build type ${CMAKE_BUILD_TYPE} has no optimisation flag "
+            "(CMAKE_CXX_FLAGS_${_vortex_config} = '${CMAKE_CXX_FLAGS_${_vortex_config}}'). "
+            "Reset it: cmake -U 'CMAKE_*_FLAGS_*' --preset <preset>, or delete the build directory.")
+    endif()
+endif()
+
 option(VORTEX_BUILD_TESTS "Build the engine unit tests" ${PROJECT_IS_TOP_LEVEL})
 option(VORTEX_BUILD_TOOLS "Build engine tools (CPU reference renderer)" ON)
 option(VORTEX_WARNINGS_AS_ERRORS "Treat engine warnings as errors" OFF)
