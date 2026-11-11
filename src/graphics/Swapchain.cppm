@@ -1,90 +1,57 @@
 module;
 
 #include <vulkan/vulkan.h>
-#include <VkBootstrap.h>
+
+#include <cstdint>
 #include <vector>
 
 export module vortex.graphics:swapchain;
 
-import :context;
-import vortex.memory;
+import :device;
 
-namespace vortex::graphics {
+export namespace vortex::graphics {
 
     /**
-     * @brief Manages the Vulkan Swapchain and presentation images.
-     * @details Handles double/triple buffering, image acquisition, and presentation to the surface.
+     * @brief Presentation surface images.
+     * @details Colour format is a UNORM format (the final shader applies the sRGB curve itself,
+     * which is also what Dear ImGui expects). Images are created with COLOR_ATTACHMENT and
+     * TRANSFER_SRC usage (screenshots).
      */
-    export class Swapchain {
+    class Swapchain {
     public:
         Swapchain() = default;
         ~Swapchain();
+        Swapchain(const Swapchain&) = delete;
+        Swapchain& operator=(const Swapchain&) = delete;
+
+        /// @param vsync true: FIFO. false: MAILBOX if available, else IMMEDIATE, else FIFO.
+        bool Create(Device& device, uint32_t width, uint32_t height, bool vsync);
+        /// @brief Recreates for a new size (waits for the device to be idle). Returns false on failure.
+        bool Recreate(uint32_t width, uint32_t height, bool vsync);
+        void Destroy();
+        bool IsValid() const { return m_Swapchain != VK_NULL_HANDLE; }
+
+        VkFormat Format() const { return m_Format; }
+        VkExtent2D Extent() const { return m_Extent; }
+        uint32_t ImageCount() const { return static_cast<uint32_t>(m_Images.size()); }
+        VkImage Image(uint32_t index) const { return m_Images[index]; }
+        VkImageView View(uint32_t index) const { return m_Views[index]; }
 
         /**
-         * @brief Initializes the swapchain for a specific window surface.
-         * @param context The active Vulkan context.
-         * @param surface The window surface to present to.
-         * @param width Initial width of the swapchain.
-         * @param height Initial height of the swapchain.
-         * @return True if initialization succeeded, false otherwise.
+         * @brief Acquires the next image.
+         * @return false if the swapchain is out of date and must be recreated before rendering
+         * (nothing was acquired and `signal` is unsignalled).
          */
-        bool Initialize(VulkanContext& context, VkSurfaceKHR surface, uint32_t width, uint32_t height);
-
-        /**
-         * @brief Recreates the swapchain (e.g., on window resize).
-         * @param width New width.
-         * @param height New height.
-         * @warning This waits for the device to be idle before recreation.
-         */
-        void Recreate(uint32_t width, uint32_t height);
-
-        /**
-         * @brief Destroys the swapchain and its resources.
-         */
-        void Shutdown();
-
-        /**
-         * @brief Requests the index of the next available image from the swapchain.
-         * @param semaphore A semaphore to signal when the image is available.
-         * @return The index of the next image, or UINT32_MAX on error/out-of-date.
-         */
-        uint32_t AcquireNextImage(VkSemaphore semaphore);
-
-        /**
-         * @brief Presents a rendered image to the presentation queue.
-         * @param queue The queue to submit the presentation request to.
-         * @param imageIndex The index of the image to present.
-         * @param renderFinishedSemaphore A semaphore to wait on (signaling render completion).
-         * @return VK_SUCCESS or an error code (e.g., VK_ERROR_OUT_OF_DATE_KHR).
-         */
-        VkResult Present(VkQueue queue, uint32_t imageIndex, VkSemaphore renderFinishedSemaphore);
-
-        VkFormat GetFormat() const { return m_SwapchainFormat; }
-        VkFormat GetDepthFormat() const { return VK_FORMAT_D32_SFLOAT; } 
-        VkExtent2D GetExtent() const { return m_SwapchainExtent; }
-        const std::vector<VkImage>& GetImages() const { return m_Images; }
-        const std::vector<VkImageView>& GetImageViews() const { return m_ImageViews; }
-        
-        /**
-         * @brief Returns the depth image associated with the swapchain resolution.
-         */
-        const memory::AllocatedImage& GetDepthImage() const { return m_DepthImage; }
+        bool Acquire(VkSemaphore signal, uint32_t& outIndex);
+        /// @brief Presents. Returns false if the swapchain should be recreated (out of date / suboptimal).
+        bool Present(VkSemaphore wait, uint32_t index);
 
     private:
-        VulkanContext* m_Context{nullptr};
-        VkSurfaceKHR m_Surface{VK_NULL_HANDLE};
-        
-        vkb::Swapchain m_VkbSwapchain;
-        VkSwapchainKHR m_Swapchain{VK_NULL_HANDLE};
-        
+        Device* m_Device = nullptr;
+        VkSwapchainKHR m_Swapchain = VK_NULL_HANDLE;
+        VkFormat m_Format = VK_FORMAT_UNDEFINED;
+        VkExtent2D m_Extent{0, 0};
         std::vector<VkImage> m_Images;
-        std::vector<VkImageView> m_ImageViews;
-        VkExtent2D m_SwapchainExtent{0, 0};
-        VkFormat m_SwapchainFormat{VK_FORMAT_UNDEFINED};
-
-        memory::AllocatedImage m_DepthImage; 
-
-        void Create(uint32_t width, uint32_t height);
-        void DestroyInternal();
+        std::vector<VkImageView> m_Views;
     };
 }

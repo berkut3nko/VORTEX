@@ -1,72 +1,66 @@
 module;
 
+#include <array>
+#include <chrono>
+#include <cstdint>
 #include <string>
+#include <string_view>
+#include <vector>
 
-export module vortex.core:profiller;
+export module vortex.core:profiler;
 
-namespace vortex::core {
+export namespace vortex {
 
     /**
-     * @brief Static class for performance profiling and timing.
-     * @details Collects execution times of named sections and renders them using ImGui.
-     * Stores history for real-time graphing.
+     * @brief Lightweight frame profiler: named timers (CPU scopes, GPU pass timings) with a
+     * short history, plus named counters. Thread safe; presentation lives in the editor.
      */
-    export class Profiler {
+    class Profiler {
     public:
-        /**
-         * @brief Clears frame data and prepares for new measurements.
-         * @details Should be called at the very beginning of the frame.
-         */
-        static void BeginFrame();
+        static constexpr int kHistory = 120;
 
-        /**
-         * @brief Starts measuring time for a named section (CPU).
-         * @param name Unique name of the section (used for display).
-         */
-        static void Begin(const std::string& name);
+        struct Timer {
+            std::string name;
+            float lastMs = 0.0f;
+            float avgMs = 0.0f;
+            float maxMs = 0.0f;
+            std::array<float, kHistory> history{};
+            int cursor = 0;      ///< Index of the next sample to be written.
+            int samples = 0;     ///< Number of valid samples (<= kHistory).
+        };
 
-        /**
-         * @brief Stops measuring time for the named section (CPU).
-         * @details Calculates duration and adds it to the history.
-         * @param name Name of the section to stop.
-         */
-        static void End(const std::string& name);
+        struct Counter {
+            std::string name;
+            double value = 0.0;
+        };
 
-        /**
-         * @brief Adds a manual time sample (e.g., for GPU timers queries).
-         * @param name Name of the metric.
-         * @param timeMs Time in milliseconds.
-         */
-        static void AddSample(const std::string& name, float timeMs);
+        /// @brief Records a duration in milliseconds. Multiple samples per frame are summed.
+        static void AddSample(std::string_view name, float milliseconds);
+        /// @brief Sets a named value shown next to the timers (chunk counts, memory ...).
+        static void SetCounter(std::string_view name, double value);
+        /// @brief Closes the current frame: per-frame sums become history samples.
+        static void EndFrame();
 
-        /**
-         * @brief Renders the profiling data as ImGui graphs.
-         * @details Creates a new ImGui window "Performance Profiler".
-         */
-        static void Render();
+        static std::vector<Timer> SnapshotTimers();
+        static std::vector<Counter> SnapshotCounters();
     };
 
     /**
-     * @brief RAII wrapper for automatic profiling scopes.
-     * @details Automatically calls Profiler::Begin in constructor and Profiler::End in destructor.
-     * Usage: `ProfileScope scope("MyFunction");`
+     * @brief RAII CPU timer. `name` must outlive the scope (use a string literal).
+     * @code ProfileScope scope("World::Update"); @endcode
      */
-    export struct ProfileScope {
-        std::string name;
-
-        /**
-         * @brief Starts a profiling scope.
-         * @param n Name of the scope.
-         */
-        explicit ProfileScope(const std::string& n) : name(n) {
-            Profiler::Begin(name);
-        }
-
-        /**
-         * @brief Ends the profiling scope automatically.
-         */
+    class ProfileScope {
+    public:
+        explicit ProfileScope(const char* name) : m_Name(name), m_Start(std::chrono::steady_clock::now()) {}
         ~ProfileScope() {
-            Profiler::End(name);
+            const auto end = std::chrono::steady_clock::now();
+            Profiler::AddSample(m_Name, std::chrono::duration<float, std::milli>(end - m_Start).count());
         }
+        ProfileScope(const ProfileScope&) = delete;
+        ProfileScope& operator=(const ProfileScope&) = delete;
+
+    private:
+        const char* m_Name;
+        std::chrono::steady_clock::time_point m_Start;
     };
 }
