@@ -41,7 +41,7 @@ layout(set = 0, binding = 0, std140) uniform FrameUniforms {
     vec4 cameraPosVoxel;         // xyz = camera position in window-local voxel units, w = voxel size (m)
     vec4 renderSize;             // xy = render resolution (px), zw = 1 / resolution
     vec4 outputSize;             // xy = output resolution (px), zw = 1 / resolution
-    vec4 jitter;                 // xy = this frame's jitter in NDC units, zw = previous frame's
+    vec4 jitter;                 // xy = this frame's jitter in NDC units, zw = horizontal edge fog start / end (m, 0 = off)
     vec4 sunDirection;           // xyz = unit vector TOWARDS the sun, w = tan(angular radius)
     vec4 sunRadiance;            // rgb = sun radiance (linear)
     vec4 skyZenith;              // rgb
@@ -163,6 +163,12 @@ layout(set = 0, binding = 10, std430) readonly buffer HudBuffer      { VxHudQuad
 #define VX_GRID_SIZE                     u_Frame.gridSize.xyz
 #define VX_GRID_MIN_CHUNK                u_Frame.gridMinChunk.xyz
 #define VX_GRID_ORIGIN                   vec3(0.0)
+// u_Grid holds the cells, then one column-top word per column, then the content top
+// (voxel::World::GridWords).
+#define VX_GRID_CELL_COUNT               uint(u_Frame.gridSize.x * u_Frame.gridSize.y * u_Frame.gridSize.z)
+#define VX_GRID_COLUMN_TOP(c)            u_Grid.data[VX_GRID_CELL_COUNT + (c)]
+#define VX_GRID_CONTENT_TOP              u_Grid.data[VX_GRID_CELL_COUNT + uint(u_Frame.gridSize.x * u_Frame.gridSize.z)]
+#define VX_GRID_REGION_TOP(r)            u_Grid.data[VX_GRID_CELL_COUNT + uint(u_Frame.gridSize.x * u_Frame.gridSize.z) + 1u + (r)]
 #define VX_VOXEL_SIZE                    u_Frame.cameraPosVoxel.w
 #define VX_INV_VOXEL_SIZE                (1.0 / u_Frame.cameraPosVoxel.w)
 #define VX_OCC_WORD(slot, w)             u_Occ.data[(slot) * VX_OCC_STRIDE + (w)]
@@ -192,6 +198,11 @@ uint VxPackMaterial(uint globalMaterial, uint variation) { return (globalMateria
 uint VxMaterialIndex(uint packed) { return packed & 0x00FFFFFFu; }
 float VxMaterialVariation(uint packed) { return float(packed >> 24u) * (1.0 / 255.0); }
 vec4 VxEncodeNormal(vec3 n) { return vec4(n * 0.5 + 0.5, 0.0); }
+// Alpha of the normal target (2 bits; every surface writes 0): 1 marks a pixel with a depth but
+// no lighting - a chunk that is not loaded yet (VX_GRID_PENDING, shown as sky). The lighting
+// history and the spatial filter skip such taps; they read the normal anyway, so it costs no fetch.
+const vec4 VX_NORMAL_UNLIT = vec4(0.5, 1.0, 0.5, 1.0);
+bool VxNormalUnlit(vec4 encoded) { return encoded.a > 0.5; }
 vec3 VxDecodeNormal(vec4 v) { return normalize(v.xyz * 2.0 - 1.0); }
 
 // Stable per-voxel hash (0..255) used for the material "variation" brightness jitter.

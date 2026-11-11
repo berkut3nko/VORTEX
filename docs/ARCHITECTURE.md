@@ -126,17 +126,55 @@ a chunk calls `MarkDirty(slot)`; the renderer drains `TakeDirty()` once per fram
 
 ### 4.3 World
 
-`voxel::World` keeps a box of chunks around a focus point - the *window*, `windowSize` chunks. Each window cell is `Unloaded`, `Loading`, `Empty`, `Uniform` (one solid
-material, no storage) or `Dense` (owns a slot). Cells are stored in a toroidal array
-(`index = coord mod size`, `x + z*sx + y*sx*sz`), so moving the window re-targets one slab
-of cells and moves no data.
+`voxel::World` keeps a box of chunks around a focus point - the *window*, `windowSize` chunks. Each window cell is
+`Unloaded`, `Loading`, `Empty`, `Uniform` (one solid material, no storage), `Dense` (owns a slot) or `Packed` (dense
+content no ray can reach: only its RLE bytes on the CPU, no slot). Cells are stored in a toroidal array
+(`index = coord mod size`, **column-major**: `(x + z*sx) * sy + y`), so moving the window re-targets one slab of
+columns, each a contiguous run, and moves no data.
 
-`World::Grid()` is the same array in GPU encoding: `0` empty, `0x80000000 | id` uniform,
-`slot + 1` dense. It is uploaded as is.
+**Full-height window** (`WorldConfig::fullHeight`, the game's setting; `docs/design/view-distance.md`, stage 1).
+The window covers a fixed range of rows - `heightRange`, or the generator's `IWorldGenerator::VerticalBounds()` plus
+`buildHeadroom` (32 m), rounded outwards to `heightSnap` (16 m): -48..128 m = 55 rows at 0.1 m for the built-in
+terrain - and follows the focus in x and z only, so climbing or flying never unloads anything. The top of the range
+is the **build ceiling** (`World::BuildCeiling()`): an edit that would write a solid voxel above it is refused whole
+(`EditReport::outOfBounds`, decided from integers), `Scene::CreateVoxelObject` refuses a model reaching above it, and
+`Scene::DestroyAbove` is the kill plane for bodies thrown over it (the terrain guard treats the sky above the window
+as ready). Without known bounds (or with `fullHeight` off: tests, a session server today) the window is camera-centred
+in all three axes as before.
 
-Loading runs on the job system (`RegionStore` first, generator second), nearest chunks
-first; results are installed on the main thread with a per-frame budget. Cells carry a
-generation counter so results for a chunk that has left the window are dropped.
+**Column pass.** Every column of the window first gets one job: `IWorldGenerator::ClassifyColumn(cx, cz)` (from the
+height tile the terrain generator builds anyway) says which rows are certainly Empty (`>= emptyFrom`), certainly
+Uniform (`< solidBelow`) and where the surface band starts (`surfaceFrom`); `Generate` makes its own early-outs from
+the same function, so the two agree (tested). Sky and rock cells are installed without a job unless the
+`RegionStore` holds a saved chunk there; band cells become `VX_GRID_PENDING` until generated. Jobs go out by
+horizontal distance (a counting sort of the columns, rebuilt per window move): everything within `nearRadius`
+(16 m) of the focus first, then classification and the surface band of every column, then the buried (cave) rows
+(`surfaceFirstBacklog`, default 0 = all surfaces first). The integration budget counts Dense results only.
+
+**Packed** (`WorldConfig::packHidden`, needs the column pass). A Dense result farther than `nearRadius` + half a
+chunk from the focus whose row lies below the lowest surface voxel of every column of its 3 x 3 neighbourhood, that
+is not from a save and has no face neighbour that is edited or from a save, keeps its `EncodeChunk` runs and shows
+in the grid as `0x80000000 | most frequent id`. Columns outside the window are not known when a chunk at the edge is
+judged: when a column is classified, the Packed chunks of its neighbours are judged again and the visible ones
+decoded. A Packed chunk is made resident (decoded into a slot) when the focus comes within `nearRadius` (scanned
+whenever the focus moved a quarter chunk), when an edit touches it (decoded at its first changed voxel, exactly like
+an Empty / Uniform cell), for the six face neighbours of every chunk an edit changed or a saved chunk that loads, and
+by `EnsureResident`. A resident chunk that is unedited and hidden keeps its runs and is packed again once the focus is
+`repackMargin` (8 m) beyond `nearRadius` (so a session in one area does not fill the store). Packing and unpacking
+are not content changes: `TakeChangedChunks` does not list them, `WorldHash` hashes the runs, `GetVoxel` /
+`ReadChunk` read them, saves are unchanged. `GetChunk` returns nullptr for a Packed chunk (readers that need its
+voxels use `ReadChunk`: physics, island search). A load result that finds the store full is kept Packed (drawn as
+rock), never installed as Empty, so a saved chunk is never lost (`WorldStats::storeFullLoads`).
+
+`World::Grid()` is the cell array in GPU encoding: `0` empty, `0x80000000 | id` uniform (or packed), `0x80000000`
+(id 0) pending, `slot + 1` dense. `World::GridWords()` - what is uploaded - appends one **column top** per column
+(window rows `>=` it are air in that column), the **content top** (their maximum) and one **region top** per 4 x 4
+columns of the window (window-relative). Raised tops are written at once, lowered ones lazily (a top that is too
+high only costs steps). `GridPageRevisions()` gives the revision at which each 4 KiB page last changed; the renderer
+copies only those.
+
+Loading runs on the job system (`RegionStore` first, generator second); results are installed on the main thread.
+Cells and columns carry generation counters so results for a chunk or column that has left the window are dropped.
 
 Editing (`SetVoxel`, `FillBox`, `FillSphere`, `CarveSphere` and the quantised `FillSphereQ`,
 `CarveSphereQ`, `SwapSphereQ`, `ClearMask`) materialises Empty / Uniform cells on demand, marks
@@ -183,7 +221,11 @@ against a reference DDA, runs on the GPU.
 * `VxTraceChunk` - hierarchical walk of one chunk: empty 8^3 cells and 4^3 blocks are left in
   one step. Exit positions are computed from the plane crossed (no accumulation, no epsilons).
 * `VxTraceWorld` - DDA over the chunk grid in window-local voxel units; uniform chunks are hit
-  as boxes, dense chunks descend into `VxTraceChunk`.
+  as boxes, dense chunks descend into `VxTraceChunk`. A cell at or above its column's top is left
+  through the column's air prism in one step - or the whole 4 x 4 region's prism when it is above the
+  region top - out through x / z or down onto the top; a rising ray above the content top ends. A
+  pending cell stops the ray with material 0 (the G-buffer writes it as sky with a depth; `World::Raycast`
+  reports no hit). Tested against the traversal without the tables and a voxel DDA on 48 x 55 x 48.
 * `VxTraceInstances` - stack-based BVH traversal, then `VxTraceChunk` in each instance's
   local space. The local direction is not renormalised, so `t` stays comparable across objects.
 * `VxTraceScene` - world + instances, closest or any hit. Inputs in render space, metres.
@@ -217,7 +259,7 @@ mirrors the block. Unit tests compare the two through reflection.
 | binding | name | contents | written |
 |---|---|---|---|
 | 0 | `u_Frame` | `FrameUniforms` (UBO) | every frame |
-| 1 | `u_Grid` | world grid, `uint[]` | when `World::GridRevision()` changes or uploads are pending |
+| 1 | `u_Grid` | `World::GridWords()`: cells, column tops, content top, region tops (`uint[]`) | the 4 KiB pages whose revision changed, and the page of a cell whose slot was just uploaded |
 | 2 | `u_Occ` | occupancy pyramids, 1042 words per slot | dirty slots |
 | 3 | `u_Ids` | voxel ids, 8192 words per slot | dirty slots |
 | 4 | `u_Materials` | `VxMaterial[]`, 256 per palette (`params.w` = surface kind: 0 solid, 1 liquid) | when `MaterialLibrary::Revision()` changes |
@@ -501,7 +543,10 @@ every dynamic body (`PhysicsWorld::GetDynamicBodies`):
   nothing: it is *parked*, costs one static body and no collider, and is released (still asleep)
   when a focus point brings the terrain back, or when something wakes it.
 * At the edge of the world window a body simply stops: the chunk beyond is not loaded. It
-  continues if the window moves over it. Nothing can leave the loaded world by falling.
+  continues if the window moves over it. Nothing can leave the loaded world by falling. Above the
+  top of a full-height window is sky over the build ceiling: ready, no collider, and the kill
+  plane (`Scene::DestroyAbove`) removes what flies through it.
+* A Packed chunk (4.3) needs a collider like a Dense one; its voxels come from `World::ReadChunk`.
 
 Kinematic and static bodies are not guarded. Character controllers are not bodies: a game holds
 its character while `Engine::TerrainReady(bounds)` is false - the box version, given the
@@ -624,17 +669,21 @@ A blast is split into simulation and presentation:
 
 * `sim::Blast(simulation, sphereQ, power)` (or `BlastDesc` in metres, quantised first): apply
   `WorldOp::Carve`; search the box `floor(centre) +- (radius + 24)` voxels for floating terrain
-  (`ExtractFloatingIslands` without removing) and turn each island into a `WorldOp::Detach` (an
-  occupancy mask, `netId = 0`, the blast's push at its corner as velocity) applied with
-  `ApplyOp` = `World::ClearMask`; `Scene::Damage` for every body in range (a snapshot first);
+  (`ExtractFloatingIslands` without removing) and turn each island of at least
+  `scene::kMinPieceVoxels` (16) into a `WorldOp::Detach` (an occupancy mask, `netId = 0`, the
+  blast's push at its corner as velocity) applied with `ApplyOp` = `World::ClearMask`; all smaller
+  islands ("crumbs") together become one `WorldOp::Clear` (kind `ClearMask`: the union of their
+  voxels over the smallest box holding them), applied last; `Scene::Damage` for every body in range (a snapshot first);
   push every body within three radii (`sim::BlastPush` x mass) and wake what is within two. No
   particles, no light, no entity for an island. Returns the applied operations in order, the
   voxels each one changed, the object fragments (below the replicated threshold, 7.3) and the
   quantised centre / radius.
-* `Engine::PresentBlast(result)`: debris particles for a sample of the carved voxels, local rubble
-  for every `Detach` with `netId = 0` built from the voxels it removed (`sim::BuildDetachedPiece`,
-  `VoxelObjectDesc::debris`, so 7.3 applies, started with the operation's velocity), rubble for the
-  object fragments, the explosion burst and a flash.
+* `sim::PresentBlast(simulation, result)` (GPU-free, so unit tested; `Engine::PresentBlast` calls
+  it): debris particles for a sample of the carved voxels, local rubble for every `Detach` with
+  `netId = 0` built from the voxels it removed (`sim::BuildDetachedPiece`,
+  `VoxelObjectDesc::debris`, so 7.3 applies, started with the operation's velocity), particles
+  only for the crumbs of a `ClearMask` (no model, entity or body), rubble for the object
+  fragments, the explosion burst and a flash.
 
 `Engine::Explode` is `PresentBlast(sim::Blast(...))`. A server runs only the first half and sends
 the operations; a client applies them with `ApplyOp` and runs the second half.
@@ -647,7 +696,7 @@ Destruction must not fill the world with tiny rigid bodies: each costs a body, a
 
 | size (solid voxels) | what it is | default |
 |---|---|---|
-| `< minPieceVoxels` | never an entity: particles on the spot (`Damage` fragments, floating terrain crumbs) | 16 |
+| `< minPieceVoxels` | never an entity: particles on the spot (`Damage` fragments, floating terrain crumbs). The default is `scene::kMinPieceVoxels`, which is also `sim::Blast`'s rule for terrain islands (smaller ones are one `ClearMask` per blast, not a `Detach` each) | 16 |
 | `< debrisBodyVoxels` | a *small* body: `Layer::Debris` (no collisions among each other), continuous collision detection; rubble of this size gets the `Debris` component | 48 |
 | larger | an ordinary object that stays | |
 | `< replicatedPieceVoxels` | a piece `Damage` makes no entity for: returned in `DamageResult::fragments` (model, pose, velocities) for whoever draws to create as local rubble; also the damaged entity itself when it is that small and Dynamic (`toRubble`). Off (0) offline; 512 on a server (`sim::ServerConfig`) | 0 |
@@ -713,8 +762,8 @@ network client will predict with (`docs/design/networking.md`).
   `scene.markDebris = false` and `scene.debrisRemnants = false` (nothing is rubble), and
   `scene.replicatedPieceVoxels = 512` (smaller object pieces are client rubble, no entity).
 * **World operations.** `sim::WorldOp` is one replicated terrain change with integer parameters
-  only: `CarveSphere`, `FillSphere`, `SwapSphere`, `FillBox`, `Detach` (kind values are wire
-  format). `sim::ApplyOp(world, op, edits)` makes the matching `World` call and returns the voxels
+  only: `CarveSphere`, `FillSphere`, `SwapSphere`, `FillBox`, `Detach`, `ClearMask` (kind values
+  are wire format). `sim::ApplyOp(world, op, edits)` makes the matching `World` call and returns the voxels
   changed plus the skipped / unsynced chunks (4.3). The same operations in the same order on two
   worlds that were equal give equal voxels, whatever the job-thread timing (tested with
   `voxel::WorldHash`). `sim::Blast` (7.2) produces them.
@@ -818,10 +867,12 @@ World (statistics, save).
   rubble, effects dropped by an empty particle pool, the replicated-piece threshold (fragments,
   a survivor going to rubble, an anchored one staying). World operations: `ApplyOp` per kind,
   the skipped report for chunks outside the window and still loading, a detached piece built from
-  the removed voxels; `sim::Blast`: islands as `Detach` without entities, an island box that is
-  not loaded, objects damaged and pushed, fragments on a server; and the stage-2 acceptance: two
-  simulations with different worker counts fed the same operations (islands included) have equal
-  world hashes, a slightly different stream does not.
+  the removed voxels; `sim::Blast`: islands as `Detach` without entities, crumbs under 16 voxels
+  as one `ClearMask` (the 15 / 16 boundary; offline `sim::PresentBlast` makes particles and no
+  entity or body for them), an island box that is not loaded, objects damaged and pushed,
+  fragments on a server; and the stage-2 acceptance: two simulations with different worker counts
+  fed the same operations (islands and crumbs included) have equal world hashes, a slightly
+  different stream does not.
 * `VortexGraphicsTests` - SPIR-V reflection of the real shader binaries, C++ / GLSL struct
   layout parity (`VxHudQuad` included), the material surface-kind and HUD cell-grid constants
   (C++ vs. the text of `common.glsl`) and

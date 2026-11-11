@@ -122,6 +122,13 @@ TEST(WorldOps, ApplyOpIsTheWorldCallOfEachKind) {
     for (int y = 0; y < 20; y += 2) mask.Set(3, y, 2, true);
     EXPECT_EQ(sim::ApplyOp(a.World(), sim::WorldOp::Detach({-3, 70, -3}, mask, glm::vec3(0.0f))).changed,
               b.World().ClearMask({-3, 70, -3}, mask));
+    voxel::VoxelMask crumbs({9, 3, 4});
+    crumbs.Set(0, 0, 0, true);
+    crumbs.Set(8, 2, 3, true);
+    crumbs.Set(4, 1, 1, true);
+    const uint32_t cleared = sim::ApplyOp(a.World(), sim::WorldOp::Clear({-5, 72, -4}, crumbs)).changed;
+    EXPECT_EQ(cleared, b.World().ClearMask({-5, 72, -4}, crumbs));
+    EXPECT_GT(cleared, 0u);
     EXPECT_EQ(a.Hash().hash, b.Hash().hash);
 
     // Bounds of each kind.
@@ -131,6 +138,9 @@ TEST(WorldOps, ApplyOpIsTheWorldCallOfEachKind) {
     EXPECT_EQ(mx, glm::ivec3(4, 5, 6));
     sim::WorldOp::Detach({-3, 70, -3}, mask, glm::vec3(0.0f)).Bounds(mn, mx);
     EXPECT_EQ(mx - mn, glm::ivec3(7, 20, 5));
+    sim::WorldOp::Clear({-5, 72, -4}, crumbs).Bounds(mn, mx);
+    EXPECT_EQ(mn, glm::ivec3(-5, 72, -4));
+    EXPECT_EQ(mx, glm::ivec3(4, 75, 0));
     sim::WorldOp::Carve(voxel::SphereQ{glm::ivec3(8), 16}, 1).Bounds(mn, mx);
     EXPECT_EQ(mn, glm::ivec3(-1));
     EXPECT_EQ(mx, glm::ivec3(2));
@@ -251,6 +261,38 @@ TEST(Blast, IslandSearchThatCannotSeeTheWholeBoxEmitsNothing) {
     EXPECT_EQ(a.World().GetVoxel({88, kGroundVoxels + 17, 0}), ids.stone);   // the cap still floats
 }
 
+// The search that could not see its box is not lost: the world loads the box, and the search
+// runs once it is there (RetryIslandSearches), as a deferred result without a second explosion.
+TEST(Blast, IslandSearchRunsLaterOnceItsBoxHasLoaded) {
+    Arena a;
+    ASSERT_TRUE(a.initialized);
+    const voxel::WorldMaterials& ids = a.Ids();
+    ApplyAll(a.World(), std::vector<sim::WorldOp>{sim::WorldOp::Box({88, kGroundVoxels, 0}, {91, kGroundVoxels + 16, 3}, ids.stone),
+                                                  sim::WorldOp::Box({86, kGroundVoxels + 16, -2}, {93, kGroundVoxels + 19, 5}, ids.stone)});
+    const voxel::SphereQ cut{glm::ivec3(89 * 16 + 8, (kGroundVoxels + 8) * 16 + 8, 16 + 8), 40};
+    const sim::BlastResult blast = sim::Blast(a.simulation, cut, kStrong);
+    ASSERT_FALSE(blast.islandsSearched);
+    ASSERT_EQ(a.simulation.DeferredIslandSearches().size(), 1u);
+    EXPECT_TRUE(sim::RetryIslandSearches(a.simulation).empty());       // the box is still partly outside the window
+    EXPECT_EQ(a.simulation.DeferredIslandSearches().size(), 1u);
+
+    // The window moves one chunk towards the mushroom: the whole box is inside and loads.
+    a.World().LoadBlocking(kFocus + glm::dvec3(3.5, 0.0, 0.0));
+    const std::vector<sim::BlastResult> late = sim::RetryIslandSearches(a.simulation);
+    ASSERT_EQ(late.size(), 1u);
+    EXPECT_TRUE(late[0].deferred);
+    EXPECT_TRUE(late[0].islandsSearched);
+    EXPECT_EQ(late[0].IslandCount(), 1u);
+    for (const sim::AppliedOp& applied : late[0].ops) EXPECT_NE(applied.op.kind, sim::WorldOpKind::CarveSphere);
+    EXPECT_EQ(a.World().GetVoxel({88, kGroundVoxels + 17, 0}), 0);           // the cap fell
+    EXPECT_EQ(a.World().GetVoxel({88, kGroundVoxels + 1, 0}), ids.stone);    // the stump stays
+    EXPECT_TRUE(a.simulation.DeferredIslandSearches().empty());
+    // Presented without an explosion: no particles (the cap is one piece of rubble).
+    sim::PresentBlast(a.simulation, late[0]);
+    EXPECT_EQ(a.simulation.Particles().AliveCount(), 0u);
+    EXPECT_TRUE(sim::RetryIslandSearches(a.simulation).empty());
+}
+
 TEST(Blast, DamagesAndPushesObjectsWithoutTouchingTheirVoxelsInTheWorld) {
     Arena a;
     ASSERT_TRUE(a.initialized);
@@ -356,5 +398,178 @@ TEST(Blast, TwoSimulationsFedTheSameOperationsHaveEqualHashes) {
     for (size_t i = 0; i < stream.size(); ++i) {
         if (i != 2) sim::ApplyOp(missing.World(), stream[i]);
     }
+    EXPECT_NE(missing.Hash().hash, s.hash);
+}
+
+// --- crumbs: islands under scene::kMinPieceVoxels ----------------------------------------------
+
+namespace {
+    /// Floating crumbs high above the left mushroom, all inside StemCut's island box (x -26..39,
+    /// y g-25..g+40, z -32..33): two rows of 1 to 5 voxel bars, a 3 x 5 slab (15 voxels, the
+    /// largest crumb) and a 2 x 2 x 2 cube. 22 crumbs, 83 voxels.
+    std::vector<sim::WorldOp> Crumbs(const voxel::WorldMaterials& ids) {
+        const int y = kGroundVoxels + 30;
+        std::vector<sim::WorldOp> ops;
+        for (int row = 0; row < 2; ++row) {
+            const int z = row == 0 ? -10 : 10;
+            for (int i = 0; i < 10; ++i) {
+                const int x = -20 + 6 * i, length = 1 + i % 5;
+                ops.push_back(sim::WorldOp::Box({x, y, z}, {x + length, y + 1, z + 1}, row == 0 ? ids.stone : ids.dirt));
+            }
+        }
+        ops.push_back(sim::WorldOp::Box({0, y + 4, -2}, {3, y + 5, 3}, ids.wood));
+        ops.push_back(sim::WorldOp::Box({30, y - 6, 25}, {32, y - 4, 27}, ids.gold));
+        return ops;
+    }
+    constexpr uint32_t kCrumbCount = 22, kCrumbVoxels = 2 * 2 * (1 + 2 + 3 + 4 + 5) + 15 + 8;
+
+    /// The left mushroom (one island when StemCut hits its stem) plus the crumbs.
+    std::vector<sim::WorldOp> MushroomAndCrumbs(const voxel::WorldMaterials& ids) {
+        std::vector<sim::WorldOp> ops = Mushrooms(ids);
+        ops.resize(2);
+        for (const sim::WorldOp& op : Crumbs(ids)) ops.push_back(op);
+        return ops;
+    }
+}
+
+TEST(Blast, CrumbsBecomeOneClearMaskAndLargerIslandsKeepTheirDetach) {
+    Arena a;
+    ASSERT_TRUE(a.initialized);
+    ApplyAll(a.World(), MushroomAndCrumbs(a.Ids()));
+    const size_t objectsBefore = a.simulation.Scene().VoxelObjectCount();
+    const uint32_t bodiesBefore = a.simulation.Physics().BodyCount();
+
+    const sim::BlastResult blast = sim::Blast(a.simulation, StemCut(), kStrong);
+    ASSERT_TRUE(blast.islandsSearched);
+    EXPECT_TRUE(blast.Report().Complete());
+    // Carve, the cap's Detach, one ClearMask for the 22 crumbs - not 22 more Detach records.
+    ASSERT_EQ(blast.ops.size(), 3u);
+    EXPECT_EQ(blast.ops[0].op.kind, sim::WorldOpKind::CarveSphere);
+    EXPECT_EQ(blast.ops[1].op.kind, sim::WorldOpKind::Detach);
+    EXPECT_GE(blast.ops[1].op.mask.Count(), scene::kMinPieceVoxels);
+    EXPECT_EQ(blast.IslandCount(), 1u);
+    EXPECT_EQ(blast.crumbs, kCrumbCount);
+
+    const sim::AppliedOp& clear = blast.ops[2];
+    ASSERT_EQ(clear.op.kind, sim::WorldOpKind::ClearMask);
+    EXPECT_EQ(clear.op, sim::WorldOp::Clear(clear.op.min, clear.op.mask));      // only min and mask are set
+    EXPECT_EQ(clear.op.mask.Count(), kCrumbVoxels);
+    EXPECT_EQ(clear.result.changed, kCrumbVoxels);
+    EXPECT_EQ(clear.edits.size(), kCrumbVoxels);
+    EXPECT_EQ(blast.CrumbVoxels(), kCrumbVoxels);
+    // The mask's box is the smallest one holding every crumb: x from the first bar to the end
+    // of the last (-20..38), y from the cube to the slab (g+24..g+34), z from the first row to
+    // the cube (-10..26).
+    EXPECT_EQ(clear.op.min, glm::ivec3(-20, kGroundVoxels + 24, -10));
+    EXPECT_EQ(clear.op.mask.Size(), glm::ivec3(39 + 20, 35 - 24, 27 + 10));
+    for (const voxel::VoxelEdit& e : clear.edits) {
+        EXPECT_NE(e.oldId, 0);
+        EXPECT_EQ(a.World().GetVoxel(e.voxel), 0);
+    }
+    for (const sim::WorldOp& op : Crumbs(a.Ids())) EXPECT_EQ(a.World().GetVoxel(op.min), 0);
+    // The simulation makes nothing of them.
+    EXPECT_EQ(a.simulation.Scene().VoxelObjectCount(), objectsBefore);
+    EXPECT_EQ(a.simulation.Physics().BodyCount(), bodiesBefore);
+    EXPECT_EQ(a.simulation.Particles().AliveCount(), 0u);
+}
+
+TEST(Blast, IslandOfSixteenVoxelsIsAPieceAndOfFifteenACrumb) {
+    Arena a;
+    ASSERT_TRUE(a.initialized);
+    const voxel::WorldMaterials& ids = a.Ids();
+    const int y = kGroundVoxels + 20;
+    ApplyAll(a.World(), std::vector<sim::WorldOp>{sim::WorldOp::Box({-8, y, 0}, {8, y + 1, 1}, ids.stone),
+                                                  sim::WorldOp::Box({-8, y, 4}, {7, y + 1, 5}, ids.stone)});
+    // A blast in the air next to them: nothing carved, both bars are found by the search.
+    const sim::BlastResult blast = sim::Blast(a.simulation, voxel::SphereQ{glm::ivec3(8, (y + 8) * 16 + 8, 8), 32}, kStrong);
+    EXPECT_EQ(blast.ops[0].result.changed, 0u);
+    ASSERT_EQ(blast.ops.size(), 3u);
+    EXPECT_EQ(blast.ops[1].op.kind, sim::WorldOpKind::Detach);
+    EXPECT_EQ(blast.ops[1].op.mask.Count(), 16u);
+    EXPECT_EQ(blast.ops[2].op.kind, sim::WorldOpKind::ClearMask);
+    EXPECT_EQ(blast.ops[2].op.mask.Count(), 15u);
+    EXPECT_EQ(blast.crumbs, 1u);
+}
+
+TEST(Blast, OfflineCrumbsBecomeParticlesWithoutAnyEntityOrBody) {
+    Arena a;                                                   // offline: markDebris, rubble entities on
+    ASSERT_TRUE(a.initialized);
+    ApplyAll(a.World(), Crumbs(a.Ids()));
+    scene::Scene& scene = a.simulation.Scene();
+    fx::ParticleSystem& particles = a.simulation.Particles();
+    const size_t entitiesBefore = scene.EntityCount();
+    const uint32_t bodiesBefore = a.simulation.Physics().BodyCount();
+
+    // A blast in the air below the crumbs (StemCut 12 voxels higher): no carve, no island but
+    // the crumbs.
+    const voxel::SphereQ inTheAir{glm::ivec3(7 * 16 + 8, (kGroundVoxels + 20) * 16 + 8, 16 + 8), 9 * 16};
+    const sim::BlastResult blast = sim::Blast(a.simulation, inTheAir, kStrong);
+    EXPECT_EQ(blast.ops[0].result.changed, 0u);
+    ASSERT_EQ(blast.ops.size(), 2u);
+    ASSERT_EQ(blast.ops[1].op.kind, sim::WorldOpKind::ClearMask);
+    EXPECT_EQ(blast.crumbs, kCrumbCount);
+
+    sim::PresentBlast(a.simulation, blast);
+    EXPECT_EQ(scene.VoxelObjectCount(), 0u);
+    EXPECT_EQ(scene.DebrisCount(), 0u);
+    EXPECT_EQ(scene.EntityCount(), entitiesBefore + 1u);        // the flash, nothing else
+    EXPECT_EQ(a.simulation.Physics().BodyCount(), bodiesBefore);
+    const uint32_t withCrumbs = particles.AliveCount();
+
+    // The same blast without its ClearMask shows only the explosion: the crumbs made particles.
+    particles.Clear();
+    sim::BlastResult bare = blast;
+    bare.ops.resize(1);
+    sim::PresentBlast(a.simulation, bare);
+    const uint32_t bursts = (kCrumbVoxels + scene.Config().debrisParticleStride - 1) / scene.Config().debrisParticleStride;
+    EXPECT_GE(withCrumbs, particles.AliveCount() + bursts);
+}
+
+TEST(Blast, OfflineLargeIslandStillBecomesRubble) {
+    Arena a;
+    ASSERT_TRUE(a.initialized);
+    ApplyAll(a.World(), MushroomAndCrumbs(a.Ids()));
+    const uint32_t bodiesBefore = a.simulation.Physics().BodyCount();
+    const sim::BlastResult blast = sim::Blast(a.simulation, StemCut(), kStrong);
+    ASSERT_EQ(blast.IslandCount(), 1u);
+    sim::PresentBlast(a.simulation, blast);
+    // One rubble object (the cap) and nothing for the 22 crumbs.
+    EXPECT_EQ(a.simulation.Scene().VoxelObjectCount(), 1u);
+    EXPECT_EQ(a.simulation.Scene().DebrisCount(), 0u);          // 300+ voxels: not small rubble
+    EXPECT_EQ(a.simulation.Physics().BodyCount(), bodiesBefore + 1u);
+}
+
+TEST(Blast, TwoSimulationsFedOperationsWithAClearMaskHaveEqualHashes) {
+    Arena server(ArenaConfig(3)), client(ArenaConfig(1));
+    ASSERT_TRUE(server.initialized && client.initialized);
+    const std::vector<sim::WorldOp> setup = MushroomAndCrumbs(server.Ids());
+    ApplyAll(server.World(), setup);
+    ApplyAll(client.World(), setup);
+    ASSERT_EQ(server.Hash().hash, client.Hash().hash);
+
+    const std::vector<sim::WorldOp> stream = OpsOf(sim::Blast(server.simulation, StemCut(), kStrong));
+    ASSERT_EQ(stream.size(), 3u);
+    for (const sim::WorldOp& op : stream) {
+        const sim::OpResult r = sim::ApplyOp(client.World(), op);
+        EXPECT_TRUE(r.Complete());
+        if (op.kind == sim::WorldOpKind::ClearMask) EXPECT_EQ(r.changed, kCrumbVoxels);
+    }
+    const voxel::WorldHashResult s = server.Hash(), c = client.Hash();
+    ASSERT_TRUE(s.Complete() && c.Complete());
+    EXPECT_EQ(s.hash, c.hash);
+    EXPECT_EQ(s.solidChunks, c.solidChunks);
+
+    // The blast is a function of the voxels: a second server gives the same operations.
+    Arena again(ArenaConfig(2));
+    ASSERT_TRUE(again.initialized);
+    ApplyAll(again.World(), setup);
+    EXPECT_EQ(OpsOf(sim::Blast(again.simulation, StemCut(), kStrong)), stream);
+
+    // Without the ClearMask the crumbs stay: a different world.
+    Arena missing(ArenaConfig(2));
+    ASSERT_TRUE(missing.initialized);
+    ApplyAll(missing.World(), setup);
+    sim::ApplyOp(missing.World(), stream[0]);
+    sim::ApplyOp(missing.World(), stream[1]);
     EXPECT_NE(missing.Hash().hash, s.hash);
 }

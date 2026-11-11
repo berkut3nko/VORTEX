@@ -820,6 +820,8 @@ namespace vortex::editor {
         const voxel::WorldStats stats = world.Stats();
         const glm::ivec3 window = world.WindowSize();
         ImGui::Text("Chunks: %u dense, %u uniform, %u empty", stats.denseChunks, stats.uniformChunks, stats.emptyChunks);
+        ImGui::Text("Packed: %u (%.1f MiB)  unfilled columns: %u", stats.packedChunks, static_cast<double>(stats.packedBytes) / 1048576.0,
+                    stats.unfilledColumns);
         ImGui::Text("Loading: %u pending, %u jobs", stats.pendingChunks, stats.jobsInFlight);
         ImGui::Text("Chunk store: %u / %u", engine.Chunks().UsedCount(), engine.Chunks().Capacity());
         ImGui::Text("Window: %d x %d x %d chunks, voxel %.2f m", window.x, window.y, window.z, D(world.VoxelSize()));

@@ -57,6 +57,14 @@ namespace vortex::sim {
         return op;
     }
 
+    WorldOp WorldOp::Clear(const glm::ivec3& origin, voxel::VoxelMask mask) {
+        WorldOp op;
+        op.kind = WorldOpKind::ClearMask;
+        op.min = origin;
+        op.mask = std::move(mask);
+        return op;
+    }
+
     void WorldOp::Bounds(glm::ivec3& outMin, glm::ivec3& outMax) const {
         switch (kind) {
             case WorldOpKind::CarveSphere:
@@ -69,6 +77,7 @@ namespace vortex::sim {
                 outMax = glm::max(max, min);
                 return;
             case WorldOpKind::Detach:
+            case WorldOpKind::ClearMask:
                 outMin = min;
                 outMax = min + glm::max(mask.Size(), glm::ivec3(0));
                 return;
@@ -92,6 +101,7 @@ namespace vortex::sim {
                 result.changed = world.FillBox(op.min, op.max, op.id, edits, &result.report);
                 break;
             case WorldOpKind::Detach:
+            case WorldOpKind::ClearMask:
                 result.changed = world.ClearMask(op.min, op.mask, edits, &result.report);
                 break;
         }

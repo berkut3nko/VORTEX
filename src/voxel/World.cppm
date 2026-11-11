@@ -23,13 +23,49 @@ export namespace vortex::voxel {
 
     struct WorldConfig {
         float voxelSize = 0.1f;                  ///< Edge length of a voxel in metres.
-        glm::ivec3 windowSize{32, 16, 32};       ///< Loaded region in chunks.
+        /// Loaded region in chunks. With `fullHeight` (and known bounds) y is replaced by the
+        /// rows of the vertical range.
+        glm::ivec3 windowSize{32, 16, 32};
         std::filesystem::path saveDirectory;     ///< Where modified chunks are stored ("" = memory only).
-        uint32_t maxJobsInFlight = 0;            ///< Generation jobs running at once (0 = 2 per worker).
-        uint32_t maxIntegrationsPerUpdate = 64;  ///< Finished chunks installed per Update().
+        /// Generation jobs queued or running at once (0 = 8 per worker). New jobs are submitted
+        /// once per Update(), so this also caps chunks per frame: many results (sky rows, column
+        /// classifications) take far less than a frame. More would also delay collider cooking, which shares the queue (8 per worker: up to about 8 ms in the release build).
+        uint32_t maxJobsInFlight = 0;
+        /// Dense results installed per Update(); Empty, Uniform and column results are free.
+        uint32_t maxIntegrationsPerUpdate = 64;
+
+        // --- full-height window (docs/design/view-distance.md, stage 1) ---------------------
+        /// The window covers a fixed range of rows (`heightRange`, or the generator's
+        /// VerticalBounds plus `buildHeadroom`, rounded outwards to `heightSnap`) and follows the
+        /// focus in x and z only: climbing or flying never unloads anything. Without known
+        /// bounds the window stays camera-centred (windowSize.y).
+        bool fullHeight = false;
+        glm::vec2 heightRange{0.0f};             ///< Explicit [min, max) metres (a session's region); empty = from the generator.
+        float buildHeadroom = 32.0f;             ///< Metres of buildable sky above the generator's bounds.
+        float heightSnap = 16.0f;                ///< The range is rounded outwards to multiples of this (metres).
+        /// Dense chunks that no ray can reach (geometric rule) and farther than `nearRadius` from
+        /// the focus keep only their RLE bytes (CellState::Packed): no slot, drawn as rock.
+        /// Needs `fullHeight` (the rule uses the column pass).
+        bool packHidden = false;
+        float nearRadius = 16.0f;                ///< Metres around the focus where everything is resident.
+        /// While more columns of the window than this lack their surface, cave rows (outside the
+        /// near radius) wait. 0: every surface first (measured best, view-distance.md "as built").
+        uint32_t surfaceFirstBacklog = 0;
+        /// Packed chunks made resident per Update() (near the focus, newly visible ones); also the
+        /// number of resident buried chunks packed again per Update().
+        uint32_t maxDecodesPerUpdate = 16;
+        /// A buried chunk made resident near the focus is packed again once it is this many
+        /// metres farther than `nearRadius` (and still hidden, unedited, with no edited face neighbour).
+        float repackMargin = 8.0f;
     };
 
-    enum class CellState : uint8_t { Unloaded, Loading, Empty, Uniform, Dense };
+    enum class CellState : uint8_t { Unloaded, Loading, Empty, Uniform, Dense, Packed };
+
+    /// What LoadBlocking waits for.
+    enum class LoadScope : uint8_t {
+        Everything,   ///< every chunk of the window
+        Surface       ///< every column classified, every surface row and every chunk near the focus
+    };
 
     /// @brief One voxel changed by an edit operation.
     struct VoxelEdit {
@@ -94,6 +130,10 @@ export namespace vortex::voxel {
     struct EditReport {
         std::vector<glm::ivec3> skipped;
         std::vector<glm::ivec3> unsynced;
+        /// The edit would have written solid voxels above the build ceiling (World::BuildCeiling):
+        /// it was refused whole, nothing changed. Decided from integers and the ceiling only, so
+        /// every machine with the same height range refuses the same edits; not part of Complete().
+        bool outOfBounds = false;
         bool Complete() const { return skipped.empty() && unsynced.empty(); }
     };
 
@@ -111,8 +151,33 @@ export namespace vortex::voxel {
         uint32_t denseChunks = 0;
         uint32_t uniformChunks = 0;
         uint32_t emptyChunks = 0;
+        uint32_t packedChunks = 0;
         uint32_t pendingChunks = 0;   ///< Not yet generated.
         uint32_t jobsInFlight = 0;
+        /// RLE bytes held: Packed chunks, plus the copies resident buried chunks keep so that
+        /// they can be packed again without encoding.
+        uint64_t packedBytes = 0;
+        /// Columns inside 0.85 x the view radius whose surface rows are not all loaded (last Update).
+        uint32_t unfilledColumns = 0;
+        uint32_t columnsPending = 0;  ///< Columns of the window not classified yet.
+        /// Cells that held a chunk (or were loading one) and were re-targeted while their column
+        /// was within ViewRadius() of the focus horizontally: the hill bug. Counted by distance,
+        /// whatever moved the window. Cumulative.
+        uint32_t unloadsInsideRadius = 0;
+        uint32_t recenters = 0;       ///< Window moves (cumulative).
+        uint32_t retargetedColumns = 0;   ///< Columns re-targeted by window moves (cumulative).
+        float lastRecenterMs = 0.0f;
+        float maxRecenterMs = 0.0f;   ///< Slowest window move of at most one chunk in x and z.
+        uint32_t decodes = 0;         ///< Packed chunks made resident (cumulative).
+        double decodeMs = 0.0;        ///< Time spent decoding them (cumulative).
+        uint32_t repacks = 0;         ///< Resident buried chunks packed again (cumulative).
+        uint32_t reveals = 0;         ///< Packed chunks found visible after a neighbour column was classified (cumulative).
+        /// Dense load results that found the ChunkStore full and were installed Packed (drawn as
+        /// rock) instead: terrain is not shown as it is. Must stay 0. Cumulative.
+        uint32_t storeFullLoads = 0;
+        /// Decodes (near the focus, newly visible, next to an edit) refused because the store was
+        /// full. Must stay 0. Cumulative.
+        uint32_t storeFullDecodes = 0;
     };
 
     /**
@@ -145,20 +210,50 @@ export namespace vortex::voxel {
         // --- streaming -------------------------------------------------------------------
         /// @brief Recentres the window on `focus` (world metres) and advances loading. Call every frame.
         void Update(const glm::dvec3& focus);
-        /// @brief Blocks until every chunk of the window around `focus` is loaded (tools, tests, loading screens).
-        void LoadBlocking(const glm::dvec3& focus);
+        /// @brief Blocks until the window around `focus` is loaded (tools, tests, loading screens).
+        void LoadBlocking(const glm::dvec3& focus, LoadScope scope = LoadScope::Everything);
         /// @brief Saves every modified chunk currently loaded and writes the region files.
         void Save();
+        /// @brief Counts every cell (main thread, about 0.1 ms for 126 000 cells).
         WorldStats Stats() const;
+        /// @brief Cheap (per column) test of what LoadBlocking waits for, for the current window.
+        bool IsFilled(LoadScope scope) const;
+        /// @brief Columns inside 0.85 x the view radius whose surface is not loaded (last Update).
+        uint32_t UnfilledColumns() const { return m_Counters.unfilledColumns; }
 
         // --- window (shared with the renderer and the tracer) ----------------------------
         const glm::ivec3& WindowSize() const { return m_Config.windowSize; }
         const glm::ivec3& WindowMinChunk() const { return m_WindowMin; }
         /// @brief World position (metres) of the window's minimum corner: the origin of "render space".
         glm::dvec3 WindowOrigin() const;
-        std::span<const uint32_t> Grid() const { return m_Grid; }
-        /// @brief Changes whenever Grid() or WindowMinChunk() change.
+        /// @brief One entry per cell (see trace.glsl for the encoding).
+        std::span<const uint32_t> Grid() const { return std::span<const uint32_t>(m_Grid).first(m_CellCount); }
+        /// @brief What the shaders read: Grid() (column-major: (x + z * size.x) * size.y + y, each
+        /// toroidal), then one column-top word per column (x + z * size.x: window rows >= the value
+        /// are air in that column), then the content top (the largest column top), then one region
+        /// top per 4 x 4 columns of the window (window-relative, rx + rz * ceil(size.x / 4): the
+        /// largest column top of the region; rebuilt when the window moves).
+        std::span<const uint32_t> GridWords() const { return m_Grid; }
+        /// @brief Changes whenever GridWords() or WindowMinChunk() change.
         uint64_t GridRevision() const { return m_GridRevision; }
+        /// @brief Unique per World object of the process (a new World at the same address differs).
+        uint64_t InstanceId() const { return m_InstanceId; }
+        /// @brief For a cell whose grid word is dense (slot + 1): the word it had before it became
+        /// dense (0, VX_GRID_PENDING, or uniform / packed). What a renderer shows while the slot
+        /// is not on the GPU yet. Undefined for other cells.
+        uint32_t GridFallback(uint32_t cellIndex) const { return m_Fallback[cellIndex]; }
+        /// @brief Words per page of GridPageRevisions().
+        static constexpr uint32_t kGridPageWords = 1024;
+        /// @brief Per 4 KiB page of GridWords(): the GridRevision() at which it last changed.
+        std::span<const uint64_t> GridPageRevisions() const { return m_GridPages; }
+        /// @brief True if the window has a fixed vertical range (WorldConfig::fullHeight with known bounds).
+        bool FullHeight() const { return m_FullHeight; }
+        /// @brief World height (metres) above which nothing may be built: the top of the fixed
+        /// range, +infinity without one.
+        double BuildCeiling() const;
+        /// @brief Horizontal distance (metres) from the focus within which every column is inside
+        /// the window, whatever the focus' position inside its chunk.
+        double ViewRadius() const;
         /// @brief Scene view for CPU ray queries in render space (rays relative to WindowOrigin()).
         TraceScene MakeTraceScene() const;
 
@@ -174,8 +269,22 @@ export namespace vortex::voxel {
         uint8_t GetVoxel(const glm::ivec3& v) const;
         bool IsSolid(const glm::ivec3& v) const { return GetVoxel(v) != 0; }
         bool IsSolidAt(const glm::dvec3& worldPos) const { return GetVoxel(WorldToVoxel(worldPos)) != 0; }
-        /// @brief Dense chunk data, or nullptr if the chunk is empty / uniform / not loaded.
+        /// @brief Dense chunk data, or nullptr if the chunk is empty / uniform / packed / not
+        /// loaded. `uniformId` is set for Uniform chunks only (0 otherwise, Packed included).
         const Chunk* GetChunk(const glm::ivec3& chunk, uint8_t* uniformId = nullptr) const;
+        /// @brief Copies the content of any loaded chunk into `out` (a Packed one is decoded,
+        /// without making it resident). False if the chunk is not loaded.
+        bool ReadChunk(const glm::ivec3& chunk, Chunk& out) const;
+        /// @brief The RLE bytes of a Packed chunk (EncodeChunk format), empty otherwise.
+        std::span<const uint8_t> PackedData(const glm::ivec3& chunk) const;
+        /// @brief Makes every Packed chunk of the box [minChunk, maxChunk] (inclusive) resident.
+        /// Not a content change. Returns the number that could not be (store full).
+        uint32_t EnsureResident(const glm::ivec3& minChunk, const glm::ivec3& maxChunk);
+        /// @brief Loads the chunks of the box [minChunk, maxChunk] (inclusive) that lie in the
+        /// window before any other chunk except those near the focus (an edit site whose
+        /// surroundings must be complete: a blast's island search). At most 16 boxes are kept
+        /// (the oldest goes); a box is dropped once every chunk of it inside the window is loaded.
+        void RequestLoad(const glm::ivec3& minChunk, const glm::ivec3& maxChunk);
         WorldRayHit Raycast(const glm::dvec3& origin, const glm::vec3& direction, float maxDistance) const;
 
         // --- editing ---------------------------------------------------------------------
@@ -224,28 +333,92 @@ export namespace vortex::voxel {
             uint32_t slot = ChunkStore::kInvalidSlot;
             uint32_t generation = 0;        // bumped whenever the cell is re-targeted: stale jobs are ignored
             CellState state = CellState::Unloaded;
-            uint8_t uniformId = 0;
+            uint8_t uniformId = 0;          // Uniform: the id; Packed: the id its grid word shows
+            uint8_t packedId = 0;           // Dense with kept RLE bytes: the id it shows when packed again
             bool modified = false;          // differs from generator output: must be saved
             bool changeQueued = false;
             bool assigned = false;          // coord is valid
+            bool fromSave = false;          // loaded from the RegionStore (an edit of an earlier visit)
+        };
+        /// One column of cells (fixed chunk x, z): classification and loading state.
+        struct Column {
+            glm::ivec2 coord{0};            // chunk x, z
+            uint32_t generation = 0;        // bumped whenever the column is re-targeted
+            enum class Class : uint8_t { None, Classifying, Known } classState = Class::None;
+            bool assigned = false;
+            ColumnClass cls;                // valid when Known (cls.known false: every row is band)
+            uint64_t savedRows[2] = {0, 0}; // window rows outside the band with a saved chunk (window-relative)
+            uint64_t surfaceRows[2] = {0, 0};   // band rows still to submit, surface band
+            uint64_t caveRows[2] = {0, 0};      // band rows still to submit, buried
+            uint16_t surfaceLeft = 0;       // surface band cells not loaded yet
+            uint16_t top = 0;               // window rows >= top are air (mirrored in the grid words)
+            uint16_t bucket = 0;            // horizontal distance from the focus in whole chunks
         };
         struct Shared;                      // state shared with worker jobs
 
         uint32_t CellIndex(const glm::ivec3& chunk) const;
+        uint32_t ColumnIndex(int cx, int cz) const;
         Cell* FindCell(const glm::ivec3& chunk);
         const Cell* FindCell(const glm::ivec3& chunk) const;
-        void Recenter(const glm::ivec3& newMin, const glm::ivec3& focusChunk);
+        Column* FindColumn(int cx, int cz);
+        const Column* FindColumn(int cx, int cz) const;
+        glm::ivec3 WindowMinFor(const glm::ivec3& focusChunk) const;
+        void Recenter(const glm::ivec3& newMin);
+        void RetargetColumn(uint32_t columnIndex, const glm::ivec2& coord);
+        void RetargetCell(uint32_t cellIndex, const glm::ivec3& coord);
+        void Rebucket();
         void UnloadCell(uint32_t index);
+        void FreeGarbage();
         void PersistCell(Cell& cell);
         void SetGrid(uint32_t index, const Cell& cell);
+        void WriteGrid(uint32_t index, uint32_t entry);
+        void UpdateColumnTop(uint32_t columnIndex, int row, bool nonEmpty);
+        void RefreshContentTop();
+        void RebuildRegionTops();
+        uint32_t RegionOfColumn(uint32_t columnIndex) const;
+        void ApplyColumnClass(uint32_t columnIndex);
+        void PlaceCell(uint32_t cellIndex, Column& column, int relRow);
+        bool IsBandRow(const Column& column, int row) const;
+        bool IsSurfaceRow(const Column& column, int row) const;
+        bool NeighboursKnown(const Column& column, bool submitMissing);
+        /// The geometric rule. `unknownVisible`: a neighbour column that is not classified yet
+        /// makes the chunk visible (true, the safe answer) or is ignored (false: it will re-check
+        /// the chunk itself once it is classified).
+        bool Visible(const Cell& cell, bool unknownVisible = true) const;
+        /// A face neighbour is an edit (modified, or loaded from a save): a ray reaches this
+        /// chunk through it.
+        bool FaceNeighbourEdited(const glm::ivec3& chunk) const;
+        double DistanceToFocus(const glm::ivec3& chunk) const;
+        double HorizontalDistanceToFocus(int cx, int cz) const;
+        double NearSlack() const;
+        void RecheckNeighbours(uint32_t columnIndex);
+        void ProcessReveals();
+        void Repack();
+        void DropKeptBytes(uint32_t index);
         void QueueChange(Cell& cell);
         bool Materialize(uint32_t index);
+        bool Unpack(uint32_t index);
+        void PromoteNear();
+        void PromoteFaceNeighbours(const glm::ivec3& chunk);
         void IntegrateResults(uint32_t budget);
         void SubmitJobs();
-        static void LoadJob(const std::shared_ptr<Shared>& shared, uint32_t cellIndex, glm::ivec3 coord, uint32_t generation);
-        template <typename Fn, typename Touches>
+        bool SubmitRequestedBoxes();
+        bool SubmitColumnJob(uint32_t columnIndex);
+        bool SubmitCellJob(uint32_t cellIndex);
+        bool SubmitColumnRows(uint32_t columnIndex, bool caves, bool nearOnly);
+        bool LoadComplete(LoadScope scope) const;
+        static void LoadJob(const std::shared_ptr<Shared>& shared, uint32_t cellIndex, glm::ivec3 coord, uint32_t generation, bool pack);
+        static void ColumnJob(const std::shared_ptr<Shared>& shared, uint32_t columnIndex, glm::ivec2 coord, uint32_t generation,
+                              int rowMin, int rows);
+        /// Every row of voxels may change (the default row filter of EditRegion).
+        struct AnyRow {
+            bool operator()(const glm::ivec3&, int) const { return true; }
+        };
+        /// `rows(first voxel, length)` false skips a row of voxels along +x before any id is read:
+        /// a sparse mask (ClearMask) then costs a few byte tests per row of its box.
+        template <typename Fn, typename Touches, typename Rows = AnyRow>
         uint32_t EditRegion(const glm::ivec3& min, const glm::ivec3& max, Fn&& decide, Touches&& touches,
-                            std::vector<VoxelEdit>* edits, EditReport* report);
+                            std::vector<VoxelEdit>* edits, EditReport* report, Rows rows = {});
 
         WorldConfig m_Config;
         ChunkStore& m_Store;
@@ -253,16 +426,50 @@ export namespace vortex::voxel {
         const MaterialLibrary* m_Materials;
         std::shared_ptr<Shared> m_Shared;
 
+        bool m_FullHeight = false;
+        bool m_Pack = false;
+        uint32_t m_CellCount = 0;
+        uint32_t m_ColumnCount = 0;
         std::vector<Cell> m_Cells;
-        std::vector<uint32_t> m_Grid;
+        std::vector<std::vector<uint8_t>> m_Packed;   // per cell: RLE bytes of a Packed chunk
+        std::vector<Column> m_Columns;
+        std::vector<uint32_t> m_Grid;                 // cells, column tops, content top
+        std::vector<uint64_t> m_GridPages;
         uint64_t m_GridRevision = 1;
+        bool m_ContentTopStale = false;
+        bool m_RegionTopsStale = false;
+        uint32_t m_RegionsX = 0, m_RegionCount = 0;    // 4 x 4 column regions (window-relative)
+        std::vector<uint32_t> m_RegionScratch;
         glm::ivec3 m_WindowMin{0};
+        glm::ivec3 m_FocusChunk{0};
+        glm::dvec3 m_Focus{0.0};
         bool m_HasWindow = false;
+        bool m_NearPromotePending = false;
+        glm::dvec3 m_NearScanFocus{0.0};               // focus of the last PromoteNear scan
+        uint32_t m_DecodeBudget = 0;                   // decodes left in this Update
+        uint64_t m_InstanceId = 0;
+        std::vector<uint32_t> m_Fallback;              // per cell: grid word before it became dense
+        std::vector<uint32_t> m_Resident;              // Dense cells that keep RLE bytes (re-pack candidates)
+        size_t m_ResidentCursor = 0;
+        std::vector<uint32_t> m_Reveal;                // Packed cells found visible: decode them
+        struct Box {
+            glm::ivec3 min{0}, max{0};
+        };
+        std::vector<Box> m_Requested;                  // RequestLoad boxes, oldest first
 
-        std::vector<uint32_t> m_LoadOrder;   // cell indices still to load, nearest first
-        size_t m_LoadCursor = 0;
+        std::vector<uint32_t> m_BucketOrder;           // column indices by horizontal distance from the focus
+        std::vector<uint32_t> m_BucketStart, m_BucketCursor;
+        std::vector<uint16_t> m_BucketOfD2;            // floor(sqrt(d^2)) for d^2 in chunks^2
+        uint32_t m_ColumnsWithWork = 0;                // columns not classified or with rows to submit
         uint32_t m_MaxJobs = 8;
 
+        WorldStats m_Counters;                         // the cumulative / last-Update fields of Stats()
         std::vector<glm::ivec3> m_ChangedChunks;
+        std::unique_ptr<Chunk> m_Scratch;              // decode target for edits of Packed chunks
+        struct Garbage {
+            std::vector<std::unique_ptr<Chunk>> chunks;
+            std::vector<std::vector<uint8_t>> bytes;
+        };
+        Garbage m_Garbage;                             // memory of unloaded chunks, released on a worker
     };
 }

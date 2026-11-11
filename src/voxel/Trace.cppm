@@ -43,6 +43,13 @@ export namespace vortex::voxel {
         glm::ivec3 gridMinChunk{0};
         glm::vec3 gridOrigin{0.0f};          ///< Ray-space position of the window's minimum corner.
         float voxelSize = 1.0f;              ///< Ray-space edge length of a world voxel.
+        /// Optional column-top table (gridSize.x * gridSize.z words, toroidal like the cells):
+        /// window rows >= columnTops[i] are air in column i. nullptr = no column skipping.
+        const uint32_t* columnTops = nullptr;
+        uint32_t contentTop = 0;             ///< Largest column top (with columnTops only).
+        /// Optional (with columnTops): per 4 x 4 columns of the window, window-relative
+        /// (rx + rz * ceil(gridSize.x / 4)), the largest column top. nullptr = no region skipping.
+        const uint32_t* regionTops = nullptr;
 
         // Dynamic objects (may be empty).
         std::span<const GpuInstance> instances;

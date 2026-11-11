@@ -127,7 +127,7 @@ Line numbers drift: when one no longer matches, trust the symbol name and fix th
 - `GpuParticle` (48 bytes) mirrors `VxParticle` in `shaders/include/common.glsl:108`; layout is tested by `LayoutContract.ParticleMatchesVxParticle`.
   Additive particles are sent with alpha 0, rgb pre-multiplied by opacity and emissive >= 1 (`:375-380`).
 - Effect budgets are caps in code: `SpawnExplosion` <= 400 fire + 200 sparks + 200 smoke, radius clamped to [0.1, 8] m (`Effects.cpp:254-283`);
-  `SpawnVoxelBreak` <= 12 debris + 4 dust (`Effects.cpp:303,309`). `Engine::PresentBlast` samples the carved voxels with stride `n / 400` (`Engine.cpp`).
+  `SpawnVoxelBreak` <= 12 debris + 4 dust (`Effects.cpp:303,309`). `sim::PresentBlast` samples the carved voxels with stride `n / 400`, crumb voxels with stride `max(3, ceil(n / 400))` (`sim/internal/Blast.cpp`).
 
 ### Editor
 - Split: logic is free functions in `:view` / `:tools` (no ImGui, no GPU, unit tested); `Editor` adds input and widgets. ImGui / ImGuizmo headers appear only in `internal/Editor.cpp`.

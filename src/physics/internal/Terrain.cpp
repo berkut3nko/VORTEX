@@ -155,6 +155,7 @@ namespace vortex::physics {
 
         PhysicsWorld& physics;
         voxel::World& world;
+        mutable std::unique_ptr<voxel::Chunk> scratch;   // decoded Packed neighbour (main thread)
         JobSystem& jobs;
         const voxel::MaterialLibrary& materials;
         std::shared_ptr<Shared> shared;
@@ -230,7 +231,8 @@ namespace vortex::physics {
 
         bool WantsCollider(const glm::ivec3& coord) const {
             const voxel::CellState state = world.StateOf(coord);
-            return (state == voxel::CellState::Dense || state == voxel::CellState::Uniform) && Distance(coord) <= keepRadius;
+            return (state == voxel::CellState::Dense || state == voxel::CellState::Uniform || state == voxel::CellState::Packed) &&
+                   Distance(coord) <= keepRadius;
         }
 
         /// A chunk changed: rebuild it if it is tracked; start tracking it if `adopt` and it is in range.
@@ -301,7 +303,12 @@ namespace vortex::physics {
         /// which is safe (the old surface is still there) - except where carving a *neighbour*
         /// uncovered faces this chunk's collider never had: that chunk is not ready until re-cooked.
         bool ChunkReady(const glm::ivec3& coord) const {
-            if (!world.IsChunkLoaded(coord)) return false;
+            if (!world.IsChunkLoaded(coord)) {
+                // Above the top of a full-height window is the sky over the build ceiling: air, and
+                // the kill plane there removes what flies through it (scene::Scene::DestroyAbove).
+                const glm::ivec3 lo = world.WindowMinChunk(), hi = lo + world.WindowSize();
+                return world.FullHeight() && coord.y >= hi.y && coord.x >= lo.x && coord.x < hi.x && coord.z >= lo.z && coord.z < hi.z;
+            }
             if (const auto it = chunks.find(coord); it != chunks.end()) return it->second.built && it->second.installed >= it->second.exposed;
             return NeedsNoCollider(coord);
         }
@@ -322,7 +329,8 @@ namespace vortex::physics {
             auto it = chunks.find(coord);
             if (it == chunks.end()) {
                 const voxel::CellState state = world.StateOf(coord);
-                if (state != voxel::CellState::Dense && state != voxel::CellState::Uniform) return;   // nothing to collide with, or not loaded
+                if (state != voxel::CellState::Dense && state != voxel::CellState::Uniform && state != voxel::CellState::Packed)
+                    return;   // nothing to collide with, or not loaded
                 Track(coord);
                 it = chunks.find(coord);
             }
@@ -418,6 +426,7 @@ namespace vortex::physics {
             uint8_t uniformId = 0;
             const voxel::Chunk* chunk = world.GetChunk(coord, &uniformId);
             if (chunk) return chunk->IsEmpty();
+            if (world.StateOf(coord) == voxel::CellState::Packed) return false;    // has a surface somewhere
             if (uniformId == 0 || !filter->collidable[uniformId]) return true;      // air, not loaded, liquid ...
             for (const glm::ivec3& offset : kFaceOffsets) {
                 if (!IsUniformCollidable(coord + offset)) return false;
@@ -429,7 +438,13 @@ namespace vortex::physics {
         std::bitset<kN * kN> BorderBits(const glm::ivec3& coord, size_t face) const {
             std::bitset<kN * kN> bits;
             uint8_t neighbourId = 0;
-            const voxel::Chunk* neighbour = world.GetChunk(coord + kFaceOffsets[face], &neighbourId);
+            const glm::ivec3 neighbourCoord = coord + kFaceOffsets[face];
+            const voxel::Chunk* neighbour = world.GetChunk(neighbourCoord, &neighbourId);
+            if (!neighbour && world.StateOf(neighbourCoord) == voxel::CellState::Packed) {
+                // Packed (not resident): its voxels come from a decoded copy.
+                if (!scratch) scratch = std::make_unique<voxel::Chunk>();
+                if (world.ReadChunk(neighbourCoord, *scratch)) neighbour = scratch.get();
+            }
             if (!neighbour) {
                 // Uniform: closed or open as a whole. Empty or not loaded: open.
                 if (neighbourId != 0 && filter->collidable[neighbourId]) bits.set();
@@ -451,7 +466,8 @@ namespace vortex::physics {
             auto snapshot = std::make_shared<Snapshot>();
             uint8_t uniformId = 0;
             if (const voxel::Chunk* chunk = world.GetChunk(coord, &uniformId)) snapshot->chunk = *chunk;
-            else snapshot->chunk.Fill(uniformId);
+            else if (!(world.StateOf(coord) == voxel::CellState::Packed && world.ReadChunk(coord, snapshot->chunk)))
+                snapshot->chunk.Fill(uniformId);
             for (size_t face = 0; face < kFaceOffsets.size(); ++face) snapshot->border[face] = BorderBits(coord, face);
             return snapshot;
         }

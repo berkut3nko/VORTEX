@@ -7,6 +7,7 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <format>
+#include <memory>
 #include <utility>
 #include <vector>
 
@@ -183,13 +184,21 @@ namespace vortex::voxel {
 
         // Local dense copy of the region, chunk by chunk so that air chunks cost nothing.
         VoxelVolume local(size);
+        std::unique_ptr<Chunk> packedCopy;
         std::vector<uint8_t>& data = local.Data();
         bool anySolid = false;
         for (int cz = chunkMin.z; cz <= chunkMax.z; ++cz)
             for (int cy = chunkMin.y; cy <= chunkMax.y; ++cy)
                 for (int cx = chunkMin.x; cx <= chunkMax.x; ++cx) {
                     const glm::ivec3 chunk(cx, cy, cz);
-                    if (world.StateOf(chunk) == CellState::Empty) continue;
+                    const CellState state = world.StateOf(chunk);
+                    if (state == CellState::Empty) continue;
+                    // A Packed chunk is read from a decoded copy (it stays packed).
+                    const bool packed = state == CellState::Packed;
+                    if (packed) {
+                        if (!packedCopy) packedCopy = std::make_unique<Chunk>();
+                        world.ReadChunk(chunk, *packedCopy);
+                    }
                     const glm::ivec3 base = ChunkToVoxel(chunk);
                     const glm::ivec3 lo = glm::max(base, regionMin);
                     const glm::ivec3 hi = glm::min(base + glm::ivec3(kChunkSize), regionMax);
@@ -197,7 +206,8 @@ namespace vortex::voxel {
                         for (int y = lo.y; y < hi.y; ++y) {
                             size_t index = local.Index(lo.x - regionMin.x, y - regionMin.y, z - regionMin.z);
                             for (int x = lo.x; x < hi.x; ++x, ++index) {
-                                const uint8_t id = world.GetVoxel(glm::ivec3(x, y, z));
+                                const uint8_t id = packed ? packedCopy->Get(x - base.x, y - base.y, z - base.z)
+                                                          : world.GetVoxel(glm::ivec3(x, y, z));
                                 if (id == 0 || ignored[id]) continue;
                                 data[index] = id;
                                 anySolid = true;

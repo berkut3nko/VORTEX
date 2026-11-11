@@ -28,6 +28,9 @@ export namespace vortex::graphics {
         bool emissiveLighting = true;        ///< Emissive voxels light their surroundings.
         bool lightShadows = true;            ///< Point light shadows.
         bool fog = true;
+        /// Fade surfaces to the sky colour over the last 15 % of the world's horizontal view
+        /// radius (voxel::World::ViewRadius), so the edge of the loaded window is never a cut.
+        bool edgeFog = true;
         bool spatialFilter = true;
         bool checkerboardLighting = true;    ///< Trace lighting rays for half of the pixels each frame.
         float ambientDistance = 6.0f;        ///< Length of ambient occlusion rays in metres.
@@ -52,6 +55,7 @@ export namespace vortex::graphics {
         uint32_t instancesDrawn = 0;         ///< After frustum culling.
         uint32_t chunkUploads = 0;           ///< Chunks copied to the GPU this frame.
         uint32_t chunkUploadsPending = 0;
+        uint32_t gridBytesUploaded = 0;      ///< Grid words copied to the GPU this frame (dirty 4 KiB pages).
         uint32_t lights = 0;
         uint32_t particles = 0;
         uint32_t hudQuads = 0;               ///< HUD quads drawn this frame.

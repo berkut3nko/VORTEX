@@ -23,7 +23,12 @@ void main() {
     float t = hit.t * u_Frame.cameraPosVoxel.w;
     vec3 pos = u_Frame.cameraPos.xyz + rd * t;
 
-    if (u_Frame.settings.y == VX_DEBUG_STEPS) {
+    if (hit.material == 0u) {
+        // VX_GRID_PENDING: a chunk that is not loaded yet. It shows the sky / fog colour (the
+        // composite pass draws "sky" for it) but keeps its depth, so nothing behind it shows.
+        o_Material = VX_GBUFFER_SKY;
+        o_Normal = VX_NORMAL_UNLIT;       // filters must not take its (zero) lighting
+    } else if (u_Frame.settings.y == VX_DEBUG_STEPS) {
         o_Material = VX_GBUFFER_DEBUG;
         o_Normal = vec4(VxHeatColor(float(hit.steps) * (1.0 / 96.0)), 0.0);
     } else {

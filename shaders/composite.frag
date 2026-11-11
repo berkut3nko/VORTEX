@@ -53,7 +53,9 @@ vec4 FilteredLighting(ivec2 px, float depth, vec3 n) {
 
             float tapDepth = texelFetch(u_GDepth, tap, 0).r;
             if (tapDepth <= 0.0) continue;      // sky has no lighting
-            vec3 tapNormal = SafeNormal(texelFetch(u_GNormal, tap, 0));
+            vec4 tapEncoded = texelFetch(u_GNormal, tap, 0);
+            if (VxNormalUnlit(tapEncoded)) continue;    // nor has a chunk that is not loaded yet (it has a depth)
+            vec3 tapNormal = SafeNormal(tapEncoded);
 
             float depthDiff = abs(tapDepth - depth) / max(max(tapDepth, depth), 1.0e-9);
             float wDepth = clamp(1.0 - depthDiff / VX_FILTER_DEPTH_TOL, 0.0, 1.0);
@@ -209,6 +211,13 @@ vec3 ApplyFog(vec3 color, vec3 rd, float dist) {
     return mix(color, u_Frame.fogColor.rgb, amount);
 }
 
+// What a ray that hits nothing shows: the sky gradient and sun, with the atmospheric fog.
+vec3 SkyColor(vec3 rd) {
+    vec3 sky = VxSkyRadiance(rd, u_Frame.sunDirection.xyz, u_Frame.sunDirection.w, u_Frame.sunRadiance.rgb,
+                             u_Frame.skyZenith.rgb, u_Frame.skyHorizon.rgb, u_Frame.skyGround.rgb, 1.0);
+    return ApplyFog(sky, rd, VX_SKY_DISTANCE);
+}
+
 void main() {
     ivec2 px = ivec2(gl_FragCoord.xy);
     uint packed = texelFetch(u_GMaterial, px, 0).r;
@@ -223,13 +232,11 @@ void main() {
     }
 
     // ---- Sky -------------------------------------------------------------------------------
+    // (A chunk that is not loaded yet - VX_GRID_PENDING - is written as sky with a depth: it
+    // shows the sky / fog colour and hides whatever is behind it.)
     if (packed == VX_GBUFFER_SKY || depth <= 0.0) {
         vec3 sky = vec3(0.0);
-        if (debugView == VX_DEBUG_NONE) {
-            sky = VxSkyRadiance(rd, u_Frame.sunDirection.xyz, u_Frame.sunDirection.w, u_Frame.sunRadiance.rgb,
-                                u_Frame.skyZenith.rgb, u_Frame.skyHorizon.rgb, u_Frame.skyGround.rgb, 1.0);
-            sky = ApplyFog(sky, rd, VX_SKY_DISTANCE);
-        }
+        if (debugView == VX_DEBUG_NONE) sky = SkyColor(rd);
         o_Color = vec4(sky, 1.0);
         return;
     }
@@ -286,6 +293,14 @@ void main() {
               + specularColor * u_Frame.sunRadiance.rgb * lighting.a;
     }
     color = ApplyFog(color, rd, t);
+
+    // Horizontal edge of the loaded window: fade into what a ray past the edge shows (the sky),
+    // by horizontal distance only, so peaks and valleys stay clear inside the radius at any height.
+    if (u_Frame.jitter.w > 0.0) {
+        float horizontal = length(rd.xz * t);
+        float edge = smoothstep(u_Frame.jitter.z, u_Frame.jitter.w, horizontal);
+        if (edge > 0.0) color = mix(color, SkyColor(rd), edge);
+    }
 
     o_Color = vec4(color, 1.0);
 }

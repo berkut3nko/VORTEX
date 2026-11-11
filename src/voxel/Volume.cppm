@@ -96,6 +96,8 @@ export namespace vortex::voxel {
         void Set(const glm::ivec3& p, bool on) { Set(p.x, p.y, p.z, on); }
         /// @brief Number of set bits.
         uint32_t Count() const;
+        /// @brief True if any bit with an Index in [first, last) is set (clamped to the mask).
+        bool AnyInRange(size_t first, size_t last) const;
         /// @brief The packed bits: (VoxelCount() + 7) / 8 bytes.
         const std::vector<uint8_t>& Bytes() const { return m_Bits; }
 

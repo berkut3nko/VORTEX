@@ -11,7 +11,14 @@
 //  The including side provides the data through these macros:
 //    VX_GRID_ENTRY(i)                 uint   world grid entry (0 = empty,
 //                                            bit 31 set = uniform solid chunk, low byte = id,
+//                                            VX_GRID_PENDING = not loaded yet: the ray stops there
+//                                            with material 0 (drawn as fog / horizon colour),
 //                                            otherwise chunk slot + 1)
+//    VX_GRID_COLUMN_TOP(c)            uint   per column c = x + z * size.x (toroidal like the
+//                                            cells): window rows >= this value are air in it
+//    VX_GRID_CONTENT_TOP              uint   largest column top: rows >= it are air everywhere
+//    VX_GRID_REGION_TOP(r)            uint   per 4 x 4 columns of the window (window-relative,
+//                                            r = rx + rz * ceil(size.x / 4)): largest column top
 //    VX_GRID_SIZE                     ivec3  window size in chunks
 //    VX_GRID_MIN_CHUNK                ivec3  absolute chunk coordinate of the window minimum
 //    VX_GRID_ORIGIN                   vec3   position of the window minimum in ray space
@@ -32,6 +39,7 @@ VX_CONST_INT(VX_CHUNK_SIZE, 32)
 VX_CONST_UINT(VX_OCC_BLOCK_OFFSET, 2u)       // word offset of the 4^3 block mask
 VX_CONST_UINT(VX_OCC_VOXEL_OFFSET, 18u)      // word offset of the per-voxel masks
 VX_CONST_UINT(VX_GRID_UNIFORM_FLAG, 0x80000000u)
+VX_CONST_UINT(VX_GRID_PENDING, 0x80000000u)    // uniform flag, material 0
 VX_CONST_UINT(VX_INVALID, 0xFFFFFFFFu)
 VX_CONST_INT(VX_MAX_CHUNK_STEPS, 192)
 VX_CONST_INT(VX_MAX_GRID_STEPS, 512)
@@ -205,23 +213,65 @@ bool VxTraceWorld(vec3 ro, vec3 rdIn, float tMin, float tMax, VX_INOUT(VxHit) hi
     vec3 stepPos = vec3(rd.x >= 0.0f ? 1.0f : 0.0f, rd.y >= 0.0f ? 1.0f : 0.0f, rd.z >= 0.0f ? 1.0f : 0.0f);
     ivec3 stepDir = ivec3(rd.x >= 0.0f ? 1 : -1, rd.y >= 0.0f ? 1 : -1, rd.z >= 0.0f ? 1 : -1);
     ivec3 gridMin = VX_GRID_MIN_CHUNK;
+    int contentTop = int(VX_GRID_CONTENT_TOP);
 
     for (int i = 0; i < VX_MAX_GRID_STEPS; ++i) {
         hit.steps += 1;
+
+        // The grid is addressed toroidally, so moving the window never copies entries.
+        // (Positive modulo rather than a mask: the window size need not be a power of two.)
+        ivec3 w = (((gridMin + cc) % gridSize) + gridSize) % gridSize;
+        int columnTop = int(VX_GRID_COLUMN_TOP(uint(w.x + w.z * gridSize.x)));
+
+        if (cc.y >= columnTop) {
+            // Above everything in this column: a rising ray above every column is done, any
+            // other ray crosses an air prism in one step - out through x / z, or down onto the
+            // top. The prism is the whole 4 x 4 column region when the ray is above all of it.
+            if (rd.y > 0.0f && cc.y >= contentTop) return false;
+            ivec3 r0 = ivec3((cc.x >> 2) << 2, 0, (cc.z >> 2) << 2);
+            int regionTop = int(VX_GRID_REGION_TOP(uint((cc.x >> 2) + (cc.z >> 2) * ((gridSize.x + 3) >> 2))));
+            ivec3 pmin = cc;
+            ivec3 pmax = cc + ivec3(1);
+            int prismTop = columnTop;
+            if (cc.y >= regionTop) {
+                pmin = r0;
+                pmax = min(r0 + ivec3(4, 0, 4), gridSize);
+                prismTop = regionTop;
+            }
+            vec3 prismExit = vec3(rd.x >= 0.0f ? float(pmax.x) : float(pmin.x), 0.0f, rd.z >= 0.0f ? float(pmax.z) : float(pmin.z)) * cs;
+            prismExit.y = (rd.y >= 0.0f) ? float(gridSize.y) * cs : float(prismTop) * cs;
+            vec3 tPrism = (prismExit - ro) * invRd;
+            int prismAxis = VxMinAxis(tPrism);
+            float tPrismExit = tPrism[prismAxis];
+            if (tPrismExit >= tEnd) return false;
+            t = max(t, tPrismExit);
+            axis = prismAxis;
+            // The cell the ray enters: the crossed axis from the prism's face, the others from
+            // the position, kept inside the prism's extent.
+            vec3 at = (ro + rd * t) / cs;
+            ivec3 next = clamp(ivec3(floor(at)), ivec3(pmin.x, 0, pmin.z), ivec3(pmax.x - 1, gridSize.y - 1, pmax.z - 1));
+            if (prismAxis == 1) {
+                if (rd.y >= 0.0f || prismTop <= 0) return false;      // out of the top / the bottom
+                next.y = prismTop - 1;
+            } else {
+                next[prismAxis] = (rd[prismAxis] >= 0.0f) ? pmax[prismAxis] : pmin[prismAxis] - 1;
+                if (next[prismAxis] < 0 || next[prismAxis] >= gridSize[prismAxis]) return false;
+            }
+            cc = next;
+            continue;
+        }
 
         vec3 exitPlane = (vec3(cc) + stepPos) * cs;
         vec3 tAxis = (exitPlane - ro) * invRd;
         int exitAxis = VxMinAxis(tAxis);
         float tCellExit = tAxis[exitAxis];
 
-        // The grid is addressed toroidally, so moving the window never copies entries.
-        // (Positive modulo rather than a mask: the window size need not be a power of two.)
-        ivec3 w = (((gridMin + cc) % gridSize) + gridSize) % gridSize;
-        uint entry = VX_GRID_ENTRY(uint(w.x + w.z * gridSize.x + w.y * gridSize.x * gridSize.z));
+        uint entry = VX_GRID_ENTRY(uint((w.x + w.z * gridSize.x) * gridSize.y + w.y));   // column-major
         if (entry != 0u) {
             ivec3 chunkMin = cc * VX_CHUNK_SIZE;
             if ((entry & VX_GRID_UNIFORM_FLAG) != 0u) {
                 // A chunk made of a single material has no storage: its surface is its box.
+                // (VX_GRID_PENDING lands here too, with material 0.)
                 ivec3 v = clamp(ivec3(floor(ro + rd * t)), chunkMin, chunkMin + ivec3(VX_CHUNK_SIZE - 1));
                 if (axis >= 0) v[axis] = (rd[axis] > 0.0f) ? chunkMin[axis] : chunkMin[axis] + VX_CHUNK_SIZE - 1;
                 hit.t = t;

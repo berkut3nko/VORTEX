@@ -2,6 +2,7 @@ module;
 
 #include <glm/glm.hpp>
 
+#include <climits>
 #include <cstdint>
 #include <memory>
 
@@ -24,6 +25,31 @@ export namespace vortex::voxel {
         uint8_t uniformId = 0;
     };
 
+    /// @brief Height range (metres) that holds everything a generator can produce. Below `min`
+    /// every voxel is solid, above `max` every voxel is air. `max <= min` means unknown.
+    struct HeightBounds {
+        float min = 0.0f;
+        float max = 0.0f;
+        bool Known() const { return max > min; }
+    };
+
+    /**
+     * @brief What a column of chunks (fixed chunk x and z, every chunk row y) contains, decided
+     * from the column's height tile without generating a chunk (docs/design/view-distance.md).
+     * @details Rows are chunk y coordinates. A row `>= emptyFrom` is Empty, a row `< solidBelow` is
+     * Uniform `solidId`; only the band between needs Generate. `surfaceFrom` is the lowest row a
+     * ray coming from the sky through this column can reach (the row of the lowest surface voxel,
+     * minus one); band rows below it are buried (caves). Generate must agree exactly: for a row
+     * outside the band it returns the same Empty / Uniform result.
+     */
+    struct ColumnClass {
+        bool known = false;                 ///< false: nothing is known, every row needs Generate
+        int32_t emptyFrom = INT32_MAX;
+        int32_t solidBelow = INT32_MIN;
+        uint8_t solidId = 0;
+        int32_t surfaceFrom = INT32_MIN;
+    };
+
     /**
      * @brief Procedural source of the world.
      * @details Generate() is called from worker threads, for any chunk, in any order, possibly
@@ -42,6 +68,18 @@ export namespace vortex::voxel {
          * For Empty / Uniform results the chunk may be left untouched.
          */
         virtual ChunkContent Generate(const glm::ivec3& coord, Chunk& chunk) const = 0;
+
+        /// @brief Conservative vertical extent of the generated world (metres). The default is
+        /// unknown, which keeps a World in the camera-centred window of WorldConfig::windowSize.
+        virtual HeightBounds VerticalBounds() const { return {}; }
+
+        /// @brief Classifies the chunk column (cx, cz). Thread safe, like Generate. The default
+        /// knows nothing (every row is generated).
+        virtual ColumnClass ClassifyColumn(int cx, int cz) const {
+            (void)cx;
+            (void)cz;
+            return {};
+        }
     };
 
     /// @brief Tunables of the built-in terrain. All distances are in metres.
@@ -62,6 +100,10 @@ export namespace vortex::voxel {
         bool trees = true;
         float treeSpacing = 7.0f;         ///< Size of the jittered grid trees are placed on.
         float treeDensity = 0.55f;        ///< Probability that a grid cell grows a tree.
+        /// Generate returns rows outside ClassifyColumn's band without running the voxel loop.
+        /// false (tests only): every row runs it, so a test can check that the rows the column
+        /// pass skips really are all air / all dark stone. Changes no voxel.
+        bool skipClassifiedRows = true;
     };
 
     /**
@@ -75,7 +117,7 @@ export namespace vortex::voxel {
      * @brief Surface height in metres of the built-in terrain at a world position in metres.
      * @details Exactly the float the generator computes before it is turned into voxels: the
      * determinism tests pin its bit pattern, and a server can use it to place things on the ground
-     * without loading chunks. Trees and caves are not included.
+     * without loading chunks. Trees and caves are not included. Clamped to TerrainSurfaceBounds.
      */
     float TerrainHeight(const TerrainSettings& settings, float x, float z);
 
@@ -87,6 +129,10 @@ export namespace vortex::voxel {
      * must also stay inside +-2^25 (voxel coordinates are 32-bit).
      */
     bool IsValid(const TerrainSettings& settings);
+
+    /// @brief Range of TerrainHeight for these settings (the sum of the noise amplitudes; the
+    /// height is clamped to it). Caves, trees and the sea are not included.
+    HeightBounds TerrainSurfaceBounds(const TerrainSettings& settings);
 
     /// @brief Generator producing an infinite flat slab; useful for tests and tech demos.
     std::shared_ptr<IWorldGenerator> CreateFlatGenerator(int groundVoxelHeight, uint8_t surfaceId, uint8_t groundId);

@@ -8,6 +8,7 @@ module;
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -138,6 +139,7 @@ namespace vortex::scene {
         physics::PhysicsWorld& physics;
         fx::ParticleSystem& particles;
         SceneConfig config;
+        double buildCeiling = std::numeric_limits<double>::infinity();   // World::BuildCeiling
         entt::registry registry;
         glm::dvec3 viewer{0.0};
         bool hasViewer = false;
@@ -179,6 +181,21 @@ namespace vortex::scene {
                           std::max<uint32_t>(1, desc.model->SolidCount() / s.config.debrisParticleStride), desc.linearVelocity);
             }
             return kNoEntity;
+        }
+
+        // Above the build ceiling is outside the world: refused whole, never cut.
+        if (std::isfinite(s.buildCeiling)) {
+            const glm::vec3 size = glm::vec3(desc.model->Volume().Size()) * s.config.voxelSize;
+            float top = -std::numeric_limits<float>::infinity();
+            for (int corner = 0; corner < 8; ++corner) {
+                const glm::vec3 p((corner & 1) ? size.x : 0.0f, (corner & 2) ? size.y : 0.0f, (corner & 4) ? size.z : 0.0f);
+                top = std::max(top, (desc.rotation * p).y);
+            }
+            if (static_cast<double>(desc.position.y) + static_cast<double>(top) > s.buildCeiling) {
+                Log::Warn("Scene: voxel object '{}' would reach {:.1f} m, above the build ceiling at {:.1f} m: refused", desc.model->Name(),
+                          static_cast<double>(desc.position.y) + static_cast<double>(top), s.buildCeiling);
+                return kNoEntity;
+            }
         }
 
         if (s.config.bakeModels && !desc.model->IsBaked() && !desc.model->Bake(s.store)) {
@@ -478,6 +495,24 @@ namespace vortex::scene {
     void Scene::SetViewer(const glm::dvec3& position) {
         m_Impl->viewer = position;
         m_Impl->hasViewer = true;
+    }
+
+    void Scene::SetBuildCeiling(double height) { m_Impl->buildCeiling = height; }
+    double Scene::BuildCeiling() const { return m_Impl->buildCeiling; }
+
+    uint32_t Scene::DestroyAbove(double height) {
+        Impl& s = *m_Impl;
+        if (!std::isfinite(height)) return 0;
+        std::vector<Entity> lost;
+        for (const auto [entity, body] : s.registry.view<const RigidBody>().each()) {
+            if (body.motion != physics::MotionType::Dynamic || !s.physics.IsValid(body.body)) continue;
+            const physics::BodyState state = s.physics.GetState(body.body);
+            if (!(state.active || state.wantsToMove)) continue;
+            if (static_cast<double>(s.physics.GetBounds(body.body).min.y) > height) lost.push_back(entity);
+        }
+        for (const Entity entity : lost) s.registry.destroy(entity);
+        if (!lost.empty()) Log::Info("Scene: removed {} object(s) thrown above the build ceiling", lost.size());
+        return static_cast<uint32_t>(lost.size());
     }
 
     uint32_t Scene::DestroyBelow(float height) {

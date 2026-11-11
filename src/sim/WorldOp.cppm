@@ -19,13 +19,18 @@ export namespace vortex::sim {
         SwapSphere = 3,    ///< `sphere`, `from` -> `id`
         FillBox = 4,       ///< voxel box [`min`, `max`), `id`
         Detach = 5,        ///< terrain island: `min` = origin, `mask`, `velocity`, `netId`
+        /// Terrain crumbs (islands under scene::kMinPieceVoxels): `min` = origin, `mask`. The
+        /// voxels are cleared like a Detach's; whoever draws shows them as particles, nobody
+        /// makes a piece or a body of them.
+        ClearMask = 6,
     };
 
     /**
      * @brief One replicated change of the terrain (docs/design/networking.md, "World operations").
      * @details Integer parameters only, so applying the same operations in the same order to two
      * worlds with equal voxels gives equal voxels on any machine (ApplyOp). A blast is one
-     * CarveSphere followed by one Detach per terrain island that broke off (sim::Blast).
+     * CarveSphere, one Detach per terrain island of at least scene::kMinPieceVoxels that broke
+     * off, then at most one ClearMask for all smaller islands together (sim::Blast).
      *
      * One struct for every kind; only the fields the kind lists are meaningful, the others keep
      * their defaults (so `==` compares operations exactly). Build them with the factories.
@@ -36,12 +41,12 @@ export namespace vortex::sim {
         uint16_t power = 0;                    ///< Carve: in 1/16 hardness units (voxel::QuantizePower).
         uint8_t id = 0;                        ///< Fill, FillBox: material written; Swap: the replacement.
         uint8_t from = 0;                      ///< Swap: the material replaced.
-        glm::ivec3 min{0};                     ///< FillBox: minimum voxel; Detach: world voxel of mask (0, 0, 0).
+        glm::ivec3 min{0};                     ///< FillBox: minimum voxel; Detach, ClearMask: world voxel of mask (0, 0, 0).
         glm::ivec3 max{0};                     ///< FillBox: maximum voxel, exclusive.
         /// Detach: the server entity that carries the piece; 0 = nobody does, every client makes
         /// its own rubble (all islands until networking stage 6).
         uint32_t netId = 0;
-        voxel::VoxelMask mask;                 ///< Detach: voxels cleared, relative to `min`.
+        voxel::VoxelMask mask;                 ///< Detach, ClearMask: voxels cleared, relative to `min`.
         /// Detach: initial velocity of the piece in m/s (the blast's push). Not used by ApplyOp.
         glm::vec3 velocity{0.0f};
 
@@ -50,6 +55,8 @@ export namespace vortex::sim {
         static WorldOp Swap(const voxel::SphereQ& sphere, uint8_t from, uint8_t to);
         static WorldOp Box(const glm::ivec3& min, const glm::ivec3& max, uint8_t id);
         static WorldOp Detach(const glm::ivec3& origin, voxel::VoxelMask mask, const glm::vec3& velocity, uint32_t netId = 0);
+        /// @brief A ClearMask: the voxels `origin + p` of every set bit `p` become air.
+        static WorldOp Clear(const glm::ivec3& origin, voxel::VoxelMask mask);
 
         /// @brief Voxel box [min, max) the operation can change (empty for an empty sphere / box).
         void Bounds(glm::ivec3& outMin, glm::ivec3& outMax) const;
@@ -71,7 +78,8 @@ export namespace vortex::sim {
     /**
      * @brief Applies one operation to a world: the same World::*Q call on server and clients.
      * @param edits If not null, every changed voxel is appended (old and new id) in the order of
-     * World's edit functions. For a Detach these are the ids of the piece (BuildDetachedPiece).
+     * World's edit functions. For a Detach these are the ids of the piece (BuildDetachedPiece),
+     * for a ClearMask the crumbs' voxels (particles).
      */
     OpResult ApplyOp(voxel::World& world, const WorldOp& op, std::vector<voxel::VoxelEdit>* edits = nullptr);
 

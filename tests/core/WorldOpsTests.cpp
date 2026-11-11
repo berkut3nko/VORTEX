@@ -336,6 +336,45 @@ TEST(QuantizedEdits, MaskBitsArePackedInVolumeOrder) {
     EXPECT_EQ(copy.Count(), 3u);
 }
 
+TEST(QuantizedEdits, MaskRangeTestSeesExactlyTheBitsInTheRange) {
+    VoxelMask mask({20, 1, 1});
+    mask.Set(3, 0, 0, true);
+    mask.Set(17, 0, 0, true);
+    EXPECT_FALSE(mask.AnyInRange(0, 3));
+    EXPECT_TRUE(mask.AnyInRange(0, 4));
+    EXPECT_TRUE(mask.AnyInRange(3, 4));                         // one bit, inside one byte
+    EXPECT_FALSE(mask.AnyInRange(3, 3));                        // empty range
+    EXPECT_FALSE(mask.AnyInRange(4, 17));                       // across a whole zero byte
+    EXPECT_FALSE(mask.AnyInRange(9, 16));
+    EXPECT_TRUE(mask.AnyInRange(4, 18));
+    EXPECT_TRUE(mask.AnyInRange(16, 18));
+    EXPECT_FALSE(mask.AnyInRange(18, 100));                     // clamped to the mask
+    EXPECT_FALSE(mask.AnyInRange(30, 10));
+    EXPECT_FALSE(VoxelMask{}.AnyInRange(0, 8));
+}
+
+TEST(QuantizedEdits, SparseClearMaskReportsOnlyChunksWithMaskedVoxels) {
+    Bench b;
+    b.Load();
+    // A one-row mask from voxel 120 (window chunk 3) to 139 (chunk 4, outside the window).
+    const glm::ivec3 origin(120, 30, 0);
+    VoxelMask inside({20, 1, 1});
+    inside.Set(0, 0, 0, true);
+    EditReport report;
+    EXPECT_EQ(b.world->ClearMask(origin, inside, nullptr, &report), 1u);
+    EXPECT_TRUE(report.Complete());
+    EXPECT_EQ(b.world->GetVoxel(origin), 0);
+
+    VoxelMask outside({20, 1, 1});
+    outside.Set(1, 0, 0, true);
+    outside.Set(10, 0, 0, true);
+    EditReport partial;
+    EXPECT_EQ(b.world->ClearMask(origin, outside, nullptr, &partial), 1u);
+    ASSERT_EQ(partial.skipped.size(), 1u);
+    EXPECT_EQ(partial.skipped[0], glm::ivec3(4, 0, 0));
+    EXPECT_EQ(b.world->GetVoxel(origin + glm::ivec3(1, 0, 0)), 0);
+}
+
 // --- what an edit could not do -----------------------------------------------------------------
 
 TEST(QuantizedEdits, ChunksOutsideTheWindowAreReportedAsSkipped) {

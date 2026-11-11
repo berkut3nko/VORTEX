@@ -258,3 +258,12 @@ must be copied into `Snapshot` on the main thread. Re-cook decisions are `Touch`
 - Screenshot: crates and debris must rest on the ground surface, not hang in the air (frozen forever) and
   not be missing (fell through; they are destroyed below the window by `scene.DestroyBelow`).
 - Not checkable headless: feel of character movement, stairs and slopes in real play. Say so.
+
+## View distance stage 1 (full-height window, Packed chunks)
+
+- A `Packed` chunk (no slot, RLE bytes only) wants a collider like a Dense one (`WantsCollider`, `Require`);
+  `TakeSnapshot` and `BorderBits` read its voxels through `World::ReadChunk` (a decoded copy; `BorderBits` keeps one
+  scratch chunk, main thread). `NeedsNoCollider` is false for it. `GetChunk` returns nullptr and uniform id 0 for it,
+  so `IsUniformCollidable` treats it as open (conservative: neighbours build their faces).
+- `ChunkReady` treats a chunk above the top of a full-height window (x / z inside it) as ready: it is the sky over
+  the build ceiling. Without that, a body thrown upwards froze in mid-air under the ceiling for good.

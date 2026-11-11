@@ -15,7 +15,7 @@ Line numbers are as of engine commit `ec073a8`; if a number no longer matches, s
 | `Hash.cppm`, `internal/Hash.cpp` | `ChunkHash`, `UniformChunkHash`, `kAirChunkHash`, `WorldHashTerm`, `WorldHash`: content hashes for terrain agreement. |
 | `Region.cppm`, `internal/Region.cpp` | Chunk RLE codec (`EncodeChunk`/`DecodeChunk`), `RegionStore` (`r.x.y.z.vxr`). |
 | `Generator.cppm`, `internal/Generator.cpp` | `IWorldGenerator`, `TerrainGenerator` (height tiles, caves, trees), `FlatGenerator`. |
-| `Volume.cppm`, `internal/Volume.cpp` | `VoxelVolume`: dense x/y/z array, the authoring form of objects. `VoxelMask`: one bit per voxel of a box, packed 8 per byte in `VoxelVolume::Index` order (the `Detach` mask). |
+| `Volume.cppm`, `internal/Volume.cpp` | `VoxelVolume`: dense x/y/z array, the authoring form of objects. `VoxelMask`: one bit per voxel of a box, packed 8 per byte in `VoxelVolume::Index` order (the `Detach` / `ClearMask` mask); `AnyInRange` tests a run of bits. |
 | `Model.cppm`, `internal/Model.cpp` | `VoxelModel`: volume + baked `ModelPart`s (one slot per non-empty 32^3 piece), `Revision()`. |
 | `Instances.cppm`, `internal/Instances.cpp` | `GpuInstance` (224 B), `GpuBvhNode` (32 B), `BuildBvh`. |
 | `Trace.cppm`, `internal/Trace.cpp` | `TraceScene`, `Trace`/`TraceWorld`/`TraceChunk`; `TraceKernel` includes `shared/trace.glsl`. |
@@ -40,7 +40,10 @@ The mirrors of this module's GPU structs and the GLSL side of the `VX_*` accesso
 
 **Three voxel orders - never mix them.** `Chunk::ids` is block-ordered, `VoxelIndex = block*64 + local`
 (`Chunk.cppm:51-57`). `VoxelVolume` is `x + sx*(y + sy*z)` (`Volume.cppm:28`). The world grid and cells are
-`x + z*sx + y*sx*sz` (`World.cpp:89`, `World.cpp:143`, `trace.glsl:220`): those three sites change together.
+column-major `(x + z*sx) * sy + y` since view-distance stage 1 (`World::CellIndex`, the index arithmetic in
+`World.cpp` - `ci * sy + wy` in `Recenter`, `RetargetColumn`, `ApplyColumnClass`, `SubmitColumnRows`, `WriteGrid`,
+`UpdateColumnTop`, `IntegrateResults` - and `VxTraceWorld` in `trace.glsl`): those sites change together. Column
+indices (`x + z*sx`, toroidal) and region indices (window-relative 4 x 4 columns) are separate orders.
 
 **Chunk.** `occ` must equal what `RebuildOccupancy()` produces from `ids`. `Set()` and `Fill()` keep it; any other
 write through `ids[]` must be followed by `RebuildOccupancy()`. Today's raw writers: generators (`LoadJob` rebuilds
@@ -70,19 +73,47 @@ do not bounds-check (0..31 only); `GetSafe` does. A `Chunk` is 36 KB: keep it on
 - Jobs hold `shared_ptr<Shared>`, so a `World` may die with jobs queued; generator and `RegionStore` live until the last
   job ends. `JobSystem` and `ChunkStore` are held by reference and must outlive the `World` (member order
   `src/sim/internal/Simulation.cpp:67-72`: jobs, store, world; `sim::Simulation` owns them since M1 stage 1).
-- Order inside `Update` (`:104`): `Recenter` (only when the window minimum changed) -> `IntegrateResults` (budget
-  `maxIntegrationsPerUpdate`) -> `SubmitJobs` (while `inFlight < m_MaxJobs`), nearest cells first.
-- Cell lifecycle: `Unloaded -> Loading` (`SubmitJobs`) `-> Empty | Uniform | Dense` (`IntegrateResults`);
-  `Empty/Uniform -> Dense` only through `Materialize` (edits); anything `-> Unloaded` through `UnloadCell`.
-  A `Dense` cell owns its slot; it is freed in `UnloadCell` and `~World`, nowhere else. Window min = `focusChunk - size/2`.
+- Order inside `Update`: `Recenter` (only when the window minimum changed; touches only re-targeted columns, then
+  `Rebucket` + `RebuildRegionTops`) -> `IntegrateResults` (column results first, then chunk results; the budget
+  `maxIntegrationsPerUpdate` counts Dense results only) -> `PromoteNear` (Packed cells within `nearRadius` + a
+  quarter chunk, scanned whenever the focus moved a quarter chunk since the last scan) -> `ProcessReveals` (Packed
+  cells found visible; the two share `maxDecodesPerUpdate`) -> `Repack` (a round-robin share of `m_Resident`) ->
+  `SubmitJobs` (while `inFlight < m_MaxJobs`, default 8 per worker: near sphere, then `RequestLoad` boxes, then
+  classification + surface band by horizontal distance, then caves) -> `RefreshContentTop` (lazy lowered tops).
+  `LoadBlocking` runs the same steps without budgets and also waits for `m_Reveal` to drain.
+- Column lifecycle: `None -> Classifying` (`SubmitColumnJob`) `-> Known` (`ApplyColumnClass`: rows outside the band
+  become Empty / Uniform without a job unless saved; band rows go to the column's `surfaceRows` / `caveRows`
+  bit masks, window-relative, and the grid gets `kGridPending` in full height). With `packHidden` a column's band
+  jobs wait until its in-window 3 x 3 neighbours are Known (the pack decision reads them), and `ApplyColumnClass`
+  re-judges the Packed cells of its 8 neighbours (`RecheckNeighbours`, `Visible(cell, false)`): a chunk at the
+  window's edge was packed without its neighbour outside the window.
+- Cell lifecycle: `Unloaded -> Loading` (`SubmitCellJob`) `-> Empty | Uniform | Dense | Packed` (`IntegrateResults`;
+  or `Unloaded -> Empty | Uniform` in `PlaceCell`); `Empty/Uniform/Packed -> Dense` only through `Materialize` /
+  `Unpack` (edits, `PromoteNear`, `ProcessReveals`, `PromoteFaceNeighbours`, `EnsureResident`); `Dense -> Packed`
+  only through `Repack`; anything `-> Unloaded` through `UnloadCell` (or the sky fast path of `RetargetCell`). A
+  `Dense` cell owns its slot; it is freed in `UnloadCell`, `Repack` and `~World`, nowhere else. `m_Packed[index]`
+  holds the runs of a `Packed` cell, or of a resident buried chunk that may be packed again (generated, unmodified,
+  listed in `m_Resident`); `DropKeptBytes` frees them (unload, first edit, a saved chunk). A `Packed` cell is never
+  `modified`; it is `fromSave` only when the store was full at its load. Window min = `focusChunk - size/2`, except y
+  in full height (fixed at construction).
 - A result is accepted only if `assigned && coord == r.coord && generation == r.generation && state == Loading`
   (`:308`). `generation` is bumped in `UnloadCell` and whenever `Recenter` re-targets a cell. Keep all four checks.
-- `m_Grid[i]`: `0` = air, unloaded or loading (the same to a ray); `slot + 1` = dense; `0x80000000 | id` = uniform.
-  Only `SetGrid`/`UnloadCell` write it, bumping `m_GridRevision`; `Recenter` bumps it too. An in-place edit of a dense
-  chunk does not bump it (only `MarkDirty`).
+- `m_Grid[i]`: `0` = air, unloaded or loading (the same to a ray), `0x80000000` = pending band cell (full height
+  only; a ray stops there), `slot + 1` = dense; `0x80000000 | id` = uniform or packed. Cells are written only through
+  `WriteGrid` (via `SetGrid`, `UnloadCell`, `PlaceCell`), which bumps `m_GridRevision`, the page revision and the
+  column top. Column tops: raised at once (column, content and region top), lowered by a search down the column
+  and lazily for content / region tops (`m_ContentTopStale`, `m_RegionTopsStale`). A top too high only costs steps;
+  one too low would skip content - never write a cell without `WriteGrid`. An in-place edit of a dense chunk does
+  not bump anything (only `MarkDirty`). `WriteGrid` also records `m_Fallback[i]`, the word a cell had before it
+  became dense (`GridFallback`, what the renderer shows until the slot is uploaded).
+- Counters (`WorldStats`): `unloadsInsideRadius` counts re-targeted cells with content whose column is within
+  `ViewRadius()` of the focus horizontally (`RetargetCell`, by distance, whatever moved the window);
+  `retargetedColumns`, `reveals`, `repacks`; `storeFullLoads` (a Dense result installed Packed for want of a slot)
+  and `storeFullDecodes` (a decode refused) must stay 0.
 - `modified` = "differs from generator output": set by edits, cleared by `PersistCell` and by integrating a load. Only
   modified cells reach the `RegionStore`.
-- `TakeChangedChunks()` lists chunks that loaded as Dense/Uniform, were edited, or were unloaded with content. It may
+- `TakeChangedChunks()` lists chunks that loaded as Dense/Uniform/Packed, were edited, or were unloaded with content
+  (not a pack / unpack). It may
   hold coordinates no longer in the window; a chunk that loads `Empty` is not listed. Single consumer:
   `physics/internal/Terrain.cpp:566`.
 - Units: world positions `double` metres; voxel coordinates `int` world voxels (floored, negatives work);
@@ -97,6 +128,36 @@ do not bounds-check (0..31 only); `GetSafe` does. A `Chunk` is 36 KB: keep it on
 - No code outside `src/voxel` and the tests calls `Trace`, `TraceChunk` or `MakeTraceScene` today (grep). The only
   CPU ray query the engine uses is `World::Raycast`. The instance path of the CPU tracer is covered by `TraceTests`
   only.
+
+**Full height and Packed** (`docs/design/view-distance.md`, stage 1 and "Stage 1 as built").
+- `ClassifyColumn` and `Generate` must agree for every row outside the band (`ViewDistance.ClassifyColumnAgreesWithGenerate`);
+  the terrain generator's `Generate` calls `Classify` itself. `HeightMeters` clamps to `TerrainSurfaceBounds` (the
+  goldens did not change: no sampled height reaches the bounds, measured -8..59 m against -16.35..77.35 m).
+- Packing is exact: `ViewDistance.PackedAndUnpackedWorldsTakeTheSameEdits` (WorldHash, edit lists, GetVoxel,
+  ReadChunk). An edit reads a Packed chunk from `m_Scratch` and makes it resident only at its first change, so the
+  `unsynced` rule is the same as for Empty / Uniform. Keep the face-neighbour promotion after edits: a ray leaving a
+  changed chunk enters a neighbour, and a Packed neighbour would show as a solid box.
+- The visibility rule (`Visible`) reads `surfaceFrom + 1` (the row of the lowest surface voxel) of the 3 x 3 columns;
+  a column outside the window is ignored (re-checked when it is classified), an unclassified one makes the chunk
+  visible (or is ignored, in the re-check). A chunk with a face neighbour that is `modified` or `fromSave` is
+  visible too (a crater wall); a `fromSave` result promotes its Packed face neighbours when it loads, so the order
+  in which a crater and its neighbours load does not matter.
+- Near sphere: everything within `nearRadius` of the focus is resident. `PromoteNear` scans `nearRadius + h`
+  whenever the focus moved more than `h` (a quarter chunk) since its last scan; a load result is packed only beyond
+  `nearRadius + 2h` (`NearSlack()`). Between scans the focus stays within `h` of the last one and within `2h` of
+  where anything was packed since. `Repack` packs again beyond `nearRadius + repackMargin` (8 m): hysteresis.
+- Store full: a Dense result that finds no slot is installed Packed (its runs, encoded on the main thread when the
+  job did not), never Empty: a saved chunk would vanish and the next edit would overwrite the save
+  (`ViewDistance.AFullStoreNeverDropsASavedChunk`). `ChunkStore::Adopt` destroys the chunk when it fails: test for a
+  free slot first.
+- `RequestLoad(min, max)`: up to 16 boxes loaded right after the near sphere (columns classified, neighbours too
+  when packing); a box goes once every chunk of it in the window is loaded. `sim::Blast` uses it for an island
+  search it could not run (below).
+- Build ceiling: `EditRegion` evaluates `decide(v, 0)` for the part of the box above the top row; any solid result
+  refuses the whole edit (`outOfBounds`). The test is in integers and needs no loaded chunk.
+- `World::Raycast` returns no hit at a pending cell (material 0); `Trace` / `TraceWorld` return it as a hit with
+  material 0. Callers of the latter must check the material.
+- `GetVoxel` on a Packed chunk walks its runs (O(runs)); bulk readers use `ReadChunk`.
 
 **Persistence** (`Region.cpp`).
 - Chunk bytes: `[kind]`; uniform `+[id]`; dense `+` runs `[id u8][len u16 LE]` over the block-ordered ids. The format
@@ -238,7 +299,9 @@ the `VX_*` accessor macros defined there and, with the same names, in the shader
   `FillInterior` allocates `(size + 2)^3` bytes on top of the volume (about 270 MB together at 512^3).
 - `ExtractFloatingIslands` refuses regions over 192 voxels per axis and returns nothing if any chunk of the region is
   not loaded; the optional `searched` out-parameter tells a refusal from "no island" (`sim::Blast` reports it as
-  `islandsSearched`). `sim::Blast` calls it with `removeFromWorld = false` and clears each island with `ClearMask`. A component touching the region boundary counts as attached - the safety that stops it ripping out
+  `islandsSearched`, asks the world for the box with `RequestLoad` and remembers the search;
+  `sim::RetryIslandSearches` runs it once the box is loaded, from `Engine::Run`). `sim::Blast` calls it with `removeFromWorld = false` and clears each island of 16+ voxels with its own
+  `ClearMask` (a `Detach`), all smaller ones with one `ClearMask` over their tight box. A component touching the region boundary counts as attached - the safety that stops it ripping out
   hillsides; do not relax it. Ignored (liquid) voxels neither support nor belong to an island and stay in the world.
 - `BuildColliderBoxes`: with `mergeMaterials = true`, `box.material` is only the first voxel's id; mass code uses
   `false` (`Scene.cpp:41`). `ComputeMassProperties` returns the centre of mass in voxel units from the volume origin;
@@ -266,7 +329,9 @@ shader side (`VxMaterial`, `VX_MATERIAL_*` in `shaders/include/common.glsl`). Te
 
 **B. Add a world edit operation** (capsule, replace-material ...). Write it as two lambdas over `EditRegion`
 (`World.cpp`): `decide(voxel, oldId)` returns the new id, or `-1` to leave the voxel; `touches(lo, hi)` says whether
-the operation reaches any voxel of that box (used only to report skipped chunks). `EditRegion` already materialises,
+the operation reaches any voxel of that box (used only to report skipped chunks); optionally `rows(first, length)`,
+false to skip a whole row along +x before any id is read (`ClearMask` uses it with `VoxelMask::AnyInRange`, so a
+sparse mask over a big box costs byte tests, not voxel reads). `EditRegion` already materialises,
 calls `MarkDirty`, sets `modified`, queues the change, fills the `VoxelEdit` list and the `EditReport`; do not
 duplicate that. Declare it in `World.cppm`. If it is to be replicated: integer parameters only (q units, see traps), a
 new `sim::WorldOpKind` value at the end (values are wire format), a factory and a case in `sim::ApplyOp`
@@ -305,16 +370,23 @@ build/engine/tests/VortexCoreTests --gtest_filter='World.*'      # one suite, fu
 
 | Area | Tests that pin it |
 |---|---|
-| Store / lifetime | `ChunkStore.AllocFreeAndDirtyTracking`, `World.WindowMovementKeepsEditsAndFreesMemory`, `World.StoreExhaustionDegradesGracefully` |
-| Window / streaming | `World.LoadsWindowAndClassifiesChunks`, `World.SmallStepsOnlyReloadTheNewSlab`, `World.WindowSizeNeedNotBePowerOfTwo` |
+| Store / lifetime | `ChunkStore.AllocFreeAndDirtyTracking`, `World.WindowMovementKeepsEditsAndFreesMemory`, `World.StoreExhaustionDegradesGracefully`, `ViewDistance.AFullStoreNeverDropsASavedChunk`, `ViewDistance.ResidentBuriedChunksArePackedAgainBehindTheFocus` |
+| Window / streaming | `World.LoadsWindowAndClassifiesChunks`, `World.SmallStepsOnlyReloadTheNewSlab`, `World.WindowSizeNeedNotBePowerOfTwo`, `ViewDistance.*` (climb, column pass, Packed, ceiling, column tops after edits and moves, recentre slab, `RequestLoad`) |
+| Packed rule | `ViewDistance.SkyRaysRarelyMeetPackedChunks`, `...PackedChunksAreJudgedAgainWhenTheWindowMoves`, `...EditedChunksNeverBorderPackedOnesAfterAReload`, `...EverythingNearTheFocusIsResidentWhileItMovesInsideAChunk`, `...GridFallbackIsWhatTheCellShowedBefore` |
+| Column skip | `ViewDistance.ColumnSkipMatchesTheTraversalWithoutIt` (48 x 55 x 48, half-loaded columns, voxel DDA) |
 | Persistence | `World.PersistsEditsToDisk`, `Region.ChunkCodecRoundTrip` |
 | Hashes / determinism | `ChunkHash.*`, `WorldHash.*`, `Terrain.GoldenChunkHashes`; `QuantizedEdits.*`; in `VortexSimTests` `Blast.TwoSimulationsFedTheSameOperationsHaveEqualHashes` |
 
 Then the whole suite (scene, physics terrain and the renderer contract tests consume these types) and both headless
 runs from CLAUDE.md. In the headless game log:
-- `World: N dense, N uniform, N empty chunks; store a/b` (`Engine.cpp:288`, printed only when `exitAfterFrames != 0`): `a` must
-  stay below `b` (12 288 in the game, `src/main.cpp:472`; the `EngineConfig` default is 8192). `a == b` or
-  `ChunkStore is full` means missing terrain.
+- `World: N dense, N uniform, N empty chunks; store a/b, N store-full loads, N store-full decodes` (`Engine.cpp`,
+  printed only when `exitAfterFrames != 0`): `a` must stay below `b` (12 288 in the game; the `EngineConfig` default
+  is 8192) and both store-full counts must be 0. `a == b` or `ChunkStore is full` means chunks drawn as a rock
+  stand-in (the overflow is kept Packed, never dropped).
+- `World: window 48 x 55 x 48 chunks (rows -15..40, fixed), N packed chunks in X MiB, N pending; 0 unloads inside the
+  view radius`, `World: N window moves, recentre ... ms; N packed decodes in ... ms (N revealed), N packed again`,
+  `World: surface filled in N frames`, `World: window filled in N frames` (once each; with a moving camera the window
+  may never be complete).
 - None of: `Saved chunk ... is corrupt`, `Region file ... is corrupt`, `Region file ... is truncated`,
   `VoxelModel ...: chunk store is full`,
   `Renderer: chunk slot ... is beyond the GPU chunk capacity`.

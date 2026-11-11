@@ -30,6 +30,8 @@ export namespace vortex::voxel {
         /// @brief Takes ownership of a chunk built elsewhere (e.g. by a generation job).
         uint32_t Adopt(std::unique_ptr<Chunk> chunk);
         void Free(uint32_t slot);
+        /// @brief Free() that hands the chunk's memory to the caller (to release it off the main thread).
+        std::unique_ptr<Chunk> Release(uint32_t slot);
 
         bool IsAllocated(uint32_t slot) const { return slot < m_Chunks.size() && m_Chunks[slot] != nullptr; }
         Chunk& Get(uint32_t slot) { return *m_Chunks[slot]; }

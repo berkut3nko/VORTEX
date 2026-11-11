@@ -5,6 +5,7 @@ module;
 #include <cstdint>
 #include <memory>
 #include <span>
+#include <vector>
 
 export module vortex.sim:simulation;
 
@@ -57,6 +58,13 @@ export namespace vortex::sim {
      * they are client rubble. Everything else is kept.
      */
     SimulationConfig ServerConfig(SimulationConfig config = {});
+
+    /// @brief The island search of a blast that could not run because a chunk of its box was not
+    /// loaded (sim::Blast remembers it, sim::RetryIslandSearches runs it later).
+    struct DeferredIslandSearch {
+        voxel::SphereQ sphere;
+        uint32_t attempts = 0;     ///< RetryIslandSearches calls so far
+    };
 
     /**
      * @brief The simulated half of a game: terrain, physics, terrain colliders and the scene, on
@@ -123,6 +131,10 @@ export namespace vortex::sim {
 
         /// @brief Ticks simulated so far = the number of the tick that runs next. Starts at 0.
         uint32_t Tick() const;
+
+        /// @brief Island searches waiting for their box to load (sim::Blast adds, at most
+        /// kMaxDeferredIslandSearches; sim::RetryIslandSearches runs and removes them).
+        std::vector<DeferredIslandSearch>& DeferredIslandSearches();
 
         /**
          * @brief Simulates one tick: streaming, physics, lifetimes; then `Tick()` is one higher.

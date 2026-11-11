@@ -10,19 +10,19 @@ What exists today, and what was designed for but is not built yet. See
 | Build | Pinned dependencies, Vulkan headers fetched, shaders compiled to SPIR-V at build time, `cmake --preset dev`. |
 | Core | Logging, job system, profiler, input state, RNG, command line. |
 | Game UI | Play mode locks the mouse (GLFW_CURSOR_DISABLED + raw motion; pointer lock on Wayland, grab on X11) and looks around without a button; Escape opens a pause menu (Resume / Quit). A HUD drawn without ImGui (`vortex.core:hud` data + one instanced draw after tone mapping, built-in 5 x 9 bitmap font): crosshair, mode, tool, frame rate, key hints, menu. ImGui is only the F3 debug overlay (hidden by default) and the F1 editor. Windowed behaviour (lock on Wayland / X11, focus, menu clicks) is not confirmed yet: headless runs cannot exercise it. |
-| Voxel world | Streaming window of sparse 32^3 chunks, generation on worker threads, editing (set / fill / carve with material hardness), region-file persistence of modified chunks (offline game and map editor, when `saveDirectory` is set; a session server's world is memory only). |
+| Voxel world | Streaming window of sparse 32^3 chunks, generation on worker threads, editing (set / fill / carve with material hardness), region-file persistence of modified chunks (offline game and map editor, when `saveDirectory` is set; a session server's world is memory only). The game's window is **full height** (view distance stage 1): a fixed -48..128 m (55 rows) that follows the camera in x / z only, so climbing never unloads anything; a column pass installs sky and rock without jobs; buried chunks farther than 16 m stay **Packed** (RLE bytes, no slot); a build ceiling at 128 m. |
 | Terrain | Built-in generator: hills, mountains, beaches, sea, caves, trees. Custom generators through `IWorldGenerator`. |
 | Ray queries | One traversal shared by GPU and CPU (`shaders/shared/trace.glsl`), world + dynamic objects through a BVH. |
 | Objects | Voxel models of any size shared between instances, collider boxes, mass from material density. |
 | Scene | `vortex.scene`: EnTT entities with transform, voxel body, rigid body, point light and lifetime components; destroying an entity releases its body and chunk slots; part of the GPU-free `Vortex::Sim` and tested without a GPU. |
-| Destruction | Terrain carving with floating-terrain detection; objects lose voxels and split into pieces (`Scene::Damage`). A blast is `sim::Blast` (integer-exact world operations: carve, one `Detach` per floating island; object damage, impulses) plus `Engine::PresentBlast` (particles, local rubble, flash); `Engine::Explode` does both. Fragments below 16 voxels are particles, small pieces are rubble with a lifetime, a distance rule and a global cap. |
+| Destruction | Terrain carving with floating-terrain detection; objects lose voxels and split into pieces (`Scene::Damage`). A blast is `sim::Blast` (integer-exact world operations: carve, one `Detach` per floating island of 16+ voxels, one `ClearMask` for all smaller ones; object damage, impulses) plus `sim::PresentBlast` via `Engine::PresentBlast` (particles, local rubble, flash); `Engine::Explode` does both. Fragments below 16 voxels are particles, small pieces are rubble with a lifetime, a distance rule and a global cap. |
 | Import | MagicaVoxel `.vox` read / write, glTF voxelisation. |
 | Physics | Jolt behind an engine interface, fixed time step, character controller. Terrain colliders streamed around the camera and requested by every moving body; bodies without ready terrain are frozen in place and resume when it is there, so nothing falls through unloaded or uncooked terrain. |
 | Particles | CPU pool with emitters, voxel collision, effect presets. |
 | Renderer | Ray-marched G-buffer, ray-traced sun shadows, ambient occlusion, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping, ImGui. Headless mode with screenshots. Validation-clean on Intel UHD 620. |
 | Editor | `vortex.editor`: in-game editor toggled with F1 - fly camera, entity selection with a translate / rotate gizmo, inspector, terrain brush, primitive spawning, `.vox` / glTF import, environment / render / profiler / world panels. Tool logic is separate from the widgets and unit tested. |
 | Simulation | `vortex.sim`: `sim::Simulation` owns world, physics, terrain colliders and scene and steps them on a numbered fixed tick; `sim::WorldOp` / `ApplyOp` replay terrain changes exactly; `sim::Blast`. Library `Vortex::Sim` links no renderer or window. `Engine` owns one and draws it. |
-| Tests | 385 unit tests, none needing a GPU. |
+| Tests | 412 unit tests (one disabled measurement), none needing a GPU. |
 
 ## Performance (Intel UHD 620, 1280x720 output, 768x432 internal)
 
@@ -33,13 +33,14 @@ What exists today, and what was designed for but is not built yet. See
 | composite, TAA, present | ~2.5 ms |
 | HUD (play: ~150 quads; pause menu: ~70 quads, backdrop dimmed in the present pass) | 0.01 ms (median of 120 frames, measured headless at 1280x720) |
 
-World window 48 x 8 x 48 chunks (154 m across at 0.1 m voxels), about 8100 dense chunks, 473 MiB
-of GPU memory. Measured cost of the lighting features: sun shadows ~4.7 ms, ambient occlusion
+World window 48 x 55 x 48 chunks (154 m across, -48..128 m, at 0.1 m voxels; view radius 73.6 m with an edge fog
+over its last 15 %), 5500-6600 dense chunks and 17 000-18 000 Packed ones (24-25 MiB of RLE) once filled, 473 MiB
+of GPU memory. (Before view distance stage 1: 48 x 8 x 48 around the camera, about 8100 dense chunks.) Measured cost of the lighting features: sun shadows ~4.7 ms, ambient occlusion
 ~5.9 ms, emissive pickup ~1.5 ms; each can be switched off (`--no-shadows`, `--no-ao`, `--no-emissive`).
 
 Known costs worth attacking, in order of expected gain:
-1. About half of the dense chunks are underground cave chunks nobody sees; they cost memory and
-   upload time, not frame time. Lazy loading of chunks without a line to the surface would halve memory.
+1. (Done in view distance stage 1: buried chunks are Packed. Stage 5 of that design replaces the geometric rule
+   by an exact visibility flood and stops plugging cave mouths.)
 2. Primary rays: a half-resolution depth pre-pass (start each ray at the conservative depth of its
    2x2 tile) would cut most empty-space steps.
 3. Lighting at half resolution with a depth-aware upsample.
@@ -143,6 +144,11 @@ State (stages are those of [design/networking.md](design/networking.md)):
   the blast that freed it (it is still pushed the same way). **Not done / open:** nothing acts on the skipped /
   unsynced report yet (stage 7); object particles are still spawned inside `Damage`; no `opSeq` or encoding
   (stage 3). Choices where the design was open: `design/networking.md`, "Stage 2 as built".
+  **Crumbs (follow-up):** islands under 16 voxels (`scene::kMinPieceVoxels`) are no longer a `Detach` each but one
+  `ClearMask` per blast over their tight box, shown as particles only (`sim::PresentBlast`, now GPU-free and tested;
+  no model, entity or body). Measured on generated terrain: 2051 operations for 44 blasts (worst 299) became 75 (at
+  most 2), est. 65 KB -> 7.2 KB of wire. Found, open: the island search takes 70-200 ms per 1.2 m blast in the `dev`
+  build, and that build has no `-O` flag at all (empty `CMAKE_CXX_FLAGS_RELWITHDEBINFO` with CMake 4.4).
 - Stages 3-9: not started.
 
 ### M2 - Fight feel under authority
@@ -238,8 +244,17 @@ State (stages are those of [design/networking.md](design/networking.md)):
   image checks on machines without a GPU.
 
 ### World
+- **View distance** (`design/view-distance.md`): stage 1 (full-height window, column pass, Packed chunks,
+  column / region-top skip, dirty grid pages, edge fog, `--climb` / `--fly`) is **done**; measured numbers and what
+  differs from the design are in its "Stage 1 as built", the fixes of its review (edge chunks judged again, crater
+  walls never packed, buried chunks packed again behind the focus, a full store never drops a saved chunk, deferred
+  island searches, near-sphere slack, pending pixels out of the lighting filter, renderer fallback words) in "Review
+  fixes". Open in it: recentre p90 0.35 ms (gate 0.2 ms, met at the median), the carve of a blast into cave rows not
+  loaded yet is skipped (its island search runs later), session `heightRange` not wired, windowed climbing and the
+  streaming look (no dark halos, no see-through flashes) not confirmed by the owner. Next: stage 2 (voxel-size preview), then 0.125 m voxels and the LOD levels (stage 6) that
+  give the 2x view distance.
 - **Level of detail**: clip-map cascades with doubled voxel size for long view distances. The current
-  view distance is the window (about 100 m at 0.1 m voxels).
+  view radius is 73.6 m (the 48-chunk window at 0.1 m voxels).
 - **Chunk memory**: chunks are dense (37 KiB each). Palette-compressed or brick-sparse payloads.
 - **Water**: liquids have an animated, sky-reflecting surface shaded in the composite pass
   (ARCHITECTURE.md 5.7; about 0.15 ms on a UHD 620 with half of the screen under water). Still opaque voxels:

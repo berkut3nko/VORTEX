@@ -6,6 +6,7 @@ module;
 #include <memory>
 #include <span>
 #include <utility>
+#include <vector>
 
 module vortex.sim;
 
@@ -63,6 +64,7 @@ namespace vortex::sim {
         void Lifetimes(float dt) {
             scene.Update(dt);
             scene.DestroyBelow(static_cast<float>(world->WindowOrigin().y) - config.fallOutDepth);
+            scene.DestroyAbove(world->BuildCeiling());     // +infinity (nothing) without a fixed height range
         }
 
         SimulationConfig config;
@@ -79,6 +81,7 @@ namespace vortex::sim {
 
         uint32_t tick = 0;
         bool initialized = false;
+        std::vector<DeferredIslandSearch> deferredIslands;
     };
 
     Simulation::Simulation(const SimulationConfig& config) : m_Impl(std::make_unique<Impl>(config)) {}
@@ -96,6 +99,7 @@ namespace vortex::sim {
             generator = voxel::CreateTerrainGenerator(terrain);
         }
         s.world = std::make_unique<voxel::World>(s.config.world, s.store, s.jobs, std::move(generator), &s.materials);
+        s.scene.SetBuildCeiling(s.world->BuildCeiling());
 
         if (!s.physics.Initialize(s.config.physics)) {
             s.world.reset();
@@ -111,6 +115,7 @@ namespace vortex::sim {
         s.scene.Clear();            // releases bodies and model chunk slots before physics and the store go away
         s.terrain.reset();
         s.world.reset();
+        s.deferredIslands.clear();
         s.physics.Shutdown();
         s.initialized = false;
     }
@@ -133,6 +138,8 @@ namespace vortex::sim {
     const scene::Scene& Simulation::Scene() const { return m_Impl->scene; }
 
     uint32_t Simulation::Tick() const { return m_Impl->tick; }
+
+    std::vector<DeferredIslandSearch>& Simulation::DeferredIslandSearches() { return m_Impl->deferredIslands; }
 
     void Simulation::Step(std::span<const glm::dvec3> focusPoints) {
         Impl& s = *m_Impl;

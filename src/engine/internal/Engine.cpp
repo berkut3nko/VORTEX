@@ -113,62 +113,7 @@ namespace vortex {
         PresentBlast(sim::Blast(m_Impl->sim, sim::BlastDesc{center, radius, power}));
     }
 
-    void Engine::PresentBlast(const sim::BlastResult& blast) {
-        Impl& s = *m_Impl;
-        voxel::World& world = s.sim.World();
-        voxel::MaterialLibrary& materials = s.sim.Materials();
-        fx::ParticleSystem& particles = s.sim.Particles();
-        scene::Scene& scene = s.sim.Scene();
-        const float vs = world.VoxelSize();
-        const glm::dvec3 center = blast.center;
-        const float radius = blast.radius;
-
-        for (const sim::AppliedOp& applied : blast.ops) {
-            if (applied.op.kind == sim::WorldOpKind::CarveSphere) {
-                // Debris for a bounded sample of the removed voxels, in their material's colour.
-                const std::vector<voxel::VoxelEdit>& removed = applied.edits;
-                const size_t stride = std::max<size_t>(1, removed.size() / 400);
-                for (size_t i = 0; i < removed.size(); i += stride) {
-                    const glm::dvec3 p = world.VoxelCenter(removed[i].voxel);
-                    const glm::vec3 away = glm::normalize(glm::vec3(p - center) + glm::vec3(0.0f, 0.2f, 0.0f)) * 3.0f;
-                    fx::SpawnVoxelBreak(particles, p, materials.Get(voxel::kWorldPalette, removed[i].oldId).color, vs, away);
-                }
-            } else if (applied.op.kind == sim::WorldOpKind::Detach && applied.op.netId == 0) {
-                // Terrain that broke off, made from the voxels this world just removed. Rubble:
-                // crumbs become particles right here, small lumps are cleaned up by the scene.
-                voxel::VoxelVolume piece = sim::BuildDetachedPiece(applied.op, applied.edits);
-                if (piece.IsEmpty()) continue;
-                auto model = std::make_shared<voxel::VoxelModel>(std::move(piece), voxel::kWorldPalette, "debris");
-                scene.CreateVoxelObject({.model = std::move(model),
-                                         .position = glm::vec3(world.VoxelToWorld(applied.op.min)),
-                                         .linearVelocity = applied.op.velocity,
-                                         .debris = true});
-            }
-        }
-        fx::SpawnExplosion(particles, center, radius);
-
-        // Object pieces below the replicated threshold (none offline unless it is set).
-        for (const scene::DamageFragment& fragment : blast.fragments) {
-            scene.CreateVoxelObject({.model = fragment.model,
-                                     .position = fragment.pose.position,
-                                     .rotation = fragment.pose.rotation,
-                                     .linearVelocity = fragment.linearVelocity,
-                                     .angularVelocity = fragment.angularVelocity,
-                                     .debris = true});
-        }
-
-        // A flash of light that fades out quickly and removes itself once it is too dim to see.
-        constexpr float kFlashDecay = 9.0f, kFlashCutoff = 0.05f;
-        if (!(radius > 0.0f)) return;
-        scene::LightDesc flash;
-        flash.position = center;
-        flash.color = glm::vec3(1.0f, 0.7f, 0.35f);
-        flash.intensity = 40.0f * radius;
-        flash.radius = radius * 8.0f;
-        flash.decay = kFlashDecay;
-        flash.lifetime = std::log(flash.intensity / kFlashCutoff) / kFlashDecay;
-        if (flash.lifetime > 0.0f) scene.CreateLight(flash);
-    }
+    void Engine::PresentBlast(const sim::BlastResult& blast) { sim::PresentBlast(m_Impl->sim, blast); }
 
     int Engine::Run(Application& app) {
         Impl& s = *m_Impl;
@@ -180,6 +125,9 @@ namespace vortex {
         double last = NowSeconds();
         double accumulator = 0.0;
         uint32_t frame = 0;
+        // Streaming progress, logged once each (view-distance.md stage 1 gates).
+        bool surfaceFilled = false, windowFilled = false;
+        const double streamStart = NowSeconds();
 
         while (!s.exitRequested) {
             ProfileScope frameScope("CPU: frame");
@@ -208,6 +156,18 @@ namespace vortex {
                 // none (TerrainColliders::GuardBodies).
                 const glm::dvec3 focus[] = {camera.position};
                 sim.UpdateStreaming(camera.position, focus);
+                // Island searches of earlier blasts whose box has loaded since (sim::Blast had
+                // asked the world for it): what broke off falls now.
+                for (const sim::BlastResult& late : sim::RetryIslandSearches(sim)) sim::PresentBlast(sim, late);
+                const voxel::World& world = sim.World();
+                if (!surfaceFilled && world.IsFilled(voxel::LoadScope::Surface)) {
+                    surfaceFilled = true;
+                    Log::Info("World: surface filled in {} frames ({:.1f} s)", frame, NowSeconds() - streamStart);
+                }
+                if (!windowFilled && world.IsFilled(voxel::LoadScope::Everything)) {
+                    windowFilled = true;
+                    Log::Info("World: window filled in {} frames ({:.1f} s)", frame, NowSeconds() - streamStart);
+                }
             }
 
             // --- fixed-step simulation -------------------------------------------------------
@@ -279,8 +239,19 @@ namespace vortex {
         app.OnShutdown(*this);
         if (s.config.exitAfterFrames != 0) {
             const voxel::WorldStats ws = sim.World().Stats();
-            Log::Info("World: {} dense, {} uniform, {} empty chunks; store {}/{}", ws.denseChunks, ws.uniformChunks, ws.emptyChunks,
-                      sim.Chunks().UsedCount(), sim.Chunks().Capacity());
+            // Store-full loads / decodes: chunks drawn as a rock stand-in for want of a slot (must be 0).
+            Log::Info("World: {} dense, {} uniform, {} empty chunks; store {}/{}, {} store-full loads, {} store-full decodes",
+                      ws.denseChunks, ws.uniformChunks, ws.emptyChunks, sim.Chunks().UsedCount(), sim.Chunks().Capacity(), ws.storeFullLoads,
+                      ws.storeFullDecodes);
+            const voxel::World& world = sim.World();
+            Log::Info("World: window {} x {} x {} chunks (rows {}..{}{}), {} packed chunks in {:.1f} MiB, {} pending; "
+                      "{} unloads inside the view radius",
+                      world.WindowSize().x, world.WindowSize().y, world.WindowSize().z, world.WindowMinChunk().y,
+                      world.WindowMinChunk().y + world.WindowSize().y, world.FullHeight() ? ", fixed" : ", follows the camera",
+                      ws.packedChunks, static_cast<double>(ws.packedBytes) / (1024.0 * 1024.0), ws.pendingChunks, ws.unloadsInsideRadius);
+            Log::Info("World: {} window moves, recentre {:.3f} ms last, {:.3f} ms max; {} packed decodes in {:.2f} ms ({} revealed), "
+                      "{} packed again", ws.recenters, ws.lastRecenterMs, ws.maxRecenterMs, ws.decodes, ws.decodeMs, ws.reveals, ws.repacks);
+            if (!windowFilled) Log::Info("World: window not filled after {} frames ({} unfilled columns)", frame, ws.unfilledColumns);
             const physics::TerrainColliderStats ts = sim.Terrain().Stats();
             Log::Info("Physics: {} bodies ({} awake, {} frozen), {} terrain colliders; scene: {} voxel objects, {} rubble",
                       sim.Physics().BodyCount(), sim.Physics().ActiveBodyCount(), ts.frozenBodies, ts.colliders,

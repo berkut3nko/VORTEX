@@ -186,6 +186,12 @@ namespace vortex::voxel {
         return it->second;
     }
 
+    bool RegionStore::Contains(const glm::ivec3& chunk) {
+        std::scoped_lock lock(m_Impl->mutex);
+        const Impl::Region& region = m_Impl->Acquire(chunk >> kRegionShift);
+        return region.chunks.contains(Impl::LocalIndex(chunk));
+    }
+
     void RegionStore::Save(const glm::ivec3& chunk, std::vector<uint8_t> bytes) {
         std::scoped_lock lock(m_Impl->mutex);
         Impl::Region& region = m_Impl->Acquire(chunk >> kRegionShift);

@@ -573,3 +573,42 @@ TEST(Simulation, DoesNothingBeforeInitializeAndAfterShutdown) {
     EXPECT_EQ(simulation.Tick(), 2u);                            // kept, not advanced
     simulation.Shutdown();                                       // twice is harmless; the destructor is the third time
 }
+
+// Full-height window (view-distance.md stage 1): the top of the vertical range is the build
+// ceiling. A model 1 m above it is refused whole, the world is unchanged, and a body thrown over
+// it is removed by the kill plane.
+TEST(Simulation, ModelsAboveTheBuildCeilingAreRefusedAndTheSkyAboveItIsAKillPlane) {
+    sim::SimulationConfig config = SmallConfig();
+    config.world.fullHeight = true;
+    config.world.heightRange = {-3.2f, 12.8f};          // rows -1 .. 4: a ceiling at 12.8 m
+    config.world.heightSnap = 3.2f;
+    FlatWorld w(config);
+    ASSERT_TRUE(w.initialized);
+    voxel::World& world = w.simulation.World();
+    ASSERT_TRUE(world.FullHeight());
+    const double ceiling = world.BuildCeiling();
+    EXPECT_NEAR(ceiling, 12.8, 1.0e-5);
+    EXPECT_DOUBLE_EQ(w.simulation.Scene().BuildCeiling(), ceiling);
+    const voxel::WorldHashResult before = voxel::WorldHash(world, world.WindowMinChunk(), world.WindowMinChunk() + world.WindowSize());
+
+    // An 8-voxel crate whose top would be at ceiling + 1 m.
+    const size_t objects = w.simulation.Scene().VoxelObjectCount();
+    const Entity high = w.simulation.Scene().CreateVoxelObject(
+        {.model = w.Box(glm::ivec3(8), "high"), .position = glm::vec3(0.0f, static_cast<float>(ceiling) + 1.0f - 0.8f, 0.0f)});
+    EXPECT_EQ(high, kNoEntity);
+    EXPECT_EQ(w.simulation.Scene().VoxelObjectCount(), objects);
+    // The same written into the world: refused whole.
+    voxel::EditReport report;
+    const glm::ivec3 at = world.WorldToVoxel(glm::dvec3(0.0, ceiling + 0.2, 0.0));
+    EXPECT_EQ(world.FillBox(at, at + glm::ivec3(8), 5, nullptr, &report), 0u);
+    EXPECT_TRUE(report.outOfBounds);
+    EXPECT_EQ(voxel::WorldHash(world, world.WindowMinChunk(), world.WindowMinChunk() + world.WindowSize()).hash, before.hash);
+
+    // Below the ceiling it is fine; thrown up fast it leaves the world through the ceiling.
+    const Entity crate = w.simulation.Scene().CreateVoxelObject(
+        {.model = w.Box(glm::ivec3(8), "thrown"), .position = glm::vec3(0.0f, kGround + 1.0f, 0.0f), .linearVelocity = glm::vec3(0.0f, 30.0f, 0.0f)});
+    ASSERT_NE(crate, kNoEntity);
+    // (The terrain guard does not freeze it on its way: above the window of a full-height world is sky.)
+    for (int i = 0; i < 60 && w.simulation.Scene().TryGet<scene::Transform>(crate) != nullptr; ++i) w.Ticks(1);
+    EXPECT_EQ(w.simulation.Scene().TryGet<scene::Transform>(crate), nullptr);
+}

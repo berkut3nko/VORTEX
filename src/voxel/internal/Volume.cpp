@@ -90,6 +90,20 @@ namespace vortex::voxel {
         m_Bits[i >> 3] = static_cast<uint8_t>(on ? (m_Bits[i >> 3] | bit) : (m_Bits[i >> 3] & ~bit));
     }
 
+    bool VoxelMask::AnyInRange(size_t first, size_t last) const {
+        last = std::min(last, VoxelCount());
+        if (first >= last) return false;
+        const size_t firstByte = first >> 3, lastByte = (last - 1) >> 3;
+        const unsigned head = static_cast<unsigned>(0xFFu << (first & 7u)) & 0xFFu;
+        const unsigned tail = 0xFFu >> (7u - ((last - 1) & 7u));
+        if (firstByte == lastByte) return (m_Bits[firstByte] & head & tail) != 0;
+        if ((m_Bits[firstByte] & head) != 0 || (m_Bits[lastByte] & tail) != 0) return true;
+        for (size_t i = firstByte + 1; i < lastByte; ++i) {
+            if (m_Bits[i] != 0) return true;
+        }
+        return false;
+    }
+
     uint32_t VoxelMask::Count() const {
         uint32_t n = 0;
         for (const uint8_t b : m_Bits) n += static_cast<uint32_t>(std::popcount(b));

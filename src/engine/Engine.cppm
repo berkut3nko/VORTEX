@@ -160,20 +160,16 @@ export namespace vortex {
         /**
          * @brief An offline blast: `PresentBlast(sim::Blast(Simulation(), {center, radius, power}))`.
          * @details sim::Blast carves the terrain (quantised: centre and radius to 1/16 voxel, power
-         * to 1/16 hardness), detaches floating terrain as Detach operations, damages every object in
-         * range (scene::Scene::Damage) and pushes bodies away; PresentBlast then shows it. Metres,
+         * to 1/16 hardness), detaches floating terrain as Detach operations (crumbs under
+         * scene::kMinPieceVoxels as one ClearMask), damages every object in range
+         * (scene::Scene::Damage) and pushes bodies away; PresentBlast then shows it. Metres,
          * metres, material hardness.
          */
         void Explode(const glm::dvec3& center, float radius, float power);
 
-        /**
-         * @brief The presentation half of a blast, made from a sim::BlastResult and this world:
-         * debris particles for a sample of the carved voxels (at most 799 bursts), a rubble object
-         * (VoxelObjectDesc::debris, so the rubble rules apply) for every Detach with netId 0 built
-         * from the voxels it removed here (sim::BuildDetachedPiece) and started with the
-         * operation's velocity, rubble for every object fragment, the explosion particles and a
-         * flash of light (an entity with PointLight + Lifetime). Simulates nothing else.
-         */
+        /// @brief The presentation half of a blast in this engine's simulation: sim::PresentBlast
+        /// (debris particles, rubble for Detach operations and object fragments, particles for
+        /// the crumbs of a ClearMask, the explosion and a flash). Simulates nothing else.
         void PresentBlast(const sim::BlastResult& blast);
 
     private:

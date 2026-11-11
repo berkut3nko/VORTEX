@@ -41,7 +41,8 @@ namespace vortex::voxel {
                   m_Detail(settings.seed * 7919u + 4u),
                   m_Biome(settings.seed * 7919u + 5u),
                   m_CaveA(settings.seed * 7919u + 6u),
-                  m_CaveB(settings.seed * 7919u + 7u) {}
+                  m_CaveB(settings.seed * 7919u + 7u),
+                  m_Surface(TerrainSurfaceBounds(settings)) {}
 
             /// Terrain height in metres at a world position (metres).
             float HeightMeters(float x, float z) const {
@@ -51,10 +52,24 @@ namespace vortex::voxel {
                 const float ridge = m_Mountain.Ridged(x * s / 300.0f, z * s / 300.0f, 5);
                 const float detail = m_Detail.Fbm(x * s / 11.0f, z * s / 11.0f, 2);
                 const float inland = math::SmoothStep(0.05f, 0.55f, continent);     // mountains only rise inland
-                return m_S.baseHeight + continent * m_S.continentHeight +
-                       hills * m_S.hillHeight * (0.35f + 0.65f * (continent * 0.5f + 0.5f)) +
-                       ridge * ridge * m_S.mountainHeight * inland + detail * 0.35f;
+                const float h = m_S.baseHeight + continent * m_S.continentHeight +
+                                hills * m_S.hillHeight * (0.35f + 0.65f * (continent * 0.5f + 0.5f)) +
+                                ridge * ridge * m_S.mountainHeight * inland + detail * 0.35f;
+                // The noise amplitudes bound the sum only if every octave stays in [-1, 1], which
+                // the simplex kernel does not prove: the declared bounds are made true here.
+                return std::clamp(h, m_Surface.min, m_Surface.max);
             }
+
+            HeightBounds VerticalBounds() const override {
+                const float vs = m_S.voxelSize;
+                const float buried = std::max(m_S.caves ? m_S.caveMaxDepth : 0.0f, kDarkStoneDepth);
+                HeightBounds b;
+                b.min = m_Surface.min - buried - 2.0f * vs;
+                b.max = std::max(m_Surface.max, m_S.seaLevel) + (m_S.trees ? kMaxTreeHeight : 0.0f) + 2.0f * vs;
+                return b;
+            }
+
+            ColumnClass ClassifyColumn(int cx, int cz) const override { return Classify(*Tile(cx, cz)); }
 
             ChunkContent Generate(const glm::ivec3& coord, Chunk& chunk) const override {
                 const std::shared_ptr<const HeightTile> tile = Tile(coord.x, coord.z);
@@ -65,13 +80,12 @@ namespace vortex::voxel {
                 const float seaV = m_S.seaLevel * m_Inv;
                 const int seaLevelVoxel = static_cast<int>(std::floor(seaV));
 
-                // Entirely above everything (terrain, water, tree tops): air.
-                const float top = std::max(tile->maxHeight, seaV) + (m_S.trees ? kMaxTreeHeight * m_Inv : 0.0f);
-                if (static_cast<float>(y0) > top + 1.0f) return {ChunkKind::Empty, 0};
-
-                // Entirely below the deepest thing that varies (caves, soil layers): solid rock.
-                const float variableDepth = std::max(m_S.caves ? m_S.caveMaxDepth : 0.0f, kDarkStoneDepth) * m_Inv + 2.0f;
-                if (static_cast<float>(y1) < tile->minHeight - variableDepth) return {ChunkKind::Uniform, mat.stoneDark};
+                // Rows outside the column's band: decided by ClassifyColumn, so the two agree.
+                if (m_S.skipClassifiedRows) {
+                    const ColumnClass column = Classify(*tile);
+                    if (coord.y >= column.emptyFrom) return {ChunkKind::Empty, 0};
+                    if (coord.y < column.solidBelow) return {ChunkKind::Uniform, column.solidId};
+                }
 
                 const float grassV = std::max(1.0f, 0.25f * m_Inv);
                 const float dirtV = 2.0f * m_Inv;
@@ -133,6 +147,36 @@ namespace vortex::voxel {
             }
 
         private:
+            /// Rows of one column that are certainly air (above terrain, water and tree tops) or
+            /// certainly dark stone (below caves and soil layers); see ColumnClass.
+            ColumnClass Classify(const HeightTile& tile) const {
+                ColumnClass c;
+                c.known = true;
+                // Empty: the chunk's lowest voxel lies above everything.
+                const float top = std::max(tile.maxHeight, m_S.seaLevel * m_Inv) + (m_S.trees ? kMaxTreeHeight * m_Inv : 0.0f) + 1.0f;
+                const auto isEmpty = [top](int row) { return static_cast<float>(row * kChunkSize) > top; };
+                // Uniform: the chunk's top lies below the deepest thing that varies.
+                const float variableDepth = std::max(m_S.caves ? m_S.caveMaxDepth : 0.0f, kDarkStoneDepth) * m_Inv + 2.0f;
+                const float bottom = tile.minHeight - variableDepth;
+                const auto isSolid = [bottom](int row) { return static_cast<float>((row + 1) * kChunkSize) < bottom; };
+
+                // Both tests are monotonic in the row: start from the estimate, then step to the exact boundary.
+                int e = static_cast<int>(std::floor(top / kChunkSize));
+                while (isEmpty(e - 1)) --e;
+                while (!isEmpty(e)) ++e;
+                c.emptyFrom = e;
+                int b = static_cast<int>(std::floor(bottom / kChunkSize));
+                while (isSolid(b)) ++b;
+                while (!isSolid(b - 1)) --b;
+                c.solidBelow = b;                                         // rows < b are solid
+                c.solidId = m_S.materials.stoneDark;
+                const int lowestSurfaceVoxel = static_cast<int>(std::floor(tile.minHeight)) - 1;
+                c.surfaceFrom = std::max(c.solidBelow, FloorDiv(lowestSurfaceVoxel, kChunkSize) - 1);
+                return c;
+            }
+
+            static int FloorDiv(int a, int b) { return a / b - ((a % b != 0) && (a < 0) ? 1 : 0); }
+
             std::shared_ptr<const HeightTile> Tile(int cx, int cz) const {
                 const uint64_t key = static_cast<uint64_t>(static_cast<uint32_t>(cx)) | (static_cast<uint64_t>(static_cast<uint32_t>(cz)) << 32);
                 {
@@ -292,6 +336,7 @@ namespace vortex::voxel {
             TerrainSettings m_S;
             float m_Inv;
             math::SimplexNoise m_Continent, m_Hills, m_Mountain, m_Detail, m_Biome, m_CaveA, m_CaveB;
+            HeightBounds m_Surface;
             mutable std::mutex m_CacheMutex;
             mutable std::unordered_map<uint64_t, std::shared_ptr<const HeightTile>> m_Cache;
         };
@@ -299,6 +344,16 @@ namespace vortex::voxel {
         class FlatGenerator final : public IWorldGenerator {
         public:
             FlatGenerator(int height, uint8_t surfaceId, uint8_t groundId) : m_Height(height), m_Surface(surfaceId), m_Ground(groundId) {}
+
+            ColumnClass ClassifyColumn(int, int) const override {
+                ColumnClass c;
+                c.known = true;
+                c.emptyFrom = CeilDiv(m_Height, kChunkSize);              // row * 32 >= height
+                c.solidBelow = FloorDiv(m_Height - 1, kChunkSize);        // (row + 1) * 32 <= height - 1
+                c.solidId = m_Ground;
+                c.surfaceFrom = std::max(c.solidBelow, FloorDiv(m_Height - 1, kChunkSize) - 1);
+                return c;
+            }
 
             ChunkContent Generate(const glm::ivec3& coord, Chunk& chunk) const override {
                 const int y0 = coord.y * kChunkSize;
@@ -314,6 +369,9 @@ namespace vortex::voxel {
             }
 
         private:
+            static int FloorDiv(int a, int b) { return a / b - ((a % b != 0) && (a < 0) ? 1 : 0); }
+            static int CeilDiv(int a, int b) { return a / b + ((a % b != 0) && (a > 0) ? 1 : 0); }
+
             int m_Height;
             uint8_t m_Surface, m_Ground;
         };
@@ -335,6 +393,16 @@ namespace vortex::voxel {
                in(s.mountainHeight, -10000.0f, 10000.0f) && in(s.snowLine, -10000.0f, 10000.0f) &&
                in(s.caveMaxDepth, 0.0f, 10000.0f) && in(s.treeSpacing, 0.5f, 10000.0f) &&
                in(s.treeDensity, 0.0f, 1.0f);
+    }
+
+    HeightBounds TerrainSurfaceBounds(const TerrainSettings& s) {
+        // Every noise term is in [-1, 1] (ridge^2 and the inland factor in [0, 1]); the hill
+        // factor 0.35 + 0.65 * (continent / 2 + 1/2) is in [0, 1] as well.
+        const float spread = std::abs(s.continentHeight) + std::abs(s.hillHeight) + 0.35f;
+        HeightBounds b;
+        b.min = s.baseHeight - spread + std::min(0.0f, s.mountainHeight);
+        b.max = s.baseHeight + spread + std::max(0.0f, s.mountainHeight);
+        return b;
     }
 
     std::shared_ptr<IWorldGenerator> CreateFlatGenerator(int groundVoxelHeight, uint8_t surfaceId, uint8_t groundId) {

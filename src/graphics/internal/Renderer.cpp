@@ -342,9 +342,13 @@ namespace vortex::graphics {
             std::vector<uint8_t> queued;       // per slot: it is in `pending`
             std::deque<uint32_t> pending;
 
-            const voxel::World* gridWorld = nullptr;
-            uint64_t gridRevision = 0;
-            bool gridStale = true;             // an 'uploaded' flag changed since the grid was written
+            uint64_t gridWorld = 0;            // World::InstanceId() the GPU grid mirrors (0 = none)
+            uint64_t gridRevision = 0;         // the world's GridRevision() the GPU grid mirrors
+            size_t gridWords = 0;              // words of the world's grid the GPU buffer was written for
+            bool gridStale = true;             // the whole grid must be written again
+            std::vector<uint32_t> hiddenAt;    // per slot: grid word hidden because the slot was not uploaded (or ~0)
+            std::vector<uint8_t> pageDirty;    // per grid page: an 'uploaded' flag of a slot in it flipped
+            std::vector<VkBufferCopy> gridCopies;
             bool gridZeroed = false;           // the first entries are defined (used while there is no world)
             bool gridValid = false;            // this frame's GPU grid mirrors the input world
 
@@ -833,8 +837,9 @@ namespace vortex::graphics {
             if (!v.occ || !v.ids || !v.grid || !v.materials) return false;
             v.uploaded.assign(chunkCapacity, 0);
             v.queued.assign(chunkCapacity, 0);
+            v.hiddenAt.assign(chunkCapacity, ~0u);
             v.pending.clear();
-            v.gridWorld = nullptr;
+            v.gridWorld = 0;
             v.gridRevision = 0;
             v.gridStale = true;
             v.gridZeroed = false;
@@ -873,10 +878,11 @@ namespace vortex::graphics {
             VoxelGpu& v = voxels;
             std::fill(v.uploaded.begin(), v.uploaded.end(), uint8_t{0});
             std::fill(v.queued.begin(), v.queued.end(), uint8_t{0});
+            std::fill(v.hiddenAt.begin(), v.hiddenAt.end(), ~0u);
             v.pending.clear();
             v.gridStale = true;
             v.gridZeroed = false;
-            v.gridWorld = nullptr;
+            v.gridWorld = 0;
             v.materialSource = nullptr;
             const uint32_t end = std::min(v.capacity, store.HighWaterMark());
             for (uint32_t slot = 0; slot < end; ++slot) {
@@ -916,7 +922,7 @@ namespace vortex::graphics {
             const VkDeviceSize materialBytes = materialsDirty ? materialData.size_bytes() : 0;
 
             const voxel::World* world = UsableWorld(input.world);
-            const VkDeviceSize gridBytes = world != nullptr ? world->Grid().size_bytes() : kMinGridBytes;
+            const VkDeviceSize gridBytes = world != nullptr ? world->GridWords().size_bytes() : kMinGridBytes;
             const VkDeviceSize reserved = materialBytes + gridBytes;
 
             EnsureCapacity(frame, frame.staging, reserved + kChunkBytes, 0, BufferKind::Staging, "staging");
@@ -953,10 +959,8 @@ namespace vortex::graphics {
                 const voxel::Chunk* chunk = store.TryGet(slot);
                 if (chunk == nullptr) {
                     // Freed since it was marked dirty: the GPU copy is stale and must not be exposed.
-                    if (v.uploaded[slot]) {
-                        v.uploaded[slot] = 0;
-                        v.gridStale = true;
-                    }
+                    // (The grid word that pointed at it changed when the cell was unloaded.)
+                    v.uploaded[slot] = 0;
                     continue;
                 }
                 std::memcpy(staging + cursor, &chunk->occ, kOccBytes);
@@ -967,7 +971,13 @@ namespace vortex::graphics {
                 cursor += kIdBytes;
                 if (!v.uploaded[slot]) {
                     v.uploaded[slot] = 1;
-                    v.gridStale = true;
+                    // The grid word that was hidden while the slot was missing can show it now:
+                    // only its page is written again.
+                    const uint32_t word = v.hiddenAt[slot];
+                    if (word != ~0u && word / voxel::World::kGridPageWords < v.pageDirty.size()) {
+                        v.pageDirty[word / voxel::World::kGridPageWords] = 1;
+                    }
+                    v.hiddenAt[slot] = ~0u;
                 }
                 ++uploads;
             }
@@ -989,34 +999,64 @@ namespace vortex::graphics {
                     }
                 }
                 if (gridOk) {
-                    if (world != v.gridWorld || world->GridRevision() != v.gridRevision || v.gridStale) {
-                        const std::span<const uint32_t> grid = world->Grid();
-                        uint32_t* out = reinterpret_cast<uint32_t*>(staging + materialBytes);   // 4-byte aligned: materialBytes % 32 == 0
-                        for (size_t i = 0; i < grid.size(); ++i) {
-                            uint32_t entry = grid[i];
-                            if (entry != 0 && (entry & 0x80000000u) == 0) {
+                    const std::span<const uint32_t> words = world->GridWords();
+                    const std::span<const uint64_t> pages = world->GridPageRevisions();
+                    const uint32_t pageWords = voxel::World::kGridPageWords;
+                    const size_t cellCount = world->Grid().size();
+                    // A different World (even one at the same address) is written whole.
+                    const bool full = world->InstanceId() != v.gridWorld || v.gridStale || v.gridWords != words.size();
+                    if (full) v.pageDirty.assign(pages.size(), 1);
+                    v.pageDirty.resize(pages.size(), 1);
+                    v.gridCopies.clear();
+                    uint32_t* out = reinterpret_cast<uint32_t*>(staging + materialBytes);   // 4-byte aligned: materialBytes % 32 == 0
+                    // Only the 4 KiB pages that changed since the last copy (a window shift touches
+                    // all of them; streaming and edits a few). A cell whose slot is not on the GPU
+                    // yet shows what it showed before it became dense (World::GridFallback: air,
+                    // pending or its packed / uniform stand-in) and is remembered, so that the
+                    // upload re-writes one page.
+                    for (size_t page = 0; page < pages.size(); ++page) {
+                        if (!v.pageDirty[page] && pages[page] <= v.gridRevision) continue;
+                        v.pageDirty[page] = 0;
+                        const size_t first = page * pageWords;
+                        const size_t last = std::min(words.size(), first + pageWords);
+                        for (size_t i = first; i < last; ++i) {
+                            uint32_t entry = words[i];
+                            if (i < cellCount && entry != 0 && (entry & 0x80000000u) == 0) {
                                 const uint32_t slot = entry - 1;
                                 if (slot >= v.capacity) {
                                     EnqueueSlot(slot);   // reports the capacity problem once
                                     entry = 0;
                                 } else if (!v.uploaded[slot]) {
                                     if (store.IsAllocated(slot)) EnqueueSlot(slot);
-                                    entry = 0;           // not on the GPU yet: hide it
+                                    v.hiddenAt[slot] = static_cast<uint32_t>(i);
+                                    // Not on the GPU yet: never a dense word (that would read
+                                    // the slot), never a hole where something was shown.
+                                    const uint32_t fallback = world->GridFallback(static_cast<uint32_t>(i));
+                                    entry = (fallback & 0x80000000u) != 0u ? fallback : 0u;
                                 }
                             }
                             out[i] = entry;
                         }
-                        gridCopyBytes = gridBytes;
-                        v.gridWorld = world;
-                        v.gridRevision = world->GridRevision();
-                        v.gridStale = false;
-                        v.gridZeroed = true;
+                        const VkDeviceSize offset = static_cast<VkDeviceSize>(first) * sizeof(uint32_t);
+                        const VkDeviceSize bytes = static_cast<VkDeviceSize>(last - first) * sizeof(uint32_t);
+                        if (!v.gridCopies.empty() && v.gridCopies.back().dstOffset + v.gridCopies.back().size == offset) {
+                            v.gridCopies.back().size += bytes;
+                        } else {
+                            v.gridCopies.push_back(VkBufferCopy{materialBytes + offset, offset, bytes});
+                        }
+                        gridCopyBytes += bytes;
                     }
+                    v.gridWorld = world->InstanceId();
+                    v.gridRevision = world->GridRevision();
+                    v.gridWords = words.size();
+                    v.gridStale = false;
+                    v.gridZeroed = true;
                     v.gridValid = true;
                 }
             } else if (!v.gridZeroed) {
                 std::memset(staging + materialBytes, 0, kMinGridBytes);
                 gridCopyBytes = kMinGridBytes;
+                v.gridCopies.assign(1, VkBufferCopy{materialBytes, 0, kMinGridBytes});
                 v.gridZeroed = true;
                 v.gridStale = true;   // a world appearing later must rewrite the grid
             }
@@ -1036,14 +1076,14 @@ namespace vortex::graphics {
                     vkCmdCopyBuffer(cmd, frame.staging.handle, v.ids.handle, static_cast<uint32_t>(v.idCopies.size()), v.idCopies.data());
                 }
                 if (gridCopyBytes != 0) {
-                    const VkBufferCopy region{materialBytes, 0, gridCopyBytes};
-                    vkCmdCopyBuffer(cmd, frame.staging.handle, v.grid.handle, 1, &region);
+                    vkCmdCopyBuffer(cmd, frame.staging.handle, v.grid.handle, static_cast<uint32_t>(v.gridCopies.size()), v.gridCopies.data());
                 }
                 TransferBarrier(cmd, false);
             }
 
             stats.chunkUploads = uploads;
             stats.chunkUploadsPending = static_cast<uint32_t>(v.pending.size());
+            stats.gridBytesUploaded = static_cast<uint32_t>(gridCopyBytes);
         }
 
         // -----------------------------------------------------------------------------------------
@@ -1089,7 +1129,14 @@ namespace vortex::graphics {
             u.cameraPosVoxel = glm::vec4(glm::vec3(cameraPosD / voxelSize), static_cast<float>(voxelSize));
             u.renderSize = glm::vec4(renderSize, 1.0f / renderSize);
             u.outputSize = glm::vec4(outputSize, 1.0f / outputSize);
-            u.jitter = glm::vec4(jitter, historyValid ? prevJitter : jitter);
+            // zw: horizontal edge fog (start, end) in metres; 0 = off. The xy of the previous
+            // frame's jitter were never read by a shader.
+            glm::vec2 edgeFog(0.0f);
+            if (world != nullptr && settings.edgeFog && settings.fog) {
+                const float radius = static_cast<float>(world->ViewRadius());
+                if (radius > 0.0f) edgeFog = glm::vec2(0.85f * radius, radius);
+            }
+            u.jitter = glm::vec4(jitter, edgeFog);
 
             const float sunLength = glm::length(input.sun.direction);
             const glm::vec3 sunDirection = sunLength > 1.0e-6f ? input.sun.direction / sunLength : glm::vec3(0.0f, 1.0f, 0.0f);

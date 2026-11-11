@@ -3,6 +3,7 @@ module;
 #include <glm/glm.hpp>
 
 #include <cstdint>
+#include <span>
 
 module vortex.voxel;
 
@@ -52,6 +53,30 @@ namespace vortex::voxel {
         return Finish(AddRun(h, id, length));
     }
 
+    namespace {
+        /// ChunkHash of the chunk an EncodeChunk(Dense) byte string decodes to, without decoding:
+        /// adjacent runs of one id are merged, so any run split gives the maximal-run hash.
+        uint64_t EncodedChunkHash(std::span<const uint8_t> bytes) {
+            uint64_t h = kSeed;
+            bool open = false;
+            uint8_t id = 0;
+            uint32_t length = 0;
+            for (size_t p = 1; p + 2 < bytes.size(); p += 3) {
+                const uint8_t next = bytes[p];
+                const uint32_t run = static_cast<uint32_t>(bytes[p + 1] | (bytes[p + 2] << 8));
+                if (open && next == id) {
+                    length += run;
+                    continue;
+                }
+                if (open) h = AddRun(h, id, length);
+                open = true;
+                id = next;
+                length = run;
+            }
+            return open ? Finish(AddRun(h, id, length)) : kAirChunkHash;
+        }
+    }
+
     uint64_t ChunkHash(ChunkKind kind, uint8_t uniformId, const Chunk* chunk) {
         switch (kind) {
             case ChunkKind::Uniform: return UniformHash(uniformId);
@@ -89,6 +114,10 @@ namespace vortex::voxel {
                         }
                         case CellState::Dense:
                             if (const Chunk* chunk = world.GetChunk(coord)) hash = ChunkHash(*chunk);
+                            break;
+                        case CellState::Packed:
+                            // Hashed from its runs: packing is not a content change.
+                            hash = EncodedChunkHash(world.PackedData(coord));
                             break;
                     }
                     if (hash == kAirChunkHash) continue;

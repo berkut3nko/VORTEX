@@ -85,7 +85,7 @@ TEST(World, GridEncodingMatchesShaderContract) {
         for (int z = min.z; z < min.z + size.z; ++z)
             for (int x = min.x; x < min.x + size.x; ++x) {
                 const glm::ivec3 w = glm::ivec3(x, y, z) & (size - glm::ivec3(1));
-                const uint32_t entry = grid[static_cast<size_t>(w.x + w.z * size.x + w.y * size.x * size.z)];
+                const uint32_t entry = grid[static_cast<size_t>((w.x + w.z * size.x) * size.y + w.y)];
                 switch (f.world->StateOf({x, y, z})) {
                     case CellState::Empty:   EXPECT_EQ(entry, 0u); break;
                     case CellState::Uniform: EXPECT_EQ(entry, 0x80000000u | kRock); break;

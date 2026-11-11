@@ -42,6 +42,17 @@ namespace vortex::voxel {
         --m_Used;
     }
 
+    std::unique_ptr<Chunk> ChunkStore::Release(uint32_t slot) {
+        if (!IsAllocated(slot)) {
+            Log::Warn("ChunkStore::Release: slot {} is not allocated", slot);
+            return nullptr;
+        }
+        std::unique_ptr<Chunk> chunk = std::move(m_Chunks[slot]);
+        m_FreeList.push_back(slot);
+        --m_Used;
+        return chunk;
+    }
+
     void ChunkStore::MarkDirty(uint32_t slot) {
         if (slot >= m_DirtyFlag.size() || m_DirtyFlag[slot]) return;
         m_DirtyFlag[slot] = 1;

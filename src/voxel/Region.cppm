@@ -39,6 +39,8 @@ export namespace vortex::voxel {
         ~RegionStore();
 
         std::optional<std::vector<uint8_t>> Load(const glm::ivec3& chunk);
+        /// @brief True if a chunk is stored (reads the region file on first use, like Load).
+        bool Contains(const glm::ivec3& chunk);
         void Save(const glm::ivec3& chunk, std::vector<uint8_t> bytes);
         /// @brief Writes all modified regions. Returns the number of files written.
         size_t Flush();

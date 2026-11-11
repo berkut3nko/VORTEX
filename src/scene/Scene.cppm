@@ -22,13 +22,21 @@ import vortex.physics;
 
 export namespace vortex::scene {
 
+    /**
+     * @brief Connected pieces with fewer voxels than this are particles, never objects: the
+     * default of SceneConfig::minPieceVoxels, and the rule sim::Blast applies to terrain islands
+     * (smaller ones are cleared by one WorldOpKind::ClearMask per blast instead of a Detach each).
+     * The blast rule is part of what a server sends, so it is this constant, not a scene's config.
+     */
+    inline constexpr uint32_t kMinPieceVoxels = 16;
+
     /// @brief Tuning of a scene. The defaults reproduce the engine's destruction behaviour.
     struct SceneConfig {
         float voxelSize = 0.1f;               ///< Metres per voxel of every voxel object (Transform scale). Use the world's.
         /// Connected pieces with fewer voxels never become entities: they turn into particles at
         /// once (Damage, CreateVoxelObject with `debris`). 16 voxels of 0.1 m are a lump the size
         /// of a fist; anything smaller is not worth a rigid body and chunk memory.
-        uint32_t minPieceVoxels = 16;
+        uint32_t minPieceVoxels = kMinPieceVoxels;
         /// Non-static bodies with fewer solid voxels are "small": they use physics::Layer::Debris
         /// (no collisions among each other) with continuous collision detection (they are thin
         /// enough to tunnel through the terrain mesh otherwise), and - if they are rubble - get
@@ -62,7 +70,7 @@ export namespace vortex::scene {
          * Damage makes an entity of every piece of at least `minPieceVoxels` (an offline game).
          * Otherwise a piece with fewer solid voxels is not made into an entity: Damage returns it
          * in DamageResult::fragments (model, pose, velocities) for whoever shows rubble - a
-         * client, or Engine::PresentBlast offline - to create locally. The damaged entity itself
+         * client, or sim::PresentBlast offline - to create locally. The damaged entity itself
          * goes the same way when what is left of it is below the threshold and Dynamic (a
          * Static / Kinematic object only dented stays). sim::ServerConfig sets 512.
          */
@@ -338,6 +346,17 @@ export namespace vortex::scene {
          * @return Number of entities destroyed.
          */
         uint32_t DestroyBelow(float height);
+
+        /**
+         * @brief The world's build ceiling (voxel::World::BuildCeiling, metres; +infinity = none).
+         * CreateVoxelObject refuses an object whose top would be above it (logged, kNoEntity), and
+         * DestroyAbove is the kill plane for what is thrown over it.
+         */
+        void SetBuildCeiling(double height);
+        double BuildCeiling() const;
+        /// @brief Destroys dynamic bodies that are awake and entirely above `height` (world metres):
+        /// the sky above the build ceiling is outside the world. Logs the count.
+        uint32_t DestroyAbove(double height);
 
     private:
         struct Impl;

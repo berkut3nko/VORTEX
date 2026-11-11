@@ -103,14 +103,17 @@ void main() {
                 ivec2 offset = ivec2(i & 1, i >> 1);
                 ivec2 tap = clamp(base + offset, ivec2(0), maxPx);
                 float prevDepth = texelFetch(u_PrevDepth, tap, 0).r;
-                vec3 prevNormal = SafeNormal(texelFetch(u_PrevNormal, tap, 0));
-                bool sameDepth = prevDepth > 0.0 &&
+                vec4 prevEncoded = texelFetch(u_PrevNormal, tap, 0);
+                vec3 prevNormal = SafeNormal(prevEncoded);
+                float prevCount = texelFetch(u_PrevLightCount, tap, 0).r;
+                // A chunk that was not loaded yet has a depth but no lighting to reuse.
+                bool sameDepth = prevDepth > 0.0 && !VxNormalUnlit(prevEncoded) &&
                                  abs(prevDepth - expectedDepth) <= VX_HISTORY_DEPTH_TOL * max(prevDepth, expectedDepth);
                 bool sameNormal = dot(prevNormal, n) >= VX_HISTORY_NORMAL;
                 float w = ((offset.x == 1) ? f.x : 1.0 - f.x) * ((offset.y == 1) ? f.y : 1.0 - f.y);
                 w = (sameDepth && sameNormal) ? w : 0.0;
                 historySum += max(texelFetch(u_PrevLighting, tap, 0), vec4(0.0)) * w;
-                countSum += texelFetch(u_PrevLightCount, tap, 0).r * w;
+                countSum += prevCount * w;
                 weightSum += w;
             }
             if (weightSum > 1.0e-3) {

@@ -33,9 +33,9 @@ of commit ac17bcf (all re-checked against the code at 7a95975); search for the s
 Ownership and lifetimes
 - `Renderer` borrows `Device`, `Window`, `UiLayer` (raw pointers, R.cpp:360). Shutdown order is renderer
   before device; `Renderer::Shutdown` waits idle and tolerates a dead device (R.cpp:1735).
-- Everything in `FrameInput` must outlive `RenderFrame` only; nothing is retained except the *addresses* of
-  `world` and `materials`, compared (never dereferenced later) to detect a different source
-  (`gridWorld`, `materialSource`, R.cpp:334/340).
+- Everything in `FrameInput` must outlive `RenderFrame` only; nothing is retained except the *address* of
+  `materials`, compared (never dereferenced later) to detect a different source (`materialSource`), and the
+  world's `World::InstanceId()` (`gridWorld`): a new World at the same address is still a different one.
 - Two frames in flight (`kFramesInFlight`, R.cpp:45). A `FrameContext` (R.cpp:272) may only be touched after
   its fence was waited (R.cpp:1511). A buffer a previous frame may still read is never destroyed directly:
   use `DeferDestroy` (R.cpp:426); the queue is flushed when the same slot comes round again (R.cpp:1516).
@@ -113,7 +113,9 @@ Spaces, units, ranges
   relies on the per-tap depth/normal rejection in `lighting.frag:88-121` and the colour clamp in `taa.frag:77`.
 - `Frame.cppm:144` mentions `Renderer::RenderOrigin`; no such function exists. The origin is
   `World::WindowOrigin()`.
-- Spare fields, written but read by no shader: `jitter.zw`, `settings.z` (front count). `outputSize` is read by
+- `jitter.zw` is the horizontal edge fog (start, end) in metres, 0 = off (`RenderSettings::edgeFog`, 0.85 R .. R
+  with R = `World::ViewRadius()`), read by `composite.frag`; the previous frame's jitter it used to hold was never read.
+- Spare fields, written but read by no shader: `settings.z` (front count). `outputSize` is read by
   `hud.vert` (pixels -> NDC) and `settings.w` by `present.frag` (HUD backdrop dim, 0..255). `FrameInput::deltaTime` is
   not read by the renderer. Reuse spare fields before adding new ones.
 - `FrameUniforms` may only contain mat4 / vec4 / ivec4 (`Frame.cppm:22`); a vec3 or float breaks the
@@ -255,3 +257,27 @@ F. Change temporal accumulation or the checkerboard
 - Look at the screenshot: a black frame usually means a pass was skipped (targets are cleared to 0); noisy
   lighting that never settles means history is being rejected; water must look the same with TAA on and off.
 - Windowed paths (swapchain recreate, vsync toggle, UI, F5 reload) cannot be checked headless: say so.
+
+## View distance stage 1 (full-height window)
+
+- `u_Grid` is `World::GridWords()`: cells (column-major), then column tops, content top, region tops; the shader
+  macros `VX_GRID_COLUMN_TOP` / `VX_GRID_CONTENT_TOP` / `VX_GRID_REGION_TOP` in `common.glsl` index past the
+  `gridSize.x * y * z` cells. A new tail section must be added in `World`, those macros and `Trace.cpp` together.
+- Grid upload: only pages whose `World::GridPageRevisions()` entry is newer than the last copy, plus pages of cells
+  hidden while their slot was not uploaded (`VoxelGpu::hiddenAt`, per slot the grid word that was replaced). A
+  hidden cell shows `World::GridFallback(cell)`, what it showed before it became dense (pending, its packed /
+  uniform stand-in, or air): never a hole where something was, never a dense word for a slot that is not there. A
+  new world (`InstanceId`), a grown buffer or `InvalidateVoxelMirror` rewrites everything.
+  `RenderStats::gridBytesUploaded` shows the bytes per frame.
+- A pending cell (`0x80000000`, material 0) is written by `gbuffer_world.frag` as `VX_GBUFFER_SKY` with its depth
+  and normal `VX_NORMAL_UNLIT` (alpha 1 in the 2-bit alpha of the normal target; surfaces write 0): lighting skips
+  it, composite shows the sky colour, objects behind it are hidden. The spatial filter (`composite.frag`) and the
+  lighting history (`lighting.frag`) skip taps with that alpha - they read the normal anyway, so the test costs no
+  fetch (measured: composite at the spawn camera 1.86 ms median vs 1.81 ms without, noise 0.15 ms; an extra
+  `u_LightCount` fetch per tap instead cost +0.3 ms). Without it ground next to a pending cell averaged in its
+  zero lighting (dark halos while streaming).
+- Edge fog: `composite.frag` mixes surfaces towards `SkyColor(rd)` (the same sky + atmospheric fog a sky pixel gets)
+  by horizontal distance only. Sky pixels are unchanged.
+- GPU timings while the world streams are not comparable: the CPU generation threads (all cores, and the `dev`
+  build has no `-O`) take the shared power budget of the UHD 620. Compare runs with a fixed `--camera` once the log
+  says `World: window filled`.

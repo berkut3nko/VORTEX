@@ -16,9 +16,10 @@ here. Line numbers in `src/scene`, `src/sim` and `src/engine` are as of M1 stage
 - `src/sim/Sim.cppm` - primary unit of `vortex.sim`; re-exports `:simulation`, `:worldop`, `:blast`. Later stages add
   partitions here (`RegionDesc`, `StepPlayer`; `docs/design/networking.md`).
 - `src/sim/WorldOp.cppm`, `internal/WorldOp.cpp` - `WorldOpKind` (wire values), `WorldOp` + factories + `Bounds`,
-  `OpResult`, `ApplyOp`, `BuildDetachedPiece`.
+  `OpResult`, `ApplyOp`, `BuildDetachedPiece`. Kinds 1-6, the last `ClearMask` (`WorldOp::Clear`: a blast's crumbs).
 - `src/sim/Blast.cppm`, `internal/Blast.cpp` - `BlastDesc`, `AppliedOp`, `BlastResult`, `BlastPush`, `Blast` (the
-  simulation half of a blast), `kMaxIslandVoxels`, `kIslandSearchMargin`.
+  simulation half of a blast), `PresentBlast` (the presentation half, GPU-free; `Engine::PresentBlast` forwards),
+  `kMaxIslandVoxels`, `kIslandSearchMargin`. The crumb threshold is `scene::kMinPieceVoxels` (Scene.cppm).
 - `src/sim/Simulation.cppm` - `SimulationConfig`, `ServerConfig`, the `Simulation` interface. Its doc comment is the
   contract (tick, phases, what is not stepped).
 - `src/sim/internal/Simulation.cpp` - `Resolve` (the two config overrides), `Impl` (member order), `HeldWindowFocus`,
@@ -45,8 +46,8 @@ here. Line numbers in `src/scene`, `src/sim` and `src/engine` are as of M1 stage
 - `main.cpp` - `ShredborneGame`: playground, player controller, headless self-test, `--camera` / `--editor` /
   `--pause-menu` / `--no-hud` parsing, play-mode cursor (`CursorCapture`), pause menu, HUD (`DrawHud`), the F3 ImGui
   debug overlay (`DebugOverlay`).
-- `Engine` has no unit test (needs a device): `Run`, `PresentBlast` and the game are checked only by the headless
-  runs. `sim::Blast`, the half that changes the simulation, is unit tested in `tests/sim/BlastTests.cpp`. What `Run` does to the simulation is three `Simulation` calls, and those are unit tested.
+- `Engine` has no unit test (needs a device): `Run` and the game are checked only by the headless runs. Both halves
+  of a blast, `sim::Blast` and `sim::PresentBlast`, are unit tested in `tests/sim/BlastTests.cpp`. What `Run` does to the simulation is three `Simulation` calls, and those are unit tested.
 
 ## 2. Invariants
 
@@ -192,10 +193,12 @@ Scene
 
 Engine
 - Blast order. `sim::Blast` (Blast.cpp): carve (`ApplyOp(WorldOp::Carve)`) -> island search with
-  `removeFromWorld = false` -> per island `WorldOp::Detach` applied with `ApplyOp` (no entity) -> snapshot
+  `removeFromWorld = false` -> per island of 16+ voxels `WorldOp::Detach` applied with `ApplyOp` (no entity) -> one
+  `WorldOp::Clear` for all smaller islands (the union mask over their tight box) -> snapshot
   (`QueryBodies`) -> `Damage` each (fragments get `BlastPush` added) -> impulses -> `ActivateInBox`.
-  `Engine::PresentBlast` (Engine.cpp): per carve the debris particles, per Detach with netId 0 a rubble object from
-  the removed voxels with `op.velocity` -> explosion particles -> fragment rubble -> flash. Rubble made by
+  `sim::PresentBlast` (Blast.cpp): per carve the debris particles, per Detach with netId 0 a rubble object from
+  the removed voxels with `op.velocity`, per ClearMask particles only (every 3rd crumb voxel, at most 400, pushed with
+  `BlastPush` at the voxel) -> explosion particles -> fragment rubble -> flash. Rubble made by
   `PresentBlast` is created after the snapshot, so a fresh island is **not** damaged by the blast that freed it
   (before stage 2 it was, without a hardness check); it still gets the same push, as initial velocity
   (impulse = mass x `BlastPush`, so `Detach::velocity = BlastPush` at the island's corner - the old impulse sampled the
@@ -209,7 +212,8 @@ Engine
   not dynamic, so nothing happens. A frozen body keeps the push as velocity for when it resumes
   (PhysicsWorld.cpp:725-743).
 - The impulse loop runs inside a registry view (Blast.cpp): only physics calls belong there.
-- Budgets: 400 to 799 terrain debris bursts per blast (stride = removed / 400, rounded down, in `PresentBlast`),
+- Budgets: 400 to 799 terrain debris bursts per blast (stride = removed / 400, rounded down, in `PresentBlast`), at
+  most 400 crumb bursts,
   islands up to `kMaxIslandVoxels` (60 000), search box radius + `kIslandSearchMargin` (24) voxels. Flash lifetime
   `ln(40*radius / 0.05) / 9` s (0.7 s for 0.7 m). Call `Explode` / `Blast` from `OnUpdate` / `OnFixedUpdate`, never
   inside a registry view.
@@ -219,7 +223,8 @@ Engine
 - `ApplyCommandLine` also takes `--no-checkerboard` (Engine.cpp:35), missing from the comment at `Engine.cppm:54-55`.
   `--camera` and `--editor` are game flags (main.cpp:481-489).
 - A `Simulation` without an engine blasts with `sim::Blast` and gets no particles, no flash and no island rubble:
-  islands are `Detach` operations, whoever draws makes the rubble (`Engine::PresentBlast` offline, a client later).
+  islands are `Detach` operations, crumbs one `ClearMask`; whoever draws calls `sim::PresentBlast` (the engine
+  offline, a client later).
   `BlastResult::Report()` lists chunks an operation could not apply to; nothing reads it yet (stage 7).
 - `EngineConfig::world.saveDirectory` reaches the simulation's world unchanged: with it, edits are loaded from there,
   saved on shutdown and by the editor's "Save world" button (which reads `World::Config().saveDirectory`). The game
@@ -287,11 +292,11 @@ Change what `Damage` does to pieces
 Add an effect to a blast
 1. Decide the half. Changes to the simulation (world, bodies, entities that exist on a server) go into `sim::Blast`
    and must be returned in `BlastResult` if a client needs them; terrain changes only as `WorldOp`s through `ApplyOp`.
-   Pictures (particles, lights, local rubble) go into `Engine::PresentBlast`, made from the result and the client's
+   Pictures (particles, lights, local rubble) go into `sim::PresentBlast`, made from the result and the client's
    own world. Spawned entities need a `Lifetime` or `debris = true`.
-2. `sim::Blast` is unit tested (`tests/sim/BlastTests.cpp`); `PresentBlast` has no test: keep it glue.
-3. Headless run (`Blast at the crates: A -> B objects (T terrain voxels, I island(s), V object voxels in N
-   object(s))`) and a `--camera` screenshot of the plaza (`--camera 14.3,7.0,-4.5,3.1416,-0.2` frames the crates).
+2. Both halves are unit tested (`tests/sim/BlastTests.cpp`); `Engine::PresentBlast` only forwards.
+3. Headless run (`Blast at the crates: A -> B objects (T terrain voxels, I island(s), C crumb(s) of K voxels, V
+   object voxels in N object(s))`) and a `--camera` screenshot of the plaza (`--camera 14.3,7.0,-4.5,3.1416,-0.2` frames the crates).
 
 Add an `Application` callback or move a loop step
 1. Virtual with an empty default (`Engine.cppm:76-84`), call site in `Run`, keeping the order rules of section 2.
@@ -336,8 +341,9 @@ then the whole binary because `EditorTests.cpp` uses the scene; and `./build/eng
   `DestroyBelowRemovesWhatFellOutOfTheWorld`. `SceneDamage.*` (14) and `SceneDebris.*` (9): see the recipes.
 
 Headless game run (commands in `CLAUDE.md`); in the log:
-- `Blast at the crates: A -> B objects (T terrain voxels, I island(s), V object voxels in N object(s))`; since stage 2
-  `7 -> 7 objects (0 terrain voxels, 0 island(s), 558 object voxels in 5 object(s))`. `Beam cut: N voxels removed, 1
+- `Blast at the crates: A -> B objects (T terrain voxels, I island(s), C crumb(s) of K voxels, V object voxels in N
+  object(s))`; since stage 2 `7 -> 7 objects (0 terrain voxels, 0 island(s), 0 crumb(s) of 0 voxels, 558 object voxels
+  in 5 object(s))`. `Beam cut: N voxels removed, 1
   new object(s)`.
 - `Player feet at (x, y, z), on the ground`, logged by `main` after `Run`. It must not say `in the air` (run without
   `--camera`), and x / z must differ from the spawn point.
@@ -352,3 +358,23 @@ Headless game run (commands in `CLAUDE.md`); in the log:
 Screenshot without `--camera`: third-person view from behind the figure on the plaza; figure visible and upright,
 crates or their wreckage ahead, nothing hanging in the air, no flash left by frame 200. Windowed behaviour (mouse
 look, jump feel, editor focus) cannot be checked headless: say so.
+
+## View distance stage 1 (full-height window)
+
+- `Scene::SetBuildCeiling` is called by `sim::Simulation::Initialize` with `World::BuildCeiling()` (+infinity
+  without a fixed height range). `CreateVoxelObject` refuses an object whose rotated box would reach above it
+  (`Log::Warn`, `kNoEntity`); `Simulation`'s lifetime phase runs `Scene::DestroyAbove(ceiling)` after
+  `DestroyBelow`: awake dynamic bodies entirely above the ceiling are removed (tested in
+  `Simulation.ModelsAboveTheBuildCeilingAreRefusedAndTheSkyAboveItIsAKillPlane`).
+- `Engine::Run` logs `World: surface filled in N frames` and `World: window filled in N frames` once each
+  (`World::IsFilled`, per column, cheap), and at exit the store with its store-full counts (must be 0), the window
+  rows, Packed count and MiB, unloads inside the view radius, recentre times, Packed decodes (revealed ones) and
+  re-packs. `--climb` / `--fly` log their own unloads and store-full counts.
+- After the streaming phase `Engine::Run` calls `sim::RetryIslandSearches` and presents each result
+  (`sim::PresentBlast`; a `deferred` result has no explosion and no flash): the island search of a blast whose box was
+  not loaded (an offline window streams cave rows after every surface) runs once the world has loaded the box
+  (`World::RequestLoad`, asked by `sim::Blast`). At most 16 wait; one is given up after 600 calls.
+- The game (`src/main.cpp`) runs with `fullHeight` and `packHidden`; its start loads with `LoadScope::Surface` (every
+  surface and everything within 16 m; caves stream in afterwards, 23-26 s for the whole window in the `dev` build),
+  and `BuildPlayground` loads around the plaza the same way before it edits it. `--climb` and `--fly` are the
+  headless measurements of the design (`docs/design/view-distance.md`, "Stage 1 as built").
