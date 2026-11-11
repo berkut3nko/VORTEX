@@ -1,5 +1,7 @@
 # Level of detail for distant terrain and objects
 
+Rebased to 0.125 m base voxels (levels 0.125 * 2^L) by [view-distance.md](view-distance.md); mechanisms below unchanged.
+
 Status: design decision, nothing built or measured for it. Millisecond figures not quoted from
 `ROADMAP.md` are estimates; every stage names the measurement that confirms or kills them.
 Claims about today's code were checked against the sources (uncommitted physics work included).
