@@ -245,6 +245,15 @@ State (stages are those of [design/networking.md](design/networking.md)):
 - **CPU reference renderer** (`tools/cpu_render`): software frame from the shared shader code, for
   image checks on machines without a GPU.
 
+### Drafts awaiting the owner (2026-11-12)
+- **Destruction** (`design/shred.md`, draft): the "second shot" bug is the island search box - a piece that reaches
+  past +-(r/16 + 24) voxels of a blast counts as attached and is never searched again; fix by an outward flood of
+  face-touching parts (stage 1), plus carve replay into late chunks, counters, the stale-collider push fix and a rubble
+  budget (stages 1b-1e); later material crumble profiles, structural support, impact destruction by estimated mass.
+- **Frame rate** (`design/perf.md`, draft): measure the present path and CPU frame time first, then fog-radius ray
+  cut and one modulo per ray, then lod.md stage 1 and half-resolution lighting. The owner calls the 0.125 m view
+  radius (92 m) the sweet spot on the UHD 620: frame rate comes before more distance there.
+
 ### World
 - **View distance** (`design/view-distance.md`): stage 1 (full-height window, column pass, Packed chunks,
   column / region-top skip, dirty grid pages, edge fog, `--climb` / `--fly`) is **done**; measured numbers and what
