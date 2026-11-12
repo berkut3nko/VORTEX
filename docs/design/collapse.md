@@ -3,6 +3,9 @@
 Status: design decision, nothing built. All run-time costs for new code are estimates from
 operation counts (about 5 ns per voxel flood-filled, 1-2 ns per mask operation); stage 2 contains
 the benchmark that replaces them. Claims about today's code were checked against the sources.
+**Partly superseded by [shred.md](shred.md)** (2026-11-12): terrain is the first host there, the
+replication rules of networking.md apply, and its stages 0-1c are built (see "What is wrong today").
+The measured face flood costs about 50 ns per voxel visit (optimised build), not 5.
 
 ## Decision
 
@@ -44,11 +47,15 @@ Rejected, and why:
 - Per-hit cost scales with the object: 64^3 = 256 KiB copy + 1 MiB labels + up to 8 chunks
   re-baked (fine, estimated 1-3 ms); 256^3 = 16 MiB + 64 MiB + up to 512 chunks, which at
   `maxChunkUploadsPerFrame = 128` is at least 4 frames of upload alone.
-- Terrain: `Engine::Explode` searches radius + 24 voxels with a 60 000-voxel cap;
-  `ExtractFloatingIslands` treats a component touching the search box as attached and refuses
-  regions over 192 voxels per axis. The playground (`src/main.cpp:282`, `world.FillBox`) is
-  terrain, so a tower with its base blasted out stays in the air.
-- No piece ever gets a `Lifetime`; `minPieceVoxels = 6` keeps tiny bodies alive.
+- Terrain: `sim::Blast` (no longer `Engine::Explode`) searches radius + 24 voxels with a
+  60 000-voxel cap; `ExtractFloatingIslands` treats a component touching the search box as attached
+  and refuses regions over 192 voxels per axis. **Fixed for pieces up to 60 000 voxels by
+  shred.md stage 1**: such a component is proven by a bounded flood inside the blast's flood box
+  (+-96 voxels), so the playground's watch tower falls on the shot that cuts its base
+  (`--tower-blast`). Larger pieces (castle walls) still stay, counted: shred.md stages 4-5.
+- Stale since networking / view-distance stage 3: pieces under `MinPieceVoxels` (8 at 0.125 m)
+  are particles, and rubble under `debrisBodyVoxels` (25 at 0.125 m) has `Debris` with a 15 s
+  life and a cap of 192. Larger rubble still has neither (shred.md stage 1e).
 
 ### Data (`vortex.voxel:structure`, CPU only)
 

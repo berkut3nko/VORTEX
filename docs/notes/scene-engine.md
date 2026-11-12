@@ -19,7 +19,9 @@ here. Line numbers in `src/scene`, `src/sim` and `src/engine` are as of M1 stage
   `OpResult`, `ApplyOp`, `BuildDetachedPiece`. Kinds 1-6, the last `ClearMask` (`WorldOp::Clear`: a blast's crumbs).
 - `src/sim/Blast.cppm`, `internal/Blast.cpp` - `BlastDesc`, `AppliedOp`, `BlastResult`, `BlastPush`, `Blast` (the
   simulation half of a blast), `PresentBlast` (the presentation half, GPU-free; `Engine::PresentBlast` forwards),
-  `kMaxIslandVoxels`, `kIslandSearchMargin`. The crumb threshold is `scene::MinPieceVoxels(world.VoxelSize())` (Scene.cppm; 8 at 0.125 m).
+  `kMaxIslandVoxels`, `kIslandSearchMargin`, `kFloodVisitBudget`, `kMaxDeferredIslandSearches`, `kServerWindowMarginChunks`,
+  `IslandBox` / `FloodBox`, `BlastTimes` / `IslandSearchStats` (shred.md stages 0-1c), `RetryIslandSearches`. The crumb
+  threshold is `scene::MinPieceVoxels(world.VoxelSize())` (Scene.cppm; 8 at 0.125 m).
 - `src/sim/Simulation.cppm` - `SimulationConfig`, `ServerConfig`, the `Simulation` interface. Its doc comment is the
   contract (tick, phases, what is not stepped).
 - `src/sim/internal/Simulation.cpp` - `Resolve` (the two config overrides), `Impl` (member order), `HeldWindowFocus`,
@@ -34,7 +36,10 @@ here. Line numbers in `src/scene`, `src/sim` and `src/engine` are as of M1 stage
 - Libraries: `scene` + `sim` are `VortexSim` (Core + Physics + EnTT, no GPU); `engine` + `editor` are `VortexEngine`.
 - `tests/sim/BlastTests.cpp` - suites `WorldOps` and `Blast` (stage 2, incl. the two-simulation hash acceptance);
   helpers `Arena` (simulation on flat ground, window loaded), `Mushrooms` (set-up operations with two islands to be),
-  `StemCut`.
+  `StemCut`. `tests/sim/FaceFloodTests.cpp` - `Blast.*` of shred.md stages 1-1c (face flood, carve replay, deferred
+  searches) and the disabled cost case `Blast.DISABLED_CostOfTheTowerAndCastleCases`; helpers `FloodArena`,
+  `UnclassifiedGround` (no column pass: a chunk that enters the window stays Loading until the next `Update`),
+  `MushroomGround` (a generated mushroom, for a carve into a loading chunk), `Pillar`, `kBaseCut`.
 - `tests/sim/SimulationTests.cpp` - suite `Simulation`; helpers `FlatWorld` (a simulation on flat ground, window
   loaded) and `Playground` (crates, a static block, a lamp, a flash). `tests/sim/ServerSceneTests.cpp` - suite
   `ServerScene`; helper `Bench` (store + materials + physics + particles + scene, no world). Both are
@@ -161,7 +166,8 @@ Scene
 - `SceneConfig::bakeModels = false` (server): no model the scene sees is ever baked, so `Parts()` is empty and
   `GatherInstances` returns nothing for it. Anything new that reads `Parts()` or chunk slots of a scene model must
   cope with an unbaked one (it already had to: the full-store case above). A model baked by its creator stays baked.
-- `SceneConfig::markDebris = false` (server) switches off all three places that add `Debris` (Scene.cpp:204, 418, 426).
+- `SceneConfig::markDebris = false` (server) switches off every place that adds `Debris` (`CreateVoxelObject`, the
+  `Damage` pieces and remnant) and with it the whole rubble budget (stage 1e below).
   Layers do not change: a small body is still `Layer::Debris` with CCD. Pieces below `minPieceVoxels` still never
   become entities.
 - `SceneConfig::replicatedPieceVoxels` (0 = off, the default; 512 from `sim::ServerConfig`): in `Damage` a piece below
@@ -171,9 +177,12 @@ Scene
   size (`pieceMotion` must be Dynamic). The test sits before the bake, so fragments never take chunk slots. Damage's
   own particles are still spawned. On a server the game's crate (296 voxels) is client rubble at its first hit.
 - A Static / Kinematic object cut apart becomes Dynamic as a whole; the kept entity's `RigidBody::motion` changes.
-- Rubble marking is asymmetric by design: new small pieces always get `Debris`; the damaged entity only if small,
-  Dynamic and `debrisRemnants`; an existing `Debris` keeps its age
-  (`SceneDebris.RemnantOfADamagedObjectBecomesRubbleOnceItIsSmall`).
+- Rubble marking is asymmetric by design: new small pieces always get `Debris`; every piece split off an entity
+  that is rubble gets it too (age 0, a lifetime by the piece's size: with the parent's age a piece of old large
+  rubble expired on the next `Update`, `PiecesCutOffOldRubbleAreNotRemovedAtOnce`; `PiecesCutOffRubbleStayRubble`);
+  the damaged entity only if small, Dynamic and `debrisRemnants`; an existing `Debris` keeps its age and lifetime
+  (`SceneDebris.RemnantOfADamagedObjectBecomesRubbleOnceItIsSmall`). Pieces of a non-rubble object of
+  `debrisBodyVoxels` or more are ordinary objects (offline crate halves stay).
 - `VoxelObjectDesc::debris` only acts with `withBody` and `motion == Dynamic` (Scene.cpp:175). Below `minPieceVoxels` (8 at 0.125 m) it
   returns `kNoEntity`, which is not an error: do not log or assert on it.
 - A model with no solid voxels and `withBody = true` gives an entity without `RigidBody` (Scene.cpp:190).
@@ -182,8 +191,17 @@ Scene
   rest and are not frozen themselves; the flight velocity remembered for the original is lost (no test covers it).
 - `Update` handles `Lifetime` before rubble: an entity with both leaves no particle puff; invisible rubble leaves none
   either (Scene.cpp:97).
-- The cap counts only pieces that did not expire this frame; ties break by entity id (Scene.cpp:128-130) so headless
-  runs stay reproducible. A `Debris` entity without a body counts as resting for the far rule (Scene.cpp:119).
+- The caps count only pieces that did not expire this frame; ties break by entity id (`ListRubble`) so headless
+  runs stay reproducible. A `Debris` entity without a body counts as resting for the far rule and for the budget.
+  The `Update` cap pass (rubble split by `Damage`) removes resting pieces first, then moving ones, oldest first each,
+  like `MakeRoom` (`CapAfterASplitRemovesRestingRubbleFirst`); it reads physics state only when a cap is exceeded.
+- The far rule applies to small rubble (< `debrisBodyVoxels`) only; larger rubble lives its 20 / 30 s wherever the
+  viewer is (`LargeRubbleFarFromTheViewerLivesItsLifetime`). For it "resting" is `!active`, so a frozen small piece
+  counts (it has no collider 25 m away and would hang there); `MakeRoom` uses `!(active || wantsToMove)` on purpose.
+- `OnRigidBodyDestroyed` wakes the body's bounds + one voxel + 0.05 m after removing it (`ActivateInBox`, frozen
+  bodies there get `wake`): Jolt wakes nothing on removal, and a crate on expired rubble stayed asleep in the air
+  (`RemovedRubbleWakesWhatRestsOnIt`). It applies to every removal (expiry, caps, `Destroy`, `Damage`'s old body,
+  `DestroyAbove` / `DestroyBelow`); `Scene::Clear` sets `clearing` and wakes nothing.
 - `DestroyBelow` (world metres, whole AABB below) takes only Dynamic bodies that are awake, or frozen with
   `wantsToMove`; an impulse or `ActivateInBox` on a parked body makes it eligible. NaN position or bounds always go.
 - `EntityCount()` uses `storage<entt::entity>()->free_list()` (Scene.cpp:235-240): EnTT 3.15 internals
@@ -193,8 +211,10 @@ Scene
 
 Engine
 - Blast order. `sim::Blast` (Blast.cpp): carve (`ApplyOp(WorldOp::Carve)`) -> island search with
-  `removeFromWorld = false` -> per island of at least `scene::MinPieceVoxels(world voxel size)` `WorldOp::Detach` applied with `ApplyOp` (no entity) -> one
-  `WorldOp::Clear` for all smaller islands (the union mask over their tight box) -> snapshot
+  `removeFromWorld = false` -> face flood (`voxel::ProveFaceComponents`) of the components that touch the island box
+  face (shred.md stage 1) -> per island of at least `scene::MinPieceVoxels(world voxel size)` `WorldOp::Detach`
+  applied with `ApplyOp` (no entity), in-box islands in scan order first, then proven ones in candidate order -> one
+  `WorldOp::Clear` for all smaller islands of both kinds (the union mask over their tight box) -> snapshot
   (`QueryBodies`) -> `Damage` each (fragments get `BlastPush` added) -> impulses -> `ActivateInBox`.
   `sim::PresentBlast` (Blast.cpp): per carve the debris particles, per Detach with netId 0 a rubble object from
   the removed voxels with `op.velocity`, per ClearMask particles only (every 3rd crumb voxel, at most 400, pushed with
@@ -214,7 +234,8 @@ Engine
 - The impulse loop runs inside a registry view (Blast.cpp): only physics calls belong there.
 - Budgets: 400 to 799 terrain debris bursts per blast (stride = removed / 400, rounded down, in `PresentBlast`), at
   most 400 crumb bursts,
-  islands up to `kMaxIslandVoxels` (60 000), search box radius + `kIslandSearchMargin` (24) voxels. Flash lifetime
+  islands up to `kMaxIslandVoxels` (60 000), search box radius + `kIslandSearchMargin` (24) voxels, face flood inside
+  `voxel::kFloodHalfExtent` (96) voxels of the centre with `kFloodVisitBudget` (240 000) visits per blast. Flash lifetime
   `ln(40*radius / 0.05) / 9` s (0.7 s for 0.7 m). Call `Explode` / `Blast` from `OnUpdate` / `OnFixedUpdate`, never
   inside a registry view.
 - Before `Initialize()` succeeds `World()` and `Explode` dereference a null `world`; the other accessors return
@@ -225,7 +246,21 @@ Engine
 - A `Simulation` without an engine blasts with `sim::Blast` and gets no particles, no flash and no island rubble:
   islands are `Detach` operations, crumbs one `ClearMask`; whoever draws calls `sim::PresentBlast` (the engine
   offline, a client later).
-  `BlastResult::Report()` lists chunks an operation could not apply to; nothing reads it yet (stage 7).
+  `BlastResult::Report()` lists chunks an operation could not apply to; offline, a carve that skipped chunks is
+  replayed before the late island search (shred.md 1b), nothing else reads it yet (networking stage 7).
+- Deferred island searches (shred.md 1b / 1c): `Simulation::DeferredIslandSearches()` holds at most 16. A search waits
+  for its island box, or for the one chunk a flood met (`waitsForChunk`); it is retried only when that is loaded (a
+  cheap check per frame), and given up only once its flood box no longer shares a chunk column with the window
+  (`deferredGivenUp`, a `Log::Warn`). A full list drops the search farthest from the window centre (`deferredDropped`
+  on the new blast's result, a `Log::Warn`). A replayed carve is `ops[0]` of the late result (`carveReplayed`), so
+  `PresentBlast` shows its debris; late results never get an explosion or flash.
+- `SimulationConfig::sessionServer` (set by `ServerConfig` only) turns the flood's "chunk not loaded" from a deferral
+  into an error: counted in `IslandSearchStats::attachedByUnloaded`, `Log::Error`, the piece stays. Nothing else in the
+  simulation reads it.
+- `Engine::PresentBlast` logs one `Blast:` line per blast (`Blast (late search):` for a retry result): ms per phase
+  (`BlastTimes` from `sim::Blast` plus its own present time), flood counters, deferral, skipped chunks, edited chunks +
+  rubble slots and the bytes they upload (36 936 B each). `Engine::Run` presents late results through it too. Times
+  are wall clock and logged only; `IslandSearchStats` are integer work counts.
 - `EngineConfig::world.saveDirectory` reaches the simulation's world unchanged: with it, edits are loaded from there,
   saved on shutdown and by the editor's "Save world" button (which reads `World::Config().saveDirectory`). The game
   sets none. A networked client must keep it empty (stage 3). `EngineConfig` has no physics or job-thread settings: the engine's simulation uses the defaults.
@@ -348,7 +383,7 @@ Headless game run (commands in `CLAUDE.md`); in the log:
 - `Player feet at (x, y, z), on the ground`, logged by `main` after `Run`. It must not say `in the air` (run without
   `--camera`), and x / z must differ from the spawn point.
 - `Physics: B bodies (A awake, F frozen), T terrain colliders; scene: V voxel objects, R rubble`: R at or below
-  `maxDebris` (192); a large F near the plaza means missing terrain colliders.
+  `maxDebris` + `maxRubbleBodies` (192 + 48); a large F near the plaza means missing terrain colliders.
 - `World: ... store used/capacity`: used below capacity.
 - None of: `Scene: could not create the body ...`, `... could not be baked (chunk store full)`,
   `Scene: removed N object(s) that fell out of the world` (exhausted budget, or bodies falling through terrain).
@@ -414,12 +449,48 @@ look, jump feel, editor focus) cannot be checked headless: say so.
   its sides got and floated one row above them. The log line counts middle-voxel fallbacks (a box with no centre on
   an axis; 0 at 0.1 / 0.125 / 0.15 m) and floating islands over the pad (must be 0). The cost of the rule: a box whose
   upper end is on a tie is one voxel longer (at 0.1 m ties are the x.25 / x.75 m boundaries).
+- `--tower-blast` (shred.md stage 1) shoots the watch tower's base ring (7 shots at 0.5 m, 1.2 m, power 6, from frame
+  20, every 10 frames) and logs `Tower: freed by shot K of K` when the shot that cuts the ring frees the roof, and the
+  piece's speed at +1 / +5 frames (a frozen piece: the velocity it keeps) and, at +5, `Tower: store a/b after the
+  cuts; rubble ...` (the 1e budget). Measured: freed by shot 7 of 7 (8516 voxels at 0.125 m, 19 106 at 0.1 m);
+  2.92 m/s at +1 (frozen, velocity kept) and 2.71 m/s at +5 (awake); store 5273/12288. `--castle-blast` builds a FillBox
+  castle 16-36 m south of the plaza and blasts a curtain wall, the keep and a tower at frames 40 / 50 / 60 (the flood's
+  worst case; it adds about 700 dense chunks, store 5531 at frame 40).
 - `--probe-blast` blasts the chair's legs at frame 30 and logs islands, crumbs and each new piece (voxels, layer,
-  mass, position from the probe corner, velocity, awake / frozen) at +0, 1, 5, 15, 30, 60, 119 frames.
-- **A detached piece loses its blast push when its first step is not frozen.** Most likely cause (from the code,
-  not isolated in a test): the piece is created over the terrain collider that still holds its own former voxels: `Apply` keeps the old collider until the rebuilt one is
-  installed, and `ChunkReady` counts a built (stale) collider as ready, so the guard does not freeze the piece.
-  Measured: velocity (-2.4, 1.2, -2.4) m/s at +0 frames, about 0 at +1 at 0.1 m (Dynamic layer) and at 0.125 m
-  (Debris layer); at 0.15 m the piece was frozen in its first step, kept its velocity and slid about 0.9 m. Which
-  happens depends on collider timing, not on the voxel size or the layer (an earlier run at 0.125 m threw the piece
-  about 2 m). Not fixed (physics contract; affects every terrain Detach, M1 included).
+  rubble, mass, position from the probe corner, velocity - the kept one while frozen -, awake / asleep / frozen) at
+  +0, 1, 5, 15, 30, 60, 119 frames, and at +5 `Probe piece N keeps its push: horizontal X m/s at +5 frames of Y m/s
+  given` (keeps = at least half; `LOST` otherwise).
+- **Lost blast push (shred.md stage 1d, fixed by rule).** A piece is created where its voxels were, over a collider
+  that still holds them; the guard now counts the stale part of a collider (the boxes of edits not cooked yet) as
+  not ready for a body that overlaps it, so the piece waits frozen with its velocity and resumes on the re-cooked
+  collider (`notes/physics.md` "Physics after destruction"). The loss the earlier engine showed (about 0 m/s at
+  +1 frames at 0.1 / 0.125 m) did not reproduce in isolation today; today's runs: probe piece 3.19 m/s given, 3.18
+  m/s horizontal at +5 (frozen at +1, velocity kept), at 0.125 m.
+
+## Rubble budget (shred.md stage 1e)
+
+- Every Dynamic object created with `VoxelObjectDesc::debris` and a body (terrain `Detach` pieces, object fragments)
+  is rubble when `markDebris` is on: `Debris{age, lifetime}` with the lifetime by size - under `debrisBodyVoxels`
+  `debrisLifetime` 15 s, under `rubbleLargeVoxels` (`kLargeRubbleVolume` 1 m^3: 512 voxels at 0.125 m, 1000 at
+  0.1 m) `rubbleMediumLifetime` 20 s, larger `rubbleLargeLifetime` 30 s (the owner's answer to shred.md question 7).
+  A `Debris` added by hand has `lifetime = -1`, meaning `debrisLifetime` (old behaviour); 0 means no time limit.
+- Caps: `maxDebris` 192 for small rubble (as before, only small now), `maxRubbleBodies` 48 for rubble of
+  `debrisBodyVoxels` or more, `maxRubbleSlots` 600 chunk-store slots for all rubble models (`Parts().size()` of
+  each). `CreateVoxelObject` makes room first: the body cap before the bake, the slot cap after it (the slot count
+  is only known from the baked parts; the bake is undone if no room is found). Room = the oldest **resting** rubble
+  (`!(active || wantsToMove)`; a frozen piece waiting for colliders is not resting) that helps the full cap, removed
+  with `debrisDespawnBursts`. If nothing resting is left, the new piece becomes particles (`CrumblePiece`: one burst
+  per `debrisParticleStride` voxels, at most 400) and `RubbleStats::crumbledByCap` counts it. `Update` enforces all
+  three caps too (oldest first, moving or not): only `Damage` splitting rubble can exceed them there.
+- A rubble model that cannot be baked (store full) crumbles the same way (`crumbledByBake`, a warning); before 1e it
+  returned `kNoEntity` after the `Detach` had removed the voxels, so the piece vanished. An ordinary object still
+  fails with `kNoEntity` and no particles (its caller keeps the model).
+- `Scene::Rubble()` counts on the call (O(rubble), no physics reads) and returns the counters. The `Blast:` line ends
+  with `rubble S small, B/48 bodies, N/600 slots` (+ crumbled pieces of that blast); the tower run logs it at +5.
+- The budget is client presentation: a server scene has `markDebris` off, so none of it applies there, and nothing
+  in it is hashed. Cost: `CreateVoxelObject` of rubble lists the rubble once (and once more with physics reads only
+  when a cap is full); `Update` lists and sorts it once per call - O(n log n) for n <= 240, not measured.
+- Tests: `SceneDebris.EveryRubblePieceLivesByItsSize`, `RubbleThatCannotBeBakedBecomesParticles`,
+  `RubbleBodyCapRemovesTheOldestRestingPieceOrCrumblesTheNewOne`, `RubbleSlotCapKeepsRubbleModelsInTheirShareOfTheStore`,
+  `PiecesCutOffRubbleStayRubble` (VortexEngineTests; all failed with the old rules) and `Rubble.TowerCutsStayUnderCaps`
+  (VortexSimTests: 20 tower cuts with caps 6 bodies / 8 slots; every Detach is a body or particles, caps hold).

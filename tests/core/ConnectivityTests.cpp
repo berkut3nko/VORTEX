@@ -601,3 +601,21 @@ TEST(FloatingIslands, UndecidableRegionsReturnNothing) {
     EXPECT_EQ(islands[0].voxelCount, 27u);
     EXPECT_EQ(CountWorldSolid(world, blobMin, blobMax), 0u);
 }
+
+// Diagnostic (docs/design/shred.md, "Other causes checked"): a piece that hangs on by a single
+// voxel is attached - 6-connectivity by contract, not the "second shot" bug.
+TEST(FloatingIslands, OneVoxelThreadKeepsThePieceAttached) {
+    Fixture f;
+    World& world = *f.world;
+    world.FillBox({10, kGround, 10}, {12, 56, 12}, kRock);             // a pillar on the ground
+    world.FillBox({2, 50, 2}, {6, 54, 6}, kRock);                      // a blob beside it
+    world.FillBox({5, 52, 6}, {6, 53, 11}, kRock);                     // a 1-voxel thread from the blob along z ...
+    world.FillBox({6, 52, 10}, {10, 53, 11}, kRock);                   // ... and along x to the pillar
+    const glm::ivec3 regionMin(-8, 32, -8), regionMax(24, 64, 24);
+    EXPECT_TRUE(ExtractFloatingIslands(world, &f.materials, regionMin, regionMax, 100000, false).empty());
+    // Cut the thread: the blob (and the rest of the thread on its side) floats.
+    world.SetVoxel({8, 52, 10}, 0);
+    const std::vector<FloatingIsland> islands = ExtractFloatingIslands(world, &f.materials, regionMin, regionMax, 100000, false);
+    ASSERT_EQ(islands.size(), 1u);
+    EXPECT_EQ(islands[0].voxelCount, 4u * 4u * 4u + 5u + 2u);
+}

@@ -15,14 +15,14 @@ What exists today, and what was designed for but is not built yet. See
 | Ray queries | One traversal shared by GPU and CPU (`shaders/shared/trace.glsl`), world + dynamic objects through a BVH. |
 | Objects | Voxel models of any size shared between instances, collider boxes, mass from material density. |
 | Scene | `vortex.scene`: EnTT entities with transform, voxel body, rigid body, point light and lifetime components; destroying an entity releases its body and chunk slots; part of the GPU-free `Vortex::Sim` and tested without a GPU. |
-| Destruction | Terrain carving with floating-terrain detection; objects lose voxels and split into pieces (`Scene::Damage`). A blast is `sim::Blast` (integer-exact world operations: carve, one `Detach` per floating island of 8+ voxels (0.016 m^3), one `ClearMask` for all smaller ones; object damage, impulses) plus `sim::PresentBlast` via `Engine::PresentBlast` (particles, local rubble, flash); `Engine::Explode` does both. Fragments below 8 voxels are particles, small pieces (under 25 voxels, 0.048 m^3) are rubble with a lifetime, a distance rule and a global cap. |
+| Destruction | Terrain carving with floating-terrain detection; objects lose voxels and split into pieces (`Scene::Damage`). A blast is `sim::Blast` (integer-exact world operations: carve, one `Detach` per floating island of 8+ voxels (0.016 m^3), one `ClearMask` for all smaller ones - islands found in the island box and, for parts that reach past it, proven by a bounded face flood inside a +-96-voxel flood box, so a tower falls on the shot that cuts it; object damage, impulses) plus `sim::PresentBlast` via `Engine::PresentBlast` (particles, local rubble, flash); `Engine::Explode` does both. Fragments below 8 voxels are particles; every piece of rubble has a lifetime by size (15 s under 25 voxels, 20 s under 1 m^3, 30 s larger), a distance rule for small rubble and global caps (192 small, 48 bodies, 600 chunk-store slots); a piece that does not fit, or cannot be baked, becomes particles. |
 | Import | MagicaVoxel `.vox` read / write, glTF voxelisation. |
-| Physics | Jolt behind an engine interface, fixed time step, character controller. Terrain colliders streamed around the camera and requested by every moving body; bodies without ready terrain are frozen in place and resume when it is there, so nothing falls through unloaded or uncooked terrain. |
+| Physics | Jolt behind an engine interface, fixed time step, character controller. Terrain colliders streamed around the camera and requested by every moving body; bodies without ready terrain are frozen in place and resume when it is there, so nothing falls through unloaded or uncooked terrain; a body overlapping edits its chunk's collider does not show yet waits too, frozen with its velocity, and a body parked over ground edited out of sight is woken when that ground gets its collider. |
 | Particles | CPU pool with emitters, voxel collision, effect presets. |
 | Renderer | Ray-marched G-buffer, ray-traced sun shadows, ambient occlusion, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping, ImGui. Headless mode with screenshots. Validation-clean on Intel UHD 620. |
 | Editor | `vortex.editor`: in-game editor toggled with F1 - fly camera, entity selection with a translate / rotate gizmo, inspector, terrain brush, primitive spawning, `.vox` / glTF import, environment / render / profiler / world panels. Tool logic is separate from the widgets and unit tested. |
 | Simulation | `vortex.sim`: `sim::Simulation` owns world, physics, terrain colliders and scene and steps them on a numbered fixed tick; `sim::WorldOp` / `ApplyOp` replay terrain changes exactly; `sim::Blast`. Library `Vortex::Sim` links no renderer or window. `Engine` owns one and draws it. |
-| Tests | 419 unit tests (one disabled measurement), none needing a GPU. |
+| Tests | 465 unit tests (two disabled measurements), none needing a GPU. |
 
 ## Performance (Intel UHD 620, 1280x720 output, 768x432 internal)
 
@@ -151,7 +151,8 @@ State (stages are those of [design/networking.md](design/networking.md)):
   no model, entity or body). Measured on generated terrain: 2051 operations for 44 blasts (worst 299) became 75 (at
   most 2), est. 65 KB -> 7.2 KB of wire. Found, open: the island search takes 70-200 ms per 1.2 m blast in the `dev`
   build, and that build has no `-O` flag at all (empty `CMAKE_CXX_FLAGS_RELWITHDEBINFO` with CMake 4.4).
-- Stages 3-9: not started.
+- Stages 3-9: not started. Before stage 3: shred.md stage 1 changed the search result (face flood), the server
+  window margin (3 chunks, flood box) and the cast budget (a work budget); see networking.md "Changed by shred.md".
 
 ### M2 - Fight feel under authority
 - Spell framework: data-driven casts (projectile, beam, area) producing world operations,
@@ -246,10 +247,31 @@ State (stages are those of [design/networking.md](design/networking.md)):
   image checks on machines without a GPU.
 
 ### Drafts awaiting the owner (2026-11-12)
-- **Destruction** (`design/shred.md`, draft): the "second shot" bug is the island search box - a piece that reaches
-  past +-(r/16 + 24) voxels of a blast counts as attached and is never searched again; fix by an outward flood of
-  face-touching parts (stage 1), plus carve replay into late chunks, counters, the stale-collider push fix and a rubble
-  budget (stages 1b-1e); later material crumble profiles, structural support, impact destruction by estimated mass.
+- **Destruction** (`design/shred.md`; the owner took the recommended answers to questions 1, 2, 3 and 7): the "second
+  shot" bug was the island search box - a piece that reaches past +-(r/16 + 24) voxels of a blast counted as attached
+  and was never searched again. **Stages 0, 1, 1b, 1c, 1d and 1e are built** (shred.md "Stage 0-1c as built",
+  "Stages 1d-1e as built"): a `Blast:` log
+  line per blast (ms per phase, flood counters, chunks to upload), the island box gathered by chunk (2-7x faster),
+  the face flood (`voxel::ProveFaceComponents`) inside the fixed flood box with a 240 000-visit budget, offline
+  deferral / server error counter, rows above the build ceiling as air, the carve replayed before a late search,
+  counted and logged deferred-search drops / give-ups (given up only once the flood box left the window) and oversize
+  islands; `--tower-blast` (the watch tower falls on the shot that cuts its ring: shot 7 of 7) and `--castle-blast`.
+  Server window margin 3 chunks (`sim::kServerWindowMarginChunks`, networking.md updated). **Measured: search + flood
+  per cast is 3.3-5.6 ms at the tower and castle cases (-O2, quiet) and the island search alone 9-12 ms underground,
+  over the 3 ms rule: stage 4 (cell graph) should move before networking stage 3 - owner question 4, open.** Stage
+  1d: a body is not simulated where its chunk's collider still holds edited voxels (the freed piece waits frozen,
+  velocity kept: tower 2.92 m/s at +1 frame, 2.71 at +5; probe piece keeps 3.18 of 3.19 m/s), and a body parked
+  over ground edited out of sight is woken on that chunk's first collider build. Stage 1e: every rubble piece has a
+  lifetime by size (15 / 20 / 30 s), caps of 48 rubble bodies and 600 store slots besides the 192 small pieces
+  (oldest resting removed first, else the new piece becomes particles), a failed bake crumbles instead of
+  vanishing (`Scene::Rubble()` counts it all; the tower run ends at store 5273/12288). The lost push itself did not
+  reproduce in isolation (shred.md). Review of 0-1e (shred.md "Review of stages 0-1e", 14 new tests): rows below a
+  full-height window's bottom are ground for the island search (a blast near -48 m deferred for good), a server never
+  defers (island box not loaded = counted error), the carve replay touches only the chunks it skipped, as they load,
+  the far-rest rule is for small rubble only, removing a body wakes what rests on it, pieces of old rubble start a new
+  lifetime, the split cap removes resting rubble first, the unseen-edit list keeps only chunks under frozen bodies,
+  the per-blast log no longer sorts one entry per voxel. Open: later stages 2-7; the windowed fall of towers and walls
+  and their push are not confirmed by the owner.
 - **Frame rate** (`design/perf.md`, draft): measure the present path and CPU frame time first, then fog-radius ray
   cut and one modulo per ray, then lod.md stage 1 and half-resolution lighting. The owner calls the 0.125 m view
   radius (92 m) the sweet spot on the UHD 620: frame rate comes before more distance there.
@@ -261,7 +283,7 @@ State (stages are those of [design/networking.md](design/networking.md)):
   walls never packed, buried chunks packed again behind the focus, a full store never drops a saved chunk, deferred
   island searches, near-sphere slack, pending pixels out of the lighting filter, renderer fallback words) in "Review
   fixes". Open in it: recentre p90 0.35 ms (gate 0.2 ms, met at the median), the carve of a blast into cave rows not
-  loaded yet is skipped (its island search runs later), session `heightRange` not wired, windowed climbing and the
+  loaded yet is replayed on those chunks as they load, before its late island search (shred.md 1b), session `heightRange` not wired, windowed climbing and the
   streaming look (no dark halos, no see-through flashes) not confirmed by the owner. Stage 2 (voxel preview) is
   **done**: `--voxel-size` (0.1-0.15 m, offline only) in the game, a furniture probe beside the plaza built on request
   (`--probe`, `--camera probe` / `probe-far`, `--probe-blast`), generation chunks/s logged; per-size numbers and

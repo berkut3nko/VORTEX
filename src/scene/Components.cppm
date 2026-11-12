@@ -127,15 +127,22 @@ export namespace vortex::scene {
     };
 
     /**
-     * @brief Marks a voxel object as rubble: a small piece left over by destruction that nobody
-     * will miss. Scene::Update removes rubble (see SceneConfig: debrisLifetime, debrisFarDistance,
-     * maxDebris) and leaves a puff of particles in its place.
-     * @details Added by the scene to small pieces that Scene::Damage splits off, to what is left
-     * of the damaged object once that is small (SceneConfig::debrisRemnants) and to small
-     * objects created with VoxelObjectDesc::debris. Remove the component to keep such a piece
-     * for good; add it to any voxel object to have it cleaned up.
+     * @brief Marks a voxel object as rubble: a piece left over by destruction that nobody will
+     * miss. Scene::Update removes rubble (see SceneConfig: the lifetimes by size,
+     * debrisFarDistance, maxDebris / maxRubbleBodies / maxRubbleSlots) and leaves a puff of
+     * particles in its place.
+     * @details Added by the scene to every dynamic object created with VoxelObjectDesc::debris
+     * (terrain that broke off, object fragments; docs/design/shred.md stage 1e), to the pieces
+     * Scene::Damage splits off a piece of rubble, to small pieces Damage splits off anything, and
+     * to what is left of the damaged object once that is small (SceneConfig::debrisRemnants).
+     * Remove the component to keep such a piece for good; add it to any voxel object to have it
+     * cleaned up.
      */
     struct Debris {
         float age = 0.0f;             ///< Seconds since it became rubble. The oldest go first.
+        /// Seconds it lives: set by the scene from the piece's size (SceneConfig::debrisLifetime,
+        /// rubbleMediumLifetime, rubbleLargeLifetime). < 0 (a Debris added by hand):
+        /// SceneConfig::debrisLifetime. 0: no time limit (the caps still apply).
+        float lifetime = -1.0f;
     };
 }

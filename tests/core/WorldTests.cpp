@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
 #include <glm/glm.hpp>
 
 #include <bit>
@@ -150,6 +152,62 @@ TEST(World, RaycastHitsGroundAndMatchesReference) {
     }
     EXPECT_GT(hits, 500);
     EXPECT_LE(bad, total / 200) << bad << " of " << total << " rays disagree with the reference march";
+}
+
+// shred.md stage 1d: physics needs to know which part of an old collider is stale, so a change
+// carries the box of the voxels edits changed in its chunk (none for a load).
+TEST(World, ChunkChangesCarryTheBoxOfTheEditedVoxels) {
+    Fixture f;
+    f.world->LoadBlocking(glm::dvec3(0.0, 20.0, 0.0));
+    (void)f.world->TakeChunkChanges();
+
+    ASSERT_TRUE(f.world->SetVoxel({3, 5, 4}, 0));
+    ASSERT_TRUE(f.world->SetVoxel({6, 2, 4}, 0));
+    ASSERT_GT(f.world->FillBox({30, 1, 1}, {34, 3, 2}, 0), 0u);     // over the border of chunks x 0 and 1
+    std::vector<ChunkChange> changes = f.world->TakeChunkChanges();
+    ASSERT_EQ(changes.size(), 2u);
+    std::sort(changes.begin(), changes.end(), [](const ChunkChange& a, const ChunkChange& b) { return a.coord.x < b.coord.x; });
+    EXPECT_EQ(changes[0].coord, glm::ivec3(0, 0, 0));
+    EXPECT_TRUE(changes[0].Edited());
+    EXPECT_EQ(changes[0].editMin, glm::ivec3(3, 1, 1));
+    EXPECT_EQ(changes[0].editMax, glm::ivec3(32, 6, 5));
+    EXPECT_EQ(changes[1].coord, glm::ivec3(1, 0, 0));
+    EXPECT_EQ(changes[1].editMin, glm::ivec3(32, 1, 1));
+    EXPECT_EQ(changes[1].editMax, glm::ivec3(34, 3, 2));
+    EXPECT_TRUE(f.world->TakeChunkChanges().empty());
+
+    // A chunk that is only loaded or unloaded reports no box.
+    f.world->LoadBlocking(glm::dvec3(1000.0, 20.0, 0.0));
+    bool any = false;
+    for (const ChunkChange& change : f.world->TakeChunkChanges()) {
+        any = true;
+        EXPECT_FALSE(change.Edited());
+    }
+    EXPECT_TRUE(any);
+}
+
+// The carve replay of sim::RetryIslandSearches: CarveSphereQ restricted to one chunk makes the
+// same decisions, in the same order, as the whole carve does in that chunk.
+TEST(World, CarveSphereQInChunkEqualsTheWholeCarveChunkByChunk) {
+    Fixture a, b;
+    a.world->LoadBlocking(glm::dvec3(0.0, 20.0, 0.0));
+    b.world->LoadBlocking(glm::dvec3(0.0, 20.0, 0.0));
+    const SphereQ sphere{glm::ivec3(31 * 16 + 5, 30 * 16 + 3, 33 * 16 + 11), 9 * 16 + 7};     // over chunk borders
+    std::vector<VoxelEdit> whole, pieces;
+    const uint32_t changed = a.world->CarveSphereQ(sphere, 65535, &whole);
+    ASSERT_GT(changed, 0u);
+    uint32_t sum = 0;
+    for (int cy = -1; cy <= 2; ++cy)
+        for (int cz = -1; cz <= 2; ++cz)
+            for (int cx = -1; cx <= 2; ++cx) sum += b.world->CarveSphereQInChunk(sphere, 65535, {cx, cy, cz}, &pieces);
+    EXPECT_EQ(sum, changed);
+    ASSERT_EQ(pieces.size(), whole.size());
+    for (size_t i = 0; i < whole.size(); ++i) {
+        EXPECT_EQ(pieces[i].voxel, whole[i].voxel) << i;
+        EXPECT_EQ(pieces[i].oldId, whole[i].oldId) << i;
+    }
+    // A chunk the sphere does not reach changes nothing.
+    EXPECT_EQ(b.world->CarveSphereQInChunk(sphere, 65535, {-3, 0, 0}), 0u);
 }
 
 TEST(World, EditsMaterializeAndReportChanges) {

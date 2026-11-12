@@ -18,6 +18,7 @@ module;
 #include <span>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -76,6 +77,23 @@ namespace vortex::physics {
                     return border[face].test(static_cast<size_t>(u + v * kN));
                 }
                 return false;
+            }
+        };
+
+        /// A box of world voxel coordinates, [min, max); empty when min >= max on an axis.
+        struct VoxelBox {
+            glm::ivec3 min{0}, max{0};
+            bool Empty() const { return !(min.x < max.x && min.y < max.y && min.z < max.z); }
+            void Add(const VoxelBox& other) {
+                if (other.Empty()) return;
+                if (Empty()) *this = other;
+                else {
+                    min = glm::min(min, other.min);
+                    max = glm::max(max, other.max);
+                }
+            }
+            bool Overlaps(const glm::ivec3& lo, const glm::ivec3& hi) const {
+                return !Empty() && min.x < hi.x && lo.x < max.x && min.y < hi.y && lo.y < max.y && min.z < hi.z && lo.z < max.z;
             }
         };
 
@@ -141,6 +159,29 @@ namespace vortex::physics {
             bool built = false;          // the collider (or the fact that none is needed) has been established once
             bool hasBorder = false;      // `border` is valid
             uint64_t keepUntil = 0;      // a body needs this chunk: not dropped before this Update() index
+            /// Where the installed collider is stale - it still has the old voxels there (docs/design/
+            /// shred.md stage 1d): the box of the edits since the newest snapshot was taken, and per
+            /// snapshot not installed yet the box of the edits it was the first to show. Installing
+            /// the result of generation g makes every snapshot of generation <= g shown.
+            VoxelBox pendingEdit;
+            std::vector<std::pair<uint64_t, VoxelBox>> cookingEdits;
+            bool Stale() const { return !pendingEdit.Empty() || !cookingEdits.empty(); }
+            bool StaleWhere(const glm::ivec3& lo, const glm::ivec3& hi) const {
+                if (pendingEdit.Overlaps(lo, hi)) return true;
+                for (const auto& [generation, box] : cookingEdits)
+                    if (box.Overlaps(lo, hi)) return true;
+                return false;
+            }
+            /// The snapshot (or the decision without one) about to be made for `generation` shows
+            /// every edit so far.
+            void StartCook(uint64_t generation) {
+                if (!pendingEdit.Empty()) cookingEdits.emplace_back(generation, pendingEdit);
+                pendingEdit = {};
+            }
+            /// The result of `generation` is installed.
+            void Installed(uint64_t generation) {
+                std::erase_if(cookingEdits, [generation](const auto& cooking) { return cooking.first <= generation; });
+            }
             /// Neighbour collidability the newest mesh job of this chunk was given (Snapshot::border),
             /// kept up to date as neighbours change: a neighbour change that leaves it as it is
             /// does not need a new mesh.
@@ -164,6 +205,13 @@ namespace vortex::physics {
         uint64_t filterRevision = 0;
 
         std::unordered_map<glm::ivec3, Entry, IVec3Hash> chunks;
+        /// Chunks whose voxels were edited while no up-to-date collider of them existed (edited
+        /// untracked, or dropped before their re-cook). A body parked over one never saw the
+        /// change: the first build of such a chunk wakes what is around it. Only chunks a frozen
+        /// body lies on are kept (GuardBodies drops the rest every pass): a body simulated since
+        /// saw the new ground, and one parked later is parked on what it saw.
+        std::unordered_set<glm::ivec3, IVec3Hash> modifiedUnseen;
+        std::unordered_set<glm::ivec3, IVec3Hash> frozenChunks;    // GuardBodies scratch
         std::vector<glm::ivec3> dirty;            // coordinates of queued entries (may hold stale / duplicate coordinates)
         uint64_t nextGeneration = 0;
         uint32_t maxJobs = 2;
@@ -241,6 +289,30 @@ namespace vortex::physics {
                 MarkDirty(coord, it->second);
             } else if (adopt && WantsCollider(coord)) {
                 Track(coord);
+            }
+        }
+
+        /// Consumes World::TakeChunkChanges: chunks whose content changed (loaded, unloaded, edited),
+        /// and the neighbours whose border faces depend on them.
+        void ConsumeChanges() {
+            const bool anyFrozen = physics.FrozenBodyCount() > 0;
+            for (const voxel::ChunkChange& change : world.TakeChunkChanges()) {
+                const glm::ivec3& coord = change.coord;
+                const bool wasTracked = chunks.contains(coord);
+                Touch(coord, true);
+                if (wasTracked && change.Edited()) chunks[coord].pendingEdit.Add({change.editMin, change.editMax});
+                // Face f of the neighbour beyond face f ^ 1 looks back at this chunk.
+                for (size_t face = 0; face < kFaceOffsets.size(); ++face) NeighbourChanged(coord + kFaceOffsets[face], face ^ 1u);
+                if (wasTracked || !world.IsChunkLoaded(coord)) continue;
+                if (change.Edited()) modifiedUnseen.insert(coord);
+                // A tracked chunk wakes what rests on it when its new collider is installed. Where
+                // nothing is tracked, bodies are parked (frozen asleep): tell them their ground
+                // changed, so they come back to life, ask for colliders and fall if it is gone.
+                if (anyFrozen) {
+                    math::AABB bounds = ChunkBounds(coord);
+                    bounds.Expand(world.VoxelSize() + 0.05f);
+                    physics.ActivateInBox(bounds);
+                }
             }
         }
 
@@ -354,10 +426,37 @@ namespace vortex::physics {
             return true;
         }
 
+        /// True if a body whose bounds are `bounds` (going to travel `travel`) may be simulated:
+        /// every chunk it touches (grown by one voxel) is ready, and none of them has a stale
+        /// collider where the body is - an edit that is not cooked yet. The rule: no body is
+        /// simulated against voxels its chunk's collider still shows. A body made where voxels were
+        /// just removed (a detached piece) waits, frozen with its velocity, for the new collider.
+        /// (A lost push from such an overlap was not reproduced in isolation, shred.md 1d.)
+        bool BodyReady(const math::AABB& bounds, const glm::vec3& travel) const {
+            const float vs = world.VoxelSize();
+            glm::ivec3 lo, hi;
+            if (!ChunkRange(bounds, travel, vs, lo, hi)) return false;
+            const glm::dvec3 bmin = glm::dvec3(glm::min(bounds.min, bounds.min + travel)) - glm::dvec3(vs);
+            const glm::dvec3 bmax = glm::dvec3(glm::max(bounds.max, bounds.max + travel)) + glm::dvec3(vs);
+            const glm::ivec3 vmin = glm::ivec3(glm::floor(bmin / static_cast<double>(vs)));
+            const glm::ivec3 vmax = glm::ivec3(glm::floor(bmax / static_cast<double>(vs))) + glm::ivec3(1);
+            for (int y = lo.y; y <= hi.y; ++y)
+                for (int z = lo.z; z <= hi.z; ++z)
+                    for (int x = lo.x; x <= hi.x; ++x) {
+                        const glm::ivec3 coord(x, y, z);
+                        if (!ChunkReady(coord)) return false;
+                        const auto it = chunks.find(coord);
+                        if (it != chunks.end() && it->second.StaleWhere(vmin, vmax)) return false;
+                    }
+            return true;
+        }
+
         void GuardBodies() {
             physics.GetDynamicBodies(bodies);
             const float voxel = world.VoxelSize();
             const float chunk = voxel * static_cast<float>(kN);
+            const bool pruneUnseen = !modifiedUnseen.empty();
+            frozenChunks.clear();
             for (const DynamicBodyInfo& info : bodies) {
                 glm::vec3 velocity = info.linearVelocity;
                 if (!(std::isfinite(velocity.x) && std::isfinite(velocity.y) && std::isfinite(velocity.z))) velocity = glm::vec3(0.0f);
@@ -376,9 +475,19 @@ namespace vortex::physics {
 
                 // 2. No body is simulated where the terrain cannot be collided with.
                 const glm::vec3 next = glm::clamp(velocity * kFreezeLookahead, glm::vec3(-chunk), glm::vec3(chunk));
-                const bool ready = BoxReady(info.bounds, next);
+                const bool ready = BodyReady(info.bounds, next);
                 if (ready == info.frozen) physics.SetFrozen(info.body, !ready);
+
+                // The chunks a body that is frozen now lies on (bounds + one voxel).
+                if (pruneUnseen && !ready && ChunkRange(info.bounds, glm::vec3(0.0f), voxel, lo, hi)) {
+                    for (int y = lo.y; y <= hi.y; ++y)
+                        for (int z = lo.z; z <= hi.z; ++z)
+                            for (int x = lo.x; x <= hi.x; ++x) frozenChunks.insert(glm::ivec3(x, y, z));
+                }
             }
+            // Only a body that is frozen now can have missed an edit of its ground: an edit
+            // anywhere else is forgotten, so the set never outgrows the chunks under parked bodies.
+            if (pruneUnseen) std::erase_if(modifiedUnseen, [this](const glm::ivec3& c) { return !frozenChunks.contains(c); });
         }
 
         void RemoveBody(Entry& entry) {
@@ -392,6 +501,8 @@ namespace vortex::physics {
         void Apply(const glm::ivec3& coord, Entry& entry, const ShapeRef& shape, uint64_t generation) {
             const bool rebuilt = entry.built;
             const bool hadBody = entry.body.IsValid();
+            // The edits this result shows are no longer stale.
+            entry.Installed(generation);
             RemoveBody(entry);
             if (shape) {
                 BodyDesc desc;
@@ -408,8 +519,10 @@ namespace vortex::physics {
             entry.installed = generation;
             entry.built = true;
 
-            // The ground changed under whatever was resting here: let it react.
-            if (rebuilt && (hadBody || entry.body.IsValid())) {
+            // The ground changed under whatever was resting here: let it react. On a first build,
+            // only if the chunk was edited while nobody was looking (a body parked over it).
+            const bool unseenEdit = !rebuilt && modifiedUnseen.erase(coord) > 0;
+            if ((rebuilt && (hadBody || entry.body.IsValid())) || unseenEdit) {
                 math::AABB bounds = ChunkBounds(coord);
                 bounds.Expand(world.VoxelSize() + 0.05f);
                 physics.ActivateInBox(bounds);
@@ -524,6 +637,7 @@ namespace vortex::physics {
                 if (NeedsNoCollider(candidate.coord)) {
                     entry.queued = false;
                     entry.hasBorder = false;
+                    entry.StartCook(entry.generation);
                     Apply(candidate.coord, entry, nullptr, entry.generation);
                     continue;
                 }
@@ -533,6 +647,7 @@ namespace vortex::physics {
                 }
 
                 entry.queued = false;
+                entry.StartCook(entry.generation);
                 std::shared_ptr<const Snapshot> taken = TakeSnapshot(candidate.coord);
                 entry.border = taken->border;
                 entry.hasBorder = true;
@@ -578,20 +693,7 @@ namespace vortex::physics {
 
         // 1. Chunks whose content changed (loaded, unloaded, edited), and the neighbours whose
         //    border faces depend on them.
-        const bool anyFrozen = impl.physics.FrozenBodyCount() > 0;
-        for (const glm::ivec3& coord : impl.world.TakeChangedChunks()) {
-            impl.Touch(coord, true);
-            // Face f of the neighbour beyond face f ^ 1 looks back at this chunk.
-            for (size_t face = 0; face < kFaceOffsets.size(); ++face) impl.NeighbourChanged(coord + kFaceOffsets[face], face ^ 1u);
-            // A tracked chunk wakes what rests on it when its new collider is installed. Where
-            // nothing is tracked, bodies are parked (frozen asleep): tell them their ground
-            // changed, so they come back to life, ask for colliders and fall if it is gone.
-            if (anyFrozen && !impl.chunks.contains(coord) && impl.world.IsChunkLoaded(coord)) {
-                math::AABB bounds = impl.ChunkBounds(coord);
-                bounds.Expand(impl.world.VoxelSize() + 0.05f);
-                impl.physics.ActivateInBox(bounds);
-            }
-        }
+        impl.ConsumeChanges();
 
         // 2. Chunks that came into range because the focus points moved.
         if (impl.NeedsScan(r)) {
@@ -606,6 +708,8 @@ namespace vortex::physics {
         for (auto it = impl.chunks.begin(); it != impl.chunks.end();) {
             const bool wanted = impl.Distance(it->first) <= dropRadius || it->second.keepUntil >= impl.updateIndex;
             if (!impl.world.IsChunkLoaded(it->first) || !wanted) {
+                // Dropped before its edit was cooked: a body parked over it has not seen the edit.
+                if (it->second.Stale()) impl.modifiedUnseen.insert(it->first);
                 impl.RemoveBody(it->second);
                 it = impl.chunks.erase(it);
             } else {
@@ -621,6 +725,8 @@ namespace vortex::physics {
     }
 
     void TerrainColliders::GuardBodies() {
+        // Edits made since Update() (a blast in a fixed update) are seen before the step.
+        m_Impl->ConsumeChanges();
         m_Impl->GuardBodies();
         m_Impl->ProcessDirty();      // start cooking what the bodies asked for right away
     }
@@ -661,6 +767,7 @@ namespace vortex::physics {
         stats.pending = m_Impl->shared->inFlight.load();
         stats.built = m_Impl->builtTotal;
         stats.frozenBodies = m_Impl->physics.FrozenBodyCount();
+        stats.unseenEdits = static_cast<uint32_t>(m_Impl->modifiedUnseen.size());
         return stats;
     }
 }

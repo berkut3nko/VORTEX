@@ -31,6 +31,7 @@ namespace vortex::sim {
 
     SimulationConfig ServerConfig(SimulationConfig config) {
         config.maxParticles = 0;
+        config.sessionServer = true;
         config.world.saveDirectory.clear();
         config.scene.bakeModels = false;
         config.scene.debrisRemnants = false;

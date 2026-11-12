@@ -20,14 +20,14 @@ Line numbers are as of engine commit `ec073a8`; if a number no longer matches, s
 | `Instances.cppm`, `internal/Instances.cpp` | `GpuInstance` (224 B), `GpuBvhNode` (32 B), `BuildBvh`. |
 | `Trace.cppm`, `internal/Trace.cpp` | `TraceScene`, `Trace`/`TraceWorld`/`TraceChunk`; `TraceKernel` includes `shared/trace.glsl`. |
 | `Collider.cppm`, `internal/Collider.cpp` | `BuildColliderBoxes`, `ComputeMassProperties`, `CollisionFilter`, `BuildChunkCollisionMesh`. |
-| `Connectivity.cppm`, `internal/Connectivity.cpp` | `LabelComponents`, `SplitComponents`, `ExtractFloatingIslands`. |
+| `Connectivity.cppm`, `internal/Connectivity.cpp` | `LabelComponents`, `SplitComponents`, `ExtractFloatingIslands` (+ `IslandBoxScan`), `ProveFaceComponents` (the face flood, shred.md stage 1; `FaceComponent`, `FloodLimits`, `FloodResult`, `kFloodHalfExtent`). |
 | `Material.cppm`, `internal/Material.cpp` | `Material`, `GpuMaterial`, `MaterialLibrary` (palettes), `RegisterDefaultWorldMaterials`. |
 | `VoxFormat.cppm`, `internal/VoxFormat.cpp` | MagicaVoxel `.vox` read/write, `RegisterVoxPalette`. |
 | `MeshImport.cppm`, `internal/MeshImport.cpp` | `VoxelizeTriangles` (SAT), interior fill, glTF import through tinygltf. |
 | `internal/ThirdPartyImpl.cpp` | The one non-module TU with the tinygltf / stb implementations. |
 | `shaders/shared/trace.glsl` | Traversal compiled as GLSL and C++: `VxTraceChunk/World/Instances/Scene`. |
 | `shaders/shared/shading.glsl`, `cube.glsl`, `vx_cpp.h`, `vx_glsl.glsl` | Shared shading helpers, proxy-cube corners, and the two language shims (rules: `vx_cpp.h:22-27`). |
-| `tests/core/*.cpp` | `VortexCoreTests`: Chunk (+ChunkStore), World (+Region, Terrain), WorldOps (`QuantizedEdits.*`), Hash (+golden terrain), Trace (+Bvh), Collider, Connectivity, VoxFormat, MeshImport. `ParticleTests.cpp` in the same binary belongs to `fx`, not to this module. |
+| `tests/core/*.cpp` | `VortexCoreTests`: Chunk (+ChunkStore), World (+Region, Terrain), WorldOps (`QuantizedEdits.*`), Hash (+golden terrain), Trace (+Bvh), Collider, Connectivity, VoxFormat, MeshImport, ViewDistance (with `FloatingIslands.GatherByChunkEqualsPerVoxel` and `.RowsAboveTheBuildCeilingAreAir`, which need its terrain fixtures). `ParticleTests.cpp` in the same binary belongs to `fx`, not to this module. |
 
 Who compiles the shared files as C++ today: `trace.glsl` in `Trace.cpp`, `cube.glsl` in
 `tests/graphics/ContractTests.cpp`. `shading.glsl` says it is C++-compatible but no C++ file includes it, so nothing
@@ -114,10 +114,13 @@ do not bounds-check (0..31 only); `GetSafe` does. A `Chunk` is 36 KB: keep it on
   generation work) and read by `Stats()`.
 - `modified` = "differs from generator output": set by edits, cleared by `PersistCell` and by integrating a load. Only
   modified cells reach the `RegionStore`.
-- `TakeChangedChunks()` lists chunks that loaded as Dense/Uniform/Packed, were edited, or were unloaded with content
-  (not a pack / unpack). It may
-  hold coordinates no longer in the window; a chunk that loads `Empty` is not listed. Single consumer:
-  `physics/internal/Terrain.cpp:566`.
+- `TakeChunkChanges()` lists chunks that loaded as Dense/Uniform/Packed, were edited, or were unloaded with content
+  (not a pack / unpack), each once (`Cell::changeQueued` / `changeIndex` point at its entry). It may
+  hold coordinates no longer in the window; a chunk that loads `Empty` is not listed. Each entry carries the box
+  (world voxels) of the voxels `EditRegion` changed in that chunk since the last take - empty for a load / unload;
+  an entry queued before its cell is unloaded keeps the old coordinate and box (shred.md stage 1d: physics needs to
+  know where an old collider is stale; `World.ChunkChangesCarryTheBoxOfTheEditedVoxels`). `TakeChangedChunks()` is
+  the same list as coordinates and empties it too. Single consumer: `TerrainColliders::Impl::ConsumeChanges`.
 - Units: world positions `double` metres; voxel coordinates `int` world voxels (floored, negatives work);
   `FillSphere/CarveSphere` take centre and radius in **voxels** and test voxel centres (`+0.5`) with `<= r^2`;
   `FillBox` is `[min, max)`.
@@ -312,9 +315,39 @@ the `VX_*` accessor macros defined there and, with the same names, in the shader
 - `ExtractFloatingIslands` refuses regions over 192 voxels per axis and returns nothing if any chunk of the region is
   not loaded; the optional `searched` out-parameter tells a refusal from "no island" (`sim::Blast` reports it as
   `islandsSearched`, asks the world for the box with `RequestLoad` and remembers the search;
-  `sim::RetryIslandSearches` runs it once the box is loaded, from `Engine::Run`). `sim::Blast` calls it with `removeFromWorld = false` and clears each island of at least `scene::MinPieceVoxels(world voxel size)` (8 at 0.125 m) with its own
+  `sim::RetryIslandSearches` runs it once the box is loaded, from `Engine::Run`). In a fixed-height window, chunk rows
+  at or above the build ceiling count as air, not as "not loaded" (nothing can exist there). `sim::Blast` calls it with `removeFromWorld = false` and clears each island of at least `scene::MinPieceVoxels(world voxel size)` (8 at 0.125 m) with its own
   `ClearMask` (a `Detach`), all smaller ones with one `ClearMask` over their tight box. A component touching the region boundary counts as attached - the safety that stops it ripping out
-  hillsides; do not relax it. Ignored (liquid) voxels neither support nor belong to an island and stay in the world.
+  hillsides; do not relax it. **The face rule stands; face components are then proven by a bounded flood inside the
+  flood box** (`ProveFaceComponents`, below). Ignored (liquid) voxels neither support nor belong to an island and stay in the world.
+- The box is gathered chunk by chunk (shred.md stage 0): `StateOf` + `GetChunk` once per chunk, empty 4^3 blocks
+  skipped by `blockMask`, a Uniform chunk filled by rows, a Packed chunk decoded once into a copy (`DecodeChunk`
+  rebuilds its occupancy, which the block skip reads). `FloatingIslands.GatherByChunkEqualsPerVoxel` pins it
+  against the old per-voxel `GetVoxel` gather. Measured (-O2, quiet process, 0.125 m): 1.0-4.0 ms for a 66^3 box above
+  ground, 9-12 ms for a solid underground 72^3 box, against 7-14 / 20-25 ms per voxel: the labelling
+  (`LabelComponents`, about 20-25 ns per solid voxel) is now most of it.
+- `IslandBoxScan` (optional out-parameter): the labels (`ComponentLabels::firstIndex` = each component's first voxel in
+  scan order, its seed), the face components with at most `maxIslandVoxels` voxels in the box (the flood candidates,
+  label order), `faceOversize`, `oversizeIslands` (floating but over the limit: they stay, counted), `boxVoxels` and
+  `boxMin` / `boxMax`, the box actually labelled: in a full-height window the region without its rows below the
+  bottom row (the world's ground, never loaded; a component touching that row touches the box face and is attached,
+  as the flood's `bottomY` rule; a region entirely below is searched and empty). Pass `boxMin` / `boxMax`, not the
+  requested region, to `ProveFaceComponents` (it checks the label size).
+- `World::CarveSphereQInChunk` is `CarveSphereQ` restricted to one chunk (same decision and (z, y, x) order;
+  all chunks in (y, z, x) order equal the whole carve, `World.CarveSphereQInChunkEqualsTheWholeCarveChunkByChunk`).
+  Only the offline carve replay uses it; it is not a `WorldOp`.
+- `ProveFaceComponents` (shred.md stage 1, rules 1-9): candidates by in-box count ascending, ties by label; FIFO flood
+  through world voxels, neighbours -x +x -y +y -z +z; gives up (attached) over `maxVoxels`, on a voxel of the flood box
+  face (whatever lies outside), below the bottom row of a fixed-height window, at a voxel an earlier flood gave up on
+  or a non-candidate face component of the box, or when `maxVisitsPerSearch` is spent (every later candidate too).
+  "Visits" are voxels enqueued, so a flood that gives up at the limit costs `maxVoxels + 1`. Inside the island box
+  the box labels decide, outside the world is read through a table of the flood box's chunks (one `StateOf` /
+  `GetChunk` per chunk) with at most 16 decoded Packed chunks (FIFO; a re-decode is counted). A chunk that is not
+  loaded stops the whole call (`deferOnUnloaded`, offline: `complete == false`, `unloadedChunk`) or attaches the
+  candidate (`attachedByUnloaded`, a session server). The 2-bit state over 192^3 voxels (1.7 MiB) is a
+  `thread_local`, allocated on a thread's first call (that call costs about 1 ms more), cleared through the list of
+  touched voxels; take a reference to it outside hot loops (a `thread_local` with a constructor pays a guard per use).
+  Measured about 50 ns per visit (-O2): 0.5 ms for the 8516-voxel tower, 2.2-3.5 ms for a 60 000-visit castle wall.
 - `BuildColliderBoxes`: with `mergeMaterials = true`, `box.material` is only the first voxel's id; mass code uses
   `false` (`Scene.cpp:41`). `ComputeMassProperties` returns the centre of mass in voxel units from the volume origin;
   negative densities count as 0, and a volume of weightless materials gives `mass == 0` with the geometric centre, so

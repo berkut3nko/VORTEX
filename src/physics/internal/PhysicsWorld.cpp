@@ -688,6 +688,7 @@ namespace vortex::physics {
         const auto* frozen = m_Impl->FindFrozen(body);
         state.frozen = frozen != nullptr;
         state.wantsToMove = frozen && frozen->wake;
+        if (frozen) state.keptLinearVelocity = frozen->linear;
         return state;
     }
 

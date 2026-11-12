@@ -20,6 +20,9 @@ export namespace vortex::physics {
         uint32_t pending = 0;        ///< Chunks being cooked on worker threads.
         uint32_t built = 0;          ///< Total colliders built so far.
         uint32_t frozenBodies = 0;   ///< Dynamic bodies currently held in place (PhysicsWorld::FrozenBodyCount).
+        /// Chunks edited while no up-to-date collider of them existed, under a frozen body: their
+        /// first build wakes what is around them (docs/design/shred.md stage 1d).
+        uint32_t unseenEdits = 0;
     };
 
     /**
@@ -30,7 +33,7 @@ export namespace vortex::physics {
      * Meshes are cooked on worker threads from a snapshot of the chunk taken on the main thread
      * (the world itself is main-thread only), and installed on the main thread.
      *
-     * The object consumes World::TakeChangedChunks(): edited chunks are re-cooked and bodies
+     * The object consumes World::TakeChunkChanges(): edited chunks are re-cooked and bodies
      * resting on them are woken up. It must be the only consumer of that list. An edited chunk
      * keeps its old collider until the new one is installed (both happen in the same call), so
      * nothing falls through while a chunk is being re-cooked. A finished mesh is installed even
@@ -49,10 +52,18 @@ export namespace vortex::physics {
      *    it travels in the next few steps) is not ready: not loaded, outside the world window, or
      *    its collider not built yet. A frozen body stays exactly where it is, keeps its velocity
      *    for later and cannot be woken; it resumes as soon as the terrain is ready again.
+     *  - A body is frozen as well while its bounds (grown by one voxel) overlap voxels that were
+     *    edited since the installed collider of their chunk was cooked: that collider still has
+     *    the old voxels there. A piece that broke off is made exactly where its voxels were; it
+     *    waits for the re-cooked collider with its velocity kept instead of being simulated
+     *    inside the collider of its own former voxels (docs/design/shred.md stage 1d). IsReady()
+     *    does not apply this rule (a character standing in a crater it shot is not held).
      *  - A frozen body that was awake, or that something tried to wake or push, keeps asking for
      *    its colliders and so resumes by itself within a few frames. One that was asleep (rubble
      *    left behind by the camera) asks for nothing and costs nothing: it is parked until a focus
-     *    point comes back or something wakes it.
+     *    point comes back or something wakes it. If its ground was edited while no up-to-date
+     *    collider of it existed (edited untracked, or dropped before its re-cook), the first
+     *    build of that chunk wakes it, so it never resumes asleep in the air.
      * Kinematic and static bodies are not guarded, nor are character controllers (use IsReady).
      */
     class TerrainColliders {
@@ -75,7 +86,9 @@ export namespace vortex::physics {
          * is, and requests colliders for bodies that move (see the class description).
          * @details Update() does this once. Call it again right before every PhysicsWorld::Step()
          * that follows game code which may have created or moved bodies (the engine does), so
-         * that a body spawned in a fixed update is never stepped without ground under it.
+         * that a body spawned in a fixed update is never stepped without ground under it. It
+         * first takes the world's chunk changes made since (an edit in the same fixed update),
+         * so a piece made where voxels were just removed is held by the stale-collider rule.
          */
         void GuardBodies();
 

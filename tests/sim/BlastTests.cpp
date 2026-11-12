@@ -553,7 +553,8 @@ TEST(Blast, OfflineLargeIslandStillBecomesRubble) {
     sim::PresentBlast(a.simulation, blast);
     // One rubble object (the cap) and nothing for the 22 crumbs.
     EXPECT_EQ(a.simulation.Scene().VoxelObjectCount(), 1u);
-    EXPECT_EQ(a.simulation.Scene().DebrisCount(), 0u);          // 300+ voxels: not small rubble
+    EXPECT_EQ(a.simulation.Scene().DebrisCount(), 1u);          // 300+ voxels: a rubble body (shred.md stage 1e)
+    EXPECT_EQ(a.simulation.Scene().Rubble().bodies, 1u);
     EXPECT_EQ(a.simulation.Physics().BodyCount(), bodiesBefore + 1u);
 }
 

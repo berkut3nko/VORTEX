@@ -561,6 +561,9 @@ TEST(Simulation, ServerConfigChangesOnlyWhatAServerMustNotHave) {
     EXPECT_FALSE(server.scene.bakeModels);
     EXPECT_FALSE(server.scene.debrisRemnants);
     EXPECT_FALSE(server.scene.markDebris);
+    // A face flood that meets a chunk that is not loaded is an error there, never a deferral
+    // (docs/design/shred.md stage 1).
+    EXPECT_TRUE(server.sessionServer);
     // The replicated-piece threshold is a metre volume (0.512 m^3): 512 voxels in this 0.1 m world,
     // kServerReplicatedPieceVoxels = 262 at the engine's 0.125 m (view-distance.md stage 3).
     EXPECT_EQ(server.scene.replicatedPieceVoxels, 512u);
@@ -583,6 +586,7 @@ TEST(Simulation, ServerConfigChangesOnlyWhatAServerMustNotHave) {
     EXPECT_TRUE(offline.scene.markDebris);
     EXPECT_TRUE(offline.scene.debrisRemnants);
     EXPECT_EQ(offline.scene.replicatedPieceVoxels, 0u);           // every piece is an entity
+    EXPECT_FALSE(offline.sessionServer);
 }
 
 TEST(Simulation, DoesNothingBeforeInitializeAndAfterShutdown) {

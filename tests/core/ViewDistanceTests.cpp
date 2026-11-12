@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <random>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -1064,4 +1065,170 @@ TEST(ViewDistance, RequestedBoxesLoadBeforeTheRestOfTheWindow) {
     std::printf("requested box loaded after %d updates, %u columns still unclassified\n", updates, w.Stats().columnsPending);
     w.LoadBlocking(focus);
     EXPECT_EQ(PackedButVisible(t), 0);
+}
+
+// --- island search (docs/design/shred.md stages 0-1) ---------------------------------------------
+
+namespace {
+    /// ExtractFloatingIslands as it was before the gather by chunk: one World::GetVoxel per voxel,
+    /// then the same labelling and face rule. The reference the gather must equal.
+    std::vector<FloatingIsland> IslandsPerVoxel(const World& world, const MaterialLibrary& materials, const glm::ivec3& lo,
+                                                const glm::ivec3& hi, uint32_t maxVoxels, uint32_t& faceComponents) {
+        const glm::ivec3 size = hi - lo;
+        VoxelVolume local(size);
+        for (int z = 0; z < size.z; ++z)
+            for (int y = 0; y < size.y; ++y)
+                for (int x = 0; x < size.x; ++x) {
+                    const uint8_t id = world.GetVoxel(lo + glm::ivec3(x, y, z));
+                    if (id != 0 && (materials.Get(kWorldPalette, id).flags & MaterialFlag_Liquid) == 0) local.Set(x, y, z, id);
+                }
+        const ComponentLabels labels = LabelComponents(local);
+        std::vector<FloatingIsland> out;
+        faceComponents = 0;
+        for (uint32_t c = 1; c <= labels.count; ++c) {
+            const glm::ivec3 mn = labels.boundsMin[c], mx = labels.boundsMax[c];
+            const bool face = mn.x == 0 || mn.y == 0 || mn.z == 0 || mx.x == size.x || mx.y == size.y || mx.z == size.z;
+            if (face && labels.voxelCounts[c] <= maxVoxels) ++faceComponents;
+            if (face || labels.voxelCounts[c] > maxVoxels) continue;
+            FloatingIsland island;
+            island.origin = lo + mn;
+            island.volume = VoxelVolume(mx - mn);
+            island.voxelCount = labels.voxelCounts[c];
+            for (int z = mn.z; z < mx.z; ++z)
+                for (int y = mn.y; y < mx.y; ++y)
+                    for (int x = mn.x; x < mx.x; ++x) {
+                        if (labels.labels[local.Index(x, y, z)] == c) island.volume.Set(x - mn.x, y - mn.y, z - mn.z, local.Get(x, y, z));
+                    }
+            out.push_back(std::move(island));
+        }
+        return out;
+    }
+}
+
+// Stage 0's speed-up must not change a single island: random boxes over real terrain with Dense,
+// Uniform, Packed and Empty chunks (and water, which is ignored), with and without carved holes.
+TEST(FloatingIslands, GatherByChunkEqualsPerVoxel) {
+    uint32_t seen[6] = {};
+    uint32_t islandsSeen = 0, faceSeen = 0;
+    for (const bool pack : {true, false}) {
+        TerrainWorld t(pack);
+        World& w = *t.world;
+        const glm::dvec3 focus(20.0, 20.0, -10.0);
+        w.LoadBlocking(focus);
+        if (pack) ASSERT_GT(w.Stats().packedChunks, 0u);
+        std::mt19937 rng(pack ? 4242u : 777u);
+        // Boxes inside the window, around the surface (rows near the terrain's height range).
+        const glm::ivec3 wmin = ChunkToVoxel(w.WindowMinChunk()), wmax = wmin + w.WindowSize() * kChunkSize;
+        std::uniform_int_distribution<int> extent(8, 64), radius(2, 9);
+        std::uniform_int_distribution<int> axisX(wmin.x, wmax.x - 65), axisZ(wmin.z, wmax.z - 65);
+        std::uniform_int_distribution<int> height(wmin.y, std::min(wmax.y - 65, 80));
+        for (int trial = 0; trial < 40; ++trial) {
+            const glm::ivec3 lo(axisX(rng), height(rng), axisZ(rng));
+            const glm::ivec3 hi = lo + glm::ivec3(extent(rng), extent(rng), extent(rng));
+            // Holes make floating pieces; every third trial searches untouched terrain (Packed stays packed).
+            if (trial % 3 != 0) {
+                for (int i = 0; i < 4; ++i) {
+                    const glm::dvec3 c = glm::dvec3(lo) + glm::dvec3(hi - lo) * glm::dvec3(rng() % 100, rng() % 100, rng() % 100) / 100.0;
+                    w.CarveSphereQ(QuantizeSphere(c, radius(rng)), QuantizePower(100.0f));
+                }
+            }
+            const glm::ivec3 cmin = VoxelToChunk(lo), cmax = VoxelToChunk(hi - glm::ivec3(1));
+            for (int z = cmin.z; z <= cmax.z; ++z)
+                for (int y = cmin.y; y <= cmax.y; ++y)
+                    for (int x = cmin.x; x <= cmax.x; ++x) ++seen[static_cast<int>(w.StateOf({x, y, z}))];
+            uint32_t faceReference = 0;
+            const std::vector<FloatingIsland> reference = IslandsPerVoxel(w, t.materials, lo, hi, 60000, faceReference);
+            bool searched = false;
+            IslandBoxScan scan;
+            const std::vector<FloatingIsland> islands = ExtractFloatingIslands(w, &t.materials, lo, hi, 60000, false, MaterialFlag_Liquid, &searched, &scan);
+            ASSERT_TRUE(searched) << trial;
+            ASSERT_EQ(islands.size(), reference.size()) << trial;
+            for (size_t i = 0; i < islands.size(); ++i) {
+                EXPECT_EQ(islands[i].origin, reference[i].origin) << trial;
+                EXPECT_EQ(islands[i].voxelCount, reference[i].voxelCount) << trial;
+                EXPECT_EQ(islands[i].volume.Data(), reference[i].volume.Data()) << trial;
+            }
+            EXPECT_EQ(scan.faceComponents.size(), faceReference) << trial;
+            EXPECT_EQ(scan.boxVoxels, static_cast<uint64_t>(hi.x - lo.x) * static_cast<uint64_t>(hi.y - lo.y) * static_cast<uint64_t>(hi.z - lo.z));
+            for (const FaceComponent& f : scan.faceComponents) {
+                EXPECT_NE(w.GetVoxel(f.firstVoxel), 0) << trial;
+                EXPECT_EQ(scan.labels.labels[scan.labels.firstIndex[f.label]], f.label) << trial;
+            }
+            islandsSeen += static_cast<uint32_t>(islands.size());
+            faceSeen += faceReference;
+        }
+    }
+    std::printf("chunks seen: %u empty, %u uniform, %u dense, %u packed; %u islands, %u face components\n",
+                seen[static_cast<int>(CellState::Empty)], seen[static_cast<int>(CellState::Uniform)], seen[static_cast<int>(CellState::Dense)],
+                seen[static_cast<int>(CellState::Packed)], islandsSeen, faceSeen);
+    EXPECT_GT(seen[static_cast<int>(CellState::Packed)], 0u);
+    EXPECT_GT(seen[static_cast<int>(CellState::Uniform)], 0u);
+    EXPECT_GT(seen[static_cast<int>(CellState::Dense)], 0u);
+    EXPECT_GT(islandsSeen, 0u);
+    EXPECT_GT(faceSeen, 0u);
+}
+
+// Above the build ceiling nothing can exist: an island box and a face flood that reach past it
+// see air there, not "not loaded" (shred.md stage 1, rule 7).
+TEST(FloatingIslands, RowsAboveTheBuildCeilingAreAir) {
+    HillWorld full(true);
+    World& w = *full.world;
+    w.LoadBlocking(glm::dvec3(300.0, 1.7, 0.0));
+    const int ceiling = (w.WindowMinChunk().y + w.WindowSize().y) * kChunkSize;     // 288 voxels = 144 m
+    ASSERT_EQ(ceiling, 288);
+    const glm::ivec3 at(600, 0, 0);
+    // A floating blob right under the ceiling; the box reaches above it.
+    w.FillBox(at + glm::ivec3(0, 280, 0), at + glm::ivec3(3, 283, 3), 1);
+    bool searched = false;
+    std::vector<FloatingIsland> islands = ExtractFloatingIslands(w, nullptr, at + glm::ivec3(-8, 270, -8), at + glm::ivec3(8, 300, 8), 1000, false,
+                                                                 MaterialFlag_Liquid, &searched);
+    EXPECT_TRUE(searched);
+    ASSERT_EQ(islands.size(), 1u);
+    EXPECT_EQ(islands[0].voxelCount, 27u);
+
+    // A piece touching the ceiling row, cut by the island box's top face: the flood closes on air.
+    w.FillBox(at + glm::ivec3(20, 284, 0), at + glm::ivec3(22, 288, 2), 1);
+    const glm::ivec3 lo = at + glm::ivec3(10, 270, -10), hi = at + glm::ivec3(30, 286, 10);
+    IslandBoxScan scan;
+    islands = ExtractFloatingIslands(w, nullptr, lo, hi, 1000, false, MaterialFlag_Liquid, &searched, &scan);
+    EXPECT_TRUE(searched);
+    EXPECT_TRUE(islands.empty());
+    ASSERT_EQ(scan.faceComponents.size(), 1u);
+    FloodLimits limits;
+    limits.floodMin = at + glm::ivec3(-76, 182, -86);
+    limits.floodMax = at + glm::ivec3(116, 374, 106);
+    limits.maxVoxels = 1000;
+    limits.maxVisitsPerSearch = 4000;
+    const FloodResult flood = ProveFaceComponents(w, nullptr, scan.faceComponents, lo, hi, scan.labels, MaterialFlag_Liquid, limits);
+    EXPECT_TRUE(flood.complete);
+    ASSERT_EQ(flood.islands.size(), 1u);
+    EXPECT_EQ(flood.islands[0].voxelCount, 16u);
+    EXPECT_EQ(flood.islands[0].origin, at + glm::ivec3(20, 284, 0));
+}
+
+// Below the bottom row of a full-height window nothing is ever loaded: those rows are the world's
+// ground. A box reaching below it is searched over the window's rows (its bottom face is the
+// window's), never refused as "not loaded".
+TEST(FloatingIslands, RowsBelowTheBottomOfAFullHeightWindowAreGround) {
+    HillWorld full(true);
+    World& w = *full.world;
+    w.LoadBlocking(glm::dvec3(300.0, 1.7, 0.0));
+    const int bottom = w.WindowMinChunk().y * kChunkSize;
+    const glm::ivec3 at(600, 0, 0);
+    bool searched = false;
+    IslandBoxScan scan;
+    const std::vector<FloatingIsland> islands = ExtractFloatingIslands(w, nullptr, at + glm::ivec3(-8, bottom - 10, -8),
+                                                                       at + glm::ivec3(8, bottom + 20, 8), 100000, false,
+                                                                       MaterialFlag_Liquid, &searched, &scan);
+    EXPECT_TRUE(searched);
+    EXPECT_TRUE(islands.empty());
+    EXPECT_EQ(scan.boxMin, at + glm::ivec3(-8, bottom, -8));
+    EXPECT_EQ(scan.boxMax, at + glm::ivec3(8, bottom + 20, 8));
+    EXPECT_EQ(scan.boxVoxels, 16u * 20u * 16u);
+
+    // Entirely below the window: nothing can be there, searched and empty.
+    searched = false;
+    EXPECT_TRUE(ExtractFloatingIslands(w, nullptr, at + glm::ivec3(0, bottom - 40, 0), at + glm::ivec3(8, bottom - 8, 8), 1000, false,
+                                       MaterialFlag_Liquid, &searched).empty());
+    EXPECT_TRUE(searched);
 }

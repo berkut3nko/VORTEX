@@ -492,7 +492,7 @@ lower), terrain colliders store 0, so `Scene::EntityFromUserData` can tell them 
 `physics::TerrainColliders` streams static meshes for terrain chunks: it snapshots a chunk and
 its neighbours' border voxels on the main thread, cooks the mesh (`BuildChunkCollisionMesh` +
 Jolt mesh shape) on a worker thread and installs the body on the main thread. It consumes
-`World::TakeChangedChunks()`. A chunk gets a collider for one of two reasons:
+`World::TakeChunkChanges()` (each changed chunk with the box of the voxels edited in it). A chunk gets a collider for one of two reasons:
 
 * it is within `EngineConfig::colliderRadius` of a *focus point* (the camera: the ground the
   player and things at rest nearby stand on), dropped again at 1.5x that distance;
@@ -517,7 +517,10 @@ Three rules make this hold under continuous editing (a held brush, a channelled 
   wait a few frames with their velocity kept rather than drop into solid rock.
 
 A changed chunk that has no collider entry (far from the camera) wakes the bodies parked on it
-(`ActivateInBox`), so they ask for colliders and fall if their support was blasted away.
+(`ActivateInBox`), so they ask for colliders and fall if their support was blasted away. Such a
+chunk, and a chunk whose entry is dropped before an edit was cooked, is remembered: its first
+build wakes what is around it too, so a body parked over it never resumes asleep in the air
+(shred.md stage 1d; each guard pass keeps only the chunks a frozen body lies on).
 
 ### 6.1 Bodies never simulate without terrain
 
@@ -530,6 +533,13 @@ every dynamic body (`PhysicsWorld::GetDynamicBodies`):
 * The chunks touched by its bounds, grown by one voxel and by what it travels in 0.05 s, must
   all be *ready*: loaded, and either with their collider built or needing none (air, liquid,
   rock enclosed by rock). If one is not, the body is **frozen**; when all are, it is released.
+* Nor may they hold, where the body is (bounds grown by one voxel), voxels edited since their
+  installed collider was cooked: that collider still has the old voxels there. Each entry keeps
+  the box of the edits not cooked yet (per snapshot generation, so a chunk edited every frame is
+  stale only where the newest results do not reach). A piece that broke off is created exactly
+  where its voxels were; it waits frozen, its push kept, for the re-cooked collider (shred.md
+  stage 1d). `IsReady` does not apply this rule. `GuardBodies` first takes the chunk changes made
+  since `Update()`, so an edit in a fixed update is seen before that step.
 * `PhysicsWorld::SetFrozen` makes the Jolt body static (keeping its collision layer): it stays
   exactly where it is, nothing can wake it, other bodies rest on it. **The velocities are kept**
   and given back on release, so a body frozen in flight continues its flight - zeroing them
@@ -709,21 +719,28 @@ does it with the world's size, `sim::ServerConfig` converts the replicated volum
 keeps the metre sizes; a value given in voxels is kept. The blast's crumb rule is
 `scene::MinPieceVoxels(world.VoxelSize())`, computed from the session's voxel size that server and clients share.
 
-`Debris` is added to small pieces that `Damage` splits off, to small dynamic objects created
-with `VoxelObjectDesc::debris`, and to the damaged entity itself once what is left of it is
-small and dynamic (`SceneConfig::debrisRemnants`, on by default: otherwise every destroyed crate
-and every large terrain island leaves one fist-sized body behind for good). A small object
-placed by the game or the editor is not rubble until it is damaged; static and kinematic objects
-never are. To keep a particular remnant, remove its `Debris` component after `Damage`.
-`Scene::Update` then removes rubble, oldest first, each piece leaving `debrisDespawnBursts` (3)
-particle bursts in its material's colour:
+`Debris{age, lifetime}` (rubble, shred.md stage 1e) is added to every dynamic object created
+with `VoxelObjectDesc::debris` (terrain islands, client fragments), to every piece `Damage` splits
+off rubble (age 0, its own lifetime), to small pieces split off other objects, and to the damaged
+entity itself once what is left of it is small and dynamic (`SceneConfig::debrisRemnants`, on by
+default: otherwise every destroyed crate leaves one fist-sized body behind for good). A small
+object placed by the game or the editor is not rubble until it is damaged; static and kinematic
+objects never are. To keep a particular remnant, remove its `Debris` component after `Damage`.
+`Scene::Update` then removes rubble, each piece leaving `debrisDespawnBursts` (3) particle bursts
+in its material's colour:
 
-* older than `debrisLifetime` (15 s);
-* resting - asleep, or frozen by the terrain guard - farther than `debrisFarDistance` (25 m) from
-  the viewer (`Scene::SetViewer`, the camera) and older than `debrisFarLifetime` (2 s);
-* beyond `maxDebris` (192) pieces alive: the oldest go.
+* older than its lifetime: 15 s under `debrisBodyVoxels`, 20 s under `rubbleLargeVoxels` (1 m^3),
+  30 s larger;
+* small rubble resting - asleep, or frozen by the terrain guard - farther than `debrisFarDistance`
+  (25 m) from the viewer (`Scene::SetViewer`, the camera) and older than `debrisFarLifetime` (2 s);
+  larger rubble is never removed for its distance;
+* over a cap - `maxDebris` (192) small pieces, `maxRubbleBodies` (48) larger ones,
+  `maxRubbleSlots` (600) chunk-store slots of rubble models: resting pieces first, then moving
+  ones, oldest first. A new piece makes room the same way when it is created (resting pieces
+  only); if none rests, it becomes particles.
 
-The cap is applied once per frame, so one large blast can exceed it until the end of its frame.
+Removing any body wakes what touches its bounds (Jolt does not), so nothing stays asleep in the
+air on a piece that expired.
 
 With `SceneConfig::markDebris = false` the scene adds the `Debris` component to nothing, so none
 of the three rules ever fires (a component the game adds by hand is still honoured). That is the

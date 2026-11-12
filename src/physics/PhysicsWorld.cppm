@@ -74,6 +74,9 @@ export namespace vortex::physics {
         /// Frozen bodies only: it was awake when it was frozen, or something tried to wake, push or
         /// move it since (DynamicBodyInfo::wantsToMove). False for a body parked asleep.
         bool wantsToMove = false;
+        /// Frozen bodies only: the linear velocity it resumes with when `wantsToMove`
+        /// (DynamicBodyInfo::linearVelocity). Zero otherwise.
+        glm::vec3 keptLinearVelocity{0.0f};
     };
 
     /// @brief One movable body - dynamic, or dynamic and frozen - as listed by PhysicsWorld::GetDynamicBodies.

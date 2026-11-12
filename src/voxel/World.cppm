@@ -137,6 +137,16 @@ export namespace vortex::voxel {
         bool Complete() const { return skipped.empty() && unsynced.empty(); }
     };
 
+    /// @brief A chunk whose solid content changed, as World::TakeChunkChanges reports it.
+    struct ChunkChange {
+        glm::ivec3 coord{0};
+        /// Bounding box, in world voxel coordinates [editMin, editMax), of the voxels edits changed
+        /// in this chunk since the last take. Empty (editMin == editMax) when the chunk was only
+        /// loaded or unloaded. Physics uses it to know which part of an old collider is stale.
+        glm::ivec3 editMin{0}, editMax{0};
+        bool Edited() const { return editMin.x < editMax.x && editMin.y < editMax.y && editMin.z < editMax.z; }
+    };
+
     /// @brief Result of World::Raycast.
     struct WorldRayHit {
         bool hit = false;
@@ -331,6 +341,12 @@ export namespace vortex::voxel {
          */
         uint32_t CarveSphereQ(const SphereQ& sphere, uint16_t power, std::vector<VoxelEdit>* removed = nullptr,
                               EditReport* report = nullptr);
+        /// @brief CarveSphereQ restricted to one chunk: the same decision for every voxel of the
+        /// sphere inside `chunk`, in the same (z, y, x) order, nothing outside it. Carving every
+        /// chunk of the sphere this way in (y, z, x) order equals CarveSphereQ. Used to replay a
+        /// carve on exactly the chunks it skipped (sim::RetryIslandSearches).
+        uint32_t CarveSphereQInChunk(const SphereQ& sphere, uint16_t power, const glm::ivec3& chunk,
+                                     std::vector<VoxelEdit>* removed = nullptr, EditReport* report = nullptr);
         /// @brief Replaces material `from` by `to` inside the sphere (other ids untouched; `from`
         /// may be 0 to fill only air). `from == to` changes nothing.
         uint32_t SwapSphereQ(const SphereQ& sphere, uint8_t from, uint8_t to, std::vector<VoxelEdit>* edits = nullptr,
@@ -346,7 +362,10 @@ export namespace vortex::voxel {
         /// hardness exceeds `power` (or flagged indestructible) survive.
         uint32_t CarveSphere(const glm::vec3& centerVoxel, float radiusVoxels, float power, std::vector<VoxelEdit>* removed = nullptr);
 
-        /// @brief Chunks whose solid content changed (loaded, unloaded or edited) since the last call.
+        /// @brief Chunks whose solid content changed (loaded, unloaded or edited) since the last
+        /// call, each once, with the box of the voxels edits changed in it.
+        std::vector<ChunkChange> TakeChunkChanges();
+        /// @brief TakeChunkChanges, coordinates only (the same list: either call empties it).
         std::vector<glm::ivec3> TakeChangedChunks();
 
     private:
@@ -358,7 +377,8 @@ export namespace vortex::voxel {
             uint8_t uniformId = 0;          // Uniform: the id; Packed: the id its grid word shows
             uint8_t packedId = 0;           // Dense with kept RLE bytes: the id it shows when packed again
             bool modified = false;          // differs from generator output: must be saved
-            bool changeQueued = false;
+            bool changeQueued = false;      // m_ChangedChunks[changeIndex] is this chunk's entry
+            uint32_t changeIndex = 0;
             bool assigned = false;          // coord is valid
             bool fromSave = false;          // loaded from the RegionStore (an edit of an earlier visit)
         };
@@ -417,7 +437,9 @@ export namespace vortex::voxel {
         void ProcessReveals();
         void Repack();
         void DropKeptBytes(uint32_t index);
-        void QueueChange(Cell& cell);
+        /// Reports the cell's chunk as changed (once until the next take); its entry, valid until
+        /// the next call.
+        ChunkChange& QueueChange(Cell& cell);
         bool Materialize(uint32_t index);
         bool Unpack(uint32_t index);
         void PromoteNear();
@@ -486,7 +508,7 @@ export namespace vortex::voxel {
         uint32_t m_MaxJobs = 8;
 
         WorldStats m_Counters;                         // the cumulative / last-Update fields of Stats()
-        std::vector<glm::ivec3> m_ChangedChunks;
+        std::vector<ChunkChange> m_ChangedChunks;
         std::unique_ptr<Chunk> m_Scratch;              // decode target for edits of Packed chunks
         struct Garbage {
             std::vector<std::unique_ptr<Chunk>> chunks;

@@ -1131,7 +1131,8 @@ TEST(SceneDebris, TinyFragmentsStayOutOfTheScene) {
 
 // The thresholds of a default SceneConfig (the engine's voxel size), as behaviour: rubble of one
 // voxel less than the piece size crumbles, of the piece size is an entity; rubble below the
-// debris-body size is cleaned-up rubble, at that size it is an ordinary body.
+// debris-body size is small rubble, at that size it is a rubble body (shred.md stage 1e: every
+// piece of rubble is cleaned up, with a lifetime by its size).
 TEST(SceneDebris, DefaultThresholdsAtTheEngineVoxelSize) {
     const scene::SceneConfig defaults;
     EXPECT_EQ(defaults.minPieceVoxels, scene::kFromMetres);     // resolved by the scene
@@ -1167,9 +1168,14 @@ TEST(SceneDebris, DefaultThresholdsAtTheEngineVoxelSize) {
     EXPECT_NE(f.scene.TryGet<scene::Debris>(small), nullptr);
     const Entity big = rubble(c.debrisBodyVoxels);
     ASSERT_NE(big, kNoEntity);
-    EXPECT_EQ(f.scene.TryGet<scene::Debris>(big), nullptr);     // not small: an ordinary body
+    ASSERT_NE(f.scene.TryGet<scene::Debris>(big), nullptr);     // not small: a rubble body, longer lived
+    EXPECT_FLOAT_EQ(f.scene.TryGet<scene::Debris>(small)->lifetime, defaults.debrisLifetime);
+    EXPECT_FLOAT_EQ(f.scene.TryGet<scene::Debris>(big)->lifetime, defaults.rubbleMediumLifetime);
     EXPECT_EQ(f.scene.VoxelObjectCount(), 3u);
-    EXPECT_EQ(f.scene.DebrisCount(), 2u);
+    EXPECT_EQ(f.scene.DebrisCount(), 3u);
+    EXPECT_EQ(f.scene.Rubble().small, 2u);
+    EXPECT_EQ(f.scene.Rubble().bodies, 1u);
+    if (voxel::kDefaultVoxelSize == 0.125f) EXPECT_EQ(c.rubbleLargeVoxels, 512u);
 
     // An explicit voxel count is kept as it is.
     scene::SceneConfig fixed;
@@ -1232,17 +1238,17 @@ TEST(SceneDebris, RubbleTooSmallToBeAPieceCrumblesInsteadOfBecomingAnEntity) {
     ASSERT_NE(pebble, kNoEntity);
     EXPECT_EQ(f.scene.TryGet<scene::Debris>(pebble), nullptr);
 
-    // Rubble that is a piece but small is marked; a big one is not, nor is static or body-less rubble.
+    // Rubble that is a piece is marked, small or big (shred.md stage 1e); static or body-less rubble is not.
     const Entity lump = Lump(f, {1.0f, 2.0f, 0.0f});
     ASSERT_NE(lump, kNoEntity);
     EXPECT_NE(f.scene.TryGet<scene::Debris>(lump), nullptr);
     const Entity boulder = f.scene.CreateVoxelObject({.model = f.Box({8, 8, 8}), .position = {3.0f, 2.0f, 0.0f}, .debris = true});
-    EXPECT_EQ(f.scene.TryGet<scene::Debris>(boulder), nullptr);
+    EXPECT_NE(f.scene.TryGet<scene::Debris>(boulder), nullptr);
     const Entity fixed = f.scene.CreateVoxelObject(
         {.model = f.Box({2, 2, 1}), .position = {5.0f, 2.0f, 0.0f}, .motion = physics::MotionType::Static, .debris = true});
     ASSERT_NE(fixed, kNoEntity);
     EXPECT_EQ(f.scene.TryGet<scene::Debris>(fixed), nullptr);
-    EXPECT_EQ(f.scene.DebrisCount(), 1u);
+    EXPECT_EQ(f.scene.DebrisCount(), 2u);
 }
 
 TEST(SceneDebris, RubbleExpiresIntoParticlesAndReleasesEverything) {
@@ -1353,6 +1359,278 @@ TEST(SceneDebris, RestingRubbleFarFromTheViewerGoesSooner) {
     f.scene.SetViewer({0.0, 2.0, 40.0});
     f.scene.Update(0.1f);
     EXPECT_FALSE(f.scene.IsValid(nearResting));
+}
+
+// --- the rubble budget (docs/design/shred.md stage 1e) ---------------------------------------------
+
+namespace {
+    /// A static floor under y = 0 and rubble boxes of `size` voxels dropped on it at x = 0, 2, 4 ...
+    struct RubbleFloor {
+        explicit RubbleFloor(Fixture& fixture) : f(fixture) {
+            physics::BodyDesc floor;
+            floor.shape = f.physics.CreateBoxShape(glm::vec3(50.0f, 0.5f, 50.0f));
+            floor.position = {0.0f, -0.5f, 0.0f};
+            floor.motion = physics::MotionType::Static;
+            floor.layer = physics::Layer::Static;
+            f.physics.CreateBody(floor);
+        }
+        Entity Drop(const glm::ivec3& size) {
+            const glm::vec3 at(2.0f * static_cast<float>(next++), 0.05f, 0.0f);
+            return f.scene.CreateVoxelObject({.model = f.Box(size, 0, "rubble"), .position = at, .debris = true});
+        }
+        /// Lets everything settle until it sleeps.
+        void Settle() {
+            for (int i = 0; i < 180; ++i) f.physics.Step(1.0f / 60.0f);
+        }
+        bool Resting(Entity e) const {
+            const physics::BodyState state = f.physics.GetState(f.scene.TryGet<scene::RigidBody>(e)->body);
+            return !state.active && !state.wantsToMove;
+        }
+        Fixture& f;
+        int next = 0;
+    };
+}
+
+// Before stage 1e only rubble under debrisBodyVoxels had a lifetime: larger pieces stayed forever.
+TEST(SceneDebris, EveryRubblePieceLivesByItsSize) {
+    Fixture f;                                                  // 0.1 m: small < 48 voxels, large >= 1000
+    const scene::SceneConfig& c = f.scene.Config();
+    ASSERT_EQ(c.debrisBodyVoxels, 48u);
+    ASSERT_EQ(c.rubbleLargeVoxels, 1000u);
+    const Entity small = f.scene.CreateVoxelObject({.model = f.Box({3, 3, 3}), .position = {0.0f, 2.0f, 0.0f}, .debris = true});
+    const Entity medium = f.scene.CreateVoxelObject({.model = f.Box({4, 4, 4}), .position = {3.0f, 2.0f, 0.0f}, .debris = true});
+    const Entity large = f.scene.CreateVoxelObject({.model = f.Box({10, 10, 10}), .position = {6.0f, 2.0f, 0.0f}, .debris = true});
+    ASSERT_NE(small, kNoEntity);
+    ASSERT_NE(medium, kNoEntity);
+    ASSERT_NE(large, kNoEntity);
+    ASSERT_NE(f.scene.TryGet<scene::Debris>(medium), nullptr) << "rubble of debrisBodyVoxels or more has no lifetime";
+    ASSERT_NE(f.scene.TryGet<scene::Debris>(large), nullptr) << "rubble of debrisBodyVoxels or more has no lifetime";
+
+    f.scene.Update(c.debrisLifetime + 0.1f);                    // 15 s
+    EXPECT_FALSE(f.scene.IsValid(small));
+    EXPECT_TRUE(f.scene.IsValid(medium));
+    f.scene.Update(c.rubbleMediumLifetime - c.debrisLifetime);  // 20 s
+    EXPECT_FALSE(f.scene.IsValid(medium));
+    EXPECT_TRUE(f.scene.IsValid(large));
+    f.scene.Update(c.rubbleLargeLifetime - c.rubbleMediumLifetime);   // 30 s
+    EXPECT_FALSE(f.scene.IsValid(large));
+    EXPECT_EQ(f.physics.BodyCount(), 0u);
+    EXPECT_EQ(f.store.UsedCount(), 0u);
+    EXPECT_EQ(f.scene.Rubble().bodies, 0u);
+}
+
+// A Detach has already taken the voxels out of the world when its rubble is made: a piece that
+// cannot be baked (store full) must not vanish. Before stage 1e it did, without a trace.
+TEST(SceneDebris, RubbleThatCannotBeBakedBecomesParticles) {
+    Fixture f(1);
+    const Entity crate = f.scene.CreateVoxelObject({.model = f.Box({3, 3, 3}), .position = {0.0f, 2.0f, 0.0f}});
+    ASSERT_NE(crate, kNoEntity);
+    ASSERT_EQ(f.store.UsedCount(), 1u);                         // the store is full
+
+    const Entity piece = f.scene.CreateVoxelObject({.model = f.Box({4, 4, 4}), .position = {3.0f, 2.0f, 0.0f}, .debris = true});
+    EXPECT_EQ(piece, kNoEntity);
+    EXPECT_GT(f.particles.AliveCount(), 0u) << "the piece vanished";
+    EXPECT_EQ(f.scene.Rubble().crumbledByBake, 1u);
+    EXPECT_EQ(f.physics.BodyCount(), 1u);
+    EXPECT_EQ(f.store.UsedCount(), 1u);
+
+    // An ordinary object still just fails (its caller keeps the model).
+    const uint32_t particles = f.particles.AliveCount();
+    EXPECT_EQ(f.scene.CreateVoxelObject({.model = f.Box({4, 4, 4}), .position = {6.0f, 2.0f, 0.0f}}), kNoEntity);
+    EXPECT_EQ(f.particles.AliveCount(), particles);
+    EXPECT_EQ(f.scene.Rubble().crumbledByBake, 1u);
+}
+
+TEST(SceneDebris, RubbleBodyCapRemovesTheOldestRestingPieceOrCrumblesTheNewOne) {
+    scene::SceneConfig config = TestConfig();
+    config.maxRubbleBodies = 3;
+    Fixture f(256, true, config);
+    ASSERT_TRUE(f.initialized);
+    RubbleFloor floor(f);
+    const glm::ivec3 medium(4, 4, 4);                          // 64 voxels: a rubble body
+
+    const Entity a = floor.Drop(medium);
+    f.scene.Update(0.2f);
+    const Entity b = floor.Drop(medium);
+    floor.Settle();
+    ASSERT_TRUE(floor.Resting(a));
+    ASSERT_TRUE(floor.Resting(b));
+    f.scene.Update(0.2f);
+    const Entity c = floor.Drop(medium);                        // awake: just made
+    ASSERT_EQ(f.scene.Rubble().bodies, 3u);
+
+    // Full: the oldest resting piece makes room, with a puff.
+    const Entity d = floor.Drop(medium);
+    ASSERT_NE(d, kNoEntity);
+    EXPECT_FALSE(f.scene.IsValid(a));
+    EXPECT_TRUE(f.scene.IsValid(b));
+    EXPECT_GT(f.particles.AliveCount(), 0u);
+    const Entity e = floor.Drop(medium);
+    ASSERT_NE(e, kNoEntity);
+    EXPECT_FALSE(f.scene.IsValid(b));
+    EXPECT_TRUE(f.scene.IsValid(c));
+    EXPECT_EQ(f.scene.Rubble().removedByCap, 2u);
+
+    // Nothing rests any more: the new piece becomes particles, the flying ones stay.
+    const uint32_t particles = f.particles.AliveCount();
+    EXPECT_EQ(floor.Drop(medium), kNoEntity);
+    EXPECT_GT(f.particles.AliveCount(), particles);
+    EXPECT_EQ(f.scene.Rubble().crumbledByCap, 1u);
+    EXPECT_EQ(f.scene.Rubble().bodies, 3u);
+    EXPECT_TRUE(f.scene.IsValid(c) && f.scene.IsValid(d) && f.scene.IsValid(e));
+
+    // Small rubble is not counted against this cap (it has maxDebris).
+    EXPECT_NE(floor.Drop({3, 3, 3}), kNoEntity);
+    EXPECT_EQ(f.scene.Rubble().small, 1u);
+}
+
+TEST(SceneDebris, RubbleSlotCapKeepsRubbleModelsInTheirShareOfTheStore) {
+    scene::SceneConfig config = TestConfig();
+    config.maxRubbleSlots = 3;
+    Fixture f(256, true, config);
+    ASSERT_TRUE(f.initialized);
+    RubbleFloor floor(f);
+    const glm::ivec3 long2(40, 4, 4);                           // two chunks of the model: 2 slots
+
+    const Entity a = floor.Drop(long2);
+    ASSERT_NE(a, kNoEntity);
+    floor.Settle();
+    EXPECT_EQ(f.scene.Rubble().slots, 2u);
+    const Entity b = floor.Drop(long2);                         // 4 > 3: the resting one goes
+    ASSERT_NE(b, kNoEntity);
+    EXPECT_FALSE(f.scene.IsValid(a));
+    EXPECT_EQ(f.scene.Rubble().slots, 2u);
+    EXPECT_EQ(f.store.UsedCount(), 2u);
+
+    const Entity c = floor.Drop({4, 4, 4});                     // 1 slot: fits beside it
+    ASSERT_NE(c, kNoEntity);
+    EXPECT_EQ(f.scene.Rubble().slots, 3u);
+    EXPECT_EQ(floor.Drop(long2), kNoEntity);                    // b and c fly: particles, the bake is undone
+    EXPECT_EQ(f.scene.Rubble().crumbledByCap, 1u);
+    EXPECT_EQ(f.store.UsedCount(), 3u);
+
+    // Objects that are not rubble take slots outside the share.
+    EXPECT_NE(f.scene.CreateVoxelObject({.model = f.Box(long2), .position = {0.0f, 4.0f, 5.0f}}), kNoEntity);
+    EXPECT_EQ(f.scene.Rubble().slots, 3u);
+}
+
+TEST(SceneDebris, PiecesCutOffRubbleStayRubble) {
+    Fixture f;
+    const Entity beam = f.scene.CreateVoxelObject({.model = f.Box({24, 3, 3}), .position = {0.0f, 5.0f, 0.0f}, .debris = true});
+    ASSERT_NE(beam, kNoEntity);
+    f.scene.Update(3.0f);
+    const scene::DamageResult cut = f.scene.Damage(beam, glm::dvec3(1.2, 5.15, 0.15), 0.25f);
+    ASSERT_EQ(cut.pieces.size(), 1u);
+    const scene::Debris* piece = f.scene.TryGet<scene::Debris>(cut.pieces[0]);
+    ASSERT_NE(piece, nullptr) << "a piece of rubble became a permanent object";
+    EXPECT_FLOAT_EQ(piece->age, 0.0f);                          // a new piece: its own time from now
+    EXPECT_FLOAT_EQ(piece->lifetime, f.scene.Config().rubbleMediumLifetime);
+    ASSERT_NE(f.scene.TryGet<scene::Debris>(beam), nullptr);
+    EXPECT_EQ(f.scene.Rubble().bodies, 2u);
+
+    // Splitting can take rubble over a cap: Update removes the oldest (all moving; equal ages: the lower id).
+    scene::SceneConfig one = TestConfig();
+    one.maxRubbleBodies = 1;
+    Fixture g(256, true, one);
+    const Entity rod = g.scene.CreateVoxelObject({.model = g.Box({24, 3, 3}), .position = {0.0f, 5.0f, 0.0f}, .debris = true});
+    ASSERT_NE(rod, kNoEntity);
+    ASSERT_EQ(g.scene.Damage(rod, glm::dvec3(1.2, 5.15, 0.15), 0.25f).pieces.size(), 1u);
+    EXPECT_EQ(g.scene.Rubble().bodies, 2u);
+    g.scene.Update(0.1f);
+    EXPECT_EQ(g.scene.Rubble().bodies, 1u);
+    EXPECT_FALSE(g.scene.IsValid(rod));
+    EXPECT_EQ(g.scene.Rubble().removedByCap, 1u);
+}
+
+// The far rule is for small rubble: a felled tower or a wall slab lives its own lifetime wherever
+// the viewer is. Before, every rubble piece resting 25 m away went 2 s after it stopped.
+TEST(SceneDebris, LargeRubbleFarFromTheViewerLivesItsLifetime) {
+    scene::SceneConfig config = TestConfig();
+    config.debrisFarDistance = 20.0f;
+    config.debrisFarLifetime = 1.0f;
+    Fixture f(256, true, config);
+    const Entity slab = f.scene.CreateVoxelObject({.model = f.Box({10, 10, 10}), .position = {30.0f, 2.0f, 0.0f}, .debris = true});
+    const Entity lump = Lump(f, {30.0f, 2.0f, 5.0f});
+    ASSERT_NE(slab, kNoEntity);
+    ASSERT_NE(lump, kNoEntity);
+    ASSERT_NE(f.scene.TryGet<scene::Debris>(slab), nullptr);
+    f.physics.SetFrozen(f.scene.TryGet<scene::RigidBody>(slab)->body, true);
+    f.physics.SetFrozen(f.scene.TryGet<scene::RigidBody>(lump)->body, true);
+    f.scene.SetViewer({0.0, 2.0, 0.0});
+    f.scene.Update(3.0f);
+    EXPECT_FALSE(f.scene.IsValid(lump));
+    EXPECT_TRUE(f.scene.IsValid(slab)) << "large rubble far from the viewer went after debrisFarLifetime";
+    f.scene.Update(config.rubbleLargeLifetime);
+    EXPECT_FALSE(f.scene.IsValid(slab));
+}
+
+// Jolt wakes nothing when a body is removed: what rested on a piece of rubble that expires (or a
+// cap removes) must be woken, or it stays asleep in the air.
+TEST(SceneDebris, RemovedRubbleWakesWhatRestsOnIt) {
+    Fixture f;
+    ASSERT_TRUE(f.initialized);
+    RubbleFloor floor(f);
+    const Entity slab = f.scene.CreateVoxelObject({.model = f.Box({12, 2, 12}, 0, "slab"), .position = {0.0f, 0.02f, 0.0f}, .debris = true});
+    ASSERT_NE(slab, kNoEntity);
+    const Entity crate = f.scene.CreateVoxelObject({.model = f.Box({4, 4, 4}, 0, "crate"), .position = {0.4f, 0.25f, 0.4f}});
+    ASSERT_NE(crate, kNoEntity);
+    ASSERT_EQ(f.scene.TryGet<scene::Debris>(crate), nullptr);
+    floor.Settle();
+    ASSERT_TRUE(floor.Resting(slab));
+    ASSERT_TRUE(floor.Resting(crate));
+    const physics::BodyId body = f.scene.TryGet<scene::RigidBody>(crate)->body;
+    const float before = f.physics.GetState(body).position.y;
+    ASSERT_GT(before, 0.15f);
+
+    f.scene.Update(f.scene.Config().rubbleLargeLifetime + 0.1f);     // the slab expires
+    ASSERT_FALSE(f.scene.IsValid(slab));
+    for (int i = 0; i < 60; ++i) f.physics.Step(1.0f / 60.0f);
+    EXPECT_LT(f.physics.GetState(body).position.y, before - 0.1f) << "the crate stayed asleep in the air";
+}
+
+// A piece cut off old rubble is new: it gets its own lifetime from now. Before, it took the
+// rubble's age with a shorter lifetime and vanished on the next Update, in flight.
+TEST(SceneDebris, PiecesCutOffOldRubbleAreNotRemovedAtOnce) {
+    Fixture f;
+    const Entity block = f.scene.CreateVoxelObject({.model = f.Box({30, 6, 6}), .position = {0.0f, 5.0f, 0.0f}, .debris = true});
+    ASSERT_NE(block, kNoEntity);
+    ASSERT_FLOAT_EQ(f.scene.TryGet<scene::Debris>(block)->lifetime, f.scene.Config().rubbleLargeLifetime);
+    f.scene.Update(25.0f);
+    ASSERT_TRUE(f.scene.IsValid(block));
+    const scene::DamageResult cut = f.scene.Damage(block, glm::dvec3(2.0, 5.3, 0.3), 0.45f);
+    ASSERT_GE(cut.pieces.size(), 1u);
+    f.scene.Update(1.0f);
+    for (const Entity piece : cut.pieces) EXPECT_TRUE(f.scene.IsValid(piece)) << "a piece of old rubble vanished at once";
+}
+
+// Over a cap after a split, resting rubble goes before moving rubble, as when a new piece makes
+// room. Before, the oldest went first, moving or not.
+TEST(SceneDebris, CapAfterASplitRemovesRestingRubbleFirst) {
+    scene::SceneConfig config = TestConfig();
+    config.maxRubbleBodies = 2;
+    Fixture f(256, true, config);
+    ASSERT_TRUE(f.initialized);
+    RubbleFloor floor(f);
+    // An old piece high in the air (still falling) and a younger one resting on the floor.
+    const Entity falling = f.scene.CreateVoxelObject({.model = f.Box({24, 3, 3}), .position = {10.0f, 200.0f, 0.0f}, .debris = true});
+    ASSERT_NE(falling, kNoEntity);
+    f.scene.Update(1.0f);
+    const Entity resting = floor.Drop({4, 4, 4});
+    ASSERT_NE(resting, kNoEntity);
+    floor.Settle();
+    ASSERT_TRUE(floor.Resting(resting));
+    ASSERT_FALSE(floor.Resting(falling));
+
+    f.scene.SyncFromPhysics();
+    const glm::vec3 at = f.scene.TryGet<scene::Transform>(falling)->current.position;
+    const scene::DamageResult cut = f.scene.Damage(falling, glm::dvec3(at) + glm::dvec3(1.2, 0.15, 0.15), 0.25f);
+    ASSERT_EQ(cut.pieces.size(), 1u);
+    ASSERT_EQ(f.scene.Rubble().bodies, 3u);
+    f.scene.Update(0.01f);
+    EXPECT_EQ(f.scene.Rubble().bodies, 2u);
+    EXPECT_FALSE(f.scene.IsValid(resting));
+    EXPECT_TRUE(f.scene.IsValid(falling)) << "a piece in flight was removed while resting rubble was left";
+    EXPECT_TRUE(f.scene.IsValid(cut.pieces[0]));
 }
 
 TEST(SceneDebris, SmallBodiesDoNotTunnelThroughThinGround) {

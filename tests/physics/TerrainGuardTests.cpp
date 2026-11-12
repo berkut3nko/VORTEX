@@ -462,6 +462,155 @@ TEST(TerrainGuard, KinematicAndStaticBodiesAreLeftAlone) {
     EXPECT_EQ(f.colliders->Stats().frozenBodies, 0u);
 }
 
+// --- physics after destruction (docs/design/shred.md stage 1d) ----------------------------------
+
+// A piece that broke off is made where its voxels were, in the same frame as the edit that removed
+// them. The chunk's collider still holds those voxels until it is re-cooked. The rule pinned here:
+// no body is simulated against voxels its chunk's collider still shows, so the piece waits (frozen,
+// velocity kept) for the new collider. Before stage 1d it was stepped at once (this test failed on
+// IsFrozen); the lost push itself was not reproduced in isolation (shred.md "Stages 1d-1e as built").
+TEST(TerrainGuard, PieceOverAStaleColliderWaitsFrozenWithItsVelocity) {
+    Fixture f;
+    ASSERT_TRUE(f.initialized);
+    f.world->LoadBlocking(kHome);
+    // A 2 x 4 x 2 voxel (1 x 2 x 1 m) pillar on the ground at x 5..6 m, z 6..7 m.
+    ASSERT_GT(f.world->FillBox({10, 40, 12}, {12, 44, 14}, kRock), 0u);
+    f.Frames(3, kHome);
+    f.colliders->Flush();
+    ASSERT_NEAR(f.physics.Raycast({5.5f, 30.0f, 6.5f}, {0.0f, -1.0f, 0.0f}, 20.0f).position.y, f.ground + 2.0f, 2e-3f);
+
+    // It breaks off: its voxels leave the world and a body takes their place, thrown up and sideways.
+    ASSERT_GT(f.world->FillBox({10, 40, 12}, {12, 44, 14}, 0), 0u);
+    BodyDesc desc;
+    desc.shape = f.physics.CreateBoxShape(glm::vec3(0.5f, 1.0f, 0.5f));
+    desc.position = {5.5f, f.ground + 1.0f, 6.5f};
+    const glm::vec3 push(3.0f, 2.0f, 0.0f);
+    desc.linearVelocity = push;
+    desc.continuous = true;                                     // as the scene makes small and thin rubble
+    const BodyId piece = f.physics.CreateBody(desc);
+
+    // The next frame: the guard sees the stale collider under the piece and holds it.
+    f.Frames(1, kHome);
+    EXPECT_TRUE(f.physics.IsFrozen(piece)) << "the piece was simulated inside the collider of its own former voxels";
+    EXPECT_NEAR(f.physics.GetState(piece).keptLinearVelocity.x, push.x, 1e-4f);
+
+    // Once the chunk is re-cooked it flies on with the push it was given.
+    f.Frames(4, kHome);
+    ASSERT_FALSE(f.physics.IsFrozen(piece));
+    const BodyState state = f.physics.GetState(piece);
+    EXPECT_NEAR(state.linearVelocity.x, push.x, 0.05f) << "the push was lost";
+    EXPECT_GT(state.linearVelocity.y, 0.5f);
+    f.Frames(60, kHome);
+    EXPECT_GT(f.physics.GetState(piece).position.x, 7.0f);
+}
+
+// Bodies away from the edit are not held: the stale part of a collider is where voxels changed.
+TEST(TerrainGuard, BodiesAwayFromAnEditAreNotHeldByTheStaleCollider) {
+    Fixture f;
+    ASSERT_TRUE(f.initialized);
+    f.world->LoadBlocking(kHome);
+    f.Frames(3, kHome);
+    f.colliders->Flush();
+    const BodyId box = f.RestingBox(5.0f, 6.0f, kHome);
+    f.physics.Activate(box);
+
+    ASSERT_GT(f.world->FillBox({16, 38, 16}, {20, 40, 20}, 0), 0u);   // 3 m away, same chunk
+    const std::array<glm::dvec3, 1> points = {kHome};
+    f.colliders->Update(points, kRadius);
+    EXPECT_FALSE(f.physics.IsFrozen(box));
+    EXPECT_TRUE(f.colliders->IsReady({5.0, 19.0, 6.0}));
+}
+
+// A chunk edited every frame never has an up-to-date collider: what is stale is only what the
+// newest results do not show yet, not everything edited since the last time it was up to date.
+TEST(TerrainGuard, BodyBesideAChunkEditedEveryFrameIsNotHeld) {
+    Fixture f;
+    ASSERT_TRUE(f.initialized);
+    f.world->LoadBlocking(kHome);
+    const BodyId box = f.RestingBox(5.0f, 6.0f, kHome);
+    for (int i = 0; i < 32; ++i) {
+        // Voxels 3-4 m to the left and right of the box (x 4.5..5.5 m = voxels 9, 10), in turn:
+        // the same chunk and row, a new voxel every frame (8 layers: the chunk below is never
+        // uncovered, which would make the whole chunk "not ready").
+        static constexpr int kX[] = {2, 17, 3, 18};
+        ASSERT_TRUE(f.world->SetVoxel({kX[i % 4], 39 - i / 4, 12}, 0));
+        f.Frames(1, kHome);
+        ASSERT_FALSE(f.physics.IsFrozen(box)) << "frame " << i;
+    }
+}
+
+// A body asleep on ground that is carved, while the camera leaves in the same frame: the chunk's
+// collider is dropped before its re-cook, the body is parked asleep. When the collider is built
+// again (a first build, not a rebuild) the body must notice that its ground changed.
+TEST(TerrainGuard, ParkedBodyFallsWhenItsGroundWasCarvedJustBeforeTheColliderWasDropped) {
+    Fixture f;
+    ASSERT_TRUE(f.initialized);
+    f.world->LoadBlocking(kHome);
+    const BodyId box = f.RestingBox(5.0f, 6.0f, kHome);
+    f.Frames(130, kHome);                                       // its own collider requests have run out
+
+    ASSERT_GT(f.world->FillBox({7, 38, 9}, {14, 40, 16}, 0), 0u);
+    f.Frames(10, kAway);
+    ASSERT_TRUE(f.physics.IsFrozen(box));
+    ASSERT_FALSE(f.physics.Raycast({9.0f, 30.0f, 9.0f}, {0.0f, -1.0f, 0.0f}, 20.0f).hit);
+
+    f.Frames(180, kHome);
+    EXPECT_FALSE(f.physics.IsFrozen(box));
+    EXPECT_NEAR(f.physics.GetState(box).position.y, f.ground - 0.5f, 0.05f) << "the body resumed asleep in the air";
+}
+
+// The same with the chunk itself unloaded (the window moved on) before the colliders saw the edit:
+// after the reload the body falls into the hole.
+TEST(TerrainGuard, ParkedBodyOverAChunkCarvedAndUnloadedFallsAfterTheReload) {
+    Fixture f;
+    ASSERT_TRUE(f.initialized);
+    f.world->LoadBlocking(kHome);
+    const BodyId box = f.RestingBox(5.0f, 6.0f, kHome);
+    f.Frames(130, kHome);
+
+    ASSERT_GT(f.world->FillBox({7, 38, 9}, {14, 40, 16}, 0), 0u);
+    const glm::dvec3 far(1000.0, 21.0, 0.0);
+    f.world->LoadBlocking(far);
+    ASSERT_FALSE(f.world->IsChunkLoaded({0, 1, 0}));
+    f.Frames(5, far);
+    ASSERT_TRUE(f.physics.IsFrozen(box));
+
+    f.world->LoadBlocking(kHome);
+    ASSERT_EQ(f.world->GetVoxel({10, 39, 12}), 0);              // the edit was kept
+    f.Frames(180, kHome);
+    EXPECT_FALSE(f.physics.IsFrozen(box));
+    EXPECT_NEAR(f.physics.GetState(box).position.y, f.ground - 0.5f, 0.05f) << "the body resumed asleep in the air";
+}
+
+// The chunks remembered as "edited while unseen" are only those a frozen body lies on: edits far
+// from every frozen body (other blasts, other players' once M1 replicates them) are not kept while
+// something stays parked. Before, the list grew until no body at all was frozen.
+TEST(TerrainGuard, UnseenEditsAreRememberedOnlyUnderFrozenBodies) {
+    Fixture f;
+    ASSERT_TRUE(f.initialized);
+    f.world->LoadBlocking(kHome);
+    const BodyId box = f.RestingBox(5.0f, 6.0f, kHome);
+    f.Frames(130, kHome);
+    f.Frames(10, kAway);
+    ASSERT_TRUE(f.physics.IsFrozen(box));
+
+    // Edits in five chunks far from the box and from the colliders around kAway (loaded, untracked).
+    for (int i = 0; i < 5; ++i) {
+        const glm::ivec3 at(-120 + 32 * i, 36, -110);
+        ASSERT_GT(f.world->FillBox(at, at + glm::ivec3(4, 4, 4), 0), 0u);
+    }
+    f.Frames(2, kAway);
+    ASSERT_TRUE(f.physics.IsFrozen(box));
+    EXPECT_EQ(f.colliders->Stats().unseenEdits, 0u);
+
+    // An edit under the box still reaches it (the parked-body tests pin the remembered case).
+    ASSERT_GT(f.world->FillBox({7, 38, 9}, {14, 40, 16}, 0), 0u);
+    f.Frames(180, kHome);
+    EXPECT_FALSE(f.physics.IsFrozen(box));
+    EXPECT_NEAR(f.physics.GetState(box).position.y, f.ground - 0.5f, 0.05f);
+    EXPECT_EQ(f.colliders->Stats().unseenEdits, 0u);
+}
+
 // --- PhysicsWorld::SetFrozen -------------------------------------------------------------------
 
 namespace {

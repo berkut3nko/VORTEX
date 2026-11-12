@@ -502,7 +502,8 @@ namespace vortex::voxel {
         if (cell.state == CellState::Dense && cell.slot != ChunkStore::kInvalidSlot) m_Garbage.chunks.push_back(m_Store.Release(cell.slot));
         DropKeptBytes(index);       // Packed bytes, or the copy a resident buried chunk keeps
         // The cell is about to represent a different chunk: report the old one directly.
-        if (hadContent && !cell.changeQueued) m_ChangedChunks.push_back(cell.coord);
+        // (An entry queued before keeps the old coordinate and its edit box.)
+        if (hadContent && !cell.changeQueued) m_ChangedChunks.push_back({cell.coord});
 
         cell.slot = ChunkStore::kInvalidSlot;
         cell.state = CellState::Unloaded;
@@ -624,18 +625,27 @@ namespace vortex::voxel {
         }
     }
 
-    void World::QueueChange(Cell& cell) {
-        if (cell.changeQueued) return;
-        cell.changeQueued = true;
-        m_ChangedChunks.push_back(cell.coord);
+    ChunkChange& World::QueueChange(Cell& cell) {
+        if (!cell.changeQueued) {
+            cell.changeQueued = true;
+            cell.changeIndex = static_cast<uint32_t>(m_ChangedChunks.size());
+            m_ChangedChunks.push_back({cell.coord});
+        }
+        return m_ChangedChunks[cell.changeIndex];
+    }
+
+    std::vector<ChunkChange> World::TakeChunkChanges() {
+        std::vector<ChunkChange> out = std::move(m_ChangedChunks);
+        m_ChangedChunks.clear();
+        for (const ChunkChange& change : out) {
+            if (Cell* cell = FindCell(change.coord)) cell->changeQueued = false;
+        }
+        return out;
     }
 
     std::vector<glm::ivec3> World::TakeChangedChunks() {
-        std::vector<glm::ivec3> out = std::move(m_ChangedChunks);
-        m_ChangedChunks.clear();
-        for (const glm::ivec3& coord : out) {
-            if (Cell* cell = FindCell(coord)) cell->changeQueued = false;
-        }
+        std::vector<glm::ivec3> out;
+        for (const ChunkChange& change : TakeChunkChanges()) out.push_back(change.coord);
         return out;
     }
 
@@ -1450,6 +1460,7 @@ namespace vortex::voxel {
                     const uint32_t index = CellIndex(coord);
                     uint32_t changed = 0;
                     bool failed = false;
+                    glm::ivec3 changedMin(kChunkSize), changedMax(0);   // chunk-local box of the changed voxels
                     // A Packed chunk is read from a decoded copy and made resident at its first
                     // change only, exactly like an Empty / Uniform one: the result is the same
                     // as if it had never been packed.
@@ -1482,6 +1493,8 @@ namespace vortex::voxel {
                                 }
                                 m_Store.Get(cell->slot).Set(x, y, z, static_cast<uint8_t>(newId));
                                 if (edits) edits->push_back({voxel, oldId, static_cast<uint8_t>(newId)});
+                                changedMin = glm::min(changedMin, glm::ivec3(x, y, z));
+                                changedMax = glm::max(changedMax, glm::ivec3(x + 1, y + 1, z + 1));
                                 ++changed;
                             }
                         }
@@ -1491,7 +1504,10 @@ namespace vortex::voxel {
                         m_Store.MarkDirty(cell->slot);
                         cell->modified = true;
                         DropKeptBytes(index);     // the bytes a resident buried chunk kept are stale now
-                        QueueChange(*cell);
+                        ChunkChange& change = QueueChange(*cell);
+                        const bool first = !change.Edited();
+                        change.editMin = first ? origin + changedMin : glm::min(change.editMin, origin + changedMin);
+                        change.editMax = first ? origin + changedMax : glm::max(change.editMax, origin + changedMax);
                         changedTotal += changed;
                         if (m_Pack) changedChunks.push_back(coord);
                     }
@@ -1631,6 +1647,20 @@ namespace vortex::voxel {
     uint32_t World::CarveSphereQ(const SphereQ& sphere, uint16_t power, std::vector<VoxelEdit>* removed, EditReport* report) {
         glm::ivec3 mn, mx;
         SphereVoxelBounds(sphere, mn, mx);
+        const std::array<bool, 256> carvable = CarvableIds(m_Materials, power);
+        return EditRegion(mn, mx, [&sphere, &carvable](const glm::ivec3& v, uint8_t oldId) {
+            if (oldId == 0 || !carvable[oldId] || !InSphereQ(sphere, v)) return -1;
+            return 0;
+        }, [&sphere](const glm::ivec3& lo, const glm::ivec3& hi) { return SphereTouchesBox(sphere, lo, hi); }, removed, report);
+    }
+
+    uint32_t World::CarveSphereQInChunk(const SphereQ& sphere, uint16_t power, const glm::ivec3& chunk, std::vector<VoxelEdit>* removed,
+                                        EditReport* report) {
+        glm::ivec3 mn, mx;
+        SphereVoxelBounds(sphere, mn, mx);
+        const glm::ivec3 origin = ChunkToVoxel(chunk);
+        mn = glm::max(mn, origin);
+        mx = glm::min(mx, origin + glm::ivec3(kChunkSize));
         const std::array<bool, 256> carvable = CarvableIds(m_Materials, power);
         return EditRegion(mn, mx, [&sphere, &carvable](const glm::ivec3& v, uint8_t oldId) {
             if (oldId == 0 || !carvable[oldId] || !InSphereQ(sphere, v)) return -1;

@@ -139,7 +139,8 @@ bodies resume on what was just installed, and their requests are cooked in the s
   (released if the terrain is ready, and vice versa). Nothing outside `Terrain.cpp` calls `SetFrozen` today;
   a "pause this body" feature needs its own mechanism (or a flag the guard respects), not `SetFrozen`.
 - **`GetState` of a frozen body reports zero velocity** (read from the static Jolt body); the kept velocity
-  is only in `Movable` and in `DynamicBodyInfo::linearVelocity` (PW.cpp:969). The guard needs the latter.
+  is in `Movable`, `DynamicBodyInfo::linearVelocity` (the guard reads that) and, since shred.md stage 1d,
+  `BodyState::keptLinearVelocity` (logs and tests: "frozen, velocity kept").
 - **Release restores velocities only if `wake`** (PW.cpp:811-812). A body frozen asleep resumes asleep with
   zero velocity; that is the "parked rubble costs nothing" behaviour, not a bug.
 - **`AddImpulse` on a frozen body drops the spin** of an off-centre impulse and converts to linear velocity
@@ -173,8 +174,8 @@ bodies resume on what was just installed, and their requests are cooked in the s
   following the controller does not block it. Whether the virtual character pushes dynamic bodies is unverified.
 - **`Raycast` normal**: falls back to `-dir` and is always flipped to face the ray origin (PW.cpp:923-935).
   It hits every layer, frozen bodies included; only sensors are skipped.
-- **`TerrainColliders` must be the only consumer of `World::TakeChangedChunks()`** (T.cpp:566). A second
-  consumer silently starves one of them. The range scan runs only when a focus point moved a quarter chunk
+- **`TerrainColliders` must be the only consumer of `World::TakeChunkChanges()`** (`ConsumeChanges`; the
+  coordinate-only `TakeChangedChunks` empties the same list). A second consumer silently starves one of them. The range scan runs only when a focus point moved a quarter chunk
   or the radius/point count changed (`NeedsScan`, :266), so a chunk that becomes loaded later gets its
   collider *only* because loading reports it as changed (`Touch(coord, true)`).
 - **Radii**: create within `radius + chunk/4`, drop beyond `max(1.5*radius, radius + chunk/2)` (T.cpp:556-561).
@@ -267,3 +268,36 @@ must be copied into `Snapshot` on the main thread. Re-cook decisions are `Touch`
   so `IsUniformCollidable` treats it as open (conservative: neighbours build their faces).
 - `ChunkReady` treats a chunk above the top of a full-height window (x / z inside it) as ready: it is the sky over
   the build ceiling. Without that, a body thrown upwards froze in mid-air under the ceiling for good.
+
+## Physics after destruction (shred.md stage 1d)
+
+- **Stale part of a collider.** `ConsumeChanges` adds each tracked chunk's edit box (`World::ChunkChange`,
+  world voxels) to `Entry::pendingEdit`. `ProcessDirty` moves it into `cookingEdits` tagged with the generation
+  of the snapshot it starts (`StartCook`, also on the `NeedsNoCollider` path); `Apply` of a result of generation
+  g drops every tag <= g (`Installed`). `BodyReady` (the guard's test) = `BoxReady` **and** no touched entry is
+  stale where the body is (bounds + one voxel + 0.05 s of travel, in voxels). Keep the per-generation tags: a
+  single union box cleared only when the newest result lands never clears on a chunk edited every frame, and
+  then freezes every body near a held brush (`BodyBesideAChunkEditedEveryFrameIsNotHeld`).
+- `IsReady` (characters, `Engine::TerrainReady`) is chunk-level only, unchanged: a player standing in the crater
+  they shot is not held.
+- The public `GuardBodies()` calls `ConsumeChanges` first: a blast in `OnFixedUpdate` is followed by the guard
+  of the same tick before any streaming, and must already freeze the piece
+  (`Rubble.DetachedPieceWaitsFrozenWithItsPushOverAStaleCollider` steps once without `UpdateStreaming`).
+- **Wake on first build.** `modifiedUnseen` holds chunks edited while no up-to-date collider of them existed:
+  edited while untracked (and loaded), or dropped in step 3 while `Entry::Stale()`. `Apply` on a first build
+  (`!rebuilt`) erases the chunk and `ActivateInBox`es its bounds. Every guard pass keeps only the chunks a body
+  frozen now lies on (`ChunkRange` of its bounds + one voxel; a body simulated since saw the new ground, one
+  parked later parks on what it saw), so the set never outgrows the chunks under parked bodies (it used to be
+  cleared only when no body at all was frozen: one parked crate let every later edit pile up).
+  `TerrainColliderStats::unseenEdits` is its size (`UnseenEditsAreRememberedOnlyUnderFrozenBodies`). Do not
+  prune by the world window: a chunk that unloaded under a parked body must stay remembered until it reloads. Tests: `ParkedBodyFallsWhenItsGroundWasCarvedJustBeforeTheColliderWasDropped`,
+  `ParkedBodyOverAChunkCarvedAndUnloadedFallsAfterTheReload` (both resumed asleep in the air before).
+- **What was and was not reproduced.** Before 1d a piece created over its stale collider was stepped at once
+  (the pinned rule; `PieceOverAStaleColliderWaitsFrozenWithItsVelocity` and the sim test failed on
+  `IsFrozen`). The lost push itself did **not** reproduce in isolation: a box or a blast-cut pillar stepped
+  inside the stale collider kept its velocity (Jolt ignores the back faces it sits behind), and in today's
+  game runs the piece was already frozen in its first step by a neighbour's `exposed` rule. The old
+  measurement (view-distance.md "Stage 2", about 0 m/s at +1) came from an earlier engine. The rule stays:
+  a body must not be simulated against geometry known to be gone.
+- Cost: one `std::vector` per tracked entry (empty unless edits are in flight) and, per guarded body, the
+  overlap test on the chunks `BoxReady` already visits. Not measured; it is a few comparisons per chunk.

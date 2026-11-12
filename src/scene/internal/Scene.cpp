@@ -30,7 +30,17 @@ namespace vortex::scene {
         }
 
         void OnRigidBodyDestroyed(entt::registry& source, entt::entity entity) {
-            physics.DestroyBody(source.get<RigidBody>(entity).body);
+            const physics::BodyId body = source.get<RigidBody>(entity).body;
+            // Jolt wakes nothing when a body is removed: what rested on it (rubble, a crate on a
+            // piece that expired) would stay asleep in the air. Wake its bounds, one voxel wider;
+            // frozen bodies there resume awake. Not while the whole scene is cleared.
+            math::AABB bounds;
+            if (!clearing) bounds = physics.GetBounds(body);
+            physics.DestroyBody(body);
+            if (!bounds.IsEmpty()) {
+                bounds.Expand(config.voxelSize + 0.05f);
+                physics.ActivateInBox(bounds);
+            }
         }
 
         /// Creates the body of a voxel object: a compound of its collider boxes at `transform`.
@@ -71,8 +81,99 @@ namespace vortex::scene {
             return physics.CreateBody(body);
         }
 
-        /// True if a dynamic piece with this many voxels is rubble that Update() cleans up.
+        /// True if a dynamic piece with this many voxels is "small" (Debris layer, maxDebris).
         bool IsSmall(uint32_t solidVoxels) const { return solidVoxels < config.debrisBodyVoxels; }
+
+        /// Seconds a piece of rubble of this size lives (Debris::lifetime; 0 = no limit).
+        float RubbleLifetime(uint32_t solidVoxels) const {
+            const float seconds = IsSmall(solidVoxels) ? config.debrisLifetime
+                                : solidVoxels < config.rubbleLargeVoxels ? config.rubbleMediumLifetime
+                                                                         : config.rubbleLargeLifetime;
+            return seconds > 0.0f ? seconds : 0.0f;
+        }
+
+        /// Most particle bursts a piece that crumbles because of the rubble budget leaves.
+        static constexpr uint32_t kMaxCrumbleBursts = 400;
+
+        /// A piece of rubble that does not fit the budget: particles where its voxels are, one
+        /// burst per `debrisParticleStride` voxels (at most kMaxCrumbleBursts), with its velocity.
+        void CrumblePiece(const voxel::VoxelModel& model, const math::Transform& transform, const glm::vec3& velocity) {
+            const uint32_t bursts = std::min(kMaxCrumbleBursts, std::max<uint32_t>(1, model.SolidCount() / config.debrisParticleStride));
+            Crumble(model.Volume(), model.Palette(), transform, model.SolidCount(), bursts, velocity);
+        }
+
+        /// Chunk-store slots a model holds in this scene's store.
+        static uint32_t SlotsOf(const voxel::VoxelModel& model) {
+            return model.IsBaked() ? static_cast<uint32_t>(model.Parts().size()) : 0u;
+        }
+
+        /// One piece of rubble as the budget sees it.
+        struct RubblePiece {
+            Entity entity;
+            float age;
+            bool small;
+            uint32_t slots;
+            bool resting;      // asleep, parked or without a body: removing it changes nothing in motion
+        };
+
+        /// Every piece of rubble, oldest first. `resting` is read from physics only when asked.
+        void ListRubble(std::vector<RubblePiece>& out, bool withResting) const {
+            out.clear();
+            for (const auto [entity, debris] : registry.view<const Debris>().each()) {
+                const VoxelBody* voxels = registry.try_get<VoxelBody>(entity);
+                const RigidBody* body = registry.try_get<RigidBody>(entity);
+                const uint32_t solid = voxels && voxels->model ? voxels->model->SolidCount() : 0u;
+                bool resting = true;
+                if (withResting && body && physics.IsValid(body->body)) {
+                    const physics::BodyState state = physics.GetState(body->body);
+                    resting = !(state.active || state.wantsToMove);
+                }
+                out.push_back({entity, debris.age, IsSmall(solid), voxels && voxels->model ? SlotsOf(*voxels->model) : 0u, resting});
+            }
+            // Oldest first; pieces of the same age in a fixed order.
+            std::sort(out.begin(), out.end(), [](const RubblePiece& a, const RubblePiece& b) {
+                return a.age != b.age ? a.age > b.age : static_cast<uint32_t>(a.entity) < static_cast<uint32_t>(b.entity);
+            });
+        }
+
+        RubbleStats Count() const {
+            RubbleStats stats = counters;
+            std::vector<RubblePiece> pieces;
+            ListRubble(pieces, false);
+            for (const RubblePiece& p : pieces) {
+                (p.small ? stats.small : stats.bodies) += 1;
+                stats.slots += p.slots;
+            }
+            return stats;
+        }
+
+        /// Makes room for a new piece of rubble: one more body of debrisBodyVoxels or more
+        /// (`body`) and `slots` more chunk-store slots. Removes the oldest resting rubble that
+        /// helps, as long as that is needed. False if a cap is still exceeded (nothing that rests
+        /// is left to remove): the new piece must not become an entity.
+        bool MakeRoom(bool body, uint32_t slots) {
+            std::vector<RubblePiece> pieces;
+            ListRubble(pieces, false);
+            uint32_t bodies = 0, used = 0;
+            for (const RubblePiece& p : pieces) {
+                if (!p.small) ++bodies;
+                used += p.slots;
+            }
+            const bool fits = !(body && bodies + 1 > config.maxRubbleBodies) && used + slots <= config.maxRubbleSlots;
+            if (fits) return true;
+            ListRubble(pieces, true);              // only now: which of them rest
+            for (const RubblePiece& p : pieces) {
+                const bool needBody = body && bodies + 1 > config.maxRubbleBodies;
+                const bool needSlots = used + slots > config.maxRubbleSlots;
+                if (!needBody && !needSlots) break;
+                if (!p.resting || !((needBody && !p.small) || (needSlots && p.slots > 0))) continue;
+                if (!p.small) --bodies;
+                used -= p.slots;
+                DespawnDebris(p.entity);
+                ++counters.removedByCap;
+            }
+            return !(body && bodies + 1 > config.maxRubbleBodies) && used + slots <= config.maxRubbleSlots;
+        }
 
         /// Particle bursts at up to `bursts` evenly chosen voxels of a volume placed at `transform`.
         void Crumble(const voxel::VoxelVolume& volume, voxel::PaletteId palette, const math::Transform& transform, uint32_t solid,
@@ -104,35 +205,52 @@ namespace vortex::scene {
         }
 
         void UpdateDebris(float dt) {
-            struct Aged {
-                Entity entity;
-                float age;
-            };
             std::vector<Entity> expired;
-            std::vector<Aged> kept;
             const bool farRule = hasViewer && config.debrisFarDistance > 0.0f;
             for (const auto [entity, debris] : registry.view<Debris>().each()) {
                 debris.age += dt;
-                bool expire = config.debrisLifetime > 0.0f && debris.age >= config.debrisLifetime;
-                if (!expire && farRule && debris.age >= config.debrisFarLifetime) {
+                const float lifetime = debris.lifetime < 0.0f ? config.debrisLifetime : debris.lifetime;
+                bool expire = lifetime > 0.0f && debris.age >= lifetime;
+                // Small rubble only: a felled tower or a wall slab lives its lifetime wherever the
+                // viewer is (it would visibly vanish 25 m away).
+                const VoxelBody* voxels = registry.try_get<VoxelBody>(entity);
+                const bool small = !voxels || !voxels->model || IsSmall(voxels->model->SolidCount());
+                if (!expire && farRule && small && debris.age >= config.debrisFarLifetime) {
                     const Transform* transform = registry.try_get<Transform>(entity);
                     const RigidBody* body = registry.try_get<RigidBody>(entity);
-                    // Frozen bodies are not active either: rubble parked without terrain goes too.
+                    // Frozen bodies are not active either: small rubble parked without terrain (it
+                    // would hang there until the viewer comes back) goes too.
                     const bool resting = !body || !physics.GetState(body->body).active;
                     expire = resting && transform &&
                              glm::distance(glm::dvec3(transform->current.position), viewer) > static_cast<double>(config.debrisFarDistance);
                 }
                 if (expire) expired.push_back(entity);
-                else kept.push_back({entity, debris.age});
-            }
-            if (kept.size() > config.maxDebris) {
-                // Oldest first; pieces of the same age in a fixed order.
-                std::sort(kept.begin(), kept.end(), [](const Aged& a, const Aged& b) {
-                    return a.age != b.age ? a.age > b.age : static_cast<uint32_t>(a.entity) < static_cast<uint32_t>(b.entity);
-                });
-                for (size_t i = 0; i < kept.size() - config.maxDebris; ++i) expired.push_back(kept[i].entity);
             }
             for (const Entity entity : expired) DespawnDebris(entity);
+
+            // Caps (only Damage splitting rubble can push a count over its cap here; new pieces
+            // make room when they are created): resting rubble first, oldest first, as MakeRoom;
+            // then moving rubble, oldest first.
+            std::vector<RubblePiece> pieces;
+            ListRubble(pieces, false);
+            uint32_t small = 0, bodies = 0, slots = 0;
+            for (const RubblePiece& p : pieces) {
+                (p.small ? small : bodies) += 1;
+                slots += p.slots;
+            }
+            if (small <= config.maxDebris && bodies <= config.maxRubbleBodies && slots <= config.maxRubbleSlots) return;
+            ListRubble(pieces, true);              // only now: which of them rest
+            for (const bool restingPass : {true, false}) {
+                for (const RubblePiece& p : pieces) {
+                    if (p.resting != restingPass) continue;
+                    const bool over = p.small ? small > config.maxDebris : bodies > config.maxRubbleBodies;
+                    if (!over && !(slots > config.maxRubbleSlots && p.slots > 0)) continue;
+                    (p.small ? small : bodies) -= 1;
+                    slots -= p.slots;
+                    DespawnDebris(p.entity);
+                    ++counters.removedByCap;
+                }
+            }
         }
 
         voxel::ChunkStore& store;
@@ -140,10 +258,12 @@ namespace vortex::scene {
         physics::PhysicsWorld& physics;
         fx::ParticleSystem& particles;
         SceneConfig config;
+        RubbleStats counters;                     // removedByCap, crumbledByCap, crumbledByBake
         double buildCeiling = std::numeric_limits<double>::infinity();   // World::BuildCeiling
         entt::registry registry;
         glm::dvec3 viewer{0.0};
         bool hasViewer = false;
+        bool clearing = false;                    // Scene::Clear: destroyed bodies wake nothing
     };
 
     Scene::Scene(voxel::ChunkStore& store, const voxel::MaterialLibrary& materials, physics::PhysicsWorld& physics,
@@ -199,8 +319,32 @@ namespace vortex::scene {
             }
         }
 
-        if (s.config.bakeModels && !desc.model->IsBaked() && !desc.model->Bake(s.store)) {
+        // Rubble the scene cleans up (docs/design/shred.md stage 1e): a body cap first, before
+        // anything is baked.
+        const bool budgeted = rubble && s.config.markDebris;
+        const bool smallRubble = s.IsSmall(desc.model->SolidCount());
+        if (budgeted && !smallRubble && !s.MakeRoom(true, 0)) {
+            if (desc.visible) s.CrumblePiece(*desc.model, transform.current, desc.linearVelocity);
+            ++s.counters.crumbledByCap;
+            return kNoEntity;
+        }
+
+        const bool bakedHere = s.config.bakeModels && !desc.model->IsBaked();
+        if (bakedHere && !desc.model->Bake(s.store)) {
+            if (rubble) {
+                // The voxels already left the world (a Detach): never let the piece vanish.
+                Log::Warn("Scene: rubble '{}' could not be baked (chunk store full): it crumbles", desc.model->Name());
+                if (desc.visible) s.CrumblePiece(*desc.model, transform.current, desc.linearVelocity);
+                ++s.counters.crumbledByBake;
+                return kNoEntity;
+            }
             Log::Error("Scene: voxel object '{}' could not be baked (chunk store full)", desc.model->Name());
+            return kNoEntity;
+        }
+        if (budgeted && !s.MakeRoom(false, Impl::SlotsOf(*desc.model))) {
+            if (bakedHere) desc.model->Unbake();
+            if (desc.visible) s.CrumblePiece(*desc.model, transform.current, desc.linearVelocity);
+            ++s.counters.crumbledByCap;
             return kNoEntity;
         }
 
@@ -219,7 +363,7 @@ namespace vortex::scene {
         s.registry.emplace<VoxelBody>(entity, desc.model, desc.visible);
         const std::string& name = desc.name.empty() ? desc.model->Name() : desc.name;
         if (!name.empty()) s.registry.emplace<Name>(entity, name);
-        if (rubble && s.config.markDebris && s.IsSmall(desc.model->SolidCount())) s.registry.emplace<Debris>(entity);
+        if (budgeted) s.registry.emplace<Debris>(entity, 0.0f, s.RubbleLifetime(desc.model->SolidCount()));
         return entity;
     }
 
@@ -246,7 +390,11 @@ namespace vortex::scene {
         if (m_Impl->registry.valid(entity)) m_Impl->registry.destroy(entity);
     }
 
-    void Scene::Clear() { m_Impl->registry.clear(); }
+    void Scene::Clear() {
+        m_Impl->clearing = true;
+        m_Impl->registry.clear();
+        m_Impl->clearing = false;
+    }
 
     bool Scene::IsValid(Entity entity) const { return m_Impl->registry.valid(entity); }
 
@@ -262,6 +410,8 @@ namespace vortex::scene {
         const auto* bodies = registry.storage<VoxelBody>();
         return bodies ? static_cast<size_t>(bodies->size()) : 0;
     }
+
+    RubbleStats Scene::Rubble() const { return m_Impl->Count(); }
 
     size_t Scene::DebrisCount() const {
         const entt::registry& registry = m_Impl->registry;
@@ -390,6 +540,9 @@ namespace vortex::scene {
 
         std::string name;
         if (const Name* label = s.registry.try_get<Name>(entity)) name = label->value;
+        // Pieces of rubble are rubble: new pieces, with a lifetime by their own size from now (a
+        // piece of old rubble that took its age would vanish at once, in flight).
+        const bool rubbleParent = s.config.markDebris && s.registry.all_of<Debris>(entity);
 
         // Let go of the old model before the pieces are baked: if this entity was its last user,
         // its chunk slots are free for the pieces (which never need more slots than it had).
@@ -454,7 +607,8 @@ namespace vortex::scene {
                 s.registry.emplace<Transform>(target, placed);
                 s.registry.emplace<VoxelBody>(target, std::move(pieceModel), visible);
                 if (!name.empty()) s.registry.emplace<Name>(target, name);
-                if (small && s.config.markDebris) s.registry.emplace<Debris>(target);       // rubble: cleaned up by Update()
+                if (rubbleParent) s.registry.emplace<Debris>(target, 0.0f, s.RubbleLifetime(piece.voxelCount));
+                else if (small && s.config.markDebris) s.registry.emplace<Debris>(target);       // rubble: cleaned up by Update()
                 result.pieces.push_back(target);
             }
         }

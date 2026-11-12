@@ -6,12 +6,14 @@ module;
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <format>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -113,7 +115,55 @@ namespace vortex {
         PresentBlast(sim::Blast(m_Impl->sim, sim::BlastDesc{center, radius, power}));
     }
 
-    void Engine::PresentBlast(const sim::BlastResult& blast) { sim::PresentBlast(m_Impl->sim, blast); }
+    void Engine::PresentBlast(const sim::BlastResult& blast) {
+        sim::Simulation& sim = m_Impl->sim;
+        const uint32_t slotsBefore = sim.Chunks().UsedCount();
+        const scene::RubbleStats rubbleBefore = sim.Scene().Rubble();
+        const uint64_t crumbledBefore = rubbleBefore.crumbledByCap + rubbleBefore.crumbledByBake;
+        const auto start = std::chrono::steady_clock::now();
+        sim::PresentBlast(sim, blast);
+        // One line per blast (docs/design/shred.md stage 0): where the main-thread time went and
+        // how much the renderer has to upload (an edited chunk goes up whole; a rubble model
+        // takes new slots of the same size). Its own cost counts as presentation. Edits come
+        // chunk by chunk (World::EditRegion), so runs are collapsed before the short list is sorted.
+        std::vector<glm::ivec3> chunks;
+        for (const sim::AppliedOp& applied : blast.ops)
+            for (const voxel::VoxelEdit& edit : applied.edits) {
+                const glm::ivec3 chunk = voxel::VoxelToChunk(edit.voxel);
+                if (chunks.empty() || chunks.back() != chunk) chunks.push_back(chunk);
+            }
+        std::sort(chunks.begin(), chunks.end(), [](const glm::ivec3& a, const glm::ivec3& b) {
+            return std::tie(a.x, a.y, a.z) < std::tie(b.x, b.y, b.z);
+        });
+        chunks.erase(std::unique(chunks.begin(), chunks.end()), chunks.end());
+        const uint32_t slotsAfter = sim.Chunks().UsedCount();
+        const scene::RubbleStats rubble = sim.Scene().Rubble();
+        const size_t skipped = blast.Report().skipped.size();
+        const double presentMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+        const uint32_t rubbleSlots = slotsAfter > slotsBefore ? slotsAfter - slotsBefore : 0u;
+        const double uploadMb = static_cast<double>((chunks.size() + rubbleSlots) * sizeof(voxel::Chunk)) / 1.0e6;
+        const sim::BlastTimes& t = blast.times;
+        const sim::IslandSearchStats& q = blast.search;
+        const uint32_t carved = (!blast.ops.empty() && blast.ops[0].op.kind == sim::WorldOpKind::CarveSphere) ? blast.ops[0].result.changed : 0u;
+        if (blast.deferred && blast.ops.empty() && blast.deferredGivenUp == 0) return;
+        Log::Info("Blast{}: {:.2f} ms = carve {:.2f} ({} voxels{}) + islands {:.2f} ({} box voxels) + flood {:.2f} ({} visits) + ops {:.2f} + "
+                  "objects {:.2f} + present {:.2f}; {} island(s) ({} by the flood), {} crumb(s) of {} voxels; face {} candidate(s): {} proven, "
+                  "{} merged, attached {} limit / {} known / {} budget / {} unloaded, {} over the limit; {} oversize island(s); {} decode(s); "
+                  "{}{}{}{}{} edited chunk(s) + {} rubble slot(s) = {:.2f} MB to upload; rubble {} small, {}/{} bodies, {}/{} slots{}",
+                  blast.deferred ? " (late search)" : "", t.carveMs + t.searchMs + t.floodMs + t.opsMs + t.objectsMs + presentMs, t.carveMs,
+                  carved, blast.carveReplayed ? ", replayed" : "", t.searchMs, q.boxVoxels, t.floodMs, q.floodVisits, t.opsMs, t.objectsMs,
+                  presentMs, blast.IslandCount(), q.facePieces, blast.crumbs, blast.CrumbVoxels(), q.faceCandidates,
+                  q.facePieces + q.faceCrumbs, q.merged, q.attachedByLimit, q.attachedByKnown, q.attachedByBudget, q.attachedByUnloaded,
+                  q.faceOversize, q.oversizeIslands, q.chunksDecoded,
+                  blast.islandsSearched ? "" : (q.floodDeferred ? "flood deferred (chunk not loaded); " : "search deferred (box not loaded); "),
+                  skipped == 0 ? "" : std::format("{} skipped chunk(s); ", skipped),
+                  blast.deferredDropped ? "an older deferred search dropped; " : "", blast.deferredGivenUp ? "given up; " : "",
+                  chunks.size(), rubbleSlots, uploadMb, rubble.small, rubble.bodies, sim.Config().scene.maxRubbleBodies, rubble.slots,
+                  sim.Config().scene.maxRubbleSlots,
+                  rubble.crumbledByCap + rubble.crumbledByBake > crumbledBefore
+                      ? std::format(", {} piece(s) crumbled by the budget", rubble.crumbledByCap + rubble.crumbledByBake - crumbledBefore)
+                      : std::string());
+    }
 
     int Engine::Run(Application& app) {
         Impl& s = *m_Impl;
@@ -162,7 +212,7 @@ namespace vortex {
                 sim.UpdateStreaming(camera.position, focus);
                 // Island searches of earlier blasts whose box has loaded since (sim::Blast had
                 // asked the world for it): what broke off falls now.
-                for (const sim::BlastResult& late : sim::RetryIslandSearches(sim)) sim::PresentBlast(sim, late);
+                for (const sim::BlastResult& late : sim::RetryIslandSearches(sim)) PresentBlast(late);
                 const voxel::World& world = sim.World();
                 if (!surfaceFilled && world.IsFilled(voxel::LoadScope::Surface)) {
                     surfaceFilled = true;

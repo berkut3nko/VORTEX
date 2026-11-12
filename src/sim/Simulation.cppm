@@ -31,6 +31,11 @@ export namespace vortex::sim {
         /// A dynamic body that was falling and is this many metres below the bottom of the world
         /// window is destroyed (scene::Scene::DestroyBelow).
         float fallOutDepth = 64.0f;
+        /// A session server (ServerConfig sets it): its window holds every blast's flood box by
+        /// construction, so a face flood that meets a chunk that is not loaded is an error (counted
+        /// in IslandSearchStats::attachedByUnloaded, logged) and the piece stays, instead of the
+        /// offline answer of deferring the search until the chunk has loaded.
+        bool sessionServer = false;
         unsigned jobThreads = 0;              ///< Worker threads of the job system (0 = one per core, minus one).
         /// The terrain. With a `saveDirectory` the world loads modified chunks from there and
         /// saves them on shutdown and on World().Save() (an offline game, the map editor). A
@@ -62,16 +67,26 @@ export namespace vortex::sim {
      * (`scene.debrisRemnants = false`, `scene.markDebris = false`): which entities exist on a
      * server must not depend on a viewer, an age or a cap that clients do not share. Object
      * pieces below `kServerReplicatedPieceVolume` get no entity (`scene.replicatedPieceVoxels`,
-     * that volume in voxels of `world.voxelSize`): they are client rubble. Everything else is
-     * kept (the other debris thresholds are resolved from the world's size by the Simulation).
+     * that volume in voxels of `world.voxelSize`): they are client rubble. `sessionServer` is set:
+     * a blast's face flood that meets a chunk that is not loaded is an error there, not a reason
+     * to wait. Everything else is kept (the other debris thresholds are resolved from the world's
+     * size by the Simulation).
      */
     SimulationConfig ServerConfig(SimulationConfig config = {});
 
-    /// @brief The island search of a blast that could not run because a chunk of its box was not
-    /// loaded (sim::Blast remembers it, sim::RetryIslandSearches runs it later).
+    /// @brief The island search of a blast that could not run because a chunk of its island box,
+    /// or of its flood box that a flood reached, was not loaded (sim::Blast remembers it,
+    /// sim::RetryIslandSearches runs it later).
     struct DeferredIslandSearch {
         voxel::SphereQ sphere;
-        uint32_t attempts = 0;     ///< RetryIslandSearches calls so far
+        uint16_t power = 0;           ///< Of the blast's carve, to replay it.
+        /// Chunks the blast's carve skipped (not loaded) that may still load, in its visit order:
+        /// the carve is replayed on each of them, and only on them, as soon as it is loaded.
+        std::vector<glm::ivec3> carvePending;
+        /// A face flood met `waitChunk` (not loaded): the search runs again once it is.
+        bool waitsForChunk = false;
+        glm::ivec3 waitChunk{0};
+        uint32_t attempts = 0;        ///< RetryIslandSearches calls so far
     };
 
     /**

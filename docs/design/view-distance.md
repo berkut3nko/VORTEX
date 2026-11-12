@@ -448,7 +448,9 @@ same view at every size and only the view radius changes.
   it. Most likely cause (from the code, not isolated): the piece is made over the terrain collider that still holds
   its own former voxels (the old collider stays until the rebuilt one is installed, and a built, stale collider
   counts as ready), and the overlap eats the push. An earlier run at 0.125 m threw the piece about 2 m. Open, an
-  engine issue for every terrain Detach (`notes/scene-engine.md`), not part of this stage.
+  engine issue for every terrain Detach (`notes/scene-engine.md`), not part of this stage. (Later, shred.md stage
+  1d: such a piece is held frozen, its push kept, until the stale collider is re-cooked; the loss itself did not
+  reproduce in isolation by then.)
 - **Shape at 0.15 m** (no floating parts any more): the 25 cm-pitch shelf's boards come out uneven (pitch 1.67
   voxels: some gaps are 1 voxel, some boards merge into 2-voxel slabs), every 12.5 cm book is 1 voxel wide, the seat
   sits at 0.30 m with 2-voxel legs. At 0.1 m the 25 cm shelf is uneven too (boards 1-2 voxels thick, gaps

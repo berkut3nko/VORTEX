@@ -40,6 +40,9 @@ export namespace vortex::scene {
     inline constexpr double kMinPieceVolume = 0.016;   ///< m^3: a lump the size of a fist.
     inline constexpr double kDebrisBodyVolume = 0.048; ///< m^3: below it a body is "small" (Debris layer).
     inline constexpr double kThinBodyLength = 0.6;     ///< m: a body thinner than this on an axis is "thin".
+    /// m^3: rubble of this size or more is "large" and lives longest (512 voxels of 0.125 m;
+    /// docs/design/shred.md stage 1e).
+    inline constexpr double kLargeRubbleVolume = 1.0;
     /// @}
 
     /**
@@ -111,12 +114,26 @@ export namespace vortex::scene {
         uint32_t debrisParticleStride = 3;    ///< One debris particle burst per this many carved voxels (>= 1).
 
         // --- rubble clean-up (entities with the Debris component), applied by Update() ---
-        float debrisLifetime = 15.0f;         ///< Seconds a piece of rubble lives. <= 0: no time limit.
+        // Every dynamic object created with VoxelObjectDesc::debris is rubble with a lifetime by
+        // its size and counts against the caps below (docs/design/shred.md stage 1e). A piece that
+        // finds a cap full makes room by removing the oldest *resting* rubble; if nothing rests,
+        // the new piece becomes particles. Rubble that Damage splits further stays rubble.
+        float debrisLifetime = 15.0f;         ///< Seconds rubble under `debrisBodyVoxels` lives. <= 0: no time limit.
+        float rubbleMediumLifetime = 20.0f;   ///< Seconds rubble from `debrisBodyVoxels` to under `rubbleLargeVoxels` lives. <= 0: none.
+        float rubbleLargeLifetime = 30.0f;    ///< Seconds rubble of `rubbleLargeVoxels` or more lives. <= 0: none.
+        /// Rubble with at least this many solid voxels is large. kFromMetres (the default):
+        /// kLargeRubbleVolume (512 voxels of 0.125 m, 1000 of 0.1 m).
+        uint32_t rubbleLargeVoxels = kFromMetres;
         /// Rubble that rests (asleep or frozen) farther than this from the viewer (SetViewer) is
         /// removed as soon as it is older than debrisFarLifetime. <= 0, or no viewer: rule off.
         float debrisFarDistance = 25.0f;
         float debrisFarLifetime = 2.0f;       ///< Seconds; see debrisFarDistance.
-        uint32_t maxDebris = 192;             ///< Most rubble entities alive at once; the oldest are removed first.
+        uint32_t maxDebris = 192;             ///< Most rubble entities under `debrisBodyVoxels` alive at once; Update removes the oldest.
+        /// Most rubble bodies of `debrisBodyVoxels` or more alive at once (0 = none at all).
+        uint32_t maxRubbleBodies = 48;
+        /// Most chunk-store slots held by the models of all rubble (0 = rubble is never drawn: it
+        /// becomes particles). Each slot is one 36 936-byte chunk the renderer uploads.
+        uint32_t maxRubbleSlots = 600;
         uint32_t debrisDespawnBursts = 3;     ///< Particle bursts (fx::SpawnVoxelBreak) left by removed rubble; 0 = none.
     };
 
@@ -128,6 +145,7 @@ export namespace vortex::scene {
         if (config.minPieceVoxels == kFromMetres) config.minPieceVoxels = MinPieceVoxels(vs);
         if (config.debrisBodyVoxels == kFromMetres) config.debrisBodyVoxels = VoxelsForVolume(kDebrisBodyVolume, vs);
         if (config.thinBodyVoxels == kFromMetres) config.thinBodyVoxels = VoxelsForLength(kThinBodyLength, vs);
+        if (config.rubbleLargeVoxels == kFromMetres) config.rubbleLargeVoxels = VoxelsForVolume(kLargeRubbleVolume, vs);
         return config;
     }
 
@@ -145,8 +163,10 @@ export namespace vortex::scene {
         /// The object is rubble (terrain or wreckage that broke off). A dynamic one with a body
         /// then follows the debris rules of SceneConfig: below `minPieceVoxels` no entity is
         /// created at all - the voxels become particles and kNoEntity is returned, which is not
-        /// an error; below `debrisBodyVoxels` it gets the Debris component and is cleaned up
-        /// (unless SceneConfig::markDebris is off).
+        /// an error. Otherwise (unless SceneConfig::markDebris is off) it gets the Debris
+        /// component with a lifetime by its size and counts against the rubble caps; when a cap is
+        /// full of moving rubble, or the chunk store is full, it becomes particles too
+        /// (kNoEntity, counted in Scene::Rubble) - never a silent loss.
         bool debris = false;
     };
 
@@ -159,6 +179,17 @@ export namespace vortex::scene {
         float sourceRadius = 0.1f;
         float lifetime = 0.0f;                ///< Seconds; 0 = persistent (no Lifetime component).
         float decay = 0.0f;                   ///< Lifetime::lightDecay; only used when lifetime > 0.
+    };
+
+    /// @brief What the rubble of a scene holds now, and what its budget did (Scene::Rubble).
+    struct RubbleStats {
+        uint32_t small = 0;              ///< Rubble under SceneConfig::debrisBodyVoxels (maxDebris).
+        uint32_t bodies = 0;             ///< Rubble of debrisBodyVoxels or more (maxRubbleBodies).
+        uint32_t slots = 0;              ///< Chunk-store slots of rubble models (maxRubbleSlots).
+        // Since the scene was made:
+        uint64_t removedByCap = 0;       ///< Rubble removed (in a puff) to stay under a cap.
+        uint64_t crumbledByCap = 0;      ///< New rubble that found a cap full of moving rubble: particles instead.
+        uint64_t crumbledByBake = 0;     ///< New rubble that could not be baked (chunk store full): particles instead.
     };
 
     /// @brief A piece of a damaged object below SceneConfig::replicatedPieceVoxels: no entity
@@ -249,7 +280,9 @@ export namespace vortex::scene {
          * @return kNoEntity (and a log line) if the model is null, could not be baked because
          * the store ran out of slots, or the requested body could not be created; nothing is
          * leaked in that case (a model that could not be baked is left unbaked and holds no
-         * chunk slots, so the same model can be used again once the store has room).
+         * chunk slots, so the same model can be used again once the store has room). Rubble
+         * (`debris`) that cannot be baked or finds its caps full becomes particles instead (see
+         * VoxelObjectDesc::debris).
          */
         Entity CreateVoxelObject(const VoxelObjectDesc& desc);
 
@@ -270,6 +303,8 @@ export namespace vortex::scene {
         size_t EntityCount() const;          ///< Living entities of any kind.
         size_t VoxelObjectCount() const;     ///< Living entities with a VoxelBody (visible or not).
         size_t DebrisCount() const;          ///< Living entities with the Debris component.
+        /// @brief Rubble now (counted on the call: O(rubble)) and the budget's counters.
+        RubbleStats Rubble() const;
 
         /**
          * @brief Direct access to the registry for game components, views and anything the
@@ -342,7 +377,8 @@ export namespace vortex::scene {
          *  - Pieces smaller than `minPieceVoxels` turn into particles moving with the object;
          *    carved voxels throw debris particles away from `center`.
          *  - New pieces smaller than `debrisBodyVoxels` are rubble: they get the Debris component
-         *    and are cleaned up by Update(). So does the damaged entity itself once what is left
+         *    and are cleaned up by Update(); so are all pieces split off an entity that is rubble
+         *    (they keep its age, with a lifetime by their own size). So does the damaged entity itself once what is left
          *    of it is that small and dynamic (`SceneConfig::debrisRemnants`); otherwise it keeps
          *    its identity and components, Debris included if it had it. With
          *    `SceneConfig::markDebris` off nothing is marked: every piece of at least
@@ -373,8 +409,9 @@ export namespace vortex::scene {
         /**
          * @brief Advances lifetimes by `dt` seconds: fades lights (Lifetime::lightDecay) and
          * destroys entities whose time is up. Then cleans up rubble (Debris component): pieces
-         * older than `debrisLifetime`, resting pieces far from the viewer, and the oldest pieces
-         * beyond `maxDebris` are destroyed, each leaving `debrisDespawnBursts` particle bursts.
+         * older than their lifetime, resting pieces far from the viewer, and the oldest pieces
+         * over a cap (`maxDebris`, `maxRubbleBodies`, `maxRubbleSlots`) are destroyed, each
+         * leaving `debrisDespawnBursts` particle bursts.
          */
         void Update(float dt);
 
