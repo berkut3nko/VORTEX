@@ -40,6 +40,10 @@ export namespace vortex::voxel {
         float restitution = 0.05f;
         float hardness = 1.0f;        ///< Resistance to carving; damage must exceed it.
         uint32_t flags = MaterialFlag_None;
+        /// Bond strengths for the load check (docs/design/shred.md Part 4b), kg/m^2, integers (no
+        /// float to round on a server): compression (resting on what is below), shear (held
+        /// sideways), tension (hanging from what is above). The default is stone's.
+        uint32_t strength[3] = {100000, 40000, 15000};
     };
 
     /// @brief Values of `GpuMaterial::params.w`: how the composite pass shades the surface.

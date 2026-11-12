@@ -161,11 +161,30 @@ namespace vortex {
                     : std::format("face {} candidate(s): {} proven, {} merged, attached {} limit / {} known / {} budget / {} unloaded, {} over the limit",
                                   q.faceCandidates, q.facePieces + q.faceCrumbs, q.merged, q.attachedByLimit, q.attachedByKnown, q.attachedByBudget,
                                   q.attachedByUnloaded, q.faceOversize);
-        Log::Info("Blast{}: {:.2f} ms = carve {:.2f} ({} voxels{}) + {} + ops {:.2f} + objects {:.2f} + present {:.2f}; {} island(s) ({} across the "
+        // The load check (shred.md Part 4b): its network, work and what it released.
+        std::string neck;
+        if (q.neckRan) {
+            std::string pieces;
+            for (const voxel::NeckCut& c : q.neckCuts)
+                pieces += std::format(" [{} voxels: load {} > cut {} MU, {} faces{}]", c.voxels, c.load, c.cut, c.faces, c.insideCell ? ", inside a cell" : "");
+            std::string waits;
+            if (q.neckLoading + q.neckBeyondWindow > 0)
+                waits = std::format(", {} loading / {} beyond-window chunk(s) taken as support{}", q.neckLoading, q.neckBeyondWindow,
+                                    q.neckDeferred ? ", re-check queued" : "");
+            neck = std::format("; neck {} nodes ({} split), {} loads, {} anchors ({} solid chunk(s)), {} arcs, {} ext visits, {} flow work, {} piece(s) + "
+                               "{} crumb(s){}{}{}{}{}{}{} in {:.2f} ms + {:.2f} ms of graph builds",
+                               q.neckNodes, q.neckSplit, q.neckLoads, q.neckAnchors, q.neckSolidChunks, q.neckArcs, q.neckExteriorVisits, q.neckFlowWork,
+                               q.neckPieces, q.neckCrumbs, pieces, q.neckOversize ? std::format(", {} oversize", q.neckOversize) : std::string(),
+                               q.neckDeferredParts ? std::format(", {} part(s) left for a later cast (cap)", q.neckDeferredParts) : std::string(),
+                               q.neckSkipped ? ", SKIPPED (network limit)" : "", q.neckFlowBudget ? ", FLOW BUDGET SPENT" : "",
+                               q.neckExteriorBudget ? std::format(", {} exterior flood(s) cut by the budget", q.neckExteriorBudget) : std::string(),
+                               waits, t.neckMs, t.neckBuildMs);
+        }
+        Log::Info("Blast{}: {:.2f} ms = carve {:.2f} ({} voxels{}) + {}{} + ops {:.2f} + objects {:.2f} + present {:.2f}; {} island(s) ({} across the "
                   "island box face), {} crumb(s) of {} voxels; {}; {} oversize island(s); {} decode(s); {}{}{}{}{} edited chunk(s) + {} rubble "
                   "slot(s) = {:.2f} MB to upload; rubble {} small, {}/{} bodies, {}/{} slots{}",
                   blast.deferred ? " (late search)" : "", t.carveMs + t.searchMs + t.floodMs + t.opsMs + t.objectsMs + presentMs, t.carveMs,
-                  carved, blast.carveReplayed ? ", replayed" : "", search, t.opsMs, t.objectsMs, presentMs, blast.IslandCount(), q.facePieces,
+                  carved, blast.carveReplayed ? ", replayed" : "", search, neck, t.opsMs, t.objectsMs, presentMs, blast.IslandCount(), q.facePieces,
                   blast.crumbs, blast.CrumbVoxels(), attached, q.oversizeIslands, q.chunksDecoded,
                   blast.islandsSearched ? "" : (q.floodDeferred ? "flood deferred (chunk not loaded); " : "search deferred (box not loaded); "),
                   skipped == 0 ? "" : std::format("{} skipped chunk(s); ", skipped),

@@ -12,6 +12,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <format>
+#include <string>
 #include <functional>
 #include <memory>
 #include <span>
@@ -117,7 +119,12 @@ namespace {
                                              << checks.searches << " search(es)";
             if (expectChecked)
                 EXPECT_EQ(checks.searches, checks.run) << "island searches run without the comparison (checkIslandSearch lost on the way?)";
+            // shred.md Part 4b: these arenas are pillars, ledges and slabs far inside the strength
+            // table's margins; the load check releases nothing in them.
+            if (!allowNeckReleases) EXPECT_EQ(checks.neckReleases, 0u) << "the load check released a part in a stage-1 arena";
         }
+        /// The cost measurement's load-check runs (the tower falls by the check there).
+        bool allowNeckReleases = false;
         /// false for the arenas that run one search on purpose (checkIslandSearch off).
         bool expectChecked = true;
         FloodArena(const FloodArena&) = delete;
@@ -629,6 +636,7 @@ TEST(Structure, GraphFloatingEqualsFaceFlood) {
         for (int k = 0; k < 2; ++k) {
             sim::SimulationConfig config = c.config;
             config.checkIslandSearch = false;
+            config.neckRule = false;          // two island searches compared op for op (the reference has no load check)
             config.islandSearch = k == 0 ? sim::IslandSearchKind::Graph : sim::IslandSearchKind::Voxel;
             FloodArena a(config, c.unclassified ? std::shared_ptr<voxel::IWorldGenerator>(std::make_shared<UnclassifiedGround>()) : Ground());
             a.expectChecked = false;
@@ -902,11 +910,20 @@ namespace {
     };
 
     struct CostRow {
-        double searchMs = 0.0, buildMs = 0.0, floodMs = 0.0, relabelMs = 0.0;
+        double searchMs = 0.0, buildMs = 0.0, floodMs = 0.0, relabelMs = 0.0, neckMs = 0.0, neckBuildMs = 0.0;
         uint32_t built = 0, used = 0, visits = 0, overfull = 0, islands = 0;
+        uint32_t neckNodes = 0, neckLoads = 0, neckArcs = 0, neckExterior = 0, neckWork = 0, neckPieces = 0, neckSolid = 0;
+        // The graph run only: the load check run on its world right after the shot (voxel::
+        // SearchIslandsOnGraph, nothing applied), so its cost is measured on the same world state
+        // as the search without it (review: the check's own run diverged once it released the tower).
+        double probeMs = 0.0, probeBuildMs = 0.0;
+        uint32_t probeNodes = 0, probeLoads = 0, probeVisits = 0, probeWork = 0, probeParts = 0, probeVoxels = 0, probeSolid = 0;
+        uint64_t probeLoad = 0, probeCut = 0;
     };
 
-    std::vector<CostRow> RunCostScene(const CostScene& scene, bool terrain, sim::IslandSearchKind kind, uint64_t& hash) {
+    /// `neck`: the graph search with its load check (shred.md Part 4b); off for the hash comparison
+    /// with the voxel search (the reference has no load check).
+    std::vector<CostRow> RunCostScene(const CostScene& scene, bool terrain, sim::IslandSearchKind kind, uint64_t& hash, bool neck = false) {
         constexpr float vs = 0.125f;
         sim::SimulationConfig config = FloodConfig(3, scene.window);
         config.world.voxelSize = vs;
@@ -914,8 +931,10 @@ namespace {
         config.chunkCapacity = 8192;
         config.checkIslandSearch = false;
         config.islandSearch = kind;
+        config.neckRule = neck;
         FloodArena a(config, terrain ? nullptr : Ground(), false);
         a.expectChecked = false;
+        a.allowNeckReleases = neck;
         std::vector<CostRow> rows;
         if (!a.initialized) return rows;
         a.World().LoadBlocking(scene.focus);
@@ -932,6 +951,41 @@ namespace {
             row.visits = kind == sim::IslandSearchKind::Graph ? blast.search.nodeVisits : blast.search.floodVisits;
             row.overfull = blast.search.overfullCells;
             row.islands = blast.IslandCount();
+            row.neckMs = blast.times.neckMs;
+            row.neckNodes = blast.search.neckNodes;
+            row.neckLoads = blast.search.neckLoads;
+            row.neckArcs = blast.search.neckArcs;
+            row.neckExterior = blast.search.neckExteriorVisits;
+            row.neckWork = blast.search.neckFlowWork;
+            row.neckPieces = blast.search.neckPieces + blast.search.neckCrumbs;
+            row.neckBuildMs = blast.times.neckBuildMs;
+            row.neckSolid = blast.search.neckSolidChunks;
+            if (kind == sim::IslandSearchKind::Graph && !neck) {
+                voxel::GraphSearchLimits limits;
+                sim::IslandBox(shot.sphere, limits.boxMin, limits.boxMax);
+                sim::FloodBox(shot.sphere, limits.floodMin, limits.floodMax);
+                limits.maxIslandVoxels = sim::kMaxIslandVoxels;
+                limits.maxNodeVisits = sim::kGraphNodeVisitBudget;
+                const voxel::GraphMaterials materials = voxel::MakeGraphMaterials(&a.simulation.Materials(), voxel::MaterialFlag_Liquid);
+                voxel::NeckLimits neckLimits = voxel::MakeNeckLimits(materials, a.World().VoxelSize());
+                limits.neck = &neckLimits;
+                const voxel::GraphSearchResult probe = voxel::SearchIslandsOnGraph(a.World(), a.simulation.TerrainGraphs(), materials, limits);
+                row.probeMs = probe.neckMs;
+                row.probeBuildMs = probe.neckBuildMs;
+                row.probeNodes = probe.neckNodes;
+                row.probeLoads = probe.neckLoads;
+                row.probeVisits = probe.neckExteriorVisits;
+                row.probeWork = probe.neckFlowWork;
+                row.probeSolid = probe.neckSolidChunks;
+                row.probeParts = static_cast<uint32_t>(probe.neckPieces.size());
+                for (const voxel::NeckCut& c : probe.neckCuts) {
+                    row.probeVoxels += c.voxels;
+                    if (c.load > row.probeLoad) {
+                        row.probeLoad = c.load;
+                        row.probeCut = c.cut;
+                    }
+                }
+            }
             rows.push_back(row);
         }
         hash = a.Hash().hash;
@@ -972,8 +1026,11 @@ TEST(Blast, DISABLED_CostOfTheTowerAndCastleCases) {
                                voxel::QuantizePower(6.0f)});
             static constexpr glm::dvec2 kShots[] = {{31.5, -58.5}, {44.0, -58.5}, {56.5, -58.5}, {56.5, -46.0},
                                                     {56.5, -33.5}, {31.5, -33.5}, {31.5, -46.0}};
-            static constexpr const char* kNames[] = {"tower ring shot 1 (cold)", "tower ring shot 2", "tower ring shot 3", "tower ring shot 4",
+            static constexpr const char* kNames[] = {"tower ring shot 1", "tower ring shot 2", "tower ring shot 3", "tower ring shot 4",
                                                      "tower ring shot 5", "tower ring shot 6", "tower ring shot 7 (frees it)"};
+            // Review: a dud where shot 1 lands, before it - does the tower stand on this ground before any shot?
+            t.shots.push_back({"tower dud before shot 1 (cold)", ShotAt(glm::dvec3(c) * static_cast<double>(vs) + glm::dvec3(kShots[0].x, 5.0, kShots[0].y) * 0.1, vs),
+                               0});
             for (size_t k = 0; k < 7; ++k) {
                 const glm::dvec3 at = glm::dvec3(c) * static_cast<double>(vs) + glm::dvec3(kShots[k].x, 5.0, kShots[k].y) * 0.1;
                 t.shots.push_back({kNames[k], ShotAt(at, vs), voxel::QuantizePower(6.0f)});
@@ -1010,9 +1067,10 @@ TEST(Blast, DISABLED_CostOfTheTowerAndCastleCases) {
         }
         for (const CostScene& scene : scenes)
             for (int run = 0; run < 3; ++run) {
-                uint64_t hash[2] = {};
+                uint64_t hash[3] = {};
                 const std::vector<CostRow> graph = RunCostScene(scene, terrain, sim::IslandSearchKind::Graph, hash[0]);
                 const std::vector<CostRow> voxel = RunCostScene(scene, terrain, sim::IslandSearchKind::Voxel, hash[1]);
+                const std::vector<CostRow> neck = RunCostScene(scene, terrain, sim::IslandSearchKind::Graph, hash[2], true);
                 ASSERT_EQ(graph.size(), scene.shots.size());
                 ASSERT_EQ(voxel.size(), scene.shots.size());
                 EXPECT_EQ(hash[0], hash[1]) << scene.name;
@@ -1023,6 +1081,25 @@ TEST(Blast, DISABLED_CostOfTheTowerAndCastleCases) {
                                 terrain ? "terrain" : "flat", run, scene.shots[k].name, r.searchMs, r.buildMs, r.built, r.used,
                                 r.built ? 1000.0 * r.buildMs / r.built : 0.0, r.floodMs, r.visits, r.relabelMs, r.overfull,
                                 voxel[k].searchMs, voxel[k].visits, r.islands, voxel[k].islands);
+                    std::printf("%s run %d %s: the check on this world (nothing applied): %.2f ms + %.2f ms of graph builds (%u nodes, %u loads, "
+                                "%u exterior visits, %u flow work, %u solid chunk(s)); would release %u part(s), %u voxels%s\n",
+                                terrain ? "terrain" : "flat", run, scene.shots[k].name, r.probeMs, r.probeBuildMs, r.probeNodes, r.probeLoads,
+                                r.probeVisits, r.probeWork, r.probeSolid, r.probeParts, r.probeVoxels,
+                                r.probeParts ? std::format(" (heaviest: load {} > cut {} MU, {:.2f}x)", r.probeLoad, r.probeCut,
+                                                           static_cast<double>(r.probeLoad) / static_cast<double>(std::max<uint64_t>(1, r.probeCut)))
+                                                   .c_str()
+                                             : "");
+                    if (k < neck.size()) {
+                        const CostRow& n = neck[k];
+                        std::printf("%s run %d %s: with the load check%s: search %.2f ms of which check %.2f ms + builds %.2f ms (%u nodes, %u "
+                                    "loads, %u arcs, %u exterior visits, %u flow work, %u released); %u Detach(es)\n",
+                                    terrain ? "terrain" : "flat", run, scene.shots[k].name,
+                                    std::any_of(neck.begin(), neck.begin() + static_cast<std::ptrdiff_t>(k), [](const CostRow& x) { return x.neckPieces > 0; })
+                                        ? " (AFTER A RELEASE: another world)"
+                                        : "",
+                                    n.searchMs, n.neckMs, n.neckBuildMs, n.neckNodes, n.neckLoads, n.neckArcs, n.neckExterior, n.neckWork,
+                                    n.neckPieces, n.islands);
+                    }
                 }
             }
     }

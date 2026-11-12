@@ -32,27 +32,49 @@ export namespace vortex::voxel {
     /// Faces of a cell, in the fixed neighbour order of every traversal (-x +x -y +y -z +z).
     enum CellFace : uint8_t { kFaceNegX, kFacePosX, kFaceNegY, kFacePosY, kFaceNegZ, kFacePosZ };
 
+    /// Bond classes of the load check (docs/design/shred.md Part 4b), indices of
+    /// Material::strength and GraphNode::weak: a node resting on the one below (its -y face) loads
+    /// the bond in compression, one hanging from the one above (+y) in tension, x and z in shear.
+    enum StrengthClass : uint8_t { kCompression = 0, kShear = 1, kTension = 2 };
+    /// The class of a bond crossed from a node through its face `face`.
+    constexpr uint8_t StrengthClassOf(uint8_t face) { return face == kFaceNegY ? kCompression : face == kFacePosY ? kTension : kShear; }
+    inline constexpr uint8_t kNoCut = 255;          ///< GraphNode::cutFaces of a node that is never split.
+    inline constexpr uint8_t kCutAnchorBit = 0x80;  ///< GraphNode::cutPlane: the node holds an anchor voxel.
+
     /**
      * @brief One node: a 6-connected component of solid (not ignored) voxels inside one 8^3 cell.
      * @details Face masks hold the node's voxels on each face of its cell, 8 x 8 bits: an x face
      * bit y + 8z, a y face bit x + 8z, a z face bit x + 8y, so the masks of two cells that share a
      * face line up: two nodes are linked exactly when `a.face[f] & b.face[opposite f]` is not 0,
-     * and its popcount is their bond (voxel faces shared). Voxel count, mass and bonds are kept
-     * for a later load check (shred.md stage 7: "a tower on a 4-voxel bridge must not hold").
+     * and its popcount is their bond (voxel faces shared). Voxel count, mass, bonds, the weakest
+     * material per bond class and the narrowest horizontal plane are what the load check reads
+     * (docs/design/shred.md Part 4b: "a tower on a 4-voxel neck must not hold").
      */
     struct GraphNode {
         uint64_t face[6] = {};
         /// Material-weighted mass: the sum of GraphMaterials::densityQ (kg/m^3, integer) over its
-        /// voxels; kilograms = mass x voxel size^3.
+        /// voxels; kilograms = mass x voxel size^3 (foliage weighs 0).
         uint32_t mass = 0;
         uint16_t voxels = 0;          ///< 1..512.
         uint16_t firstVoxel = 0;      ///< Cell-local x + 8y + 64z of its first voxel in scan order (z, then y, then x).
         uint16_t firstLink = 0;       ///< Its links inside the chunk: ChunkGraph::links[firstLink, firstLink + linkCount).
         uint16_t linkCount = 0;
+        /// Voxel faces of the node across its narrowest horizontal plane, where the load check
+        /// splits it into a lower and an upper half (1..63), or kNoCut: not constricted there, or
+        /// a half would not be 6-connected (shred.md Part 4b, "The narrowest plane").
+        uint8_t cutFaces = kNoCut;
+        /// Bits 0-2: the plane, between cell-local layers y = k and k + 1 (with cutFaces != kNoCut).
+        /// kCutAnchorBit: a voxel of the node is an anchor material (GraphMaterials::anchor).
+        uint8_t cutPlane = 0;
         uint8_t cell = 0;             ///< cx + 4 cy + 16 cz.
         uint8_t boxMin[3] = {};       ///< Cell-local bounds of its voxels, inclusive.
         uint8_t boxMax[3] = {};
+        /// Per StrengthClass the id of its weakest material (lowest strength, ties to the smaller
+        /// id), foliage left out unless the node holds nothing else: a bond is as strong as the
+        /// weaker material on either side.
+        uint8_t weak[3] = {};
     };
+    static_assert(sizeof(GraphNode) == 72);
 
     /// @brief A link between two nodes of the same chunk (links across a chunk face are computed
     /// from the face masks when a traversal needs them: BondVoxels).
@@ -87,14 +109,25 @@ export namespace vortex::voxel {
     }
 
     /// @brief What a graph is built from per material id: whether it is ignored (liquids: neither
-    /// support nor part of a piece, like the island search) and its integer density.
+    /// support nor part of a piece, like the island search), its integer density, its bond
+    /// strengths and whether it is an anchor (never fails, always supports).
     struct GraphMaterials {
         std::array<bool, 256> ignored{};
-        std::array<uint16_t, 256> densityQ{};         ///< kg/m^3, rounded, saturated at 65535; 0 for air.
+        /// Indestructible and not ignored (bedrock): a node holding one is an anchor of the load check.
+        std::array<bool, 256> anchor{};
+        /// MaterialFlag_Foliage (leaves): weightless, and left out of a node's weakest material
+        /// (GraphNode::weak) when the node holds any other solid id: a leaf touching a wall does not
+        /// rate the wall (shred.md "Stage 4b review").
+        std::array<bool, 256> foliage{};
+        /// kg/m^3, rounded, saturated at 65535; 0 for air, ignored ids and foliage (weightless for
+        /// the load check: a canopy never overloads its trunk).
+        std::array<uint16_t, 256> densityQ{};
+        /// Material::strength per StrengthClass, kg/m^2.
+        std::array<std::array<uint32_t, 256>, 3> strength{};
         bool operator==(const GraphMaterials&) const = default;
     };
     /// @brief The tables for `materials` (kWorldPalette) and `ignoreFlags`; without a library
-    /// nothing is ignored and every density is 1000.
+    /// nothing is ignored, every density is 1000 and every strength stone's (Material's default).
     GraphMaterials MakeGraphMaterials(const MaterialLibrary* materials, uint32_t ignoreFlags);
 
     /// @brief Builds the graph of a chunk from its voxels (`chunk`), or of a Uniform chunk of
@@ -177,6 +210,66 @@ export namespace vortex::voxel {
         TerrainGraphStats m_Stats;
     };
 
+    // --- the load check (docs/design/shred.md Part 4b) ------------------------------------------------
+
+    /// Strengths are kg/m^2 and masses kg/m^3 x voxels ("MU": kg = MU x vs^3); one voxel face of
+    /// a material carries strength x vs^2 kg = strength x 1 000 000 / vsMicro MU.
+    uint32_t VoxelSizeMicro(float voxelSize);       ///< llround(voxelSize x 1e6): 125 000 at 0.125 m.
+
+    /// @brief The limits of the load check of one search (GraphSearchLimits::neck).
+    struct NeckLimits {
+        /// Per StrengthClass and material id: what one voxel face carries, MU (MakeNeckLimits).
+        std::array<std::array<uint64_t, 256>, 3> capFace{};
+        uint32_t maxNetworkNodes = 8192;      ///< Judged nodes (halves counted) plus loads; above: skipped.
+        uint32_t maxArcPairs = 65535;         ///< Arc pairs of the network; above: skipped.
+        uint32_t maxExteriorVisits = 16384;   ///< Node visits of the exterior floods; then every flood is an anchor.
+        uint32_t maxFlowWork = 262144;        ///< Arc scans of the maximum preflow; spent: nothing released.
+        /// Released parts and voxels per check (shred.md "Stage 4b review"): parts are taken in piece
+        /// order while both fit; the first that does not and every later one stay (counted in
+        /// `neckDeferredParts`; still overloaded, a later cast near them releases them).
+        uint32_t maxReleasedVoxels = 60000;
+        uint32_t maxReleasedParts = 64;
+        /// Tests only: a non-zero seed permutes the arc order of every network node and the first
+        /// queue of the preflow (the released set must not change: `Neck.ReleasedSetIndependentOfArcOrder`).
+        uint32_t shuffleForTesting = 0;
+    };
+    /// @brief capFace[k][id] = strength[k][id] x 1 000 000 / VoxelSizeMicro(voxelSize), floor;
+    /// the budgets at their defaults.
+    NeckLimits MakeNeckLimits(const GraphMaterials& materials, float voxelSize);
+
+    /// @brief One part the load check released (or found overloaded and left, `oversize`).
+    struct NeckCut {
+        uint64_t load = 0;        ///< MU: the mass of the part (exterior loads hanging on it included).
+        uint64_t cut = 0;         ///< MU: what the bonds out of the part carry (load > cut, strictly).
+        uint32_t faces = 0;       ///< Voxel faces of those bonds.
+        uint32_t voxels = 0;
+        bool insideCell = false;  ///< Some of the cut runs through the narrowest plane of a split node.
+    };
+
+    /// @brief An abstract load network (tests; the search builds its own the same way): node
+    /// supplies in MU, arc pairs with a capacity each way, arcs to the sink (`to == kNeckSink`).
+    struct NeckNetwork {
+        static constexpr uint32_t kNeckSink = 0xFFFFFFFFu;
+        static constexpr uint64_t kInfinite = ~uint64_t{0};
+        struct Arc {
+            uint32_t from = 0, to = 0;
+            uint64_t cap = 0;         ///< from -> to, MU (kInfinite: never saturates).
+            uint64_t capBack = 0;     ///< to -> from (ignored for an arc to the sink).
+        };
+        std::vector<uint64_t> supply;
+        std::vector<Arc> arcs;
+        uint32_t shuffleSeed = 0;     ///< As NeckLimits::shuffleForTesting.
+    };
+    struct NeckFlowResult {
+        bool solved = false;              ///< false: maxWork spent (nothing may be released).
+        std::vector<uint8_t> released;    ///< Per node: 1 = in the largest strictly overloaded set.
+        uint64_t work = 0;                ///< Arc scans.
+    };
+    /// @brief The load check's rule on a network: a maximum preflow on the perturbed capacities
+    /// (c x 2^17 + 1, supplies x 2^17), released = the nodes that cannot reach the sink in its
+    /// residual graph: the largest set A with mass(A) > cap(A -> out), unique whatever the order.
+    NeckFlowResult SolveNeckNetwork(const NeckNetwork& network, uint32_t maxWork);
+
     // --- the island search on the graph -------------------------------------------------------------
 
     struct GraphSearchLimits {
@@ -190,6 +283,8 @@ export namespace vortex::voxel {
         /// returned (`complete` false, the caller waits for `unloadedChunk`); false (session
         /// server) that flood is attached and `attachedByUnloaded` counts an error.
         bool deferOnUnloaded = true;
+        /// The load check (docs/design/shred.md Part 4b) after the island floods, or nullptr: off.
+        const NeckLimits* neck = nullptr;
     };
 
     struct GraphSearchResult {
@@ -244,6 +339,44 @@ export namespace vortex::voxel {
         uint64_t graphsBuilt = 0;
         /// Wall clock, logged only: seeds and box components (graph builds included), floods, re-labelling.
         double seedMs = 0.0, floodMs = 0.0, relabelMs = 0.0;
+
+        // The load check (GraphSearchLimits::neck). Every counter follows from the voxels of the
+        // flood box: equal cold or warm, with any number of workers.
+        /// Parts released by the check, in piece order (smallest network index first), and what
+        /// each held (`neckCuts`, same order). They may reach past the island box.
+        std::vector<FloatingIsland> neckPieces;
+        std::vector<NeckCut> neckCuts;
+        bool neckRan = false;              ///< The check ran (searched, complete, `neck` given).
+        uint32_t neckNodes = 0;            ///< Network nodes: judged nodes (a split node counts twice) and loads.
+        uint32_t neckSplit = 0;            ///< Judged nodes split at their narrowest plane.
+        uint32_t neckLoads = 0;            ///< Closed exterior floods: loads hanging on judged nodes.
+        uint32_t neckAnchors = 0;          ///< Exterior floods that ended as anchors.
+        uint32_t neckArcs = 0;             ///< Arc pairs.
+        uint32_t neckExteriorVisits = 0;
+        uint32_t neckFlowWork = 0;         ///< Arc scans of the preflow.
+        uint32_t neckSplitRelabels = 0;    ///< Split nodes re-labelled per voxel for their halves' mass.
+        uint32_t neckVoxels = 0;           ///< Voxels released.
+        uint32_t neckOversize = 0;         ///< Overloaded parts over maxIslandVoxels: they stay (counted).
+        /// Overloaded parts left for a later cast by NeckLimits::maxReleasedVoxels / maxReleasedParts.
+        uint32_t neckDeferredParts = 0;
+        /// Exterior floods that ended on entering a chunk that is solid through (32^3 solid voxels,
+        /// whatever its storage): ground, an anchor without reading further (shred.md "Stage 4b review").
+        uint32_t neckSolidChunks = 0;
+        uint32_t neckSkipped = 0;          ///< Network over maxNetworkNodes or maxArcPairs: nothing judged.
+        uint32_t neckExteriorBudget = 0;   ///< Exterior floods ended (or never run) by maxExteriorVisits: anchors.
+        uint32_t neckFlowBudget = 0;       ///< maxFlowWork spent: nothing released.
+        uint32_t neckUnloaded = 0;         ///< Server: an exterior flood met a chunk that is not loaded (an anchor; an error).
+        /// Offline: the check met a chunk outside the world window (it cannot load before the
+        /// window moves) / a chunk of the window still loading. Either is taken as support for this
+        /// check, which can only release less than the full answer (never something that holds),
+        /// and the check asks to run again once `neckWaitChunk` (the first one met) has loaded
+        /// (`neckWaits`; sim::Blast queues a late search). The islands are not held back.
+        uint32_t neckBeyondWindow = 0;
+        uint32_t neckLoading = 0;
+        bool neckWaits = false;
+        glm::ivec3 neckWaitChunk{0};
+        /// Wall clock, logged only: the check without the chunk graphs it built (`neckBuildMs`).
+        double neckMs = 0.0, neckBuildMs = 0.0;
     };
 
     /**
@@ -262,6 +395,15 @@ export namespace vortex::voxel {
      * entirely inside the box interior is closed without a flood. Island nodes are re-labelled per
      * voxel to build the island volumes. Integer-only, a fixed order: equal voxels in the flood
      * box give equal results, whatever was cached or loaded outside it. Changes nothing in the world.
+     * With `limits.neck` the load check runs after the floods (docs/design/shred.md Part 4b): the
+     * nodes of the island box that are not islands are judged, what hangs on them inside the
+     * flood box is a load, what reaches the flood box face (or an anchor material) supports; the
+     * largest strictly overloaded set is returned as `neckPieces` (capped per call:
+     * NeckLimits::maxReleasedParts / maxReleasedVoxels). An exterior flood that enters a chunk solid
+     * through is ground (`neckSolidChunks`). A chunk the check needs that is not loaded is support:
+     * a server counts an error (`neckUnloaded`); offline (`deferOnUnloaded`) it is counted
+     * (`neckLoading`, `neckBeyondWindow`) and `neckWaits` asks the caller to run the search again
+     * once `neckWaitChunk` has loaded. Unlike a face flood it never holds back the islands.
      */
     GraphSearchResult SearchIslandsOnGraph(const World& world, TerrainGraphCache& cache, const GraphMaterials& materials,
                                            const GraphSearchLimits& limits);

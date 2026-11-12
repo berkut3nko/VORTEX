@@ -20,7 +20,7 @@ here. Line numbers in `src/scene`, `src/sim` and `src/engine` are as of M1 stage
 - `src/sim/Blast.cppm`, `internal/Blast.cpp` - `BlastDesc`, `AppliedOp`, `BlastResult`, `BlastPush`, `Blast` (the
   simulation half of a blast), `PresentBlast` (the presentation half, GPU-free; `Engine::PresentBlast` forwards),
   `kMaxIslandVoxels`, `kIslandSearchMargin`, `kFloodVisitBudget`, `kMaxDeferredIslandSearches`, `kServerWindowMarginChunks`,
-  `kGraphNodeVisitBudget`, `IslandBox` / `FloodBox`, `BlastTimes` / `IslandSearchStats` (shred.md stages 0-1c and 4),
+  `kGraphNodeVisitBudget`, the `kNeck*` budgets of the load check, `IslandBox` / `FloodBox`, `BlastTimes` / `IslandSearchStats` (shred.md stages 0-1c, 4 and 4b),
   `RetryIslandSearches`. In Blast.cpp the search is `GraphSearch` (default) or `VoxelSearch` (the stage-1 reference),
   both returning a `Found`; `SearchIslands` emits the operations from either. The crumb
   threshold is `scene::MinPieceVoxels(world.VoxelSize())` (Scene.cppm; 8 at 0.125 m).
@@ -46,7 +46,13 @@ here. Line numbers in `src/scene`, `src/sim` and `src/engine` are as of M1 stage
   `FloodArena`, `Arena` (BlastTests) and `RubbleArena` set `checkIslandSearch` and fail a test whose searches differ
   or that ran a search without comparing it (`IslandSearchChecks::run`; `FloodArena::expectChecked = false` for the
   arenas that run one search on purpose);
-  voxel-search counters are in `BlastResult::reference` there.
+  voxel-search counters are in `BlastResult::reference` there. The three arenas also fail when the load check released
+  anything (`IslandSearchChecks::neckReleases`; `Arena` / `RubbleArena::expectNeckReleases` for the tests that want a
+  release). `Structure.GraphFloatingEqualsFaceFlood` runs with `neckRule = false` (the voxel reference has no load
+  check). `tests/sim/NeckTests.cpp` - `Blast.Neck*` (shred.md stage 4b in `sim::Blast`: the release is an ordinary
+  Detach, two simulations and replay, server / offline unloaded chunk - support plus a late re-check, face islands not
+  held, a chunk beyond the window - the rule switched off), helpers `NeckArena`
+  (window 6 x 8 x 6: the tower's flood box reaches y 181), `TowerOnANeck`, `NeckShot`.
 - `tests/sim/SimulationTests.cpp` - suite `Simulation`; helpers `FlatWorld` (a simulation on flat ground, window
   loaded) and `Playground` (crates, a static block, a lamp, a flash). `tests/sim/ServerSceneTests.cpp` - suite
   `ServerScene`; helper `Bench` (store + materials + physics + particles + scene, no world). Both are
@@ -221,9 +227,11 @@ Engine
   `voxel::SearchIslandsOnGraph` on `Simulation::TerrainGraphs()` (shred.md stage 4), with
   `SimulationConfig::islandSearch = Voxel` the stage-1 search (`ExtractFloatingIslands` with
   `removeFromWorld = false`, then the face flood `voxel::ProveFaceComponents` of the components that touch the island
-  box face); the same islands in the same order unless a budget runs out -> per island of at least `scene::MinPieceVoxels(world voxel size)` `WorldOp::Detach`
-  applied with `ApplyOp` (no entity), in-box islands in scan order first, then proven ones in candidate order -> one
-  `WorldOp::Clear` for all smaller islands of both kinds (the union mask over their tight box) -> snapshot
+  box face); the same islands in the same order unless a budget runs out; with the graph search and
+  `SimulationConfig::neckRule` (default on) the load check of shred.md Part 4b runs inside it -> per island of at least
+  `scene::MinPieceVoxels(world voxel size)` `WorldOp::Detach` applied with `ApplyOp` (no entity), in-box islands in
+  scan order first, then proven ones in candidate order, then the load check's released parts in piece order -> one
+  `WorldOp::Clear` for all smaller ones of the three kinds (the union mask over their tight box) -> snapshot
   (`QueryBodies`) -> `Damage` each (fragments get `BlastPush` added) -> impulses -> `ActivateInBox`.
   `sim::PresentBlast` (Blast.cpp): per carve the debris particles, per Detach with netId 0 a rubble object from
   the removed voxels with `op.velocity`, per ClearMask particles only (every 3rd crumb voxel, at most 400, pushed with
@@ -263,7 +271,11 @@ Engine
   cheap check per frame), and given up only once its flood box no longer shares a chunk column with the window
   (`deferredGivenUp`, a `Log::Warn`). A full list drops the search farthest from the window centre (`deferredDropped`
   on the new blast's result, a `Log::Warn`). A replayed carve is `ops[0]` of the late result (`carveReplayed`), so
-  `PresentBlast` shows its debris; late results never get an explosion or flash.
+  `PresentBlast` shows its debris; late results never get an explosion or flash. Since the stage-4b review a third
+  kind waits: the load check took an unloaded chunk as support (`IslandSearchStats::neckDeferred`, internal
+  `SearchOutcome::NeckWaits`): the blast's islands are out (`islandsSearched` true) and the late search re-runs search
+  and check once that chunk has loaded - for a chunk outside the window only after the window moved over it, so a blast
+  whose flood box reaches past the window keeps one waiting entry (tests with small windows see it).
 - `SimulationConfig::checkIslandSearch` (tests) runs the other search on the same voxels before any operation is
   applied; it doubles the search cost and must stay off in the game. The chunk graphs live in the `Simulation`
   (`TerrainGraphs()`, cleared by `Shutdown`); nothing else invalidates them than `World::ChunkRevision`.

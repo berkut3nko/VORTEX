@@ -54,6 +54,10 @@ export namespace vortex::sim {
         /// operation is applied) and compares the islands; a difference is logged and counted
         /// (Simulation::IslandSearchChecks, IslandSearchStats::referenceMismatch).
         bool checkIslandSearch = false;
+        /// The load check after a blast's graph island search (docs/design/shred.md Part 4b): a
+        /// part whose weight the bonds holding it cannot carry falls (a tower on a thin neck). Off
+        /// with IslandSearchKind::Voxel (the reference has none).
+        bool neckRule = true;
         unsigned jobThreads = 0;              ///< Worker threads of the job system (0 = one per core, minus one).
         /// The terrain. With a `saveDirectory` the world loads modified chunks from there and
         /// saves them on shutdown and on World().Save() (an offline game, the map editor). A
@@ -101,7 +105,8 @@ export namespace vortex::sim {
         /// Chunks the blast's carve skipped (not loaded) that may still load, in its visit order:
         /// the carve is replayed on each of them, and only on them, as soon as it is loaded.
         std::vector<glm::ivec3> carvePending;
-        /// A face flood met `waitChunk` (not loaded): the search runs again once it is.
+        /// A face flood met `waitChunk` (not loaded), or the load check took it as support: the
+        /// search runs again once it is loaded.
         bool waitsForChunk = false;
         glm::ivec3 waitChunk{0};
         uint32_t attempts = 0;        ///< RetryIslandSearches calls so far
@@ -186,6 +191,7 @@ export namespace vortex::sim {
             uint32_t run = 0;
             uint32_t searches = 0;
             uint32_t mismatches = 0;
+            uint32_t neckReleases = 0;    ///< Parts the load check released (pieces and crumbs), all searches.
         };
         IslandSearchChecks& IslandSearchCheck();
 

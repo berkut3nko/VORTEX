@@ -61,7 +61,11 @@ namespace {
             const sim::Simulation::IslandSearchChecks& checks = simulation.IslandSearchCheck();
             EXPECT_EQ(checks.mismatches, 0u) << "the graph and the voxel island search differed";
             EXPECT_EQ(checks.searches, checks.run) << "island searches run without the comparison (checkIslandSearch lost on the way?)";
+            // shred.md Part 4b: nothing here is near the strength table's limits.
+            EXPECT_EQ(checks.neckReleases, expectNeckReleases) << "the load check released parts";
         }
+        /// Parts the load check is expected to release over the arena's life (shred.md Part 4b).
+        uint32_t expectNeckReleases = 0;
         RubbleArena(const RubbleArena&) = delete;
         RubbleArena& operator=(const RubbleArena&) = delete;
         voxel::World& World() { return simulation.World(); }
@@ -194,4 +198,47 @@ TEST(Rubble, TowerCutsStayUnderCaps) {
     EXPECT_EQ(end.crumbledByBake, 0u);
     // Every rubble body has a lifetime: 20 s (medium) at these sizes.
     for (const auto [entity, debris] : scene.Registry().view<const scene::Debris>().each()) EXPECT_GT(debris.lifetime, 0.0f);
+}
+
+// shred.md Part 4b: the watch tower released by the load check (0.1 m, a 2 x 2 neck) is one Detach
+// like any island: it becomes one rubble body, or particles when the caps are full; the caps hold.
+TEST(Rubble, TowerNeckReleasesStayUnderCaps) {
+    for (const bool full : {false, true}) {
+        sim::SimulationConfig config = RubbleConfig();
+        config.world.windowSize = {6, 8, 6};          // the tower's flood box reaches y 181
+        config.chunkCapacity = 1536;
+        config.scene.maxRubbleBodies = 4;
+        config.scene.maxRubbleSlots = full ? 1 : 64;  // full: the tower piece (2 model chunks) cannot get its slots
+        RubbleArena a(config);
+        ASSERT_TRUE(a.initialized);
+        a.expectNeckReleases = 1;
+        const voxel::WorldMaterials& m = a.Ids();
+        const glm::ivec3 c(-44, g, 46);
+        const auto B = [&](glm::ivec3 lo, glm::ivec3 hi, uint8_t id) { Apply(a.World(), sim::WorldOp::Box(c + lo, c + hi, id)); };
+        B({10, -1, -80}, {80, 0, -10}, m.stoneDark);
+        B({30, 0, -60}, {58, 70, -32}, m.stone);
+        B({33, 0, -57}, {55, 66, -35}, 0);
+        B({28, 66, -62}, {60, 70, -30}, m.planks);
+        B({30, 1, -60}, {58, 16, -32}, 0);
+        B({30, 1, -60}, {32, 16, -58}, m.stone);
+        scene::Scene& scene = a.simulation.Scene();
+        const sim::BlastResult blast = sim::Blast(a.simulation, voxel::SphereQ{(c + glm::ivec3(44, 5, -46)) * 16 + glm::ivec3(8), 96},
+                                                  voxel::QuantizePower(6.0f));
+        ASSERT_TRUE(blast.islandsSearched);
+        ASSERT_EQ(blast.search.neckPieces, 1u);
+        const scene::RubbleStats before = scene.Rubble();
+        const size_t objectsBefore = scene.VoxelObjectCount();
+        sim::PresentBlast(a.simulation, blast);
+        const scene::RubbleStats after = scene.Rubble();
+        const uint32_t made = static_cast<uint32_t>(scene.VoxelObjectCount() + (after.removedByCap - before.removedByCap) - objectsBefore);
+        const uint32_t crumbled = static_cast<uint32_t>((after.crumbledByCap - before.crumbledByCap) + (after.crumbledByBake - before.crumbledByBake));
+        EXPECT_EQ(made + crumbled, 1u) << "the tower piece was lost";
+        EXPECT_EQ(crumbled, full ? 1u : 0u);
+        EXPECT_LE(after.bodies, config.scene.maxRubbleBodies);
+        EXPECT_LE(after.slots, config.scene.maxRubbleSlots);
+        for (int frame = 0; frame < 30; ++frame) a.Frame();
+        EXPECT_LE(scene.Rubble().bodies, config.scene.maxRubbleBodies);
+        EXPECT_LE(scene.Rubble().slots, config.scene.maxRubbleSlots);
+        EXPECT_LE(a.simulation.Chunks().UsedCount(), config.chunkCapacity);
+    }
 }

@@ -72,7 +72,9 @@ namespace vortex::sim {
         double MsSince(Clock::time_point start) { return std::chrono::duration<double, std::milli>(Clock::now() - start).count(); }
 
         /// Refused: a session server's island box was not loaded (an error, nothing waits).
-        enum class SearchOutcome { Done, BoxNotLoaded, FloodWaits, Refused };
+        /// NeckWaits (offline only): everything was emitted, but the load check took a chunk that
+        /// is not loaded as support; the search runs again once it has loaded.
+        enum class SearchOutcome { Done, BoxNotLoaded, FloodWaits, Refused, NeckWaits };
 
         /// Every chunk of the voxel box [min, max) is loaded, or lies above the build ceiling or
         /// below the bottom row of a fixed-height window (nothing exists above, the world's ground
@@ -105,8 +107,12 @@ namespace vortex::sim {
             glm::ivec3 waitChunk{0};
             std::vector<voxel::FloatingIsland> boxIslands;     ///< in-box islands, scan order
             std::vector<voxel::FloatingIsland> faceIslands;    ///< proven ones, candidate order
+            std::vector<voxel::FloatingIsland> neckPieces;     ///< released by the load check, piece order
+            std::vector<voxel::NeckCut> neckCuts;
+            bool neckWaits = false;                            ///< offline: the check took an unloaded chunk as support
+            glm::ivec3 neckWaitChunk{0};
             IslandSearchStats stats;
-            double searchMs = 0.0, floodMs = 0.0, graphBuildMs = 0.0, graphFloodMs = 0.0, relabelMs = 0.0;
+            double searchMs = 0.0, floodMs = 0.0, graphBuildMs = 0.0, graphFloodMs = 0.0, relabelMs = 0.0, neckMs = 0.0, neckBuildMs = 0.0;
         };
 
         /// The stage-1 search: ExtractFloatingIslands over the island box, then the face flood.
@@ -162,19 +168,38 @@ namespace vortex::sim {
             limits.maxNodeVisits = kGraphNodeVisitBudget;
             limits.deferOnUnloaded = !simulation.Config().sessionServer;
             voxel::TerrainGraphCache& cache = simulation.TerrainGraphs();
+            const voxel::GraphMaterials materials = voxel::MakeGraphMaterials(&simulation.Materials(), voxel::MaterialFlag_Liquid);
+            // The load check (shred.md Part 4b): capacities for the session's voxel size (the
+            // float both sides hold bit for bit), the four work budgets.
+            voxel::NeckLimits neck;
+            if (simulation.Config().neckRule && simulation.Config().islandSearch == IslandSearchKind::Graph) {
+                neck = voxel::MakeNeckLimits(materials, simulation.World().VoxelSize());
+                neck.maxNetworkNodes = kNeckMaxNetworkNodes;
+                neck.maxArcPairs = kNeckMaxArcPairs;
+                neck.maxExteriorVisits = kNeckExteriorVisitBudget;
+                neck.maxFlowWork = kNeckFlowWorkBudget;
+                neck.maxReleasedVoxels = kNeckMaxReleasedVoxels;
+                neck.maxReleasedParts = kNeckMaxReleasedParts;
+                limits.neck = &neck;
+            }
             const double buildBefore = cache.Stats().buildMs;
             const Clock::time_point start = Clock::now();
-            voxel::GraphSearchResult r = voxel::SearchIslandsOnGraph(
-                simulation.World(), cache, voxel::MakeGraphMaterials(&simulation.Materials(), voxel::MaterialFlag_Liquid), limits);
+            voxel::GraphSearchResult r = voxel::SearchIslandsOnGraph(simulation.World(), cache, materials, limits);
             out.searchMs = MsSince(start);
             out.graphBuildMs = cache.Stats().buildMs - buildBefore;
             out.graphFloodMs = r.floodMs;
             out.relabelMs = r.relabelMs;
+            out.neckMs = r.neckMs;
+            out.neckBuildMs = r.neckBuildMs;
+            out.neckWaits = r.neckWaits;
+            out.neckWaitChunk = r.neckWaitChunk;
             out.searched = r.searched;
             out.complete = r.complete;
             out.waitChunk = r.unloadedChunk;
             out.boxIslands = std::move(r.boxIslands);
             out.faceIslands = std::move(r.faceIslands);
+            out.neckPieces = std::move(r.neckPieces);
+            out.neckCuts = std::move(r.neckCuts);
             IslandSearchStats& stats = out.stats;
             stats.graph = true;
             stats.faceOversize = r.faceOversize;
@@ -195,6 +220,25 @@ namespace vortex::sim {
             stats.overfullCells = r.overfullCells;
             stats.relabelledNodes = r.relabelledNodes;
             stats.outsideBox = r.outsideBox;
+            stats.neckRan = r.neckRan;
+            stats.neckNodes = r.neckNodes;
+            stats.neckSplit = r.neckSplit;
+            stats.neckLoads = r.neckLoads;
+            stats.neckAnchors = r.neckAnchors;
+            stats.neckArcs = r.neckArcs;
+            stats.neckExteriorVisits = r.neckExteriorVisits;
+            stats.neckFlowWork = r.neckFlowWork;
+            stats.neckSplitRelabels = r.neckSplitRelabels;
+            stats.neckVoxels = r.neckVoxels;
+            stats.neckOversize = r.neckOversize;
+            stats.neckSkipped = r.neckSkipped;
+            stats.neckExteriorBudget = r.neckExteriorBudget;
+            stats.neckFlowBudget = r.neckFlowBudget;
+            stats.neckUnloaded = r.neckUnloaded;
+            stats.neckBeyondWindow = r.neckBeyondWindow;
+            stats.neckLoading = r.neckLoading;
+            stats.neckDeferredParts = r.neckDeferredParts;
+            stats.neckSolidChunks = r.neckSolidChunks;
             return out;
         }
 
@@ -238,6 +282,8 @@ namespace vortex::sim {
             result.times.graphBuildMs += found.graphBuildMs;
             result.times.graphFloodMs += found.graphFloodMs;
             result.times.relabelMs += found.relabelMs;
+            result.times.neckMs += found.neckMs;
+            result.times.neckBuildMs += found.neckBuildMs;
             ++simulation.IslandSearchCheck().run;
             if (simulation.Config().checkIslandSearch) {
                 // Nothing has been applied yet: the other search reads the same voxels.
@@ -292,6 +338,34 @@ namespace vortex::sim {
                 stats.relabelledNodes += f.relabelledNodes;
                 stats.outsideBox += f.outsideBox;
                 stats.referenceMismatch += f.referenceMismatch;
+                stats.neckRan = stats.neckRan || f.neckRan;
+                stats.neckNodes += f.neckNodes;
+                stats.neckSplit += f.neckSplit;
+                stats.neckLoads += f.neckLoads;
+                stats.neckAnchors += f.neckAnchors;
+                stats.neckArcs += f.neckArcs;
+                stats.neckExteriorVisits += f.neckExteriorVisits;
+                stats.neckFlowWork += f.neckFlowWork;
+                stats.neckSplitRelabels += f.neckSplitRelabels;
+                stats.neckVoxels += f.neckVoxels;
+                stats.neckOversize += f.neckOversize;
+                stats.neckSkipped += f.neckSkipped;
+                stats.neckExteriorBudget += f.neckExteriorBudget;
+                stats.neckFlowBudget += f.neckFlowBudget;
+                stats.neckUnloaded += f.neckUnloaded;
+                stats.neckBeyondWindow += f.neckBeyondWindow;
+                stats.neckLoading += f.neckLoading;
+                stats.neckDeferredParts += f.neckDeferredParts;
+                stats.neckSolidChunks += f.neckSolidChunks;
+            }
+            if (found.stats.neckUnloaded > 0) {
+                Log::Error("Blast: the load check met {} chunk(s) that are not loaded inside the flood box of the blast at ({:.2f}, {:.2f}, "
+                           "{:.2f}) m; they were taken as support (a session window must hold every flood box)",
+                           found.stats.neckUnloaded, result.center.x, result.center.y, result.center.z);
+            }
+            if (found.stats.neckSkipped + found.stats.neckFlowBudget > 0) {
+                Log::Warn("Blast: the load check at ({:.2f}, {:.2f}, {:.2f}) m released nothing: {}", result.center.x, result.center.y,
+                          result.center.z, found.stats.neckSkipped ? "its network is over the node or arc limit" : "its flow work budget ran out");
             }
             if (found.stats.attachedByUnloaded > 0) {
                 Log::Error("Blast: {} face flood(s) met a chunk that is not loaded inside the flood box of the blast at ({:.2f}, {:.2f}, "
@@ -302,9 +376,26 @@ namespace vortex::sim {
                 stats.floodDeferred = true;
                 waitChunk = found.waitChunk;
                 found.faceIslands.clear();
+                found.neckPieces.clear();
+                found.neckCuts.clear();
+            } else if (found.neckWaits) {
+                // Offline: the load check took a chunk that is not loaded as support (it released
+                // at most part of the full answer). The islands go out now; the search runs again
+                // once that chunk has loaded (a chunk outside the window: once the window moved).
+                stats.neckDeferred = true;
+                waitChunk = found.neckWaitChunk;
+            }
+            if (found.stats.neckDeferredParts > 0) {
+                Log::Info("Blast: the load check at ({:.2f}, {:.2f}, {:.2f}) m left {} overloaded part(s) for a later cast (at most {} parts / "
+                          "{} voxels per cast)",
+                          result.center.x, result.center.y, result.center.z, found.stats.neckDeferredParts, kNeckMaxReleasedParts,
+                          kNeckMaxReleasedVoxels);
             }
             const std::vector<voxel::FloatingIsland>& islands = found.boxIslands;
             const std::vector<voxel::FloatingIsland>& proven = found.faceIslands;
+            const std::vector<voxel::FloatingIsland>& necks = found.neckPieces;
+            stats.neckCuts.insert(stats.neckCuts.end(), found.neckCuts.begin(), found.neckCuts.end());
+            simulation.IslandSearchCheck().neckReleases += static_cast<uint32_t>(necks.size());
 
             // Islands under the piece threshold are crumbs: no Detach each, one ClearMask for all.
             // The threshold is the piece volume in voxels of the session's size (shared bit for bit).
@@ -312,18 +403,21 @@ namespace vortex::sim {
             const uint32_t minPiece = scene::MinPieceVoxels(static_cast<double>(world.VoxelSize()));
             glm::ivec3 crumbMin(std::numeric_limits<int32_t>::max()), crumbMax(std::numeric_limits<int32_t>::min());
             uint32_t crumbs = 0;
-            // In-box islands in scan order, then proven ones in candidate order.
-            for (const std::vector<voxel::FloatingIsland>* list : {&islands, &proven}) {
-                const bool face = list == &proven;
+            // In-box islands in scan order, then proven ones in candidate order, then the parts the
+            // load check released in piece order.
+            for (const std::vector<voxel::FloatingIsland>* list : {&islands, &proven, &necks}) {
+                const bool face = list == &proven, neck = list == &necks;
                 for (const voxel::FloatingIsland& island : *list) {
                     if (island.voxelCount < minPiece) {
                         ++crumbs;
                         if (face) ++stats.faceCrumbs;
+                        if (neck) ++stats.neckCrumbs;
                         crumbMin = glm::min(crumbMin, island.origin);
                         crumbMax = glm::max(crumbMax, island.origin + island.volume.Size());
                         continue;
                     }
                     if (face) ++stats.facePieces;
+                    if (neck) ++stats.neckPieces;
                     AppliedOp detach;
                     const glm::vec3 corner(world.VoxelToWorld(island.origin));
                     detach.op = WorldOp::Detach(island.origin, voxel::VoxelMask::FromVolume(island.volume), BlastPush(center, radius, corner));
@@ -332,12 +426,14 @@ namespace vortex::sim {
                 }
             }
             if (crumbs > 0) {
-                // The box lies inside the island box grown by less than MinPieceVoxels per side (a
-                // proven crumb touches the island box face), so it stays under (192 + 2 x minPiece)
-                // voxels per axis. Bits are set from the islands' own voxels, so the mask does not
-                // depend on the order the islands come in.
+                // The box lies inside the island box grown by less than MinPieceVoxels + 7 per side: a
+                // proven crumb touches the island box face; a released crumb (load check) touches a
+                // judged node, whose cell meets the island box, so its voxels lie at most 7 voxels
+                // outside it - or is a load alone hanging on one (review). So it stays under
+                // (192 + 2 x (minPiece + 7)) voxels per axis. Bits are set from the islands' own
+                // voxels, so the mask does not depend on the order the islands come in.
                 voxel::VoxelMask mask(crumbMax - crumbMin);
-                for (const std::vector<voxel::FloatingIsland>* list : {&islands, &proven})
+                for (const std::vector<voxel::FloatingIsland>* list : {&islands, &proven, &necks})
                     for (const voxel::FloatingIsland& island : *list) {
                         if (island.voxelCount >= minPiece) continue;
                         const glm::ivec3 size = island.volume.Size();
@@ -355,7 +451,8 @@ namespace vortex::sim {
                 result.crumbs += crumbs;
             }
             result.times.opsMs += MsSince(start);
-            return found.complete ? SearchOutcome::Done : SearchOutcome::FloodWaits;
+            if (!found.complete) return SearchOutcome::FloodWaits;
+            return found.neckWaits && !simulation.Config().sessionServer ? SearchOutcome::NeckWaits : SearchOutcome::Done;
         }
 
         /// Squared distance (voxels) from the centre of the island box of `sphere` to the middle of
@@ -402,7 +499,7 @@ namespace vortex::sim {
         /// flood met a chunk that is not loaded.
         void RequestFor(voxel::World& world, const voxel::SphereQ& sphere, SearchOutcome outcome) {
             glm::ivec3 min, max;
-            if (outcome == SearchOutcome::FloodWaits) FloodBox(sphere, min, max);
+            if (outcome == SearchOutcome::FloodWaits || outcome == SearchOutcome::NeckWaits) FloodBox(sphere, min, max);
             else IslandBox(sphere, min, max);
             world.RequestLoad(voxel::VoxelToChunk(min), voxel::VoxelToChunk(max - glm::ivec3(1)));
         }
@@ -460,14 +557,14 @@ namespace vortex::sim {
         //    (RetryIslandSearches), the carve first again if it skipped chunks.
         glm::ivec3 waitChunk(0);
         const SearchOutcome outcome = SearchIslands(simulation, sphere, result, waitChunk);
-        result.islandsSearched = outcome == SearchOutcome::Done;
-        if (outcome == SearchOutcome::BoxNotLoaded || outcome == SearchOutcome::FloodWaits) {
+        result.islandsSearched = outcome == SearchOutcome::Done || outcome == SearchOutcome::NeckWaits;
+        if (outcome == SearchOutcome::BoxNotLoaded || outcome == SearchOutcome::FloodWaits || outcome == SearchOutcome::NeckWaits) {
             RequestFor(world, sphere, outcome);
             DeferredIslandSearch search;
             search.sphere = sphere;
             search.power = power;
             search.carvePending = std::move(carvePending);
-            search.waitsForChunk = outcome == SearchOutcome::FloodWaits;
+            search.waitsForChunk = outcome != SearchOutcome::BoxNotLoaded;
             search.waitChunk = waitChunk;
             result.deferredDropped = Defer(simulation, search);
         }
@@ -564,10 +661,10 @@ namespace vortex::sim {
 
             glm::ivec3 waitChunk(0);
             const SearchOutcome outcome = SearchIslands(simulation, search.sphere, result, waitChunk);
-            result.islandsSearched = outcome == SearchOutcome::Done;
+            result.islandsSearched = outcome == SearchOutcome::Done || outcome == SearchOutcome::NeckWaits;
             const bool done = outcome == SearchOutcome::Done || outcome == SearchOutcome::Refused;
             if (!done) {
-                search.waitsForChunk = outcome == SearchOutcome::FloodWaits;
+                search.waitsForChunk = outcome != SearchOutcome::BoxNotLoaded;
                 search.waitChunk = waitChunk;
                 RequestFor(world, search.sphere, outcome);
             }

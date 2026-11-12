@@ -153,6 +153,39 @@ namespace vortex::voxel {
         ids.torch        = add("torch",        Srgb(255, 190, 110),   0.60f,  500.0f,  0.3f, 0.10f, 0, 12.0f);
         ids.glass        = add("glass",        Srgb(200, 230, 235),   0.05f, 2500.0f,  0.5f, 0.01f);
         ids.bedrock      = add("bedrock",      Srgb(40, 40, 44),      0.90f, 3000.0f, 1.0e9f, 0.10f, MaterialFlag_Indestructible);
+
+        // Bond strengths, kg/m^2: compression / shear / tension (docs/design/shred.md Part 4b,
+        // "Material strengths"). A free column of height h holds while density x h <= C, a
+        // cantilever of length L at its root while density x L <= S, a hanging piece while
+        // density x h <= T. Rock keeps a 3x margin in natural shapes; soil less, sand slumps.
+        // Leaves weigh nothing for the check and rate a node only when it holds nothing else
+        // (GraphMaterials); bedrock is an anchor (Indestructible).
+        auto strength = [&lib](uint8_t id, uint32_t c, uint32_t s, uint32_t t) {
+            Material m = lib.Get(kWorldPalette, id);
+            m.strength[0] = c;
+            m.strength[1] = s;
+            m.strength[2] = t;
+            lib.Set(kWorldPalette, id, m, lib.Name(kWorldPalette, id));
+        };
+        strength(ids.stone, 100000, 40000, 15000);
+        strength(ids.crystal, 100000, 40000, 15000);
+        strength(ids.stoneDark, 150000, 60000, 20000);
+        strength(ids.brick, 80000, 30000, 8000);
+        strength(ids.wood, 80000, 30000, 30000);
+        strength(ids.planks, 50000, 25000, 25000);
+        strength(ids.dirt, 50000, 8000, 2000);
+        strength(ids.grass, 50000, 8000, 2000);
+        strength(ids.grassDry, 50000, 8000, 2000);
+        strength(ids.sand, 40000, 3000, 500);
+        // Packed snow over frozen ground: compression like dirt, so a wall or the tower on the
+        // generator's 0.4 m snow cover stands (review); shear and tension stay soft (cornices slump).
+        strength(ids.snow, 50000, 2000, 500);
+        strength(ids.glass, 60000, 10000, 4000);
+        strength(ids.iron, 1000000, 600000, 600000);
+        strength(ids.gold, 150000, 80000, 80000);
+        strength(ids.torch, 20000, 8000, 8000);
+        strength(ids.leaves, 10000, 5000, 5000);
+        strength(ids.leavesAutumn, 10000, 5000, 5000);
         return ids;
     }
 }

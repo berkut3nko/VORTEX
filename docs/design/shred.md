@@ -3,7 +3,8 @@
 Status: **stages 0, 1, 1b, 1c, 1d and 1e built and reviewed** (2026-11-12, see "Stage 0-1c as built", "Stages 1d-1e
 as built" and "Review of stages 0-1e" at the end of Part 1); the owner took the recommended answers to open questions 1, 2, 3 and 7 ("Yes, build
 1-1e"). **Stage 4 built** (2026-11-12, owner's answer to question 4: yes, before networking stage 3; see "Stage 4 as
-built" in Part 4; not yet reviewed by a second reader). The rest is a draft. Written read-only against the working tree of 2026-11-12, while the
+built" in Part 4; not yet reviewed by a second reader). **Stage 4b, weak necks (load check), designed and judged**
+(2026-11-12, Part 4b; the owner: "Yes, weak necks next"). The rest is a draft. Written read-only against the working tree of 2026-11-12, while the
 voxel size moves from 0.1 to 0.125 m (the game already defaults to 0.125 m, `src/main.cpp:23-24`). Line numbers are
 from the working tree. Every millisecond figure that does not cite a measurement is an estimate and is marked **(e)**.
 Every CPU time in the docs before 2026-11-12 comes from a build without `-O` (CLAUDE.md:120-121); `build/` is now
@@ -53,7 +54,8 @@ Relation to other designs:
    rule is collapse.md's overhang rule (judged, one traversal); a load / stress model is an **optional later stage
    that the owner decides** (stage 7), because collapse.md rejected it for "buildings fall on spawn" and that
    argument still holds. Server bodies from a collapse need networking stage 6; before it every release is a
-   `netId 0` `Detach`.
+   `netId 0` `Detach`. **Owner decision (2026-11-12): thin necks must break under the weight above them, now** -
+   stage 4b (Part 4b), an integer max-flow capacity check on the stage-4 graph, run only after a cast.
 7. **Impact destruction is server-only and quantised once** (stage 6): Jolt contact energy becomes an integer
    `ImpactQ` the moment it is read; everything after that is integer, totally ordered and replays. Only authoritative
    bodies cause impacts, offline as on a server. Crush damage to players is a separate server check, not a contact.
@@ -69,7 +71,7 @@ Relation to other designs:
 | Stage 5: terrain structures | **Moved first** (here stages 4-5). The game's buildings are terrain `FillBox` boxes (`src/main.cpp:686-712`), castles must exceed 12.8 m (ROADMAP.md:174), terrain ops already replicate, object pieces need networking stage 6. |
 | "What is wrong today": `minPieceVoxels = 6`, no `Lifetime`, `Engine::Explode` does islands (collapse.md:41-50) | **Stale.** Pieces under `MinPieceVoxels` (8 at 0.125 m, `scene/Scene.cppm:53-55`) are particles; rubble under `debrisBodyVoxels` (25 at 0.125 m, `Scene.cppm:41,73-75`) has `Debris`, 15 s life and a cap of 192 (`Scene.cppm:114,119`, `Scene.cpp:222`); larger rubble had neither (built: stage 1e); islands run in `sim::Blast` (`sim/internal/Blast.cpp:68-114`). The "tower stays in the air" line (collapse.md:47-48) is the bug of stage 1 here. |
 | Cell format "more than 8 components merge into node 7" (collapse.md:74-75) | **Replaced in stage 4** (as built): every component of a cell is its own node in a per-chunk node list, so the graph equals voxel connectivity everywhere, over-full cells included (counted, `Structure.GraphEqualsLabelComponentsInOverfullCells`). |
-| Rejected "CSR node/edge graph with bond areas, masses and a load check (B)" (collapse.md:28-31) | **Kept rejected for the default.** Revisited only as optional stage 7, with a spawn guard that answers the rejection. |
+| Rejected "CSR node/edge graph with bond areas, masses and a load check (B)" (collapse.md:28-31) | **Its vertical part is stage 4b** (Part 4b): masses and bonds on the stage-4 graph, a max-flow capacity check that runs only after a cast, so pristine buildings never fall on spawn. A stress / bending model stays optional (stage 7). |
 
 ## Part 1 - The "second shot" bug (verified)
 
@@ -491,8 +493,8 @@ like dirt.
   fractureCell, grainAxis, roughness, crumble, carvable}` (16 B), built once from `Material`, hashed (R6).
   `hardnessQ = min(hardness * 16, 65535)` (saturated: bedrock's 1.0e9 does not fit, `Material.cpp:155`), and
   `carvable = !(flags & Indestructible)` (water and lava have hardness 0 but are `Indestructible`,
-  `Material.cpp:143, 152`). Test `MaterialQ.SaturatesAndKeepsIndestructible`. Bond strengths are added only if
-  stage 7 is taken.
+  `Material.cpp:143, 152`). Test `MaterialQ.SaturatesAndKeepsIndestructible`. Bond strengths (`Material::strength`,
+  integer kg/m^2 for compression, shear, tension) come with stage 4b (Part 4b) and join this table.
 - **Crumble profiles by material** (client, `fx`): powder (sand, dirt, snow: little debris, more dust), chips
   (stone, brick), splinters (wood, planks: stretched particles, no dust), shards (glass, crystal), chunks (iron). They
   replace the fixed counts in `SpawnVoxelBreak` (`Effects.cpp:303,309`) and stay inside fx-budget caps: 1500 spawns
@@ -720,13 +722,665 @@ class StructuralSolver {                       // owned by sim::Simulation, serv
 - Sleeping server bodies are evicted as `EntityDespawn{toRubble}` (networking.md:235-236). Rubble lifetimes and caps
   are stage 1e, not here.
 
-### Optional later: load flow (stage 7, owner decision)
+### Optional later: load flow (stage 7, owner decision) - resolved by stage 4b
 
-A stress model (per-node mass, per-face bond area, integer load flow over a support-distance DAG, compression / shear
-/ tension capacities per material, plus a tip check of the centre of mass per layer) gives "the floor drops when a
-wall goes" from physics instead of a distance limit. It needs per-material tuning and is what collapse.md rejected;
-it comes only if stage 5 feels wrong in play, with the spawn guard extended to "reinforce and report" overloaded
-edges. Est. 0.1-0.3 ms per structure solve (e).
+The owner decided (2026-11-12) that thin necks must break now. The per-node mass, per-face bond area and integer
+compression / shear / tension capacities per material are built by **stage 4b** (Part 4b) - not as a load flow over a
+support-distance DAG (judged there: its load split is a heuristic that can fail rock near a crater) but as a
+max-flow check whose released set is exact and unique. What stays optional for stage 7, only if play shows the need:
+a bending moment and a tip check of the centre of mass per layer (cantilevers, half-cut beams, leaning towers), necks
+that narrow sideways inside one cell, and the spawn guard's "reinforce and report" of overloaded parts (stage 4b's
+open question 6: an editor neck report). Re-checking structures away from a cast is stage 5's dirty boxes calling the
+stage-4b check.
+
+## Part 4b - Weak necks (load check)
+
+Status: **built and reviewed 2026-11-13 ("Stage 4b as built" and "Review of stage 4b" at the end of this part); design judged 2026-11-12.** The owner asked, with a screenshot, that a whole watch tower
+standing on a 4-voxel stone neck must not hold: a thin neck must break under the weight above it. Owner decisions:
+build it now, before networking stage 3 ("Yes, weak necks next"); rock stays strong enough that natural cliffs and
+overhangs do not fall by themselves; whole castles may collapse. Three designs were written independently (a
+horizontal cross-section sweep, a load-flow DAG, a bounded min-cut); this part is the judged result. Line numbers are
+from the working tree of 2026-11-12; every time marked **(e)** is an estimate.
+
+Binding, as for every structural stage (Part 2): the server (or offline) decides, clients only apply (R1); integers
+only, fixed visit order, a result that depends on nothing but the voxels of the flood box, the material table and the
+session voxel size - not on cache state or worker count (R2, R4); output is ordinary `Detach` / `ClearMask` operations,
+no new `WorldOpKind`, no wire change; `Blast.TwoSimulationsFedTheSameOperationsHaveEqualHashes` stays green; GPU-free
+in `Vortex::Core` / `Vortex::Sim`; work per cast bounded by counts that follow from the voxels (R5).
+
+### Decision in brief
+
+1. **Rule: a part falls when no distribution of its weight fits the strength of what holds it.** After a blast's
+   island search, inside the same graph pass, one integer **max-flow** problem is solved around the blast: every node
+   supplies its mass, every link carries at most `bond faces x per-face strength` (compression, shear or tension,
+   by the link's direction), and the anchors (everything that reaches the flood box face, the window's bottom row,
+   indestructible voxels) are the sink. If all mass reaches the sink, nothing happens. Otherwise the **largest
+   strictly overloaded set** - the nodes that cannot reach the sink in the residual graph of a maximum preflow - is
+   released as ordinary `Detach` pieces (`netId 0`), crumbs in the blast's one `ClearMask`.
+2. **The released set is unique**: it does not depend on the order the flow was found in (min-cut theory), so the
+   decision is exact and replays. Parallel supports add up. Every released piece satisfies `load > capacity`
+   strictly (load equal to capacity holds). What stays provably holds without the released part, so **no cascade
+   step and no follow-up queue are needed**.
+3. **Necks inside a cell are found exactly**: stage 4's graph only sees cross-sections on cell faces (every 8
+   voxels). Each node now stores its narrowest horizontal plane, computed when the graph is built; a constricted
+   node is split there into a lower and an upper half for the check, and its side links are split bit for bit by
+   height. A neck is found at any of the 8 heights inside a cell.
+4. **Scope: the island box, judged; the rest of the flood box, contracted.** Nodes of the island box (left after the
+   islands) are judged. Outside it, what is closed inside the flood box is a load hanging on them, and what reaches
+   the flood box face is an anchor. Natural cliffs and hills always reach the face, so they are never judged; rock
+   that is judged keeps a margin of 3x or more in every natural case below.
+5. **Materials**: per material three integer strengths in kg/m^2 (compression, shear, tension); foliage weighs
+   nothing for the check. Stone: 100 000 / 40 000 / 15 000. The watch tower falls on any neck under 24 voxel faces
+   (0.375 m^2 at 0.125 m), stands on its full base with a 5.2x margin.
+6. **Cost**: est. 0.05-0.3 ms per typical cast, about 3-4 ms at the per-cast budgets; nothing on a session client.
+   *(Measured in the review: 0.13-0.73 ms at a cached site plus graph builds at a cold one; 5-6 ms for the preflow
+   alone at its budget, open question 7.)*
+
+### Judgement of the three designs
+
+| | Cross-section sweep | Load-flow DAG | **Min-cut (winner)** |
+|---|---|---|---|
+| Tower on a 2x2 neck | falls; layer-exact by per-layer plates | falls; a neck straddling a cell face needs a second round | falls; inside-cell necks by the exact node split (grafted, below) |
+| Full base, beams, overhangs | stand | stand | stand |
+| Natural rock | never judged ("open" by the flood box face): safest | judged inside its examined set: DAG concentration and weakest-voxel strength can fail rock near a crater (its own F6, F7) | judged only inside the island box, and only where **no** load path fits: connected rock has many paths, so it does not fail |
+| Parallel supports | summed at one horizontal layer; mass hanging below the cut counts as support | split by bond along one DAG, a heuristic | exact (max-flow) |
+| Bending, sideways load | none (vertical only) | arching by support distance | shear and tension per link; no bending moment |
+| Cascades | follow-up checks queued over ticks (new simulation state) | up to 4 rounds per cast | none needed: the remainder is proven to hold |
+| Determinism | fixed orders | fixed orders; the answer depends on its DAG rules and remainder split | released set unique whatever the visit order (tested) |
+| Cost per cast (e) | 0.03-1.1 ms | 0.02-7 ms | 0.05-0.3 ms typical, about 3-4 ms at the budgets |
+| Implementation risk | plates, layer band, epoch union-find, follow-up queue | DAG, plane validity, pseudo-nodes, rounds, brick split | textbook push-relabel, exterior floods, an exact node split; every part brute-force testable |
+
+**Grafted** from the cross-section sweep: the strict rule (load equal to capacity holds), the voxel-size-invariant
+integer formula, a bond as strong as the weaker of its two materials, the neck test at every height inside a cell,
+"never runs without a cast". From the load-flow DAG: the narrowest plane computed per node when the graph is built (the
+bond between two layers, not a slice's area), the pristine-terrain gate test, the `--neck-blast` variants (inside a
+cell, on a cell face, the threshold width), and castle bricks as the next step (4c). From the min-cut design itself:
+the network, the directional strengths, weightless foliage, the contracted exterior, the budgets. Rejected inside the
+min-cut design: its "throat" capacity from slice areas (inexact, and a cap on all flow through a node could fail deep
+dirt) - replaced by the exact split; "ties release" - replaced by the strict rule.
+
+### Units and the integer formula
+
+- **Mass** is `GraphNode::mass` (Structure.cppm:47): the sum of `densityQ` (kg/m^3, integer) over the node's
+  voxels; call the unit MU. kg = MU x vs^3. Foliage gets `densityQ` 0 in the graph tables (weightless for the
+  check, below); `GraphNode::mass` has no other consumer (the build and the tests).
+- **Strength** per material and class k in {C compression, S shear, T tension}: `strength[k]` in kg/m^2, an
+  **integer** field of `Material` (no float to round). One voxel face carries `sigma x vs^2` kg, so per face in MU:
+
+  ```
+  capFace[k][id] = strength[k][id] * 1 000 000 / vsMicro       // uint64, floor
+  vsMicro        = llround(World::VoxelSize() * 1e6)            // 125 000 at 0.125 m, 100 000 at 0.1, 150 000 at 0.15
+  ```
+
+  That is x8 at 0.125 m, x10 at 0.1 m, x6.67 (floor) at 0.15 m. `VoxelSize()` is the session float both sides hold
+  bit for bit (the same one `MinPieceVoxels` uses), and only the server computes this. The rule is physical: the same
+  structure in kg and m^2 falls or stands at every voxel size, up to how its shape rounds.
+- **A link's capacity** from node u to node v across face f of u: `bond x min(capFace[k][weak[k](u)],
+  capFace[k][weak[k](v)])` with k = C when f is -y (u rests on v), T when f is +y (u hangs from v), S for x and z
+  faces. `bond` is `GraphLink::bond` inside a chunk, `BondVoxels` across (Structure.cppm:59-64, 85-87). A node's
+  `weak[k]` is its weakest material for class k, so a bond is as strong as the weaker side: stone on planks holds
+  what the planks hold.
+- **Overflow**: capacities and supplies are uint64. Per arc at most 64 faces x 10 000 000 MU (iron at 0.1 m) =
+  6.4e8; total supply at most 12.6 M voxels (network and load limits below) x 19 300 (gold) = 2.4e11. With the
+  strictness factor `M` = 2^17 (next section) everything stays under 3.2e16 < 1.8e19. Infinite arcs use a sentinel.
+
+### The rule, exactly
+
+The network (next section) has a source s with an arc `s -> v` of capacity `mass(v)` per node, arcs between linked
+nodes as above, and arcs to the sink t from anchored nodes. Solve a maximum preflow.
+
+- **Strict rule by perturbation.** Every finite arc capacity c is used as `c x M + 1`, every supply as
+  `mass x M`, with `M = 2^17` larger than the number of directed arcs (the network is refused above 65 535 arc
+  pairs). For a set A, `supply'(A) - cap'(A -> out) = M x (mass(A) - cap(A -> out)) - outArcs(A)`: it is positive
+  exactly when `mass(A) > cap(A -> out)` in real units. So "all supply reaches t" holds exactly when no set is
+  strictly overloaded, and a load equal to its capacity holds.
+- **Released set** A = the network nodes that cannot reach t in the residual graph of the maximum preflow. It is the
+  largest maximiser of `supply' - cap'(out)` and the same for every maximum preflow (arcs from the kept side into A
+  carry no flow, so turning the preflow into a flow changes nothing on the kept side). Consequences:
+  - each connected part P of A (over network links, saturated or not) has `mass(P) > cap(P -> out)` strictly;
+  - the kept side routes all of its own mass to t without A: after the release it holds, so **nothing cascades**
+    within the network, and no node of the kept side is cut off from an anchor (each one reaches t through links);
+  - of two cuts of the same strength the lower one wins (more mass above it, so more overload): the tower takes its
+    neck down to the lowest plane of the same strength instead of leaving a stub (except where that plane lies
+    inside an unsplit node, failure mode 1);
+  - a weightless part hanging only from a released piece goes with it (no leaves left in the air).
+- If all supply reaches t (`F == supply'`), nothing is released and the pass ends after the first sweep.
+
+### Graph additions (built with the chunk graph, cached, pure functions of the chunk)
+
+`GraphNode` (Structure.cppm:43-55) uses 67 of its 72 bytes. Five more, fields reordered so it stays **72 bytes**
+(`static_assert(sizeof(GraphNode) == 72)`): `cutFaces` (u8), `cutPlane` (u8), `weak[3]` (u8 each). Layout: `face[6]`,
+`mass`, `voxels`, `firstVoxel`, `firstLink`, `linkCount`, `cutFaces`, `cutPlane`, `cell`, `boxMin[3]`, `boxMax[3]`,
+`weak[3]`.
+
+- **`weak[k]`**: the id with the lowest `strength[k]` among the node's voxels, ties to the smaller id. A 4^3 block of
+  one id costs nothing (the `BlockSolid` fast path, Structure.cpp:116-120); mixed blocks fold it into the per-voxel
+  loop that already sums the mass (`NodeMass`, Structure.cpp:239-248). The shared full Uniform graph gets
+  `weak = uniformId` (Structure.cpp:304-321).
+- **`cutPlane` bit 7, anchor**: the node holds a voxel whose material is `Indestructible` and not ignored (bedrock;
+  water and lava are ignored, so never). Such a node is an anchor.
+- **The narrowest plane** (`cutFaces`, `cutPlane` bits 0-2). For each horizontal plane k between cell-local layers
+  k and k+1 that the node spans, its cut `c[k]` = voxel faces of the node across it, and each layer's area `a[y]`:
+  with z slices `s` (bit x + 8y), `t = s & (s >> 8)` holds plane k's faces in byte k, and a bytewise popcount summed
+  over the 8 slices gives all 7 cuts at once (and the same on `s` gives the 8 areas), about 20-30 ns per node. Then
+  `k*` = the lowest k with `c[k] = min c` and `c[k] < min(max a[y <= k], max a[y > k])` (a real constriction: wider
+  on both sides). If such a k* exists **and** the node's voxels at layers <= k* form one 6-connected component and
+  those above form one (the cell flood the build already has, run on each half; only for constricted nodes, which
+  are rare away from necks), store `cutFaces = c[k*]` (1..63) and `cutPlane = k*`. Otherwise `cutFaces = 255`: the
+  node is never split. Slopes, plates, full cells and columns of constant width are not constricted; an hourglass
+  left between two craters, or a neck with the wall above and the ring below in one cell, is.
+- **Why the halves must be connected**: a released upper half must not leave a lower part hanging that was joined
+  to the rest only through it (a U shape inside one cell). Such nodes are not split; the check then sees the cell
+  faces only there (lenient).
+- **`GraphMaterials`** (Structure.cppm:91-98) gains `strength[3][256]` (uint32, kg/m^2) and `anchor[256]`;
+  `densityQ` is 0 for `MaterialFlag_Foliage`. They are part of `operator==`, so a table change drops the cache
+  (Structure.cpp:410-415), as today. Without a library every id gets stone's strengths and no anchor.
+- **Build cost** (e): +2-6 us per Dense chunk on today's 25-33 us; measured by `Structure.DISABLED_GraphBuildCost`.
+  Memory unchanged.
+
+### Material strengths (`Material::strength[3]`, kg/m^2, integers; `RegisterDefaultWorldMaterials`, Material.cpp:136-155)
+
+Closed forms make the table readable at any voxel size: a free column of height h holds while `rho x h <= C`; a
+prismatic cantilever of length L holds at its root while `rho x L <= S`; a hanging piece of length h while
+`rho x h <= T`; a slab of span w over a hole, held at its rim, while `rho x w / 4 <= S`.
+
+| Material | rho | C | S | T | Per face at 0.125 m, MU (C / S / T) | Column / cantilever / hanging limits |
+|---|---|---|---|---|---|---|
+| stone, crystal | 2600 | 100 000 | 40 000 | 15 000 | 800 000 / 320 000 / 120 000 | 38 m / 15.4 m / 5.8 m |
+| stone_dark | 2800 | 150 000 | 60 000 | 20 000 | 1 200 000 / 480 000 / 160 000 | 54 m / 21 m / 7.1 m |
+| brick | 1900 | 80 000 | 30 000 | 8 000 | 640 000 / 240 000 / 64 000 | 42 m / 15.8 m / 4.2 m |
+| wood | 700 | 80 000 | 30 000 | 30 000 | 640 000 / 240 000 / 240 000 | 114 m / 43 m / 43 m |
+| planks | 600 | 50 000 | 25 000 | 25 000 | 400 000 / 200 000 / 200 000 | 83 m / 42 m / 42 m |
+| dirt, grass, grass_dry | 1500 / 1300 | 50 000 | 8 000 | 2 000 | 400 000 / 64 000 / 16 000 | 33 m / 5.3 m / 1.3 m (dirt) |
+| sand | 1600 | 40 000 | 3 000 | 500 | 320 000 / 24 000 / 4 000 | 25 m / 1.9 m / 0.3 m |
+| snow (packed; C was 10 000 before the review) | 400 | 50 000 | 2 000 | 500 | 400 000 / 16 000 / 4 000 | 125 m / 5 m / 1.25 m |
+| glass | 2500 | 60 000 | 10 000 | 4 000 | 480 000 / 80 000 / 32 000 | 24 m / 4 m / 1.6 m |
+| iron | 7800 | 1 000 000 | 600 000 | 600 000 | 8 000 000 / 4 800 000 / 4 800 000 | 128 m / 77 m / 77 m |
+| gold | 19300 | 150 000 | 80 000 | 80 000 | 1 200 000 / 640 000 / 640 000 | 7.8 m / 4.1 m / 4.1 m |
+| torch | 500 | 20 000 | 8 000 | 8 000 | 160 000 / 64 000 / 64 000 | |
+| leaves, leaves_autumn | weightless | 10 000 | 5 000 | 5 000 | 80 000 / 40 000 / 40 000 | carry what rests on them, weigh nothing; rate a node only when it holds nothing else (review) |
+| bedrock (any `Indestructible`, not ignored) | | anchor | | | | never fails, always supports |
+| water, lava | | ignored | | | | not in the graph (as today) |
+
+Stone's C is the owner's knob (open question 1): it sets where the tower falls. Natural rock keeps a margin of 3x or
+more at it (next table); soil less, by design (open question 5). Stage 3's `MaterialPhysicsQ` takes these integers
+over and hashes them into `buildHash` (R6); until then they are compiled-in defaults, the same on both sides of a
+session.
+
+### The owner's cases, with the arithmetic (0.125 m unless noted)
+
+The watch tower (`src/main.cpp:727-737`, `S(x) = lround(0.8 x)`), recomputed voxel for voxel: a stone shell 22 x 56
+x 22 with walls 2 voxels thick (160 per row, 150 in rows 0-15 at the 5 x 2 doorway), planks 26 x 3 x 26 at rows
+53-55, four 2 x 6 x 2 wood posts and 2 x 2 x 2 torches: **10 476 voxels** (stone 8320, planks 2028, wood 96, torch
+32), **22 932 000 MU = 44.8 t**. The tower above row 12 (rows 13-55 and the roof) is 8526 voxels, 17 862 000 MU. The
+neck test (`--neck-blast`, below) turns the ring's rows 1-12 (1.5 m) to air except a stone segment 2 voxels thick
+and W long at the north-west corner inside the wall line, so it meets row 0 below and row 13 above with 2W faces.
+
+| Case | Load, MU (kg) | Capacity, MU | Result |
+|---|---|---|---|
+| Tower on a 2 x 2 stone neck: released set = rows 1 and up (the tower plus the 48 neck voxels: 8574 voxels) | 17 986 800 (35 130 kg) | 4 x 800 000 = 3 200 000 (6 250 kg) | **falls**, 5.62x over |
+| Same, neck 2 x 10 (20 faces) | 17 862 000 + 20 x 12 x 2600 = 18 486 000 | 16 000 000 | falls, 1.16x |
+| Same, neck 2 x 11 (22 faces) | 18 548 400 | 17 600 000 | falls, 1.05x |
+| Same, neck 2 x 12 (24 faces) | 18 610 800 | 19 200 000 | stands, 0.97. **Threshold: n <= 23 faces fall** (`17 862 000 + 31 200 n > 800 000 n` for n < 23.2), 0.375 m^2 holds |
+| Four 2 x 4 necks, one per corner (32 faces) | 18 860 400 | 25 600 000 | stands (a widest-path rule would see 8 faces and drop it); one of them alone (8 faces, 18 111 600 against 6 400 000) falls |
+| Tower on its full base: everything on the paving, 150 faces (min of stone and the stone_dark paving = stone) | 22 932 000 | 120 000 000 | **stands**, 0.19 (5.2x margin) |
+| Roof on the walls (160 faces, planks C) / a corner post on the roof (4 faces, planks C) / the wall over the doorway (370 voxels, 148 shear faces) | 1 300 000 / 20 800 / 962 000 | 64 000 000 / 1 600 000 / 47 360 000 | stand (0.02 / 0.013 / 0.02) |
+| 0.1 m: 2 x 2 neck rows 1-15 (19 244 voxels) / full base (282 faces) | 41 532 000 / 53 107 200 | 4 000 000 / 282 000 000 | falls 10.4x / stands 0.19 |
+| 0.15 m: 2 x 2 neck rows 1-10 (5859 voxels) / full base (128 faces) | 12 541 000 / 16 097 800 | 2 666 664 / 85 333 248 | falls 4.70x / stands 0.19 |
+| 3 m natural stone overhang, prismatic: per root face (shear) | 24 x 2600 = 62 400 | 320 000 | **stands**, 0.20 (stone_dark 67 200 / 480 000 = 0.14) |
+| 3 m slab, 1 m thick, 2 m wide (3072 voxels), root of 128 faces | 7 987 200 | 40 960 000 | stands 0.20; falls when its root is cut to 24 faces or fewer (19 %) |
+| Mushroom rock: 3 x 3 x 1 m cap on a 1 x 1 m stem, 2 m tall (5632 voxels), stem 64 faces | 14 643 200 | 51 200 000 | stands, 0.29 |
+| Hillside, cliff, cave walls | - | - | **not judged**: they reach the flood box face (anchors). Inside the island box rock is full cells, 64 faces per link, with paths in every direction; a 1.2 m crater cannot leave a set whose every load path is overloaded unless it cuts it nearly free |
+| Cave ceiling of stone / dirt / sand, span w, held at its rim | rho w / 4 per face | S | holds to w = 61 / 21 / 7.5 m |
+| Underground 1.2 m blast 1.5 m deep (`--climb`-like, e): a 0.3 m dirt roof about 2.4 m across | 1500 x 2.4 / 4 = 900 kg/m^2 | dirt S 8 000 | stands |
+| Dirt overhang 3 m / sand overhang 2 m | 4 500 / 3 200 kg/m^2 | 8 000 / 3 000 | dirt stands (0.56), sand slumps (intended) |
+| Wooden beam 3 x 3 x 48 (6 m) butted into stone at both ends: 18 shear faces, min(wood, stone) S | 302 400 | 4 320 000 | **stands**, 0.07 |
+| Plank deck 8 m span, 8 wide, 2 thick, 4 voxels of bearing at each end (64 faces) | 691 200 | 25 600 000 | stands, 0.03 |
+| Playground timber frame: one 2 x 2 wood post with its share of deck and beams, on the paving | about 340 000 (e) | 4 x 640 000 = 2 560 000 | stands, 0.13 |
+| Generated tree, 1-voxel trunk 2.2-4.6 m (18-37 wood voxels) rooted in soil, canopy up to about 26 800 leaves | at most 25 900 (leaves weightless) | min(wood, dirt) C 400 000 | stands, 0.06. With leaves weighing 200 kg/m^3 the canopy alone is 5.36 M MU on one face: it would fall, hence weightless foliage |
+| Castle curtain wall 10 m, 0.5 m thick (stone, per face) | 80 x 2600 = 208 000 | 800 000 | stands 0.26; the castle is over 60 000 voxels anyway, so it is an anchor in 4b (open question 2) |
+| Test arena mushrooms (`tests/sim/BlastTests.cpp:81-92`, 0.1 m): stone cap and stem / planks cap and stone stem, 9 stem faces | 1 318 200 / 592 200 | 9 000 000 (4 500 000 if the floor were soil) | stand: `Blast.TwoSimulationsFedTheSameOperationsHaveEqualHashes` keeps its operations |
+
+`--tower-blast` (7 shots round the ring, `src/main.cpp:907-982`) may now free the tower one or two shots early, once
+the ring's remaining section is under about 23 faces: its acceptance becomes "freed by shot K <= 7, by an island or
+by the load check (the log says which)".
+
+### The check, step by step
+
+Phase **3b** of `voxel::SearchOnce` (Structure.cpp:718): after the island floods (step 3, ends at :969) and before
+the re-labelling (step 4, :971). It runs only when `limits.neck != nullptr`, the island box was searched and the
+face floods are complete (`result.searched && result.complete`). It uses the same `GraphTable` (Structure.cpp:543-659:
+chunks resolved once, `chunkGraphs` counted once, `ForEachLink` order -x +x -y +y -z +z then link order) and reads
+`table.state` only for `kIsland`. Island nodes (in-box and face, crumbs included) are not in the network.
+
+1. **R (judged nodes).** The seeds of step 1 (nodes whose bounds meet the island box, chunks z, y, x, then graph
+   order; Structure.cpp:770-794) that are not `kIsland`, in that order. A node with `cutFaces != 255` becomes two
+   network nodes, lower then upper. Network index = this order. If R and its loads (step 2) exceed
+   `kNeckMaxNetworkNodes` (8192) network nodes, or the arcs (step 3) 65 535 pairs, the check is skipped and nothing
+   is released (`neckSkipped`, a warning).
+2. **Exterior floods.** For each R node in order and each of its links, in `ForEachLink` order, to a node that is
+   neither in R nor `kIsland` nor labelled yet: a FIFO flood over such nodes, inside the flood box. It ends as an
+   **anchor** on a node with a voxel on the flood box face layer or the window's bottom row (the face flood's test,
+   Structure.cpp:919-927), on an anchor-material node, on more than `kMaxIslandVoxels` voxels, on a node an earlier
+   flood labelled anchor, or once `kNeckExteriorVisitBudget` (16 384 node visits per check) is spent (that flood and
+   every later one: `neckExteriorBudget`, conservative). **As built (review):** also on entering a chunk solid
+   through (32^3 solid voxels, whatever its storage; asked before the chunk is resolved, `neckSolidChunks`).
+   Otherwise it closes: a **load** (members, mass, voxels). All its visited nodes get its label. A chunk that is not
+   loaded is **support** for this check, which can only make it release less than the full answer (adding support
+   only shrinks the largest overloaded set): on a server `neckUnloaded` counts an error (the flood box is loaded by
+   construction, `kServerWindowMarginChunks`); offline it is counted (`neckLoading` inside the window,
+   `neckBeyondWindow` outside) and `sim::Blast` queues a late search that runs island search and check again once that
+   chunk has loaded (`neckDeferred`; a chunk outside the window loads once the window moved over it). **The islands
+   are not held back** (the design held the face islands with the check; the review found that slowed them while
+   chunks stream). The
+   per-slot label array lives in `GraphTable`, resized with `state` / `seed` whenever a flood resolves a new chunk
+   (trap: floods resolve chunks, Structure.cpp:589-591). Loads get network indices after R, in the order they close.
+3. **Network.** For each network node in index order, its links in `ForEachLink` order, each pair once (the twin
+   link is skipped by index):
+   - R-R: one arc pair, capacities by direction class and `weak` (above). For a split node a -y link belongs to the
+     lower half, a +y link to the upper half, and an x or z link is split by its overlap bits
+     `a.face[f] & b.face[f ^ 1]` (x face: y = bit & 7; z face: y = bit >> 3): bits at y <= k* go to the lower half,
+     the rest to the upper half, each part its own arc pair with its own popcount. Two split nodes side by side are
+     split on both ends the same way. Inside a split node: upper -> lower `cutFaces x capFace[C][weak[C]]`, lower ->
+     upper `cutFaces x capFace[T][weak[T]]`.
+   - R-load: capacities summed per (R node, load), in first-encounter order. R-anchor: summed into one arc R -> t.
+   - R nodes with the anchor bit or a voxel on the window's bottom row: an infinite arc to t.
+   - Supplies: node mass; a split node's halves get the exact mass of their voxels (`NodeVoxels`,
+     Structure.cpp:374-386, through the search's `VoxelSource`, one table lookup per voxel; counted in
+     `neckSplitRelabels`); a load its total.
+4. **Maximum preflow** (push-relabel, all integer, fixed order): exact initial labels by a reverse BFS from t over
+   arcs with residual capacity; nodes that cannot reach t get label n. Active nodes first in label order descending,
+   ties by index (the "gravity sweep": in a structure that holds, all mass flows down in this one pass), then FIFO,
+   current-arc pointers in arc order, a global relabel every `max(64, n / 4)` relabels (a count, not a time). Stop
+   when no active node has a label below n. Work = arc scans (discharges and BFS) against `kNeckFlowWorkBudget`
+   (262 144); if it is spent, nothing is released (`neckFlowBudget`, a warning).
+5. **Released set and pieces.** If all supply reached t: done. Otherwise a reverse BFS from t over residual arcs; A =
+   the nodes it does not reach. **Pieces** = connected parts of A over network links (loads expand to their member
+   nodes), ordered by their smallest network index. Per piece: voxels, load (MU), cut (sum of the real capacities of
+   its outgoing arcs) and cut faces, for the log and the tests. A piece over `kMaxIslandVoxels` stays (counted
+   `neckOversize`; castle scale, open question 2). **As built (review):** at most `kNeckMaxReleasedParts` (64) parts
+   and `kNeckMaxReleasedVoxels` (60 000) voxels are released per check, parts in piece order while both fit; the
+   first that does not and every later one stay (`neckDeferredParts`). Exact and order-free: parts of A have no
+   network arc between them, so each one left is still overloaded on its own (released by a later cast near it), and
+   the kept side holds with them in place (the preflow routed their cut capacity through it).
+6. **Voxels.** Released nodes are re-labelled with `NodeVoxels` (an upper half keeps its layers > k*) and the stage-4
+   stale-graph check (count, face masks, bounds; Structure.cpp:1007-1022): a mismatch counts `relabelMismatch` and
+   the whole search runs again on fresh graphs (Structure.cpp:1103-1125). Pieces go into a new
+   `GraphSearchResult::neckPieces` (`std::vector<FloatingIsland>`, plus `std::vector<NeckCut>` with load, cut, faces);
+   they bypass the island step's "no voxel in the island box" drop (Structure.cpp:1049-1052) and the face ordering
+   (:1065-1093).
+7. **Operations.** `sim::SearchIslands` (Blast.cpp:230-357) emits, in this order: carve; in-box islands (scan
+   order); face islands (candidate order); **neck pieces (piece order)**; one `ClearMask` for every crumb of the three
+   lists. A neck piece of at least `MinPieceVoxels(vs)` is `WorldOp::Detach(origin, mask, BlastPush(centre, radius,
+   corner))`, `netId 0`, applied at once like an island (Blast.cpp:326-331); a smaller one is a crumb. A neck piece
+   touches an R node (or is one) - **a released part may be a load alone** (review: sand hanging in tension under a
+   ceiling that holds, `Neck.HangingLoadIsReleasedAloneItsNodeStays`) - and an R node's voxels lie at most 7 voxels
+   outside the island box, so a crumb reaches past the island box by less than `MinPieceVoxels + 7` and the
+   `ClearMask` box stays under `192 + 2 x (MinPieceVoxels + 7)` voxels per axis (networking.md "Crumbs", corrected).
+   `PresentBlast` makes rubble from it as from any island (stage 1e lifetimes and caps).
+
+### When it runs, and when it does not
+
+- After every `sim::Blast` with the graph search, duds included (a power-0 blast is how the tests and the pristine
+  check probe a structure), and in every late search (`RetryIslandSearches`, Blast.cpp:566).
+- Never after editor or game `FillBox`, brush edits, generation, loading, or a client's `ApplyOp` (R1). So a
+  structure is never judged without a cast near it: the answer to collapse.md's "buildings fall on spawn"
+  (collapse.md:28-31), and why the owner's screenshot (a neck cut by `FillBox`) stood until a shot landed near it.
+- Not after its own release: the remainder is proven to hold.
+- `SimulationConfig::neckRule` (default true; Simulation.cppm:31-69); off with `IslandSearchKind::Voxel` (the
+  reference has no load check). `checkIslandSearch` / `SameResult` (Blast.cpp:203-222) keep comparing islands only.
+- Later, stage 5's `StructuralSolver::MarkDirty` calls the same phase on dirty boxes under its tick budget, and stage
+  6's impact carves call it like a blast.
+
+### Determinism and replication
+
+- Inputs: the voxels of the flood box (through the graphs, pure functions of the chunks), the material table, the
+  session's `vsMicro`. Nothing outside the flood box is read (anchors stop at its face layer).
+- Every order is fixed: R by seed order, loads by closing order, arcs by `ForEachLink` order, the preflow by labels
+  and indices, pieces by smallest index. The released set does not depend on any of these orders (step 5), which
+  `Neck.ReleasedSetIndependentOfArcOrder` pins; the work counters do depend on them, and they are fixed.
+- Clients only apply the `Detach` / `ClearMask` the server sends; no `WorldOpKind`, `Detach`, `ClearMask` or wire
+  change. The search result for the same input changes (more pieces fall): a server decision, as stage 1 and 4.
+
+### Work bound per cast (R5) and cost
+
+New constants next to `kGraphNodeVisitBudget` (`sim/Blast.cppm:177`): `kNeckMaxNetworkNodes` = 8192,
+`kNeckMaxArcPairs` = 65 535, `kNeckExteriorVisitBudget` = 16 384 node visits, `kNeckFlowWorkBudget` = 262 144 arc
+scans; since the review also `kNeckMaxReleasedVoxels` = 60 000 and `kNeckMaxReleasedParts` = 64 per check (what the
+re-label, the `Detach` ops and the wire may carry from one cast). Counters (`IslandSearchStats`, the `Blast:` line): `neckNodes`, `neckSplit`, `neckLoads`, `neckAnchors`,
+`neckArcs`, `neckExteriorVisits`, `neckFlowWork`, `neckSplitRelabels`, `neckPieces`, `neckCrumbs`, `neckVoxels`,
+`neckOversize`, `neckSkipped`, `neckExteriorBudget`, `neckFlowBudget`, `neckUnloaded`; `neckMs` logged only. All of
+them follow from the flood box voxels: equal cold or warm, with 1 or 3 workers. The cast work budget (networking.md:94)
+adds `neckExteriorVisits + neckArcs + neckFlowWork / 8 + 64 x neckSplitRelabels + neckVoxels / 64` (weights
+calibrated once, e); graphs the exterior floods resolve are already in `chunkGraphs` at the cold price.
+
+| Case | Work (e) | Time (e, -O2) |
+|---|---|---|
+| Surface 1.2 m blast, nothing overloaded | R 400-1500 nodes, 2-6 k arc pairs; exterior 150-3000 visits (a ground flood stops at 60 000 voxels, about 118 full nodes; later floods stop at its labels); one gravity sweep, 5-15 k arc scans | 0.05-0.3 ms |
+| The tower's neck shot (the release) | the sweep, about n relabels and one global relabel (20-60 k scans), 1-4 split nodes, re-label of 8574 voxels; ops and presentation as the measured freeing island (ops 1.05 ms, present 1.25 ms, Part 1) | 0.2-0.6 ms of check |
+| Underground (`--climb`) | 15-25 ground floods, 2-4 k visits | 0.2-0.5 ms |
+| Worst at the budgets | 16 k visits x 50-100 ns + 262 k scans x 4-8 ns + 65 k arcs to build + re-label up to 60 000 voxels | about 3-4 ms. **Measured in the review** (`Neck.DISABLED_CostAtTheBudgets`, quiet, -O2): the preflow alone 5-6 ms at 207 k arc scans on 8192 nodes / 65 535 arc pairs; 529 overloaded pillars (3574 nodes, 3963 visits, 45 k work, 64 parts released by the cap) 2.0-2.4 ms; a 55 936-voxel gold block released 0.8-0.9 ms (3.3 once). Est. 8-12 ms with every budget full: the per-arc cost is 20-30 ns, not 4-8 |
+
+- **Server, 5v5 at 10 casts/s**: about 3 ms of CPU per second on average (0.05 ms per tick); a worst cast stays
+  inside the 6 ms cast phase, and its tick is decided by counts, not time. A release adds one `Detach` (the tower's
+  mask about 1-2 KB RLE, inside the 16 kB event burst).
+- **Session client on the UHD 620**: nothing new runs; a release is one `Detach` and one rubble body, as an island.
+- **Offline (today's game)**: +0.05-0.6 ms on a blast frame; a typical cast stays inside the 3 ms rule, the worst
+  does not (as cold graph builds today).
+- Memory: `thread_local` network arrays, about 1-2 MB at the node cap; nothing new is cached.
+
+### Code changes (file:line)
+
+| Where | Change |
+|---|---|
+| `src/voxel/Material.cppm:37-43`, `internal/Material.cpp:136-155` | `uint32_t strength[3]` (C, S, T; kg/m^2), default stone's; the table above |
+| `src/voxel/Structure.cppm:43-55` | `GraphNode`: `cutFaces`, `cutPlane` (bits 0-2 plane, bit 7 anchor), `weak[3]`; fields reordered; `static_assert` 72 bytes |
+| `src/voxel/Structure.cppm:91-98`, `internal/Structure.cpp:275-288` | `GraphMaterials`: `strength`, `anchor`; foliage `densityQ` 0 |
+| `src/voxel/internal/Structure.cpp:102-248, 290-368` | build: `weak`, anchor bit, plane cuts and areas, halves' connectivity for constricted nodes |
+| `src/voxel/Structure.cppm:182-247` | `GraphSearchLimits::neck` (`const NeckLimits*`: `capFace[3][256]` for the session voxel size, the four budgets); `GraphSearchResult::neckPieces`, `neckCuts`, the counters |
+| `src/voxel/internal/Structure.cpp:718-1100` | phase 3b; step 4 takes the third list; `GraphTable` gets the exterior label array |
+| `src/sim/Blast.cppm:58-108, 169-187` | `IslandSearchStats` neck counters; the four constants |
+| `src/sim/internal/Blast.cpp:156-199, 230-357` | `GraphSearch` fills `NeckLimits` from `Materials()` and `World().VoxelSize()`; emission of neck pieces before the `ClearMask` |
+| `src/sim/Simulation.cppm:31-69` | `bool neckRule = true` |
+| `src/engine` `PresentBlast` | the `Blast:` line gets `neck N nodes (s split), L loads, A arcs, V ext visits, W flow work, P piece(s) [load > cut], X ms` |
+| `src/main.cpp` | `--neck-blast [W]`; `--tower-blast` says "by an island" or "by the load check"; `--castle-blast` logs the neck counters |
+
+### Tests (GPU-free; written first, seen failing against a stub that releases nothing)
+
+VortexCoreTests (`tests/core/StructureTests.cpp`, new `tests/core/NeckTests.cpp`):
+
+- `Structure.NodePlaneCutWeakestMaterialAndAnchorBit`: random cells against brute force - every plane's cut and
+  area, the chosen plane, the constriction rule, the halves' connectivity, `weak[k]` per class, the anchor bit; the
+  shared Uniform graph. `Structure.FoliageCarriesNoLoad`. The graph comparison (`StructureTests.cpp:311-330`) covers
+  the new fields, so `RefreshEqualsRebuild` and `EvictionNeverChangesAGraph` keep their meaning;
+  `NodesCarryMassAndLinksTheirBond` is unchanged (iron and stone).
+- `Neck.MaxFlowReleasesTheLargestOverloadedSet`: random networks of up to 16 nodes, all 2^16 sets enumerated: the
+  released set is the largest maximiser of `mass(A) - cap(A -> out)` among strictly overloaded sets; load equal to
+  capacity holds.
+- `Neck.ReleasedSetIndependentOfArcOrder`: a test hook shuffles arc and queue order; same set, every time.
+- `Neck.NetworkEqualsVoxelReference`: random volumes over 2 x 2 x 2 chunks with water: the same problem built per
+  voxel (infinite capacity inside a node or half, per-face capacity across) and solved by a plain reference max-flow
+  releases the same voxels.
+- `Neck.TowerOnATwoByTwoNeckFalls`: the tower's FillBoxes at 0.125 m with the neck at each of the 8 heights mod 8,
+  across an x cell face and across a z cell face, after a dud in the hollow: one piece holding all 8526 voxels above
+  the neck and at most its 48 neck voxels, ring row 0 and the paving untouched, roof air; at the aligned offset
+  exactly 8574 voxels, load 17 986 800, cut 3 200 000.
+- `Neck.ThresholdIsExact` (2 x 11 falls, 2 x 12 stands; a block of exactly n x capFace stands, one MU more falls),
+  `Neck.FullBaseStands`, `Neck.ParallelNecksAddUp`, `Neck.BondIsTheWeakerMaterial` (stone tower on a planks layer),
+  `Neck.VoxelSizeInvariant` (0.1 / 0.125 / 0.15: 2 x 2 falls, full base stands).
+- `Neck.StoneOverhang3mStands`, `Neck.OverhangRootThresholdIsExact` (24 faces fall, 25 stand),
+  `Neck.SandOverhangSlumps` (2 m falls, 1.5 m stands), `Neck.WoodBeamBridgeStands` (also with one end cut: it stands,
+  no bending, failure mode 3), `Neck.TreeWithOneVoxelTrunkStands`.
+- `Neck.NaturalTerrainNeverFails` (the rock gate): built-in terrain at 0.125 m and 0.1 m, caves, water, Packed
+  chunks: 300 duds at random surface, cliff, cave, overhang and tree points release nothing; 200 power-6 blasts
+  release only pieces that touch the crater's ring (each logged with its ratio).
+- `Neck.ChecksOnlyInsideTheIslandBox` (a thin neck high on a pillar, a dud at the base: nothing),
+  `Neck.ExteriorLoadIsPartOfThePiece`, `Neck.OversizePieceStaysCounted`, `Blast.NeckNothingOutsideTheFloodBoxIsRead`
+  (VortexSimTests; a chunk just outside loaded and unloaded: equal operations), `Neck.StaleGraphNeverReleasesAttachedVoxels` (the
+  `InjectForTesting` hook, Structure.cppm:153-156), `Neck.ExactAtLargeLoads` (a 54 872-voxel gold block on 1067 /
+  1068 iron faces at 0.1 m, about 1.07e9 MU; named `NoOverflowAtTheLimits` before the review) and
+  `Neck.NetworkAtTheLimits` (review: 8192 nodes of the largest supply, arcs just under 2^45 MU, checked in 128-bit
+  integers).
+- `Neck.BudgetsCountWorkNotTime`: small budgets reached; every counter equal cold vs warm cache and 1 vs 3 workers;
+  only `graphsBuilt` may differ.
+
+VortexSimTests:
+
+- `Blast.NeckReleaseIsAnOrdinaryDetach`: operations carve, islands, the neck `Detach`, `ClearMask`; a second
+  simulation fed the operations has an equal `WorldHash` (`Blast.NeckReleaseTwoSimulationsEqualHashes` with the
+  server config on A).
+- `Blast.NeckReplayGivesIdenticalOps` (casts at fixed ticks), `Blast.NeckOnAServerCountsAnUnloadedChunk`,
+  `Blast.NeckDefersOfflineAndTheLateSearchReleases`, `Rubble.TowerNeckReleasesStayUnderCaps`.
+- `Blast.NeckRuleOffEqualsStage4`: with `neckRule = false` every arena gives today's operations.
+- Unchanged and green: `Blast.TwoSimulationsFedTheSameOperationsHaveEqualHashes`;
+  `Structure.GraphFloatingEqualsFaceFlood` runs with `neckRule` off (it compares two island searches op for op). Every
+  stage-1 and stage-4 arena asserts `neckPieces == 0` (they are pillars, ledges and slabs far inside the table's
+  margins), or says in the test why not.
+
+### Headless `--neck-blast [W]` (game, next to `UpdateTowerBlast`, `src/main.cpp:907-982`)
+
+1. **Frame 20, pristine:** six duds (`BlastDesc{p, 1.2f, 0.0f}`) at the tower base, both brick walls, the timber
+   frame, the crystals and the metal blocks. Must log `Neck: pristine playground: 6 duds, 0 pieces released`.
+2. **Frame 30, the owner's screenshot:** `World::FillBox` turns the tower ring's rows 1 .. lround(1.5 m / vs) to air
+   except a stone segment 2 x W (default W = 2) at the north-west corner inside the wall line. No check runs for
+   `FillBox`: must log `Neck: tower on a 2 x W stone neck (2W faces), roof solid`.
+3. **Frame 40, the shot:** 0.6 m, power 6, at the centre of the tower's hollow 0.5 m above the floor (it carves only
+   paving; the neck is about 1.9 m away, inside the island box). Must log
+   `Neck: tower released: 1 piece of N voxels, load L MU (x t) > cut C MU (F faces, inside a cell | on a cell face);
+   network n nodes (s split), l loads, a arcs, v exterior visits, w flow work, X ms; roof AIR`, the piece's speed at
+   +1 and +5 frames (as `--tower-blast`) and `store a/b`.
+
+Acceptance (validation on, exit 0): W = 2 at 0.125 m releases (8574 voxels at an aligned floor, at least 8526 at any,
+ratio 5.62); `--neck-blast 11` releases (1.05x); `--neck-blast 12` logs `Neck: tower stands, roof solid`;
+`--voxel-size 0.1` and `0.15` release with W = 2 (10.4x, 4.70x). Unchanged: the standard and editor runs, `--climb`
+(its blast releases nothing), `--probe-blast` (`0 floating island(s)`), `--castle-blast` (neck counters logged, 0
+pieces: the castle is an anchor), `--tower-blast` (freed by shot K <= 7, says how). Not confirmable headless, for the
+owner: the fall seen in a window, its rubble, and the cost on a busy UHD 620.
+
+### Failure modes, stated
+
+1. **Cell granularity.** Necks are judged on cell faces and on the one narrowest horizontal plane of a constricted
+   node whose halves are each connected. Two narrow planes in one node, U shapes, and necks that narrow sideways
+   (along x or z) inside one cell are seen only at cell faces: they hold (lenient). A neck stub of up to 7 voxel rows
+   may stay below a release.
+2. **Weakest material per node and class.** A node with one glass voxel among stone is rated as glass, whether or not
+   that voxel is on the bond. Errs toward failing. **Corrected in the review:** natural terrain does mix weak
+   materials into strong ones - sand (S 3 000, T 500) over stone on beaches, snow over dirt above the snow line, leaves
+   against anything a canopy touches - so a stone node with a sand voxel is rated as sand. Two changes keep that from
+   dropping structures: **foliage is left out of a node's weakest material unless the node holds nothing else**
+   (`Neck.StoneWallWithLeavesStands`: a 6 m wall with leaves against it was released, 1.3x over the leaves' 80 000 MU
+   per face), and **snow's compression is 50 000** like dirt (`Neck.StoneWallOnSnowStands`: a 6 m wall on 0.4 m of snow
+   fell at 10 000). Sand and snow still slump in shear and tension near a crater (intended, open question 5); the rock
+   gate samples a beach, a snow field, a rock slope and deep caves and releases nothing there. Exact per-face
+   material bonds stay rejected (voxel reads per link across chunks on every search).
+3. **No bending moment, no tipping.** Long cantilevers, a beam cut at one end and slender towers do not fail by
+   moment; a tower leaning over its neck holds if the neck has the faces. Stage 7 (moment / tip check) or stage 5's
+   overhang rule inside registered structures.
+4. **Locality.** Only the island box is judged. A neck formed by earlier shots is judged when a cast lands within the
+   island box of it (about 4 m for a 1.2 m blast at 0.125 m); a shot at the roof does not re-check a neck 5 m below
+   (the tower above the roof shot is part of an anchor through the neck). Stage 5's dirty boxes call the same check.
+5. **Exterior anchors are trusted**: anything that reaches the flood box face is ground, even if it hangs by a thread
+   beyond it, and parts over 60 000 voxels are anchors - castles do not fall by this check in 4b (open question 2).
+   Since the review a chunk solid through (32^3 solid voxels) is ground too: a chunk-aligned 4 m solid cube hanging
+   on a neck outside the island box is held (`Neck.SolidChunkIsGround`; one voxel off the grid it falls).
+6. **Pre-existing overloads are shaken loose** by any cast nearby, duds included (an editor-built structure that was
+   too weak from the start falls at the first shot near its weak point). Counted in `neckPieces`; the pristine
+   playground and terrain tests pin zero.
+7. **Spent budgets release nothing** that cast (counted, warned); until stage 5 can re-queue the box, the structure
+   stays until a later cast nearby. Not lost, but late (R7 in its weakest form). The same for parts over the release
+   caps (64 parts / 60 000 voxels per cast, `neckDeferredParts`).
+8. **Stale graphs**: released and split nodes are re-checked and the search retried, as for islands - since the review
+   on everything the check reads (voxel count, face masks, bounds, mass, weakest materials, anchor bit, plane);
+   kept judged nodes, loads and anchors are not re-read: for them `World::ChunkRevision` is the only guard.
+9. **Foliage is weightless**: a canopy never overloads a trunk; leaves still carry (and can fail under) what rests
+   on them.
+10. **Strength-table drift** between a server and its replays changes decisions: the table must be in `buildHash`
+    (R6, stage 3). Clients are not affected (they only apply).
+
+### Rejected within this part
+
+| Rejected | Why |
+|---|---|
+| Horizontal cross-section sweep as the rule | vertical only; a load hung below the cut counts as support; cascades need a queued follow-up over ticks; plates and an epoch sweep are more code than the flow for less physics. Its strict rule and its tests are kept |
+| Load-flow DAG as the rule | the split of a node's load among its supporters is a heuristic that concentrates load (false falls near craters in rock), weakest-voxel strengths, plane validity rules and up to 4 rounds; its build-time plane cut is kept |
+| Widest or bottleneck path | ignores parallel supports (four corner necks) |
+| Smallest overloaded set | leaves weightless or lightly loaded parts in the air: the "second shot" bug in a new form |
+| "Ties release" | a structure exactly at its capacity would fall only when something else overloads; replaced by the strict perturbation |
+| A throat capacity from slice areas on every node | inexact (area is not the bond between layers) and caps sideways flow too; replaced by the exact split |
+| Exact per-face material bonds | voxel reads per link across chunks on every search; the per-node weakest material is cached |
+| A flow over the whole flood box | about 10x the network; the contracted exterior keeps it local and lets cliffs be anchors |
+| Isotropic strength | either rock overhangs and soil roofs fail, or a neck under the tower holds; compression / shear / tension separate them, and sand slumps |
+| Checking after `FillBox` / editor edits | "buildings fall on spawn" (collapse.md); a stage-5 editor report instead (open question 6) |
+
+### Open questions for the owner (each with a recommendation)
+
+1. **Where does the tower fall?** With stone C = 100 000 kg/m^2 the watch tower (35 t above its neck) falls on any
+   stone neck under 24 faces (0.375 m^2, a sixth of its base) and stands on 24 or more; natural rock keeps a 3x
+   margin or more. **Recommendation: keep it and tune by playing** (one integer per material; at 150 000 the tower
+   holds from 16 faces, at 70 000 only from 34).
+2. **Whole castles may collapse - when?** In 4b anything over 60 000 voxels is an anchor, so a castle never falls by
+   this check (a corner tower, about 45 000 voxels, could once the walls beside it are cut away).
+   **Recommendation: a stage 4c right after 4b is measured**: raise the exterior load limit to 4 x 60 000, split any
+   release over 60 000 voxels (and oversize islands) into chunk-aligned 32^3 bricks, each its own `Detach`, at most
+   240 000 released voxels per cast (the rest a later cast), wire bursts measured; stage 5 then spreads big collapses
+   over ticks.
+3. **A shot at the roof does not re-check a neck far below** (failure mode 4). **Recommendation: accept** until stage
+   5's dirty boxes; players cut necks with shots near them.
+4. **Foliage weightless?** **Recommendation: yes** - generated trees have 1-voxel trunks under canopies of up to
+   26 800 leaves and would otherwise all fail.
+5. **Soft ground slumps**: sand overhangs over 1.9 m and dirt over 5.3 m fall when a cast lands near them.
+   **Recommendation: yes**, it reads as "shredding" soft ground; rock is unaffected.
+6. **Weak player-built structures** stand until a shot lands near them, then fall. **Recommendation: yes, plus an
+   editor "neck report"** later (run the check on a box and list overloaded parts with their ratio; collapse.md's
+   spawn guard as a report, never a release). The review measured the case: the watch tower FillBoxed onto a game
+   slope **without its foundation** rests on about 25 faces of turf (10 000 000 MU against 22 932 000) and falls on the
+   first dud near it; the game's playground, built on its foundation, releases nothing under the six `--neck-blast`
+   duds.
+7. **(Review) The flow budget allows a cast far over the cast phase.** The preflow takes 5-6 ms at about 207 000 of
+   its 262 144 arc scans; every typical cast needs 2 600-13 000 (the tower's release 7 000-10 700). **Recommendation:**
+   lower `kNeckFlowWorkBudget` to 65 536 (about 1.5 ms, 5x the largest measured need; spent means "released next
+   cast", R7) when stage 3's cast budget is built, and charge `neckFlowWork` there; not changed now because it changes
+   which casts release (only in networks far larger than any measured).
+
+### Stage 4b as built (2026-11-13)
+
+Built as designed above unless this table says otherwise; reviewed by three readers ("Review of stage 4b" below:
+several rows here are superseded there).
+
+| Item | As built | Why / what later stages must know |
+|---|---|---|
+| Materials | `Material::strength[3]` (C, S, T, kg/m^2, `uint32_t`, default stone's), the table above in `RegisterDefaultWorldMaterials` (bedrock keeps the default: it is an anchor). `GraphMaterials` gained `anchor` (Indestructible and not ignored) and `strength`; foliage gets `densityQ` 0 there. | Stage 3 moves the integers into `MaterialPhysicsQ` and `buildHash` (R6). `MaterialFlag_Foliage` now has one reader (`MakeGraphMaterials`). |
+| Graph fields | `GraphNode` reordered, still 72 bytes (`static_assert`): `cutFaces`, `cutPlane` (bits 0-2 plane, bit 7 anchor), `weak[3]`. Single-id cells cost nothing; a mixed 4^3 block collects its solid-id set in the loop that already sums its mass, so a **single-node mixed cell takes its weakest ids from the cell's id set** (no per-voxel pass); only a cell with several nodes and several ids reads ids per voxel. The plane cut is the bytewise-popcount sweep of the design plus `FloodCell` on both halves for constricted nodes. | **Measured** (`Structure.DISABLED_GraphBuildCost`, quiet, -O2, game terrain 0.125 m, 3 passes): Dense 29-31 us per chunk (stage 4: 25-28), Packed 22-24 us (20-23), Dense with the data in the CPU cache 22.7 us (16.6). A first draft that read ids per voxel for every mixed node cost 44-46 us; the id set fixed it. Memory unchanged (5.2 / 6.5 KB per Dense / Packed graph). |
+| Phase 3b | `NeckCheck` in `internal/Structure.cpp`, called by `SearchOnce` after the floods when `limits.neck` is set and the search is complete; the `VoxelSource` moved before it (split nodes are re-labelled for their halves' masses, and re-checked against the graph: a stale node counts `relabelMismatch` and the search runs again). `GraphTable` gained `neck` (labels, grown with `state` in `Resolve`) and `ForEachBond` (face and bond per neighbour; goes on after an unloaded chunk when told to). | **Trap found by the tests:** `ForEachBond` takes its node by value; a reference into the flood queue dangled when the flood grew the queue (segfault in `Neck.ReleasedSetIndependentOfArcOrder`). |
+| Rule details | (1) Every finite arc capacity is perturbed after summing (`c x 2^17 + 1` per arc pair direction), supplies `x 2^17`, infinite arcs `2^62`. (2) **Nothing is released when all supply reaches the sink**, even a weightless part with no support at all (the largest-maximiser set would hold it at value 0; such a part is the island search's business, e.g. a component it gave up on by budget). (3) A judged node with the anchor bit, a voxel on the flood box face layer or the window's bottom row is a sink with **both** halves (the design said the node; the anchor voxel may be in either half). (4) An exterior flood that meets a load label (impossible: a closed load holds its whole component) is taken as an anchor. | `Neck.MaxFlowReleasesTheLargestOverloadedSet` pins (2) against brute force (240 random networks of 2-16 nodes; all 2^n sets). |
+| **Offline, a chunk outside the window** (superseded by the review: every unloaded chunk is support now, and a late search re-checks once it loaded) | An exterior flood (or a judged node) that meets a chunk **outside the world window** is support, counted in `neckBeyondWindow`; a chunk **of** the window that is still loading defers the search as designed (`complete = false`). Server unchanged: support plus `neckUnloaded` (an error). | Deviation, found by two stage-1 tests that failed with the design's rule (`Blast.IslandSearchRunsLaterOnceItsBoxHasLoaded`, `Rubble.TowerCutsStayUnderCaps`): the ground's exterior flood reaches the flood box face, and near the window's edge the flood box sticks out of the window, so **every** search near the edge waited for chunks that cannot load until the player moves - face islands included (stage 1 accepted that for small face components only). Offline only; the server's window holds every flood box. Taken as support, a tower near the window edge stands until a later cast (failure mode 4's direction: late, never wrong). |
+| `sim::Blast` | `SimulationConfig::neckRule` (default true; only with the graph search); `GraphSearch` fills `NeckLimits` from the material tables and `World::VoxelSize()` and the four `kNeck*` budgets (`Blast.cppm`). Emission: carve, in-box islands, face islands, neck pieces (piece order), one `ClearMask`. `IslandSearchStats` gained the `neck*` counters, `neckBeyondWindow` and `neckCuts` (load, cut, faces, voxels, inside a cell); `BlastTimes::neckMs`; `Simulation::IslandSearchChecks::neckReleases` (the stage-1 arenas fail if the check releases anything there). The engine's `Blast:` line prints the network, the work and each released part. | No `WorldOpKind`, no `Detach` / `ClearMask` or wire change; `Blast.TwoSimulationsFedTheSameOperationsHaveEqualHashes` keeps its four operations. `relabelledNodes` now also counts released neck nodes. |
+| Game | `--neck-blast [W]` as designed; the frame-30 line gives the neck's corner in metres; the pristine line counts released parts separately from islands / crumbs that already floated as built (99 at 0.125 m, 80 of them at the tower-base dud next to a generated tree, 93 at 0.15 m: crumbs that already floated, which the island search takes on any dud, as in stage 4; cause not traced further). `--tower-blast` says "by an island" or "by the load check: load L > cut C over F faces"; `--castle-blast` logs the check's counters. | |
+
+**Tests** (33 new, 510 in all, 3 of them disabled measurements). VortexCoreTests (`tests/core/NeckTests.cpp`): the
+design's list - `Neck.MaxFlowReleasesTheLargestOverloadedSet`, `ReleasedSetIndependentOfArcOrder` (150 networks x 6
+shuffles; the tower with 4 shuffled networks), `LimitsFollowTheVoxelSize`, `TowerOnATwoByTwoNeckFalls` (8 floor layers
+x neck across an x and a z cell face: everything above the neck plus at most its 48 voxels, the cut 4 faces = 3 200 000
+MU; at the aligned floor exactly 8574 voxels and 17 986 800 MU), `NeckInsideACellIsSplit` (added: a neck that only a
+split node can see), `ThresholdIsExact` (2 x 10 / 11 fall with the exact loads, 2 x 12 stands; a block of exactly n x
+capFace stands, one MU less capacity falls), `FullBaseStands`, `ParallelNecksAddUp`, `BondIsTheWeakerMaterial`,
+`VoxelSizeInvariant`, `StoneOverhang3mStands` (and the mushroom rock), `OverhangRootThresholdIsExact` (24 root faces
+fall with 3072 voxels, 25 stand), `SandOverhangSlumps`, `WoodBeamBridgeStands` (both ends and one), `TreeWithOneVoxelTrunkStands`
+(and with 200 kg/m^3 leaves it falls), `ChecksOnlyInsideTheIslandBox`, `ExteriorLoadIsPartOfThePiece`,
+`OversizePieceStaysCounted`, `ExactAtLargeLoads` (named `NoOverflowAtTheLimits` until the review; a 38^3 gold block on 1067 / 1068 iron faces at 0.1 m:
+1 067 352 200 MU against 1 067 000 000 falls, exact), `StaleGraphNeverReleasesAttachedVoxels`,
+`BudgetsCountWorkNotTime` (each budget reached; every counter equal 1 worker cold, warm, 3 workers cold; only
+`graphsBuilt` differs), `NetworkEqualsVoxelReference` (14 random volumes on bedrock with random face capacities: the
+released voxels equal those of the same problem built per voxel face and solved by a plain Dinic - 14 of 14 release,
+17 690 voxels, splits and loads present; the reference takes the nodes' weakest materials and planes from the graph, so
+it checks the network, not the build), `NaturalTerrainNeverFails` (game terrain at 0.125 and 0.1 m, full height, Packed
+chunks, 3 sites each: 420 duds at column edges - surfaces, cave ceilings and floors, overhangs - release nothing; 144
+power-6 1.2 m blasts release nothing either; the design asked 300 + 200), `Structure.NodePlaneCutWeakestMaterialAndAnchorBit`
+(400 random cells: 846 nodes, 190 constricted, against brute force), `Structure.FoliageCarriesNoLoad`. VortexSimTests:
+`Blast.NeckReleaseIsAnOrdinaryDetach`, `NeckReleaseTwoSimulationsEqualHashes` (server on A, 3 / 1 workers),
+`NeckReplayGivesIdenticalOps` (casts at ticks 3 and 7, 1 and 3 workers: equal operations and hashes; the first shot
+leaves a 44-face neck standing, the second cuts it under its threshold), `NeckOnAServerCountsAnUnloadedChunk`,
+`NeckDefersOfflineAndTheLateSearchReleases`, `NeckRuleOffEqualsStage4`, `Blast.NeckNothingOutsideTheFloodBoxIsRead`,
+`Rubble.TowerNeckReleasesStayUnderCaps`. Order of work, plainly: the API and a stub that released nothing came first,
+then the tests; against the stub 22 of the 25 core tests and all 7 sim tests then written failed (the three that passed
+are "must stand" cases: `StoneOverhang3mStands`, `WoodBeamBridgeStands`, `LimitsFollowTheVoxelSize`;
+`NaturalTerrainNeverFails` is a gate that a stub passes by construction). `Blast.NeckNothingOutsideTheFloodBoxIsRead` was
+written after the implementation (it fails against the stub: it requires the release). Two existing tests failed
+against the first implementation and led to the beyond-window rule (above).
+
+**Measured** (-O2, the UHD 620 laptop). Quiet, `Blast.DISABLED_CostOfTheTowerAndCastleCases` (now a third simulation
+per scene with the check on; the graph-vs-voxel hash comparison runs with it off), three fresh worlds per row:
+
+| Case | Flat ground: check per cast (network) | Game terrain: check per cast (network) |
+|---|---|---|
+| Underground 1.5 m, 6 m deep (cold) | 0.54-0.60 ms (1000 nodes, 3176 arc pairs, 929 exterior visits, 10 725 flow work) | 1.57-1.85 ms (1115 nodes, 3658 arcs, 974 visits, 11 981 work), of a 2.5-2.8 ms search |
+| Tower ring shots (cached site) | 0.14-0.32 ms (324-368 nodes, ~1000-1090 arcs, 405-433 visits, 3000-8200 work) | 0.28-0.72 ms (432-502 nodes, ~1300-1390 arcs, 487-607 visits, ~4000-4260 work) |
+| Tower ring shot 1 (cold) | 0.24-0.27 ms | 1.08-1.22 ms: **it releases the tower** (on the terrain its floor partly overhangs lower ground; stage 4 freed it at shot 3) |
+| Castle curtain / keep / corner tower (cold) | 0.06-0.21 ms (100-192 nodes) | 0.11-0.90 ms (105-273 nodes, 0-8 loads) |
+
+Phase split (instrumented once, then removed; quiet terrain, 564 checks of `Neck.NaturalTerrainNeverFails`): median
+0.17 ms, p90 0.39 ms, max 1.14 ms; the judged nodes take 0.03-0.07 ms, the **exterior floods most of the rest, and
+when the site is cold they build the graphs of the chunks around the island box** (counted in `chunkGraphs`), the
+arcs and the preflow 0.03-0.07 ms each. Game, headless, validation on (`--after-fill` where noted):
+
+| Run | Load check per blast | Outcome |
+|---|---|---|
+| `--neck-blast` (W = 2, 0.125 m), after fill | 6 pristine duds 1.0-5.0 ms (7-45 graphs built per dud, cold sites); the neck shot 1.32 ms (0.42-0.49 without `--after-fill`) | released 8558 voxels (the cut is the cell face 4 rows up the neck at this floor height), load 17 945 200 MU (35.0 t) > cut 3 200 000 MU, 4 faces, 5.61x; 0 pieces from the duds; piece 0.22 m/s at +5 frames, store 5170 / 12288 |
+| `--neck-blast 11` / `12` | 0.42 / 0.31 ms | 11: 8702 voxels, 18 319 600 > 17 600 000 MU (22 faces), 1.04x; 12: stands, roof solid |
+| `--neck-blast --voxel-size 0.1` / `0.15` | 1.40 / 0.97-1.00 ms | 19 228 voxels, 41 490 400 > 4 000 000 MU, 10.37x / 5847 voxels, 12 509 800 > 2 666 664 MU, 4.69x |
+| `--tower-blast --after-fill` | 0.92-3.80 ms per shot (3.80 the cold first shot) | **freed by shot 6 of 7 by the load check** (2 faces left: 18 033 600 > 1 600 000 MU, 11.27x; 8592 voxels; ring "cut" by its row test at the same shot) instead of shot 7 by an island. Judged right: what is left after shot 6 holds 35 t on 2 voxel faces |
+| `--castle-blast --after-fill` | 0.35-1.69 ms | 0 pieces: every wall reaches the flood box face or is over 60 000 voxels (open question 2) |
+| `--probe-blast` | 1.59 ms | unchanged: 1 island of 32 voxels, `0 floating island(s)` at the build |
+| `--climb` | 2.79 ms of a 7.85 ms blast while streaming (69 graphs built in 4.21 ms) | releases nothing; stage 4's blast was 4.75 ms |
+| Standard run (crate blast) | 1.12-3.84 ms (cold, streaming) | unchanged: `Beam cut: 13 voxels removed, 1 new object(s)`, HUD 149 quads, on the ground |
+
+Screenshots (the watch tower seen from the plaza, `--neck-blast --camera 11,6.5,-2,-1.18,0.12`): at frame 47 the ring
+is gone but the 2 x 2 neck at the north-west corner and the row-0 stub, the tower still upright (it has just been
+released); at frame 100 it has dropped onto its row-0 ring and tips over. (The render trails the FillBox by several
+frames: a frame-39 capture still shows the full base.)
+
+**Against the targets.** The check costs **2-4x the design's estimate** (0.05-0.3 ms typical): quiet 0.06-0.72 ms per
+cast at a cached site, 1.1-1.9 ms cold on game terrain, in game 0.3-1.7 ms cached and up to 5 ms at a cold site,
+most of the cold cost being graph builds of the chunks around the island box that only the exterior floods read. So a
+cast at an untouched site now costs about 1.5-2x stage 4's (`--climb`: 7.85 against 4.75 ms; the 3 ms offline frame
+rule is broken more often), and a cached one 0.2-0.7 ms more. On a server the work is counted (`neckExteriorVisits`,
+`neckArcs`, `neckFlowWork`, `neckSplitRelabels`, `neckVoxels`, and `chunkGraphs` at the cold price), so stage 3's
+budget charges it; at 10 casts/s a 5v5 server spends about 2-19 ms of CPU per second on it (quiet numbers), inside the
+cast phase. Session clients pay nothing new. Prebuilding graphs (the stage-4 owner question) would remove the cold
+part here too. Not measured: the worst case at the budgets (est. 3-4 ms), the UHD 620 under a real fight.
+
+**Not done / not confirmed:** the review by fresh readers (done: "Review of stage 4b" below); windowed play (the tower falling on its neck, its rubble)
+is for the owner; bending / tipping (failure mode 3) and stage 4c (castle bricks) are not built; the stage-3 budget
+does not exist yet, so the counters are only logged.
+
+### Review of stage 4b (2026-11-13)
+
+Three reviewers read the uncommitted stage 4b. Each finding was checked against the code; bugs got a failing test
+first (seen failing against the reviewed code, then passing). What was changed:
+
+| Finding | Verdict | Change |
+|---|---|---|
+| No cap on what one check releases: dozens of 60 000-voxel `Detach` ops possible; the design's worst case and the 16 kB burst did not hold | Real | `NeckLimits::maxReleasedVoxels` / `maxReleasedParts`, `sim::kNeckMaxReleasedVoxels` = 60 000, `kNeckMaxReleasedParts` = 64: parts in piece order while both fit, the rest stays (`neckDeferredParts`, logged). Exact and order-free (step 5 above). `Neck.ReleaseIsCappedPerCheck` failed first (three blocks released past a two-block cap), passes; a later check releases what stayed. |
+| A released part can be a load alone; the crumb mask bound and "a neck piece holds an R node" were wrong | Real (docs, comment) | Bound corrected to `192 + 2 x (MinPieceVoxels + 7)` per axis (Blast.cpp, step 7, networking.md "Crumbs"); `Neck.HangingLoadIsReleasedAloneItsNodeStays` (224 sand voxels hanging under a ceiling in tension: released alone, cut 16 x 4 000 MU, the ceiling stays). The code was right; the test passes against it. |
+| Offline, a chunk outside the window was support and nothing judged the structure again | Real | Every unloaded chunk the check meets offline is support for that cast (it can only release less) and `sim::Blast` queues a late search (`IslandSearchStats::neckDeferred`, `SearchOutcome::NeckWaits`) that waits for it - outside the window until the window moved over it - and runs search and check again. `Blast.NeckBeyondTheWindowIsCheckedAgainOnceLoaded` failed first. Cost: a blast whose flood box reaches past the window leaves one waiting entry (the game's window is 192 m wide; flood boxes reach past it only for casts over about 84 m away); `Blast.IslandSearchRunsLaterOnceItsBoxHasLoaded` now expects it. |
+| The stale-graph guard did not compare what the check reads | Real | `SameAsGraph` re-derives mass, weakest materials, anchor bit and narrowest plane from the voxels it re-labels (one table lookup per voxel) for split and released nodes. `Neck.StaleGraphNeverReleasesAttachedVoxels` gained graphs with the same voxels but sand as the weakest material, and 10x the mass: both released the standing tower before, both are caught now. Kept nodes still rely on `World::ChunkRevision` (failure mode 8, notes/voxel.md). |
+| Weakest material per node: leaves or snow beside a wall set its strength | Real (high) | Foliage is left out of a node's weakest material unless the node holds nothing else (`GraphMaterials::foliage`); snow's compression 10 000 -> 50 000 (packed snow; shear and tension unchanged). `Neck.StoneWallWithLeavesStands` and `Neck.StoneWallOnSnowStands` failed first (both 6 m walls released), pass. Failure mode 2 corrected. Rejected the reviewer's alternative of rating C / T from the top and bottom layers only: snow lying on the same layer as the bond would still rate it, and the inner plane of a split node needs other layers; exact per-face bonds stay rejected (cost). |
+| The rock gate did not sample beaches, snow, deep caves, 0.15 m, repeated craters | Real (test) | `Neck.NaturalTerrainNeverFails` rewritten: 0.125 / 0.1 / 0.15 m; per size the three sites near the origin plus a sand beach, a snow field and a rock slope, chosen by `TerrainHeight` and checked against the generator's top voxel (the cover rule has a noise term: the first "snow" pick was stone); edges scanned 30 m deep with at least 8 points more than 6 m under the surface per site; three overlapping power-6 shots deepening one crater and two craters 2.5 m apart, each followed by a dud. Result: 18 sites, 648 duds (144 deep), 396 blasts, **0 parts released**. |
+| Deferral of the check threw away proven face islands | Real | Same change as the beyond-window finding: the check never makes the search incomplete any more. `Blast.NeckWaitKeepsTheFaceIslands` (a floating bar across the island box face falls in the blast itself while the check waits for a loading chunk) failed first; `Blast.NeckDefersOfflineAndTheLateSearchReleases` updated (the tower stands for that cast, the late search releases it). |
+| Cold-site cost spikes; worst case at the budgets never measured | Real (cost) | Measured (`Neck.DISABLED_CostAtTheBudgets`): far over the design's 3-4 ms (Budgets, open question 7). The suggested early anchor was built: an exterior flood that enters a chunk solid through (a pure function of its voxels, asked before the chunk is resolved: Uniform id, Dense occupancy, Packed RLE runs) ends there as ground (`neckSolidChunks`, `Neck.SolidChunkIsGround`). It ends 173 floods per tower shot on flat ground and 1-34 per castle shot in game, but **0 on generated terrain**: there the cold cost is the graphs of the chunks next to the island box, which the judged nodes' bonds need, so only prebuilding graphs (the stage-4 owner question) removes it. |
+| The tower falls at ring shot 1 on game terrain, unexplained | Real (explained) | The cost scene now fires a dud before shot 1 and runs the check on the graph run's world: the tower (no foundation, on a slope) is overloaded before any shot - it rests on about 25 faces of turf, 22 932 000 MU against 10 000 000 (2.29x) - failure mode 6, open question 6. The game's playground on its foundation releases nothing (`--neck-blast`: 6 duds, 0 parts). |
+| The voxel reference barely exercised splits and loads, compared released sets only | Real (test) | `Neck.NetworkEqualsVoxelReference` rewritten: hourglass columns with the narrow layer inside a cell, in touching pairs and across the chunk faces x / z = 0, +-32 and y = 96 / 128, structures sticking out of the island box; four capacity tables per trial (random per material, one uniform capacity, and the uniform capacity at which the heaviest released part holds exactly and one MU under it); every part compared voxel for voxel **and by load, cut (MU) and cut faces**. 14 trials, 118 split nodes, 31 loads, 56 solves, 231 parts compared. It failed first - on a bug of the reference (an exterior component split by an earlier anchored flood became a load there; the graph's rule makes it an anchor) - and found no fault in the network. |
+| No exact shear or tension cut on a chunk face | Real (test) | `Neck.OverhangRootThresholdIsExactOnAChunkFace` (root at x = 31 / 32: 24 faces fall, 25 stand, cut 24 x 320 000 MU), `Neck.HangingBlockTensionThresholdOnAChunkFace` (neck across y = 95 / 96, tension set to load / 4 holds, one MU less falls), `Neck.TowerNeckAcrossTwoChunkFacesFalls` (neck at x = -1 / 0 and z = -1 / 0: 8574 voxels, 4 faces, 3 200 000 MU). All pass. |
+| The rock gate did not assert that the check ran in full; "blasts release nothing" not pinned; counts below the design | Real (test) | Every dud and blast asserts `neckRan` and no spent budget or skip, every dud no unloaded chunk taken as support; blasts on hard ground must release nothing, on sand and snow nothing reaching 2 m past the crater; at least 300 duds (40 deep) and 200 blasts. |
+| The cost table's "cached site" rows compared a fallen tower | Real | The cost scene runs the check on the graph run's world after each shot (`voxel::SearchIslandsOnGraph`, nothing applied) and marks the check run's rows after a release. Corrected numbers in "Measured after the review". |
+| `neckMs` and `graphBuildMs` overlapped | Real | `neckMs` now excludes the graphs the check built, logged as `neckBuildMs` (`BlastTimes::neckBuildMs`, the `Blast:` line "+ X ms of graph builds"). |
+| Test names and the large-load test's description | Real (docs) | `Blast.NeckNothingOutsideTheFloodBoxIsRead` named right; the gold test is `Neck.ExactAtLargeLoads` (54 872 voxels, about 1.07e9 MU); `Neck.NetworkAtTheLimits` added (8192 nodes of 512 x 65 535 MU, arcs at 2^45 - 1 MU, exact in 128-bit integers). |
+
+**Measured after the review** (-O2, the UHD 620 laptop). Quiet, `Blast.DISABLED_CostOfTheTowerAndCastleCases`, the
+check run on the graph run's own world after each shot (same world state as the search without it), three runs:
+
+| Case | Graph search alone | The check (+ its graph builds) |
+|---|---|---|
+| Tower ring shots 2-7, flat ground (cached) | 0.06-0.27 ms | 0.13-0.48 ms (+0.00-0.05) |
+| Tower ring shots 2-7, game terrain (cached) | 0.08-0.26 ms | 0.30-0.70 ms (+0.00-0.32) |
+| Tower dud before shot 1, game terrain (cold) | 0.69-0.81 ms | 0.61-0.73 ms (+0.68-0.80); it would release the tower (above) |
+| Castle shots (cold), flat / terrain | 0.41-0.58 / 0.46-1.43 ms | 0.04-0.16 (+0.00-0.09) / 0.10-0.21 ms (+0.00-0.74) |
+| Underground 1.5 m (cold), flat / terrain | 0.31-0.54 / 0.98-1.60 ms | 0.41-0.85 (+0.09-0.12) / 0.93-1.46 ms (+1.00-1.76) |
+| At the budgets (`Neck.DISABLED_CostAtTheBudgets`) | - | preflow alone 5.0-5.9 ms (8192 nodes, 65 535 arc pairs, 207 k scans); 529 pillars 2.0-2.4 ms (+0.8 cold); 55 936-voxel release 0.8-0.9 ms |
+
+So at a cached site the check costs 2-5x the search it follows (0.13-0.73 ms against 0.06-0.27); a cold site pays
+about as much again in graph builds. Game, headless, validation on: the crate blast of the standard run 0.30-0.40 ms
++ 0.5-0.7 ms of builds; `--tower-blast --after-fill` 0.84-1.86 ms + 0.06-2.23 ms per shot (freed by shot 6 of 7 by the
+check, 2 faces, 11.27x, as before); `--neck-blast --after-fill` duds 0.33-2.27 ms + 0.31-2.71 ms, the neck shot 2.86 ms
+(the release: preflow to the cut and 8558 voxels re-labelled; 0.54-1.05 ms in runs without `--after-fill`);
+`--castle-blast --after-fill` 0.48-1.19 ms + 0.12-2.76 ms; `--climb` 1.60 ms + 1.42 ms of a 7.44 ms blast while
+streaming. A 5v5 server at 10 casts/s: est. 3-15 ms of CPU per second on cached sites, about twice that at cold
+ones, inside the cast phase per cast except at the budgets (open question 7).
+
+Not done / not confirmed after the review: windowed play (the tower falling, its rubble, walls on snow) is for the
+owner; the flow budget (open question 7) and stage 3's charge; graphs are still built on demand (prebuilding is the
+stage-4 owner question and the only fix found for the cold cost); kept judged nodes are not re-checked against stale
+graphs; bending / tipping (failure mode 3) and stage 4c are not built.
 
 ## Part 5 - Impact destruction by estimated weight (stage 6)
 
@@ -782,6 +1436,7 @@ edges. Est. 0.1-0.3 ms per structure solve (e).
 | Face flood (stage 1) | 0-6 ms per blast, bounded by `maxVisitsPerSearch` |
 | **Search + flood per cast (stages 0-1)** | **est. 2-14 ms: one castle cast can use the whole 6 ms cast phase**; the work budget then moves later casts to later ticks (cast delay, logged) |
 | Graph connectivity + face flood on nodes (stage 4) | **Measured** (quiet, -O2): 0.13-1.00 ms per cast on game terrain, 0.06-0.72 ms on flat ground, cold graph builds included; in game after the window filled 0.24-0.75 ms at a cached site, 0.5-3.7 ms at the first blast of an untouched site; while streaming 4.0-4.75 ms (`--climb`). Cold worst case unbounded by the node budget: island-box chunks (up to 64) x 70-120 us in game = 4.5-7.7 ms, so stage 3 charges `chunkGraphs` x a cold price |
+| Weak-neck check (stage 4b, per cast) | **Measured** (quiet, -O2, on the same world as the search without it, "Review of stage 4b"): 0.13-0.46 ms at a cached site on flat ground, 0.30-0.73 ms on game terrain, plus 0.0-1.8 ms of graph builds at a cold site (chunks next to the island box, which the judged nodes' bonds need). **At its budgets far over the design's 3-4 ms:** the preflow alone takes 5-6 ms at about 207 000 of its 262 144 arc scans (8192 nodes, 65 535 arc pairs), a forest of 529 pillars (3574 nodes, 3963 exterior visits) 2.0-2.4 ms; est. 8-12 ms with every budget full. Releases at most 64 parts / 60 000 voxels per cast. Counted work ("Stage 4b as built"); stage 3 must charge it or the flow budget come down (open question 7) |
 | Overhang solve, one structure (<= 5k nodes) | 0.05-0.3 ms |
 | Per release: mask + `ClearMask` | 0.05-0.2 ms |
 | Per server body: colliders + body, no bake | 0.1-0.3 ms |
@@ -832,10 +1487,11 @@ screenshot, review, ROADMAP update in the same commit.
 | 2 | Crumble profiles, fracture-surface dust, carve lumps (client) | fx caps hold with `--stress-fx 10` (fx-budget stage 1); particles GPU <= 2.5 ms; screenshots per material | none | 2-3 days | M2, with fx-budget stages 1-2 |
 | 3 | `MaterialPhysicsQ` + `voxel:fracture`; client rubble fractured with LOD (presentation-only distance rule; lod.md stage 1 changed to match) | `Fracture.*` tests (cover exactly, disjoint, same seed same result, cell size controls count, wood splinters along grain, small pieces are crumbs); `MaterialQ.SaturatesAndKeepsIndestructible`; fracture stays under 1e's caps; table hash stable | material table hash in `buildHash` | 3-4 days | M2 |
 | 4 | **Built 2026-11-12** ("Stage 4 as built"). Cell graph cached per terrain chunk (liquid-masked); graph connectivity + node face flood replace the voxel search in the same flood box | `Structure.GraphNeverDetachesWhatTheVoxelSearchKeeps` (random volumes, liquids included), `Structure.GraphEqualsLabelComponentsWithoutOverfullCells`, `RefreshEqualsRebuild`, `GraphFloatingEqualsFaceFlood` on every stage-1 test; `overfullCells` logged; island search <= 0.5 ms optimised at the probe blast | same op kinds; results equal stage 1 except where a work budget runs out, and offline deferral / the attach reason when a flood box chunk is not loaded (over-full cells are exact: "Stage 4 as built"; networking.md notes it) | 4-6 days | M3, **or before networking stage 3 if stage 0 shows search + flood over 3 ms** |
+| 4b | **Built 2026-11-13** ("Stage 4b as built"; review pending). **Weak necks (load check), Part 4b**: integer strengths per material (C / S / T), node plane cut + weakest materials + anchor bit in the cell graph, max-flow check in the island box after the island floods, largest strictly overloaded set released; `--neck-blast` | Part 4b's tests (brute-force max-flow, voxel reference, tower at every height mod 8, thresholds exact, `Neck.NaturalTerrainNeverFails`, budgets equal cold / warm and 1 / 3 workers); `--neck-blast` W = 2 and 11 release, W = 12 stands (0.125 m), W = 2 releases at 0.1 and 0.15 m; all headless runs exit 0; `Blast.TwoSimulationsFedTheSameOperationsHaveEqualHashes` unchanged | `Detach` (`netId 0`) and `ClearMask` only; search result changes (more pieces); strengths into `buildHash` with stage 3 | 4-6 days | now (owner), before networking stage 3 |
 | 5 | `StructureRegistry`, overhang rule inside structures, `StructuralSolver` with tick budgets and release queue, spawn guard, `OpBatch` / `PresentOps`, client queued-piece handling, headless `--collapse` | `Structure.StoneOverhang3HoldsAnd4Falls`, `PristineStructureStable`, `SolveIndependentOfDirtyOrder`; `Collapse.TowerReleasedOverTicksWithinBudget`, `Collapse.SameOpsTwoSimulationsEqualHash`, `Collapse.ReplayGivesIdenticalOpList` (casts fed at fixed ticks); `--collapse` logs `Collapse: N releases over T ticks, max B bodies/tick, X ms max`, physics step p99, `store a/b` under 7000, validation exit 0 | `Detach` with `netId 0` and `ClearMask` only. **Server bodies (`Detach` with `netId != 0`, `EntitySpawn`, `EntityRest`) need networking stage 6** (networking.md:295); before it every release is a `netId 0` Detach | 1.5-2 weeks | M3 |
 | 5b | collapse.md stages 3-4 on objects (same graph code) | collapse.md's own criteria | `ObjectModel`, `EntitySpawn` / `EntityDespawn` (networking stage 6) | 1 week | M3 |
 | 6 | Contacts drained and extended, `ColliderMaterials`, ownership bit, `sim::Impact` with total order, cooldowns and budgets; crush check | `ContactQueueNeverFillsWhenSimulationDrains` (10k ticks), `Impact.HeavyDropCarvesLightDoesNot`, `CooldownAndFatigue`, `BudgetCapsBodiesPerTick`, `ShuffledEventsSameOps` (shuffles include several events with an equal netId pair across two terrain chunks), `ClientRubbleNeverCausesImpacts` on the offline **and** the server config, `Crush.FallingServerBodyDamagesPlayer`, `Crush.RubbleNeverDamages` | terrain side: `CarveSphere` (kind 1, later 7); body side: `ObjectModel`, `EntitySpawn` / `EntityDespawn` (**networking stage 6**); crush: a damage event (M2). Before networking stage 6 impacts act on terrain only | 1-1.5 weeks | M3 / M5 (thrown matter) |
-| 7 | Optional: `ShredSphere = 7`, `DetachFractured = 8` with golden tests; load-flow stress; settle-to-heap | `WorldOps.ApplyOpIsTheWorldCallOfEachKind` extended; `ShredSphere.*` and `ShredNoise.GoldenValues`; two-simulation hash tests | new kinds 7, 8 (after networking stage 3; `DetachFractured` after stage 6) | 1-2 weeks | after networking stage 3 / 6 |
+| 7 | Optional: `ShredSphere = 7`, `DetachFractured = 8` with golden tests; bending / tip check on top of stage 4b; settle-to-heap | `WorldOps.ApplyOpIsTheWorldCallOfEachKind` extended; `ShredSphere.*` and `ShredNoise.GoldenValues`; two-simulation hash tests | new kinds 7, 8 (after networking stage 3; `DetachFractured` after stage 6) | 1-2 weeks | after networking stage 3 / 6 |
 
 ## Rejected alternatives
 
@@ -851,7 +1507,7 @@ screenshot, review, ROADMAP update in the same commit.
 | Hold back a `Detach` until the client has built its body | Every later op that touches the same chunks would wait too; dust covers the gap instead. |
 | Distance-scaled piece threshold in `Scene::Damage` (lod.md stage 1 as written) | It would make a server decision depend on a viewer; moved to presentation. |
 | Object host first (collapse.md order) | The game's buildings are terrain; castles exceed 12.8 m; object pieces need networking stage 6. |
-| Load-flow stress as the default rule | collapse.md's judgement stands: tuning risk, "buildings fall on spawn"; kept optional (stage 7). |
+| Load-flow stress as the default rule | collapse.md's judgement stands: tuning risk, "buildings fall on spawn"; kept optional (stage 7). Weak necks are stage 4b's max-flow check instead, run only after a cast (Part 4b, "Rejected within this part"). |
 | Float impact energy deciding voxels | Jolt is not cross-platform deterministic; quantised once on the server instead (R3). |
 | Impact filter by "bodies under the threshold do not exist on the server" | False offline (rubble shares the simulation); replaced by the ownership bit. |
 | Crush damage from contact events | Characters are `CharacterVirtual` and never produce body contacts; a separate server sweep instead. |
@@ -883,3 +1539,5 @@ screenshot, review, ROADMAP update in the same commit.
    measured `--collapse` fight scene on the UHD 620 (2 new server bodies per tick, 64 awake, 256 live).
 10. **May derived impacts be dropped over budget** (unlike casts, which never are, fx-budget.md)? Recommendation:
     yes, after 30 ticks, counted and logged.
+11. **Stage 4b (weak necks)**: its six questions (where the tower falls, castle bricks as stage 4c, locality,
+    weightless foliage, soft ground slumping, weak player-built structures) are at the end of Part 4b.

@@ -15,14 +15,14 @@ What exists today, and what was designed for but is not built yet. See
 | Ray queries | One traversal shared by GPU and CPU (`shaders/shared/trace.glsl`), world + dynamic objects through a BVH. |
 | Objects | Voxel models of any size shared between instances, collider boxes, mass from material density. |
 | Scene | `vortex.scene`: EnTT entities with transform, voxel body, rigid body, point light and lifetime components; destroying an entity releases its body and chunk slots; part of the GPU-free `Vortex::Sim` and tested without a GPU. |
-| Destruction | Terrain carving with floating-terrain detection; objects lose voxels and split into pieces (`Scene::Damage`). A blast is `sim::Blast` (integer-exact world operations: carve, one `Detach` per floating island of 8+ voxels (0.016 m^3), one `ClearMask` for all smaller ones - islands found in the island box and, for parts that reach past it, proven by a bounded face flood inside a +-96-voxel flood box, so a tower falls on the shot that cuts it; object damage, impulses) plus `sim::PresentBlast` via `Engine::PresentBlast` (particles, local rubble, flash); `Engine::Explode` does both. Fragments below 8 voxels are particles; every piece of rubble has a lifetime by size (15 s under 25 voxels, 20 s under 1 m^3, 30 s larger), a distance rule for small rubble and global caps (192 small, 48 bodies, 600 chunk-store slots); a piece that does not fit, or cannot be baked, becomes particles. |
+| Destruction | Terrain carving with floating-terrain detection; objects lose voxels and split into pieces (`Scene::Damage`). A blast is `sim::Blast` (integer-exact world operations: carve, one `Detach` per floating island of 8+ voxels (0.016 m^3), one `ClearMask` for all smaller ones - islands found in the island box and, for parts that reach past it, proven by a bounded face flood inside a +-96-voxel flood box, so a tower falls on the shot that cuts it; then a max-flow load check on the cell graph releases parts whose weight their bonds cannot carry, so a tower on a thin neck falls too (shred.md stage 4b); object damage, impulses) plus `sim::PresentBlast` via `Engine::PresentBlast` (particles, local rubble, flash); `Engine::Explode` does both. Fragments below 8 voxels are particles; every piece of rubble has a lifetime by size (15 s under 25 voxels, 20 s under 1 m^3, 30 s larger), a distance rule for small rubble and global caps (192 small, 48 bodies, 600 chunk-store slots); a piece that does not fit, or cannot be baked, becomes particles. |
 | Import | MagicaVoxel `.vox` read / write, glTF voxelisation. |
 | Physics | Jolt behind an engine interface, fixed time step, character controller. Terrain colliders streamed around the camera and requested by every moving body; bodies without ready terrain are frozen in place and resume when it is there, so nothing falls through unloaded or uncooked terrain; a body overlapping edits its chunk's collider does not show yet waits too, frozen with its velocity, and a body parked over ground edited out of sight is woken when that ground gets its collider. |
 | Particles | CPU pool with emitters, voxel collision, effect presets. |
 | Renderer | Ray-marched G-buffer, ray-traced sun shadows, ambient occlusion, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping, ImGui. Headless mode with screenshots. Validation-clean on Intel UHD 620. |
 | Editor | `vortex.editor`: in-game editor toggled with F1 - fly camera, entity selection with a translate / rotate gizmo, inspector, terrain brush, primitive spawning, `.vox` / glTF import, environment / render / profiler / world panels. Tool logic is separate from the widgets and unit tested. |
 | Simulation | `vortex.sim`: `sim::Simulation` owns world, physics, terrain colliders and scene and steps them on a numbered fixed tick; `sim::WorldOp` / `ApplyOp` replay terrain changes exactly; `sim::Blast`. Library `Vortex::Sim` links no renderer or window. `Engine` owns one and draws it. |
-| Tests | 477 unit tests (three disabled measurements), none needing a GPU. |
+| Tests | 522 unit tests (four disabled measurements), none needing a GPU. |
 
 ## Performance (Intel UHD 620, 1280x720 output, 768x432 internal)
 
@@ -155,7 +155,9 @@ State (stages are those of [design/networking.md](design/networking.md)):
   window margin (3 chunks, flood box) and the cast budget (a work budget); shred.md stage 4 (built, the owner's answer
   to its question 4) moved the island search onto the cell graph - same results except where a work budget runs out,
   node visits and chunk graphs used (at a cold price; never graphs built, which depend on the cache) to count in stage
-  3's cast budget; see networking.md "Changed by shred.md".
+  3's cast budget; shred.md stage 4b (built) adds the load check: more `Detach` operations per blast (a tower on a
+  thin neck), no new op kind, its counted work joins the cast budget and the strength table must reach `buildHash`;
+  see networking.md "Changed by shred.md".
 
 ### M2 - Fight feel under authority
 - Spell framework: data-driven casts (projectile, beam, area) producing world operations,
@@ -290,8 +292,27 @@ State (stages are those of [design/networking.md](design/networking.md)):
   question in shred.md). Reviewed by three readers (shred.md "Review of stage 4"): a stale graph now never detaches
   (it corrupted the heap before), Uniform graphs are shared, cache memory is measured (5-7 KB per surface chunk
   graph, about 5 MB typical, 27 MB at most at the cap). `--after-fill`
-  runs the blast scripts after the window has filled. Open: later stages 2, 3, 5-7; the windowed fall of towers and
-  walls and their push are not confirmed by the owner; graph builds are not yet charged to a work budget (stage 3).
+  runs the blast scripts after the window has filled. **Stage 4b (weak necks) is built** (owner: "Yes, weak necks
+  next"; shred.md Part 4b, "Stage 4b as built" and "Review of stage 4b"): integer bond strengths per material (compression /
+  shear / tension, `Material::strength`), per graph node its weakest materials, an anchor bit and its narrowest
+  horizontal plane (still 72 bytes; builds 29-31 us per Dense chunk, +3-6 us), and after every graph island search a
+  max-flow load check in the island box (loads and supports from exterior floods in the flood box): the largest
+  strictly overloaded set falls as ordinary `Detach` operations, nothing new on the wire. The watch tower on a
+  2 x 2 stone neck falls (5.61x over), on 2 x 11 too (1.04x), on 2 x 12 it stands; also at 0.1 and 0.15 m; the full
+  base, rock overhangs, the mushroom rock, beams, trees, walls on snow or against leaves, and 648 duds (144 in deep
+  caves) + 396 blasts on game terrain at 0.1 / 0.125 / 0.15 m (beach, snow field, rock slope included) release
+  nothing; sand overhangs over 1.9 m slump. `--neck-blast [W]` shows it; `--tower-blast` now frees the tower at shot 6 by the
+  load check (2 faces left), not at shot 7. 45 new tests (brute-force max-flow, a per-voxel reference network that
+  checks cut and faces at thresholds, chunk-face cuts, determinism over workers and cache state, budgets). Reviewed by
+  three readers: one check releases at most 64 parts / 60 000 voxels; an unloaded chunk is support for that cast and a
+  late search re-checks once it loaded (islands are never held back by the check, chunks beyond the window included);
+  leaves no longer rate a wall, snow's compression is 50 000; the stale-graph guard covers mass and strengths; a chunk
+  solid through is ground for exterior floods. Cost (quiet, same world as the search): 0.13-0.73 ms per cast at a
+  cached site (2-5x the search), plus up to 1.8 ms of graph builds at a cold one; in game 0.3-2.9 ms + builds up to
+  2.8 ms. At its budgets the preflow alone takes 5-6 ms (est. 8-12 ms with every budget full): stage 3 must charge
+  it or the flow budget come down (shred.md open question 7). Open: later stages 2, 3, 4c (castle bricks), 5-7;
+  prebuilding graphs (the only fix found for the cold cost); the windowed fall of towers and walls and their push are
+  not confirmed by the owner; graph builds and the load check are not yet charged to a work budget (stage 3).
 - **Frame rate** (`design/perf.md`, draft): measure the present path and CPU frame time first, then fog-radius ray
   cut and one modulo per ray, then lod.md stage 1 and half-resolution lighting. The owner calls the 0.125 m view
   radius (92 m) the sweet spot on the UHD 620: frame rate comes before more distance there.

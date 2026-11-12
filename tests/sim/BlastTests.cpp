@@ -65,7 +65,11 @@ namespace {
             const sim::Simulation::IslandSearchChecks& checks = simulation.IslandSearchCheck();
             EXPECT_EQ(checks.mismatches, 0u) << "the graph and the voxel island search differed";
             EXPECT_EQ(checks.searches, checks.run) << "island searches run without the comparison (checkIslandSearch lost on the way?)";
+            // shred.md Part 4b: nothing here is near the strength table's limits.
+            EXPECT_EQ(checks.neckReleases, expectNeckReleases) << "the load check released parts";
         }
+        /// Parts the load check is expected to release over the arena's life (shred.md Part 4b).
+        uint32_t expectNeckReleases = 0;
         Arena(const Arena&) = delete;
         Arena& operator=(const Arena&) = delete;
         voxel::World& World() { return simulation.World(); }
@@ -291,10 +295,16 @@ TEST(Blast, IslandSearchRunsLaterOnceItsBoxHasLoaded) {
     EXPECT_TRUE(late[0].deferred);
     EXPECT_TRUE(late[0].islandsSearched);
     EXPECT_EQ(late[0].IslandCount(), 1u);
+    // shred.md Part 4b: the load check's ground flood reaches past the window's edge (the flood box
+    // does): offline that is support for now, counted; it does not hold the islands, and the check
+    // runs again once the window has moved over that chunk (stage 4b review).
+    EXPECT_GT(late[0].search.neckBeyondWindow, 0u);
+    EXPECT_TRUE(late[0].search.neckDeferred);
     for (const sim::AppliedOp& applied : late[0].ops) EXPECT_NE(applied.op.kind, sim::WorldOpKind::CarveSphere);
     EXPECT_EQ(a.World().GetVoxel({88, kGroundVoxels + 17, 0}), 0);           // the cap fell
     EXPECT_EQ(a.World().GetVoxel({88, kGroundVoxels + 1, 0}), ids.stone);    // the stump stays
-    EXPECT_TRUE(a.simulation.DeferredIslandSearches().empty());
+    ASSERT_EQ(a.simulation.DeferredIslandSearches().size(), 1u);              // the load check's re-check
+    EXPECT_FALSE(a.World().IsChunkLoaded(a.simulation.DeferredIslandSearches()[0].waitChunk));
     // Presented without an explosion: no particles (the cap is one piece of rubble).
     sim::PresentBlast(a.simulation, late[0]);
     EXPECT_EQ(a.simulation.Particles().AliveCount(), 0u);

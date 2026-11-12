@@ -42,6 +42,8 @@ export namespace vortex::sim {
         double graphBuildMs = 0.0; ///< Graph search: chunk graphs (re)built, part of searchMs.
         double graphFloodMs = 0.0; ///< Graph search: the floods over nodes, part of searchMs.
         double relabelMs = 0.0;    ///< Graph search: island nodes re-labelled per voxel and ordered, part of searchMs.
+        double neckMs = 0.0;       ///< Graph search: the load check (shred.md Part 4b) without its graph builds, part of searchMs.
+        double neckBuildMs = 0.0;  ///< Graph search: chunk graphs the load check built (also in graphBuildMs).
         double floodMs = 0.0;      ///< Voxel search: the face flood (voxel::ProveFaceComponents). Graph search: 0.
         double opsMs = 0.0;        ///< Detach / ClearMask built and applied.
         double objectsMs = 0.0;    ///< Scene::Damage and the push.
@@ -105,6 +107,35 @@ export namespace vortex::sim {
         /// Offline: a flood met a chunk of the flood box that is not loaded. The face pieces were
         /// not emitted, the search waits for that chunk (RetryIslandSearches).
         bool floodDeferred = false;
+        // The load check (docs/design/shred.md Part 4b; graph search with SimulationConfig::neckRule),
+        // voxel::GraphSearchResult's counters. All follow from the voxels of the flood box.
+        bool neckRan = false;            ///< The check ran in (one of) the search(es) of this result.
+        uint32_t neckNodes = 0;          ///< Network nodes (judged nodes, halves counted, and loads).
+        uint32_t neckSplit = 0;          ///< Judged nodes split at their narrowest plane.
+        uint32_t neckLoads = 0;          ///< Exterior loads hanging on judged nodes.
+        uint32_t neckAnchors = 0;        ///< Exterior floods that ended as anchors.
+        uint32_t neckArcs = 0;           ///< Arc pairs.
+        uint32_t neckExteriorVisits = 0;
+        uint32_t neckFlowWork = 0;       ///< Arc scans of the preflow.
+        uint32_t neckSplitRelabels = 0;
+        uint32_t neckPieces = 0;         ///< Released parts of at least the piece size: a Detach each.
+        uint32_t neckCrumbs = 0;         ///< Released parts under it: in the ClearMask.
+        uint32_t neckVoxels = 0;         ///< Voxels released (pieces and crumbs).
+        uint32_t neckOversize = 0;       ///< Overloaded parts over kMaxIslandVoxels: they stay.
+        uint32_t neckDeferredParts = 0;  ///< Overloaded parts over kNeckMaxReleasedVoxels / kNeckMaxReleasedParts: a later cast.
+        uint32_t neckSolidChunks = 0;    ///< Exterior floods ended as ground on a chunk solid through.
+        uint32_t neckSkipped = 0;        ///< Network over kNeckMaxNetworkNodes / kNeckMaxArcPairs: nothing judged.
+        uint32_t neckExteriorBudget = 0; ///< Exterior floods turned into anchors by kNeckExteriorVisitBudget.
+        uint32_t neckFlowBudget = 0;     ///< kNeckFlowWorkBudget spent: nothing released.
+        uint32_t neckUnloaded = 0;       ///< Server: an exterior flood met a chunk that is not loaded (an error).
+        uint32_t neckBeyondWindow = 0;   ///< Offline: the check met a chunk outside the window: support for now (logged).
+        uint32_t neckLoading = 0;        ///< Offline: the check met a chunk of the window still loading: support for now.
+        /// Offline: the check took an unloaded chunk as support (one of the two above), so a late
+        /// search was queued that runs again once it has loaded (Simulation::DeferredIslandSearches);
+        /// the islands of this search were emitted.
+        bool neckDeferred = false;
+        /// The released parts: load and cut (MU = kg / vs^3), faces, voxels, in emission order.
+        std::vector<voxel::NeckCut> neckCuts;
     };
 
     /**
@@ -115,8 +146,9 @@ export namespace vortex::sim {
         /// ops[0] is the CarveSphere; one Detach (netId 0) per terrain island of at least
         /// scene::MinPieceVoxels(world voxel size) follows: first the islands inside the island
         /// box in the order ExtractFloatingIslands found them, then the face components the flood
-        /// proved, in candidate order (in-box count ascending, ties by label); last, if there were
-        /// smaller islands ("crumbs", from both), one ClearMask over the box of all of them.
+        /// proved, in candidate order (in-box count ascending, ties by label), then the parts the
+        /// load check released (shred.md Part 4b), in piece order; last, if there were smaller
+        /// ones ("crumbs", from all three), one ClearMask over the box of all of them.
         /// Applying the `op`s in this order to a world that was equal before gives the same
         /// voxels (ApplyOp).
         std::vector<AppliedOp> ops;
@@ -175,6 +207,17 @@ export namespace vortex::sim {
     /// A flood gives up at kMaxIslandVoxels voxels: 118 nodes of solid cells, about 940 of
     /// one-voxel walls; the budget is spent only by dozens of large separate pieces.
     inline constexpr uint32_t kGraphNodeVisitBudget = 32768;
+    /// Budgets of one blast's load check (docs/design/shred.md Part 4b, R5): network nodes and arc
+    /// pairs (above either nothing is judged), exterior flood node visits (then every exterior
+    /// flood is an anchor) and preflow arc scans (spent: nothing released). All counts.
+    inline constexpr uint32_t kNeckMaxNetworkNodes = 8192;
+    inline constexpr uint32_t kNeckMaxArcPairs = 65535;
+    inline constexpr uint32_t kNeckExteriorVisitBudget = 16384;
+    inline constexpr uint32_t kNeckFlowWorkBudget = 262144;
+    /// What one check may release (R5, R7): parts in piece order while both fit; the rest stays,
+    /// still overloaded, for a later cast (counted). One piece of the largest island size always fits.
+    inline constexpr uint32_t kNeckMaxReleasedVoxels = kMaxIslandVoxels;
+    inline constexpr uint32_t kNeckMaxReleasedParts = 64;
     /// Island searches waiting at once (Simulation::DeferredIslandSearches). When the list is full,
     /// a new one replaces the one whose box is farthest from the window's centre (ties: the oldest);
     /// the new search itself is always kept (it is the blast the player just made).
@@ -215,13 +258,18 @@ export namespace vortex::sim {
      *     closes first. Each island of at least
      *     scene::MinPieceVoxels(world voxel size) becomes a `WorldOp::Detach` (mask of its voxels,
      *     netId 0, velocity = BlastPush at its minimum corner) that is applied at once with
-     *     ApplyOp - the same call a client makes: in-box islands first, then proven ones. The
+     *     ApplyOp - the same call a client makes: in-box islands first, then proven ones, then
+     *     (SimulationConfig::neckRule, graph search) the parts the load check releases: the
+     *     largest set of judged nodes whose weight no distribution fits the strength of what
+     *     holds it (docs/design/shred.md Part 4b). The
      *     smaller islands (crumbs) become one `WorldOp::Clear` whose mask is the union of their
      *     voxels over the smallest box holding them all, applied last. No entity is created for
      *     an island: rubble and particles are local. Offline, a search that meets a chunk that
      *     is not loaded (island box, or a flood in the flood box) asks the world to load it and
      *     is repeated by RetryIslandSearches; on a session server (SimulationConfig::sessionServer)
-     *     a flood that meets one stays attached and is counted as an error.
+     *     a flood that meets one stays attached and is counted as an error. The load check takes
+     *     such a chunk as support (it can only release less); offline the islands still go out
+     *     and the search is repeated once that chunk has loaded (IslandSearchStats::neckDeferred).
      *  3. Scene::Damage for every body whose bounds overlap the blast's box (a snapshot taken
      *     first, so pieces made here are not hit twice); pieces below the replicated threshold
      *     come back as fragments.

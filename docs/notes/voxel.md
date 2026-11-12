@@ -21,14 +21,14 @@ Line numbers are as of engine commit `ec073a8`; if a number no longer matches, s
 | `Trace.cppm`, `internal/Trace.cpp` | `TraceScene`, `Trace`/`TraceWorld`/`TraceChunk`; `TraceKernel` includes `shared/trace.glsl`. |
 | `Collider.cppm`, `internal/Collider.cpp` | `BuildColliderBoxes`, `ComputeMassProperties`, `CollisionFilter`, `BuildChunkCollisionMesh`. |
 | `Connectivity.cppm`, `internal/Connectivity.cpp` | `LabelComponents`, `SplitComponents`, `ExtractFloatingIslands` (+ `IslandBoxScan`), `ProveFaceComponents` (the face flood, shred.md stage 1; `FaceComponent`, `FloodLimits`, `FloodResult`, `kFloodHalfExtent`). |
-| `Structure.cppm`, `internal/Structure.cpp` | The cell graph (shred.md stage 4): `GraphNode`, `GraphLink`, `ChunkGraph`, `BondVoxels`, `GraphMaterials` / `MakeGraphMaterials`, `BuildChunkGraph`, `NodeVoxels`, `TerrainGraphCache`, `SearchIslandsOnGraph` (+ `GraphSearchLimits`, `GraphSearchResult`), `kCellSize`, `kMaxCellNodes`. |
+| `Structure.cppm`, `internal/Structure.cpp` | The cell graph (shred.md stage 4): `GraphNode`, `GraphLink`, `ChunkGraph`, `BondVoxels`, `GraphMaterials` / `MakeGraphMaterials`, `BuildChunkGraph`, `NodeVoxels`, `TerrainGraphCache`, `SearchIslandsOnGraph` (+ `GraphSearchLimits`, `GraphSearchResult`), `kCellSize`, `kMaxCellNodes`. The load check (stage 4b, shred.md Part 4b): `StrengthClass` / `StrengthClassOf`, `kNoCut`, `kCutAnchorBit`, `NeckLimits` / `MakeNeckLimits` / `VoxelSizeMicro`, `NeckCut`, `NeckNetwork` / `SolveNeckNetwork` (the rule on an abstract network, for tests), phase 3b `NeckCheck` inside the search. |
 | `Material.cppm`, `internal/Material.cpp` | `Material`, `GpuMaterial`, `MaterialLibrary` (palettes), `RegisterDefaultWorldMaterials`. |
 | `VoxFormat.cppm`, `internal/VoxFormat.cpp` | MagicaVoxel `.vox` read/write, `RegisterVoxPalette`. |
 | `MeshImport.cppm`, `internal/MeshImport.cpp` | `VoxelizeTriangles` (SAT), interior fill, glTF import through tinygltf. |
 | `internal/ThirdPartyImpl.cpp` | The one non-module TU with the tinygltf / stb implementations. |
 | `shaders/shared/trace.glsl` | Traversal compiled as GLSL and C++: `VxTraceChunk/World/Instances/Scene`. |
 | `shaders/shared/shading.glsl`, `cube.glsl`, `vx_cpp.h`, `vx_glsl.glsl` | Shared shading helpers, proxy-cube corners, and the two language shims (rules: `vx_cpp.h:22-27`). |
-| `tests/core/*.cpp` | `VortexCoreTests`: Chunk (+ChunkStore), World (+Region, Terrain), WorldOps (`QuantizedEdits.*`), Hash (+golden terrain), Trace (+Bvh), Collider, Connectivity, VoxFormat, MeshImport, ViewDistance (with `FloatingIslands.GatherByChunkEqualsPerVoxel` and `.RowsAboveTheBuildCeilingAreAir`, which need its terrain fixtures), Structure (`Structure.*`: graph = `LabelComponents`, cache refresh = rebuild, graph search vs the voxel search, `DISABLED_GraphBuildCost`). `ParticleTests.cpp` in the same binary belongs to `fx`, not to this module. |
+| `tests/core/*.cpp` | `VortexCoreTests`: Chunk (+ChunkStore), World (+Region, Terrain), WorldOps (`QuantizedEdits.*`), Hash (+golden terrain), Trace (+Bvh), Collider, Connectivity, VoxFormat, MeshImport, ViewDistance (with `FloatingIslands.GatherByChunkEqualsPerVoxel` and `.RowsAboveTheBuildCeilingAreAir`, which need its terrain fixtures), Structure (`Structure.*`: graph = `LabelComponents`, cache refresh = rebuild, graph search vs the voxel search, `DISABLED_GraphBuildCost`), Neck (`NeckTests.cpp`, `Neck.*` and `Structure.NodePlaneCutWeakestMaterialAndAnchorBit` / `.FoliageCarriesNoLoad`: brute-force max-flow, a per-voxel reference network, the watch tower on a neck at every height mod 8, thresholds, natural cases, the terrain gate, budgets). `ParticleTests.cpp` in the same binary belongs to `fx`, not to this module. |
 
 Who compiles the shared files as C++ today: `trace.glsl` in `Trace.cpp`, `cube.glsl` in
 `tests/graphics/ContractTests.cpp`. `shading.glsl` says it is C++-compatible but no C++ file includes it, so nothing
@@ -363,7 +363,39 @@ the `VX_*` accessor macros defined there and, with the same names, in the shader
   (-x +x -y +y -z +z), then node. Links inside a chunk are stored with their `bond`; across a chunk face they are
   computed from the face masks (`BondVoxels`, a face bit is y + 8z / x + 8z / x + 8y for x / y / z faces) - a graph
   never depends on a neighbour chunk, so a chunk is rebuilt only when it changes. `mass` = sum of `densityQ` (kg/m^3,
-  integer); keep the masses, voxel counts and bonds: they are what a load check (stage 7) will use.
+  integer); keep the masses, voxel counts and bonds: the load check (stage 4b) uses them.
+- **Load check fields (shred.md Part 4b).** `GraphNode` stays 72 bytes (`static_assert`): `weak[3]` = per bond class
+  (compression, shear, tension) the weakest id of the node (lowest `GraphMaterials::strength`, ties to the smaller
+  id); `cutPlane` bit 7 (`kCutAnchorBit`) = the node holds an anchor id (`Indestructible` and not ignored: bedrock);
+  `cutFaces` / `cutPlane` bits 0-2 = its narrowest horizontal plane (lowest k with the fewest faces across, narrower
+  than the widest layer below **and** above, both halves 6-connected), else `cutFaces = kNoCut`. All are pure
+  functions of the chunk and the tables, built with the graph (single-id cells cost nothing; a single-node mixed cell
+  takes the id set of its blocks; only multi-node mixed cells read ids per voxel). `GraphMaterials` gained `anchor`
+  and `strength` (part of `operator==`: a table change drops the cache) and gives **foliage density 0** (weightless:
+  `GraphNode::mass` of leaves is 0). `Material::strength[3]` (kg/m^2, integers) defaults to stone's; the table is in
+  `RegisterDefaultWorldMaterials`.
+- **The load check (`GraphSearchLimits::neck`).** Runs after the island floods when the search is complete: judged
+  nodes = seeds that are not islands (a split node is two network nodes); exterior floods from their neighbours end as
+  an anchor (flood box face layer, window bottom row, anchor bit, over `maxIslandVoxels`, an earlier anchor, the visit
+  budget) or close as a load; arcs per (node, half) pair, loads and the sink summed per half in first-encounter order;
+  capacities `bond x min(capFace[k][weak])` by the face's class (-y C, +y T, x/z S). The rule is a maximum preflow on
+  capacities x 2^17 + 1 (supplies x 2^17): released = the nodes that cannot reach the sink, the same for every
+  maximum preflow (**order-independent; do not "optimise" by stopping early or by a heuristic split**), and nothing at
+  all when every supply reaches the sink. Each piece re-labels its nodes and re-checks them against the graph (stale:
+  `relabelMismatch`, the search runs again). **Traps:** `ForEachBond` takes its node by value because floods grow the
+  vector the node came from (a reference dangled: segfault); `GraphTable::neck` grows with `state` whenever a flood
+  resolves a chunk. **A chunk that is not loaded is support** for the check (it can only release less): server
+  `neckUnloaded` (an error); offline `neckLoading` / `neckBeyondWindow` and `neckWaits` + `neckWaitChunk`, on which
+  `sim::Blast` queues a late search - the check never makes the search incomplete, so face islands are never held back
+  by it (stage-4b review). An exterior flood that enters a chunk **solid through** (32^3 solid voxels) ends there as
+  ground (`GraphTable::SolidThrough`, asked through `ForEachBond`'s `enter` before the chunk is resolved: Uniform id,
+  Dense occupancy then ids, Packed RLE runs - it must stay equal to `graph->solidVoxels == kChunkVolume`). One check
+  releases at most `maxReleasedParts` parts / `maxReleasedVoxels` voxels, in piece order (`neckDeferredParts`).
+  **Foliage is left out of `weak[]`** when the node holds any other solid id (`GraphMaterials::foliage`,
+  `WeakestOf`). **Stale graphs:** split and released nodes are re-derived from their voxels on everything the check
+  reads (count, face masks, bounds, mass, `weak`, anchor bit, plane: `SameAsGraph`); kept judged nodes, loads and
+  anchors are not - for them `World::ChunkRevision` is the only guard. `neckMs` excludes the graphs the check built
+  (`neckBuildMs`).
 - `World::ChunkRevision(chunk)` changes on every content change and load / unload of a chunk (0 = not loaded, never
   reused). **An edit path that changes chunk ids without `QueueChange` would leave a stale graph**; all edits go
   through `EditRegion`. A stale *island* node is caught when it is re-labelled (count, face masks, bounds:
@@ -382,14 +414,14 @@ the `VX_*` accessor macros defined there and, with the same names, in the shader
   bottom row of a full-height window) is attached; such nodes are never expanded, so no chunk outside the flood box is
   read. The box island order is rebuilt from per-voxel keys of released nodes only (`LabelComponents` on an island's
   in-box voxels, and only when two face islands must be ordered). Build cost (quiet, -O2, 0.125 m terrain): Dense
-  25-33 us, Packed 20-38 us, Uniform / empty: shared, no build.
+  29-31 us, Packed 22-24 us since stage 4b (25-28 / 20-23 before), Uniform / empty: shared, no build.
 - Connectivity is 6-connected: pieces touching only by an edge or a corner are separate components, and different
   materials still connect (`Connectivity.CubesTouchingOnlyByAnEdgeOrCornerAreSeparate`, `.DifferentMaterialsStillConnect`).
   Changing this changes what every destruction produces.
-- `MaterialFlag_Flammable` and `MaterialFlag_Foliage` are set on the default materials but read by no code
-  (grep over `engine/src`, `engine/shaders`, `src/`). The flags with behaviour are `Liquid` (`Material.cpp` `Pack`,
-  `physics/internal/Terrain.cpp:204`, default `ignoreFlags` of `ExtractFloatingIslands`) and `Indestructible`
-  (`CarveSphere`, `scene/internal/Scene.cpp:341`). Do not assume foliage or fire behaviour exists.
+- `MaterialFlag_Flammable` is set on the default materials but read by no code. `MaterialFlag_Foliage` is read only by
+  `MakeGraphMaterials` (weightless for the load check, and left out of a node's weakest material). The other flags with behaviour are `Liquid` (`Material.cpp`
+  `Pack`, `physics/internal/Terrain.cpp:204`, default `ignoreFlags` of `ExtractFloatingIslands`) and `Indestructible`
+  (`CarveSphere`, `scene/internal/Scene.cpp:341`, the load check's anchors). Do not assume fire behaviour exists.
 
 ## 4. Recipes
 
