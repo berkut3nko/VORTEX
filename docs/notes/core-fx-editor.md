@@ -177,7 +177,7 @@ Line numbers drift: when one no longer matches, trust the symbol name and fix th
 - **`Paths::SetAssetRoot` is not thread safe** (`Paths.cpp:58-62`) and `AssetRoot()` returns a reference to the global: call it once at start-up before any job reads assets.
 - **`Log::Write` reads `g_Logger` without the mutex** in its lazy-init check (`Log.cpp:85`). Engine start calls `Log::Init()` first (`Engine.cpp:92`); do not log from threads before that.
 - **Particle collision is a point sample at the end position** (`Particles.cpp:312`), not a swept test: a particle moving more than a wall's thickness per frame passes through
-  (rain at about 9 m/s moves 0.15 m per 60 Hz frame; a voxel is 0.1 m). Known weak spot, not a bug to patch locally.
+  (rain at about 9 m/s moves 0.15 m per 60 Hz frame; a voxel is 0.125 m). Known weak spot, not a bug to patch locally.
 - **`SolidQuery` cost.** One call per colliding particle per frame, up to five more when it hits (`Particles.cpp:206-230`). `World::IsSolidAt` is the callback (`Engine.cpp:244`); keep it cheap.
 - **Embedded particles move freely** until they leave the solid (`Particles.cpp:203-209`); deliberate, tested by `Particles.EmbeddedParticlesTravelUntilTheyLeaveTheSolid`.
 - **A full pool changes the random stream**: `Burst` stops drawing when the pool is full (`Particles.cpp:186-189`). Still deterministic for identical call sequences, but not comparable across capacities.

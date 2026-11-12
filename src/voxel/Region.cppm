@@ -27,16 +27,33 @@ export namespace vortex::voxel {
      * the players built or destroyed, not to how far they travelled. Chunks are grouped into
      * region files of 16^3 chunks (`r.x.y.z.vxr`).
      *
+     * Every region file records the voxel size it was written at (exact float bits; files of
+     * the older "VXR1" format have none and count as 0.1 m, the only size they were written at).
+     * A file of another size is refused whole: its chunks are not loaded (the generator's terrain
+     * shows instead), and the file is never overwritten - edits made there stay in memory for the
+     * session and are not flushed (Flush warns, UnwrittenRegionCount counts them). The voxel ids
+     * of one size mean nothing at another. A file this build cannot read (another magic, such as
+     * a newer format, or a header cut short) is refused the same way; only an empty file is
+     * replaced.
+     *
      * Thread safe. Save() only touches memory; Flush() writes dirty regions to disk
      * (atomically: temp file + rename).
      */
     class RegionStore {
     public:
         static constexpr int kRegionShift = 4;   ///< 16 chunks per region edge.
+        static constexpr float kLegacyVoxelSize = 0.1f;   ///< What a "VXR1" file (no voxel size) was written at.
 
         /// @param directory Folder for the region files. Empty = keep everything in memory.
-        explicit RegionStore(std::filesystem::path directory);
+        /// @param voxelSize Metres per voxel of the world: written into every file, and a file of
+        /// another size is refused.
+        RegionStore(std::filesystem::path directory, float voxelSize);
         ~RegionStore();
+
+        /// @brief Region files read so far that were refused (another voxel size, or unreadable).
+        size_t RefusedRegionCount() const;
+        /// @brief Refused regions that hold edits of this session, which Flush does not write.
+        size_t UnwrittenRegionCount() const;
 
         std::optional<std::vector<uint8_t>> Load(const glm::ivec3& chunk);
         /// @brief True if a chunk is stored (reads the region file on first use, like Load).

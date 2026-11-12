@@ -300,7 +300,10 @@ namespace vortex::voxel {
                         const glm::ivec3 base(static_cast<int>(std::floor(tx * m_Inv)), static_cast<int>(std::floor(ground * m_Inv)),
                                               static_cast<int>(std::floor(tz * m_Inv)));
                         const int trunkV = std::max(2, static_cast<int>(trunkHeight * m_Inv));
-                        const int trunkHalf = std::max(0, static_cast<int>(std::lround(0.12f * m_Inv * (0.8f + 0.6f * r6))) - 1);
+                        // Trunk width in metres (0.19-0.34 m), drawn as the odd number of voxels
+                        // nearest to it (at least 1): 1 or 3 voxels at 0.1 and 0.125 m.
+                        const float trunkWidthV = 0.24f * (0.8f + 0.6f * r6) * m_Inv;
+                        const int trunkHalf = std::max(0, static_cast<int>(std::lround(0.5f * (trunkWidthV - 1.0f))));
                         const float canopyV = canopyRadius * m_Inv;
                         const glm::ivec3 crown = base + glm::ivec3(0, trunkV, 0);
 

@@ -4,10 +4,15 @@
 
 #include <glm/glm.hpp>
 
+#include <bit>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <memory>
+#include <string>
 #include <vector>
 
 import vortex.core;
@@ -23,10 +28,10 @@ namespace {
     constexpr uint8_t kRock = 3;
 
     struct Fixture {
-        explicit Fixture(std::filesystem::path saveDir = {}, glm::ivec3 window = {8, 8, 8}, uint32_t capacity = 512)
+        explicit Fixture(std::filesystem::path saveDir = {}, glm::ivec3 window = {8, 8, 8}, uint32_t capacity = 512, float voxelSize = 0.5f)
             : store(capacity), jobs(3) {
             WorldConfig config;
-            config.voxelSize = 0.5f;
+            config.voxelSize = voxelSize;
             config.windowSize = window;
             config.saveDirectory = std::move(saveDir);
             Material hard;
@@ -260,6 +265,148 @@ TEST(World, PersistsEditsToDisk) {
         EXPECT_EQ(f.world->GetVoxel({1, kGround - 1, 0}), kSurface);
         // The two edited chunks came from the save: they are not counted as generated.
         EXPECT_EQ(f.world->Stats().generatedChunks, 8u * 8u - 2u);
+    }
+    std::filesystem::remove_all(dir);
+}
+
+// A save holds voxel ids of one voxel size; at another size they would be a different world
+// (view-distance.md stage 3). The region file records the size and a world of another size
+// refuses it whole: nothing of it is shown, and nothing overwrites it.
+TEST(World, SavesOfAnotherVoxelSizeAreRefusedAndKept) {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "vortex_world_size_test";
+    std::filesystem::remove_all(dir);
+    const glm::ivec3 marker(-5, kGround + 2, 9);
+    {
+        Fixture f(dir, {8, 8, 8}, 512, 0.5f);
+        f.world->LoadBlocking(glm::dvec3(0.0, 20.0, 0.0));
+        ASSERT_TRUE(f.world->SetVoxel(marker, kRock));
+    }
+    const std::filesystem::path file = dir / "r.-1.0.0.vxr";
+    ASSERT_TRUE(std::filesystem::exists(file));
+    const auto bytesOf = [](const std::filesystem::path& path) {
+        std::ifstream in(path, std::ios::binary);
+        return std::vector<char>(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+    const std::vector<char> saved = bytesOf(file);
+    ASSERT_GE(saved.size(), 12u);
+    EXPECT_EQ(std::string(saved.data(), 4), "VXR2");
+    uint32_t bits = 0;
+    std::memcpy(&bits, saved.data() + 4, 4);
+    EXPECT_EQ(bits, std::bit_cast<uint32_t>(0.5f));
+    {
+        // Same voxel coordinates, a quarter-metre world: the edit is not there, and the world's own
+        // edit in that region is not written over the file when it is destroyed (it saves).
+        Fixture f(dir, {8, 8, 8}, 512, 0.25f);
+        f.world->LoadBlocking(glm::dvec3(0.0, 10.0, 0.0));
+        EXPECT_EQ(f.world->GetVoxel(marker), 0);
+        EXPECT_EQ(f.world->Stats().refusedRegions, 1u);
+        ASSERT_TRUE(f.world->SetVoxel(marker + glm::ivec3(1, 0, 0), kRock));
+        EXPECT_EQ(f.world->GetVoxel(marker + glm::ivec3(1, 0, 0)), kRock);     // kept in memory
+        // A save says that the edit was not written.
+        const WorldSaveResult saved = f.world->Save();
+        EXPECT_EQ(saved.unwrittenRegions, 1u);
+        EXPECT_EQ(f.world->Stats().unwrittenRegions, 1u);
+    }
+    EXPECT_EQ(bytesOf(file), saved);
+    {
+        Fixture f(dir, {8, 8, 8}, 512, 0.5f);
+        f.world->LoadBlocking(glm::dvec3(0.0, 20.0, 0.0));
+        EXPECT_EQ(f.world->GetVoxel(marker), kRock);
+        EXPECT_EQ(f.world->GetVoxel(marker + glm::ivec3(1, 0, 0)), 0);
+        EXPECT_EQ(f.world->Stats().refusedRegions, 0u);
+    }
+    std::filesystem::remove_all(dir);
+}
+
+// Region files written before the voxel size was recorded ("VXR1") were all 0.1 m worlds.
+TEST(Region, OldFilesWithoutAVoxelSizeCountAsTenthOfAMetre) {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "vortex_region_legacy_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const std::vector<uint8_t> chunk = EncodeChunk(ChunkKind::Uniform, 7, nullptr);
+    {
+        std::ofstream out(dir / "r.0.0.0.vxr", std::ios::binary);
+        const uint32_t count = 1, size = static_cast<uint32_t>(chunk.size());
+        const uint16_t local = 1 + (2 << 4) + (3 << 8);
+        out.write("VXR1", 4);
+        out.write(reinterpret_cast<const char*>(&count), 4);
+        out.write(reinterpret_cast<const char*>(&local), 2);
+        out.write(reinterpret_cast<const char*>(&size), 4);
+        out.write(reinterpret_cast<const char*>(chunk.data()), size);
+    }
+    EXPECT_EQ(RegionStore::kLegacyVoxelSize, 0.1f);
+    {
+        RegionStore tenth(dir, 0.1f);
+        ASSERT_TRUE(tenth.Load({1, 2, 3}).has_value());
+        EXPECT_EQ(*tenth.Load({1, 2, 3}), chunk);
+        EXPECT_EQ(tenth.RefusedRegionCount(), 0u);
+    }
+    {
+        RegionStore eighth(dir, 0.125f);
+        EXPECT_FALSE(eighth.Contains({1, 2, 3}));
+        EXPECT_FALSE(eighth.Load({1, 2, 3}).has_value());
+        EXPECT_EQ(eighth.RefusedRegionCount(), 1u);
+        eighth.Save({1, 2, 3}, EncodeChunk(ChunkKind::Uniform, 9, nullptr));
+        EXPECT_EQ(eighth.Flush(), 0u);                       // the old file is never overwritten
+        // A region with no file of another size is written as usual, with the size in its header.
+        eighth.Save({20, 0, 0}, chunk);
+        EXPECT_EQ(eighth.Flush(), 1u);
+    }
+    {
+        RegionStore tenth(dir, 0.1f);
+        ASSERT_TRUE(tenth.Load({1, 2, 3}).has_value());
+        EXPECT_EQ(*tenth.Load({1, 2, 3}), chunk);
+        EXPECT_FALSE(tenth.Load({20, 0, 0}).has_value());    // written at 0.125 m: refused here
+        EXPECT_EQ(tenth.RefusedRegionCount(), 1u);
+        RegionStore eighth(dir, 0.125f);
+        ASSERT_TRUE(eighth.Load({20, 0, 0}).has_value());
+        EXPECT_EQ(*eighth.Load({20, 0, 0}), chunk);
+    }
+    std::filesystem::remove_all(dir);
+}
+
+// A file this build cannot read - a newer format, a header cut short - may hold edits: it is
+// refused like a file of another voxel size and never overwritten. Only an empty file is replaced.
+TEST(Region, UnreadableFilesAreRefusedAndNeverOverwritten) {
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "vortex_region_unreadable_test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    const auto write = [&](const char* name, const std::string& bytes) {
+        std::ofstream out(dir / name, std::ios::binary);
+        out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    };
+    const auto bytesOf = [&](const char* name) {
+        std::ifstream in(dir / name, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    };
+    const std::string newer = std::string("VXR3") + std::string(40, '\x5a');
+    const std::string cut = std::string("VXR2") + std::string(2, '\0');
+    const std::string shortMagic = "VX";
+    write("r.0.0.0.vxr", newer);
+    write("r.1.0.0.vxr", cut);
+    write("r.2.0.0.vxr", shortMagic);
+    write("r.3.0.0.vxr", "");
+    const std::vector<uint8_t> chunk = EncodeChunk(ChunkKind::Uniform, 7, nullptr);
+    {
+        RegionStore store(dir, 0.125f);
+        for (int r = 0; r < 4; ++r) {
+            const glm::ivec3 c(r * 16 + 1, 2, 3);
+            EXPECT_FALSE(store.Load(c).has_value()) << r;
+            store.Save(c, chunk);
+        }
+        EXPECT_EQ(store.RefusedRegionCount(), 3u);
+        EXPECT_EQ(store.UnwrittenRegionCount(), 3u);
+        EXPECT_EQ(store.Flush(), 1u);                          // the empty file only
+        EXPECT_EQ(store.UnwrittenRegionCount(), 3u);
+    }
+    EXPECT_EQ(bytesOf("r.0.0.0.vxr"), newer);
+    EXPECT_EQ(bytesOf("r.1.0.0.vxr"), cut);
+    EXPECT_EQ(bytesOf("r.2.0.0.vxr"), shortMagic);
+    {
+        RegionStore store(dir, 0.125f);
+        ASSERT_TRUE(store.Load({3 * 16 + 1, 2, 3}).has_value());
+        EXPECT_EQ(*store.Load({3 * 16 + 1, 2, 3}), chunk);
+        EXPECT_EQ(store.RefusedRegionCount(), 0u);
     }
     std::filesystem::remove_all(dir);
 }

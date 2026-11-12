@@ -506,6 +506,50 @@ TEST(Simulation, SceneUsesTheVoxelSizeOfTheWorld) {
     EXPECT_FLOAT_EQ(simulation.Scene().Config().voxelSize, 0.25f);
 }
 
+// The debris thresholds are metre sizes (view-distance.md stage 3): a Simulation resolves the
+// ones left at their defaults in voxels of its world, for an offline and a server configuration
+// alike, and keeps a threshold given in voxels.
+TEST(Simulation, DebrisThresholdsKeepTheirMetreSizeInTheWorld) {
+    sim::SimulationConfig config = SmallConfig();                // a 0.1 m world, scene defaults
+    ASSERT_EQ(config.scene.minPieceVoxels, scene::kFromMetres);
+    {
+        sim::Simulation simulation(config);
+        const scene::SceneConfig& c = simulation.Scene().Config();
+        EXPECT_EQ(c.minPieceVoxels, 16u);
+        EXPECT_EQ(c.debrisBodyVoxels, 48u);
+        EXPECT_EQ(c.thinBodyVoxels, 6u);
+        EXPECT_EQ(simulation.Config().scene.minPieceVoxels, 16u);
+    }
+    {
+        sim::Simulation server(sim::ServerConfig(config));
+        const scene::SceneConfig& c = server.Scene().Config();
+        EXPECT_EQ(c.minPieceVoxels, 16u);
+        EXPECT_EQ(c.debrisBodyVoxels, 48u);
+        EXPECT_EQ(c.thinBodyVoxels, 6u);
+        EXPECT_EQ(c.replicatedPieceVoxels, 512u);
+    }
+    {
+        sim::SimulationConfig eighth = config;
+        eighth.world.voxelSize = 0.125f;
+        sim::Simulation simulation(sim::ServerConfig(eighth));
+        const scene::SceneConfig& c = simulation.Scene().Config();
+        EXPECT_EQ(c.minPieceVoxels, 8u);
+        EXPECT_EQ(c.debrisBodyVoxels, 25u);
+        EXPECT_EQ(c.thinBodyVoxels, 5u);
+        EXPECT_EQ(c.replicatedPieceVoxels, 262u);
+    }
+    {
+        sim::SimulationConfig coarse = config;
+        coarse.world.voxelSize = 0.15f;
+        coarse.scene.thinBodyVoxels = 0;                         // given in voxels: kept
+        sim::Simulation simulation(coarse);
+        const scene::SceneConfig& c = simulation.Scene().Config();
+        EXPECT_EQ(c.minPieceVoxels, 5u);
+        EXPECT_EQ(c.debrisBodyVoxels, 14u);
+        EXPECT_EQ(c.thinBodyVoxels, 0u);
+    }
+}
+
 TEST(Simulation, ServerConfigChangesOnlyWhatAServerMustNotHave) {
     sim::SimulationConfig base = SmallConfig();
     base.scene.minPieceVoxels = 20;
@@ -517,8 +561,13 @@ TEST(Simulation, ServerConfigChangesOnlyWhatAServerMustNotHave) {
     EXPECT_FALSE(server.scene.bakeModels);
     EXPECT_FALSE(server.scene.debrisRemnants);
     EXPECT_FALSE(server.scene.markDebris);
-    EXPECT_EQ(server.scene.replicatedPieceVoxels, sim::kServerReplicatedPieceVoxels);
-    EXPECT_EQ(sim::kServerReplicatedPieceVoxels, 512u);
+    // The replicated-piece threshold is a metre volume (0.512 m^3): 512 voxels in this 0.1 m world,
+    // kServerReplicatedPieceVoxels = 262 at the engine's 0.125 m (view-distance.md stage 3).
+    EXPECT_EQ(server.scene.replicatedPieceVoxels, 512u);
+    EXPECT_EQ(sim::ServerConfig().scene.replicatedPieceVoxels, sim::kServerReplicatedPieceVoxels);
+    const double cube = static_cast<double>(voxel::kDefaultVoxelSize) * voxel::kDefaultVoxelSize * voxel::kDefaultVoxelSize;
+    EXPECT_LE(std::abs(static_cast<double>(sim::kServerReplicatedPieceVoxels) * cube - sim::kServerReplicatedPieceVolume), 0.5 * cube);
+    if (voxel::kDefaultVoxelSize == 0.125f) EXPECT_EQ(sim::kServerReplicatedPieceVoxels, 262u);
     // Everything else is kept.
     EXPECT_EQ(server.chunkCapacity, base.chunkCapacity);
     EXPECT_EQ(server.scene.minPieceVoxels, 20u);

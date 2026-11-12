@@ -161,7 +161,7 @@ export namespace vortex {
          * @brief An offline blast: `PresentBlast(sim::Blast(Simulation(), {center, radius, power}))`.
          * @details sim::Blast carves the terrain (quantised: centre and radius to 1/16 voxel, power
          * to 1/16 hardness), detaches floating terrain as Detach operations (crumbs under
-         * scene::kMinPieceVoxels as one ClearMask), damages every object in range
+         * scene::MinPieceVoxels(world voxel size) as one ClearMask), damages every object in range
          * (scene::Scene::Damage) and pushes bodies away; PresentBlast then shows it. Metres,
          * metres, material hardness.
          */

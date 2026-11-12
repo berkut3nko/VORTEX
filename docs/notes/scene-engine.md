@@ -19,7 +19,7 @@ here. Line numbers in `src/scene`, `src/sim` and `src/engine` are as of M1 stage
   `OpResult`, `ApplyOp`, `BuildDetachedPiece`. Kinds 1-6, the last `ClearMask` (`WorldOp::Clear`: a blast's crumbs).
 - `src/sim/Blast.cppm`, `internal/Blast.cpp` - `BlastDesc`, `AppliedOp`, `BlastResult`, `BlastPush`, `Blast` (the
   simulation half of a blast), `PresentBlast` (the presentation half, GPU-free; `Engine::PresentBlast` forwards),
-  `kMaxIslandVoxels`, `kIslandSearchMargin`. The crumb threshold is `scene::kMinPieceVoxels` (Scene.cppm).
+  `kMaxIslandVoxels`, `kIslandSearchMargin`. The crumb threshold is `scene::MinPieceVoxels(world.VoxelSize())` (Scene.cppm; 8 at 0.125 m).
 - `src/sim/Simulation.cppm` - `SimulationConfig`, `ServerConfig`, the `Simulation` interface. Its doc comment is the
   contract (tick, phases, what is not stepped).
 - `src/sim/internal/Simulation.cpp` - `Resolve` (the two config overrides), `Impl` (member order), `HeldWindowFocus`,
@@ -174,7 +174,7 @@ Scene
 - Rubble marking is asymmetric by design: new small pieces always get `Debris`; the damaged entity only if small,
   Dynamic and `debrisRemnants`; an existing `Debris` keeps its age
   (`SceneDebris.RemnantOfADamagedObjectBecomesRubbleOnceItIsSmall`).
-- `VoxelObjectDesc::debris` only acts with `withBody` and `motion == Dynamic` (Scene.cpp:175). Below 16 voxels it
+- `VoxelObjectDesc::debris` only acts with `withBody` and `motion == Dynamic` (Scene.cpp:175). Below `minPieceVoxels` (8 at 0.125 m) it
   returns `kNoEntity`, which is not an error: do not log or assert on it.
 - A model with no solid voxels and `withBody = true` gives an entity without `RigidBody` (Scene.cpp:190).
 - A body frozen by the terrain guard reports zero velocities (PhysicsWorld.cppm:73), and `GetPointVelocity`
@@ -193,7 +193,7 @@ Scene
 
 Engine
 - Blast order. `sim::Blast` (Blast.cpp): carve (`ApplyOp(WorldOp::Carve)`) -> island search with
-  `removeFromWorld = false` -> per island of 16+ voxels `WorldOp::Detach` applied with `ApplyOp` (no entity) -> one
+  `removeFromWorld = false` -> per island of at least `scene::MinPieceVoxels(world voxel size)` `WorldOp::Detach` applied with `ApplyOp` (no entity) -> one
   `WorldOp::Clear` for all smaller islands (the union mask over their tight box) -> snapshot
   (`QueryBodies`) -> `Damage` each (fragments get `BlastPush` added) -> impulses -> `ActivateInBox`.
   `sim::PresentBlast` (Blast.cpp): per carve the debris particles, per Detach with netId 0 a rubble object from
@@ -384,16 +384,29 @@ look, jump feel, editor focus) cannot be checked headless: say so.
 
 ## Voxel preview (view distance stage 2)
 
-- `--voxel-size <m>` (game, 0.1-0.15, offline only: a session takes the server's size, `networking.md`) sets
+- The engine's voxel size is `voxel::kDefaultVoxelSize` = 0.125 m (view-distance stage 3): the default of
+  `WorldConfig`, `TerrainSettings`, `SceneConfig` and the editor's glTF `voxelsPerUnit` (8). The game sets no size.
+  `--voxel-size <m>` (game, 0.1-0.15, offline only: a session takes the server's size, `networking.md`) overrides
   `EngineConfig::world.voxelSize`; `sim::Simulation` passes it to the terrain generator and the scene (`Resolve`),
-  physics and the renderer read the world's. Nothing in the engine hard-codes 0.1 m except defaults (`WorldConfig`,
-  `TerrainSettings`, `SceneConfig`, `ImportSettings`) and the debris thresholds in voxels (`kMinPieceVoxels` 16,
-  `debrisBodyVoxels` 48, `thinBodyVoxels` 6: stage 3 rescales them); `fx` presets scale particle sizes from a 0.1 m
-  reference voxel, and the generator's trunk rule gives 1-voxel trunks above 0.1 m (stage 3 rewrites it in metres).
+  physics and the renderer read the world's.
+- Debris thresholds are metre sizes (`scene::kMinPieceVolume` 0.016 m^3, `kDebrisBodyVolume` 0.048 m^3,
+  `kThinBodyLength` 0.6 m, `sim::kServerReplicatedPieceVolume` 0.512 m^3: what 16 / 48 / 6 / 512 voxels of 0.1 m
+  were), turned into voxels by `scene::VoxelsForVolume` / `VoxelsForLength`: 8 / 25 / 5 / 262 at 0.125 m. The scene
+  thresholds default to `scene::kFromMetres`, resolved in voxels of the scene's `voxelSize` when the scene is built
+  (`scene::ResolveThresholds`; `sim::Simulation`'s `Resolve` does it with the world's size, so `Config()` reports
+  counts); an explicit voxel count is kept. `sim::ServerConfig` converts the replicated volume at the config's own
+  world size. The blast's crumb rule is `scene::MinPieceVoxels(world.VoxelSize())` (the session's size, shared bit
+  for bit; `kMinPieceVoxels` is its value at the default size). Nobody converts by hand (the game does not).
+  Not rescaled (cost limits in voxels, not sizes): `sim::kIslandSearchMargin` 24, `kMaxIslandVoxels` 60 000,
+  `kMaxBursts` 400. `fx` presets scale particle sizes from a 0.1 m reference voxel (1.25x at 0.125 m).
+- Tests written in voxels of 0.1 m (`SceneTests.cpp`, `ServerSceneTests.cpp`, `BlastTests.cpp` arenas) set 0.1 m
+  explicitly and leave the thresholds at `kFromMetres` (16 / 48 / 6 there); the crumb tests use
+  `scene::MinPieceVoxels(0.1)`. `SceneDebris.DefaultThresholdsAtTheEngineVoxelSize` runs the true defaults.
   Above 0.2 m the standard run's beam is 1 voxel thick and its cut leaves two 4-voxel particle crumbs (no
   `1 new object(s)`): the accepted range stops at what was run.
-- The playground is authored in voxels of 0.1 m and scaled by `S()` (`0.1 / voxelSize`, exactly 1 at 0.1 m, so the
-  default world is unchanged); the figure, the crate and the beam too. The furniture probe (`BuildProbe`) is built
+- The playground is authored in voxels of 0.1 m and scaled by `S()` (`0.1 / voxelSize`: 0.8 at the default 0.125 m,
+  so every box keeps its metre size to the nearest voxel); the figure, the crate, the beam and the editor smoke test's
+  glTF import (6 voxels of 0.1 m per unit) too. The furniture probe (`BuildProbe`) is built
   only with `--probe` (implied by `--camera probe`, `--camera probe-far`, `--probe-blast`): the default run builds
   the old world and logs no `Probe:` line. It is authored in metres on the 1/8 m grid and voxelised by voxel
   centres, **both ends included**: on an exact tie (a centre on a boundary) both boxes that meet there get that

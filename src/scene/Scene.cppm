@@ -22,31 +22,63 @@ import vortex.physics;
 
 export namespace vortex::scene {
 
+    /// @brief Voxels of edge `voxelSize` (metres) that hold `cubicMetres`, rounded to the nearest
+    /// (at least 1). Debris thresholds are volumes in metres; this turns them into voxel counts.
+    constexpr uint32_t VoxelsForVolume(double cubicMetres, double voxelSize) {
+        const double v = cubicMetres / (voxelSize * voxelSize * voxelSize) + 0.5;
+        return v < 1.0 ? 1u : static_cast<uint32_t>(v);
+    }
+    /// @brief Voxels of edge `voxelSize` (metres) along `metres`, rounded to the nearest (at least 1).
+    constexpr uint32_t VoxelsForLength(double metres, double voxelSize) {
+        const double v = metres / voxelSize + 0.5;
+        return v < 1.0 ? 1u : static_cast<uint32_t>(v);
+    }
+
+    /// @name Debris thresholds in metres (docs/design/view-distance.md, stage 3: they were
+    /// tuned as 16 / 48 voxels and 6 voxels of 0.1 m and keep that metre size at any voxel size).
+    /// @{
+    inline constexpr double kMinPieceVolume = 0.016;   ///< m^3: a lump the size of a fist.
+    inline constexpr double kDebrisBodyVolume = 0.048; ///< m^3: below it a body is "small" (Debris layer).
+    inline constexpr double kThinBodyLength = 0.6;     ///< m: a body thinner than this on an axis is "thin".
+    /// @}
+
     /**
-     * @brief Connected pieces with fewer voxels than this are particles, never objects: the
-     * default of SceneConfig::minPieceVoxels, and the rule sim::Blast applies to terrain islands
+     * @brief Connected pieces with fewer voxels than this are particles, never objects, in a world
+     * of `voxelSize` metres: kMinPieceVolume to the nearest voxel. It is what
+     * SceneConfig::minPieceVoxels resolves to, and the rule sim::Blast applies to terrain islands
      * (smaller ones are cleared by one WorldOpKind::ClearMask per blast instead of a Detach each).
-     * The blast rule is part of what a server sends, so it is this constant, not a scene's config.
+     * The blast rule is part of what a server sends, so it is computed from the session's voxel
+     * size (which both sides share bit for bit), never from a scene's config.
      */
-    inline constexpr uint32_t kMinPieceVoxels = 16;
+    constexpr uint32_t MinPieceVoxels(double voxelSize) { return VoxelsForVolume(kMinPieceVolume, voxelSize); }
+    /// @brief MinPieceVoxels at voxel::kDefaultVoxelSize: 8 voxels of 0.125 m.
+    inline constexpr uint32_t kMinPieceVoxels = MinPieceVoxels(voxel::kDefaultVoxelSize);
+
+    /// @brief Value of a SceneConfig voxel-count threshold that means "the metre size of the
+    /// engine (kMinPieceVolume, kDebrisBodyVolume, kThinBodyLength) in voxels of `voxelSize`".
+    /// The scene resolves it when it is built (ResolveThresholds); Scene::Config() never holds it.
+    inline constexpr uint32_t kFromMetres = 0xFFFFFFFFu;
 
     /// @brief Tuning of a scene. The defaults reproduce the engine's destruction behaviour.
     struct SceneConfig {
-        float voxelSize = 0.1f;               ///< Metres per voxel of every voxel object (Transform scale). Use the world's.
+        float voxelSize = voxel::kDefaultVoxelSize;  ///< Metres per voxel of every voxel object (Transform scale). Use the world's.
         /// Connected pieces with fewer voxels never become entities: they turn into particles at
-        /// once (Damage, CreateVoxelObject with `debris`). 16 voxels of 0.1 m are a lump the size
-        /// of a fist; anything smaller is not worth a rigid body and chunk memory.
-        uint32_t minPieceVoxels = kMinPieceVoxels;
+        /// once (Damage, CreateVoxelObject with `debris`). kFromMetres (the default):
+        /// kMinPieceVolume, a lump the size of a fist (8 voxels of 0.125 m, 16 of 0.1 m); anything
+        /// smaller is not worth a rigid body and chunk memory.
+        uint32_t minPieceVoxels = kFromMetres;
         /// Non-static bodies with fewer solid voxels are "small": they use physics::Layer::Debris
         /// (no collisions among each other) with continuous collision detection (they are thin
         /// enough to tunnel through the terrain mesh otherwise), and - if they are rubble - get
-        /// the Debris component.
-        uint32_t debrisBodyVoxels = 48;
+        /// the Debris component. kFromMetres (the default): kDebrisBodyVolume (25 voxels of
+        /// 0.125 m, 48 of 0.1 m).
+        uint32_t debrisBodyVoxels = kFromMetres;
         /// Dynamic bodies whose solid voxels span fewer voxels than this along any axis are
         /// "thin" and use continuous collision detection as well, whatever their voxel count: a
         /// slab or plank falling flat passes through the terrain mesh within one step just like a
-        /// small lump. 6 voxels of 0.1 m need 36 m/s (a 66 m fall) to do that.
-        uint32_t thinBodyVoxels = 6;
+        /// small lump. 0 = no thin-body rule. kFromMetres (the default): kThinBodyLength, 5 voxels
+        /// of 0.125 m (0.625 m), which need 37.5 m/s (a 72 m fall) to do that.
+        uint32_t thinBodyVoxels = kFromMetres;
         /// When Damage leaves less than `debrisBodyVoxels` of a dynamic object, the remnant - the
         /// damaged entity itself - becomes rubble like the pieces that came off, and is cleaned
         /// up. false: the damaged entity never becomes rubble (remnants of every destroyed crate
@@ -72,7 +104,8 @@ export namespace vortex::scene {
          * in DamageResult::fragments (model, pose, velocities) for whoever shows rubble - a
          * client, or sim::PresentBlast offline - to create locally. The damaged entity itself
          * goes the same way when what is left of it is below the threshold and Dynamic (a
-         * Static / Kinematic object only dented stays). sim::ServerConfig sets 512.
+         * Static / Kinematic object only dented stays). sim::ServerConfig sets
+         * sim::kServerReplicatedPieceVolume in voxels of the world (262 voxels of 0.125 m).
          */
         uint32_t replicatedPieceVoxels = 0;
         uint32_t debrisParticleStride = 3;    ///< One debris particle burst per this many carved voxels (>= 1).
@@ -86,6 +119,17 @@ export namespace vortex::scene {
         uint32_t maxDebris = 192;             ///< Most rubble entities alive at once; the oldest are removed first.
         uint32_t debrisDespawnBursts = 3;     ///< Particle bursts (fx::SpawnVoxelBreak) left by removed rubble; 0 = none.
     };
+
+    /// @brief `config` with every kFromMetres threshold replaced by its metre size in voxels of
+    /// `config.voxelSize` (thresholds set to a voxel count are kept). The scene does this when it
+    /// is built; sim::Simulation does it for the configuration it reports.
+    constexpr SceneConfig ResolveThresholds(SceneConfig config) {
+        const double vs = static_cast<double>(config.voxelSize);
+        if (config.minPieceVoxels == kFromMetres) config.minPieceVoxels = MinPieceVoxels(vs);
+        if (config.debrisBodyVoxels == kFromMetres) config.debrisBodyVoxels = VoxelsForVolume(kDebrisBodyVolume, vs);
+        if (config.thinBodyVoxels == kFromMetres) config.thinBodyVoxels = VoxelsForLength(kThinBodyLength, vs);
+        return config;
+    }
 
     /// @brief What to create with Scene::CreateVoxelObject.
     struct VoxelObjectDesc {

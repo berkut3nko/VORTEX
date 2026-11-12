@@ -61,7 +61,24 @@ namespace {
         bool initialized = false;
     };
 
-    scene::SceneConfig ServerScene() { return sim::ServerConfig().scene; }
+    /// The server scene tests are written in voxels of 0.1 m (positions, radii, the 512-voxel
+    /// crate): they run the server configuration of a 0.1 m world, whose thresholds hold the same
+    /// metre sizes as the engine's defaults (16 / 48 / 6 voxels, 512 replicated).
+    constexpr float kVoxel = 0.1f;
+
+    /// An offline scene of a 0.1 m world.
+    scene::SceneConfig OfflineScene() {
+        scene::SceneConfig config;
+        config.voxelSize = kVoxel;            // what sim::Simulation does with the world's size
+        return config;
+    }
+
+    scene::SceneConfig ServerScene() {
+        sim::SimulationConfig config;
+        config.world.voxelSize = kVoxel;
+        config.scene = OfflineScene();
+        return sim::ServerConfig(config).scene;
+    }
 
     /// The server scene with the replicated-piece threshold off, for the tests of the other
     /// switches: their small beams and crates would otherwise not be entities at all. The
@@ -181,7 +198,7 @@ TEST(ServerScene, NothingIsEverMarkedAsRubble) {
 TEST(ServerScene, MarkDebrisAloneSwitchesTheMarkingOff) {
     // The two switches are independent: with models baked and particles on, `markDebris = false`
     // still marks nothing, and `debrisRemnants` is then irrelevant.
-    scene::SceneConfig config;
+    scene::SceneConfig config = OfflineScene();
     config.markDebris = false;
     ASSERT_TRUE(config.debrisRemnants);
     Bench b(config, 1024);
@@ -228,7 +245,7 @@ TEST(ServerScene, EffectsAskedOfAnEmptyParticlePoolAreDropped) {
 TEST(ServerScene, ReplicatedPieceThresholdReturnsSmallPiecesInsteadOfEntities) {
     Bench b(ServerScene());
     ASSERT_TRUE(b.initialized);
-    ASSERT_EQ(b.scene.Config().replicatedPieceVoxels, 512u);
+    ASSERT_EQ(b.scene.Config().replicatedPieceVoxels, 512u);    // 0.512 m^3 in voxels of 0.1 m
     // A 64 x 4 x 4 beam (1024 voxels), cut 7.5 voxels from its left end.
     const Entity beam = b.scene.CreateVoxelObject({.model = b.Box({64, 4, 4}, "beam"), .position = {0.0f, 5.0f, 0.0f}});
     ASSERT_NE(beam, kNoEntity);

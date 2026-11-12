@@ -166,8 +166,12 @@ do not bounds-check (0..31 only); `GetSafe` does. A `Chunk` is 36 KB: keep it on
   depends on `Chunk::VoxelIndex` order and on raw material ids.
 - `DecodeChunk` rejects: unknown kind, a uniform chunk with id 0, a zero-length run, runs that do not add up to
   exactly 32768. `PersistCell` therefore writes an all-air chunk as `Empty`, never as uniform 0.
-- Region file: `"VXR1"`, `u32 count` (<= 4096), then `[u16 local][u32 size][bytes]`; host endianness, no checksum.
-  A region is 16^3 chunks, `local = x + y*16 + z*256`.
+- Region file: `"VXR2"`, `u32` voxel size (float bits), `u32 count` (<= 4096), then `[u16 local][u32 size][bytes]`;
+  host endianness, no checksum. A region is 16^3 chunks, `local = x + y*16 + z*256`. `"VXR1"` files (no size) are
+  read as 0.1 m (`RegionStore::kLegacyVoxelSize`). A file whose size is not bit-equal to the world's is **refused**:
+  nothing loaded from it, `Contains` false, `Flush` never writes that region (edits there stay in memory for the
+  session), `WorldStats::refusedRegions` counts it (view-distance stage 3). Voxel ids of one size are a different
+  world at another.
 - `RegionStore` is thread safe (one mutex). `Save()` is memory only; `Flush()` writes temp file + rename. With an empty
   directory, edits still survive leaving and re-entering the window (kept in memory).
 - Saved ids are world-palette indices handed out by `MaterialLibrary::Add` in call order (`Material.cpp:136-155`:
@@ -199,7 +203,9 @@ do not bounds-check (0..31 only); `GetSafe` does. A `Chunk` is 36 KB: keep it on
   order of `RegisterDefaultWorldMaterials` fails it. If the change was meant, paste the table the failure prints over
   `kGoldenHashes` (`tests/core/HashTests.cpp`); if it was not, two builds no longer generate the same terrain. The
   test calls `Generate` directly, so it does not depend on job threads. The probe coordinates (`kGoldenCoords`, 64 per
-  seed) are fixed and were picked from the generated heights: surface, underground, tree tops, snow columns, and 16
+  seed) are fixed and were picked from the generated heights of 3.2 m chunks; since 0.125 m each probe is the 4 m chunk
+  holding the middle of the listed one (`ProbeChunk`, integer `floor((4c + 2) / 5)`; the test asserts the 0.125 m
+  default). Picked: surface, underground, tree tops, snow columns, and 16
   chunks 1 km out. The test also requires every seed's probes to contain grass, dirt, stone, dark stone, sand, snow,
   water, wood, leaves and a cave; after a generator change that fails this, pick new coordinates, do not drop the check.
 - **The chunk hashes alone do not prove equal floats**: they see them after `floor` and compares. Measured: a build
@@ -274,7 +280,11 @@ the `VX_*` accessor macros defined there and, with the same names, in the shader
 - `RegionStore::Load` reads the region file from disk while holding the mutex and `Flush` writes under it: the main
   thread's `PersistCell -> Save` can stall behind a worker's disk read. Regions are never evicted from memory.
 - `TerrainSettings::voxelSize` and `WorldConfig::voxelSize` are separate fields and nothing checks that they agree (the
-  simulation copies one into the other when it builds the default generator, `Simulation.cpp:93`).
+  simulation copies one into the other when it builds the default generator, `Simulation.cpp:93`). Both default to
+  `voxel::kDefaultVoxelSize` (0.125 m since view-distance stage 3, `Chunk.cppm`), as does `scene::SceneConfig`.
+- Generator rules are in metres; the tree trunk is 0.19-0.34 m wide, drawn as the nearest odd voxel count (1 or 3 at
+  0.1 / 0.125 m; it was `lround(r / vs) - 1`, which made every trunk 1 voxel above 0.1 m). The roots (2 voxels into
+  the ground), the cave lattice (every 4 voxels) and the slope test (voxels per voxel) are per voxel by design.
 - `IWorldGenerator::Generate` runs on workers, concurrently, repeatedly for the same chunk. The terrain tile cache is
   mutex-guarded and cleared at 4096 tiles (`Generator.cpp:160-163`). Generators write `ids` only; `LoadJob` rebuilds
   the pyramid and demotes trivial Dense results; a `Uniform` result with id 0 becomes `Empty`.
@@ -302,7 +312,7 @@ the `VX_*` accessor macros defined there and, with the same names, in the shader
 - `ExtractFloatingIslands` refuses regions over 192 voxels per axis and returns nothing if any chunk of the region is
   not loaded; the optional `searched` out-parameter tells a refusal from "no island" (`sim::Blast` reports it as
   `islandsSearched`, asks the world for the box with `RequestLoad` and remembers the search;
-  `sim::RetryIslandSearches` runs it once the box is loaded, from `Engine::Run`). `sim::Blast` calls it with `removeFromWorld = false` and clears each island of 16+ voxels with its own
+  `sim::RetryIslandSearches` runs it once the box is loaded, from `Engine::Run`). `sim::Blast` calls it with `removeFromWorld = false` and clears each island of at least `scene::MinPieceVoxels(world voxel size)` (8 at 0.125 m) with its own
   `ClearMask` (a `Detach`), all smaller ones with one `ClearMask` over their tight box. A component touching the region boundary counts as attached - the safety that stops it ripping out
   hillsides; do not relax it. Ignored (liquid) voxels neither support nor belong to an island and stay in the world.
 - `BuildColliderBoxes`: with `mergeMaterials = true`, `box.material` is only the first voxel's id; mass code uses
@@ -394,5 +404,5 @@ runs from CLAUDE.md. In the headless game log:
   `Renderer: chunk slot ... is beyond the GPU chunk capacity`.
 - `Beam cut: ... 1 new object(s)` (split + re-bake path) and `Player feet at ..., on the ground` (terrain collision fed
   by `TakeChangedChunks`) still appear.
-- Screenshot: magenta voxels = bad material id or palette; chunk-sized (3.2 m) holes in terrain = slots exhausted or a
+- Screenshot: magenta voxels = bad material id or palette; chunk-sized (4 m at 0.125 m) holes in terrain = slots exhausted or a
   chunk never uploaded; an object showing the wrong shape or terrain voxels = stale slot after a re-bake.

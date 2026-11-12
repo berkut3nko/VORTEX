@@ -22,7 +22,7 @@ import :volume;
 export namespace vortex::voxel {
 
     struct WorldConfig {
-        float voxelSize = 0.1f;                  ///< Edge length of a voxel in metres.
+        float voxelSize = kDefaultVoxelSize;     ///< Edge length of a voxel in metres.
         /// Loaded region in chunks. With `fullHeight` (and known bounds) y is replaced by the
         /// rows of the vertical range.
         glm::ivec3 windowSize{32, 16, 32};
@@ -82,7 +82,7 @@ export namespace vortex::voxel {
     inline constexpr int32_t kQuantaPerVoxel = 16;          ///< q per voxel.
     inline constexpr int32_t kPowerQuantaPerHardness = 16;  ///< Power units per Material::hardness unit.
     /// Voxel coordinates an edit may reach: [-kMaxEditVoxel, kMaxEditVoxel). Voxels beyond are
-    /// never edited (10^8 m at 0.1 m voxels; keeps every integer step in range). A quantised
+    /// never edited (1.3 x 10^8 m at 0.125 m voxels; keeps every integer step in range). A quantised
     /// sphere centre is an int32 in q and reaches +-2^27 voxels only.
     inline constexpr int32_t kMaxEditVoxel = 1 << 30;
 
@@ -186,6 +186,20 @@ export namespace vortex::voxel {
         /// Worker time spent inside IWorldGenerator::Generate for them (summed over threads):
         /// generatedChunks / generateMs is the generator's own speed, whatever the frame rate.
         double generateMs = 0.0;
+        /// Region files of the save directory refused because they were written at another voxel
+        /// size or are unreadable (RegionStore): their edits are not shown and the files are never
+        /// overwritten.
+        uint32_t refusedRegions = 0;
+        /// Of those, the regions this session edited: Save() cannot write their edits.
+        uint32_t unwrittenRegions = 0;
+    };
+
+    /// @brief What World::Save wrote.
+    struct WorldSaveResult {
+        uint32_t files = 0;              ///< Region files written.
+        /// Regions with edits that were not written because their file is refused (another voxel
+        /// size, or unreadable): those edits are lost when the world closes. 0 = everything saved.
+        uint32_t unwrittenRegions = 0;
     };
 
     /**
@@ -221,7 +235,7 @@ export namespace vortex::voxel {
         /// @brief Blocks until the window around `focus` is loaded (tools, tests, loading screens).
         void LoadBlocking(const glm::dvec3& focus, LoadScope scope = LoadScope::Everything);
         /// @brief Saves every modified chunk currently loaded and writes the region files.
-        void Save();
+        WorldSaveResult Save();
         /// @brief Counts every cell (main thread, about 0.1 ms for 126 000 cells).
         WorldStats Stats() const;
         /// @brief Cheap (per column) test of what LoadBlocking waits for, for the current window.

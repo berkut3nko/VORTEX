@@ -85,7 +85,7 @@ export namespace vortex::voxel {
     /// @brief Tunables of the built-in terrain. All distances are in metres.
     struct TerrainSettings {
         uint32_t seed = 1337;
-        float voxelSize = 0.1f;
+        float voxelSize = kDefaultVoxelSize;
         WorldMaterials materials;
 
         float seaLevel = 0.0f;

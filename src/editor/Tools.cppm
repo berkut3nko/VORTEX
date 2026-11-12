@@ -200,7 +200,7 @@ export namespace vortex::editor {
 
     struct ImportSettings {
         std::filesystem::path file;         ///< `.vox` (MagicaVoxel) or `.gltf` / `.glb`; the extension decides, case-insensitively.
-        float voxelsPerUnit = 10.0f;        ///< glTF only: mesh unit (metre) -> voxels. Use 1 / voxel size for true scale.
+        float voxelsPerUnit = 1.0f / voxel::kDefaultVoxelSize;   ///< glTF only: mesh unit (metre) -> voxels. Use 1 / voxel size for true scale.
         bool fillInterior = true;           ///< glTF only: make closed meshes solid.
         int maxVoxelsPerAxis = 256;         ///< glTF only: larger results are rejected.
     };

@@ -401,12 +401,16 @@ TEST(Blast, TwoSimulationsFedTheSameOperationsHaveEqualHashes) {
     EXPECT_NE(missing.Hash().hash, s.hash);
 }
 
-// --- crumbs: islands under scene::kMinPieceVoxels ----------------------------------------------
+// --- crumbs: islands under scene::MinPieceVoxels of the world's size ----------------------------
 
 namespace {
+    /// The crumb rule of this 0.1 m arena: 16 voxels (0.016 m^3).
+    constexpr uint32_t kMinPiece = scene::MinPieceVoxels(static_cast<double>(kVoxel));
+    static_assert(kMinPiece == 16);
+
     /// Floating crumbs high above the left mushroom, all inside StemCut's island box (x -26..39,
-    /// y g-25..g+40, z -32..33): two rows of 1 to 5 voxel bars, a 3 x 5 slab (15 voxels, the
-    /// largest crumb) and a 2 x 2 x 2 cube. 22 crumbs, 83 voxels.
+    /// y g-25..g+40, z -32..33): two rows of 1 to 5 voxel bars, a bar along z of kMinPiece - 1
+    /// voxels (the largest crumb) and an upright 1 x 2 x 2 square. 22 crumbs.
     std::vector<sim::WorldOp> Crumbs(const voxel::WorldMaterials& ids) {
         const int y = kGroundVoxels + 30;
         std::vector<sim::WorldOp> ops;
@@ -417,11 +421,13 @@ namespace {
                 ops.push_back(sim::WorldOp::Box({x, y, z}, {x + length, y + 1, z + 1}, row == 0 ? ids.stone : ids.dirt));
             }
         }
-        ops.push_back(sim::WorldOp::Box({0, y + 4, -2}, {3, y + 5, 3}, ids.wood));
-        ops.push_back(sim::WorldOp::Box({30, y - 6, 25}, {32, y - 4, 27}, ids.gold));
+        constexpr int kLargest = static_cast<int>(kMinPiece) - 1;
+        ops.push_back(sim::WorldOp::Box({0, y + 4, -2}, {1, y + 5, -2 + kLargest}, ids.wood));
+        ops.push_back(sim::WorldOp::Box({30, y - 6, 25}, {31, y - 4, 27}, ids.gold));
         return ops;
     }
-    constexpr uint32_t kCrumbCount = 22, kCrumbVoxels = 2 * 2 * (1 + 2 + 3 + 4 + 5) + 15 + 8;
+    static_assert(kMinPiece > 5, "the 5-voxel bars must stay crumbs");
+    constexpr uint32_t kCrumbCount = 22, kCrumbVoxels = 2 * 2 * (1 + 2 + 3 + 4 + 5) + (kMinPiece - 1) + 4;
 
     /// The left mushroom (one island when StemCut hits its stem) plus the crumbs.
     std::vector<sim::WorldOp> MushroomAndCrumbs(const voxel::WorldMaterials& ids) {
@@ -446,7 +452,7 @@ TEST(Blast, CrumbsBecomeOneClearMaskAndLargerIslandsKeepTheirDetach) {
     ASSERT_EQ(blast.ops.size(), 3u);
     EXPECT_EQ(blast.ops[0].op.kind, sim::WorldOpKind::CarveSphere);
     EXPECT_EQ(blast.ops[1].op.kind, sim::WorldOpKind::Detach);
-    EXPECT_GE(blast.ops[1].op.mask.Count(), scene::kMinPieceVoxels);
+    EXPECT_GE(blast.ops[1].op.mask.Count(), kMinPiece);
     EXPECT_EQ(blast.IslandCount(), 1u);
     EXPECT_EQ(blast.crumbs, kCrumbCount);
 
@@ -458,8 +464,8 @@ TEST(Blast, CrumbsBecomeOneClearMaskAndLargerIslandsKeepTheirDetach) {
     EXPECT_EQ(clear.edits.size(), kCrumbVoxels);
     EXPECT_EQ(blast.CrumbVoxels(), kCrumbVoxels);
     // The mask's box is the smallest one holding every crumb: x from the first bar to the end
-    // of the last (-20..38), y from the cube to the slab (g+24..g+34), z from the first row to
-    // the cube (-10..26).
+    // of the last (-20..38), y from the square to the z bar (g+24..g+34), z from the first row to
+    // the square (-10..26).
     EXPECT_EQ(clear.op.min, glm::ivec3(-20, kGroundVoxels + 24, -10));
     EXPECT_EQ(clear.op.mask.Size(), glm::ivec3(39 + 20, 35 - 24, 27 + 10));
     for (const voxel::VoxelEdit& e : clear.edits) {
@@ -473,22 +479,34 @@ TEST(Blast, CrumbsBecomeOneClearMaskAndLargerIslandsKeepTheirDetach) {
     EXPECT_EQ(a.simulation.Particles().AliveCount(), 0u);
 }
 
-TEST(Blast, IslandOfSixteenVoxelsIsAPieceAndOfFifteenACrumb) {
-    Arena a;
-    ASSERT_TRUE(a.initialized);
-    const voxel::WorldMaterials& ids = a.Ids();
-    const int y = kGroundVoxels + 20;
-    ApplyAll(a.World(), std::vector<sim::WorldOp>{sim::WorldOp::Box({-8, y, 0}, {8, y + 1, 1}, ids.stone),
-                                                  sim::WorldOp::Box({-8, y, 4}, {7, y + 1, 5}, ids.stone)});
-    // A blast in the air next to them: nothing carved, both bars are found by the search.
-    const sim::BlastResult blast = sim::Blast(a.simulation, voxel::SphereQ{glm::ivec3(8, (y + 8) * 16 + 8, 8), 32}, kStrong);
-    EXPECT_EQ(blast.ops[0].result.changed, 0u);
-    ASSERT_EQ(blast.ops.size(), 3u);
-    EXPECT_EQ(blast.ops[1].op.kind, sim::WorldOpKind::Detach);
-    EXPECT_EQ(blast.ops[1].op.mask.Count(), 16u);
-    EXPECT_EQ(blast.ops[2].op.kind, sim::WorldOpKind::ClearMask);
-    EXPECT_EQ(blast.ops[2].op.mask.Count(), 15u);
-    EXPECT_EQ(blast.crumbs, 1u);
+// The crumb rule is the piece volume (scene::kMinPieceVolume) in voxels of the world's size:
+// 16 voxels in this 0.1 m arena, 8 at the engine's 0.125 m.
+TEST(Blast, IslandOfMinPieceVoxelsIsAPieceAndOfOneLessACrumb) {
+    for (const float voxelSize : {kVoxel, 0.125f, 0.15f}) {
+        sim::SimulationConfig config = ArenaConfig();
+        config.world.voxelSize = voxelSize;
+        Arena a(config);
+        ASSERT_TRUE(a.initialized);
+        const voxel::WorldMaterials& ids = a.Ids();
+        // 10 voxels above the ground: the island box (+-26 voxels around the blast) must fit in
+        // the arena's 6 chunk rows, which end at voxel 127 at 0.15 m (rows -2..3 of 4.8 m).
+        const int y = kGroundVoxels + 10;
+        const uint32_t minPiece = scene::MinPieceVoxels(static_cast<double>(voxelSize));
+        EXPECT_EQ(minPiece, voxelSize == kVoxel ? 16u : voxelSize == 0.125f ? 8u : 5u);
+        const int k = static_cast<int>(minPiece);
+        ApplyAll(a.World(), std::vector<sim::WorldOp>{sim::WorldOp::Box({-8, y, 0}, {-8 + k, y + 1, 1}, ids.stone),
+                                                      sim::WorldOp::Box({-8, y, 4}, {-8 + k - 1, y + 1, 5}, ids.stone)});
+        // A blast in the air next to them: nothing carved, both bars are found by the search.
+        const sim::BlastResult blast = sim::Blast(a.simulation, voxel::SphereQ{glm::ivec3(8, (y + 8) * 16 + 8, 8), 32}, kStrong);
+        EXPECT_EQ(blast.ops[0].result.changed, 0u);
+        ASSERT_TRUE(blast.islandsSearched) << voxelSize;
+        ASSERT_EQ(blast.ops.size(), 3u) << voxelSize;
+        EXPECT_EQ(blast.ops[1].op.kind, sim::WorldOpKind::Detach);
+        EXPECT_EQ(blast.ops[1].op.mask.Count(), minPiece);
+        EXPECT_EQ(blast.ops[2].op.kind, sim::WorldOpKind::ClearMask);
+        EXPECT_EQ(blast.ops[2].op.mask.Count(), minPiece - 1);
+        EXPECT_EQ(blast.crumbs, 1u);
+    }
 }
 
 TEST(Blast, OfflineCrumbsBecomeParticlesWithoutAnyEntityOrBody) {

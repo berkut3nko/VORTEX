@@ -17,6 +17,13 @@ export namespace vortex::voxel {
     constexpr int kBlocksPerChunk = 512;          ///< 8^3 blocks of 4^3 voxels.
 
     /**
+     * @brief Edge length of a voxel in metres unless a world is configured otherwise: the default
+     * of WorldConfig, TerrainSettings and scene::SceneConfig (docs/design/view-distance.md, stage
+     * 3). Exact in binary: a chunk is 4 m, the edit quantum (1/16 voxel) 7.8125 mm.
+     */
+    constexpr float kDefaultVoxelSize = 0.125f;
+
+    /**
      * @brief Three-level occupancy pyramid of a chunk (4168 bytes).
      * @details This is what a ray actually walks: it never touches material ids until it has
      * found a solid voxel, and it skips empty 8^3 and 4^3 regions in a single step.

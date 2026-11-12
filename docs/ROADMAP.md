@@ -10,19 +10,19 @@ What exists today, and what was designed for but is not built yet. See
 | Build | Pinned dependencies, Vulkan headers fetched, shaders compiled to SPIR-V at build time, `cmake --preset dev`. |
 | Core | Logging, job system, profiler, input state, RNG, command line. |
 | Game UI | Play mode locks the mouse (GLFW_CURSOR_DISABLED + raw motion; pointer lock on Wayland, grab on X11) and looks around without a button; Escape opens a pause menu (Resume / Quit). A HUD drawn without ImGui (`vortex.core:hud` data + one instanced draw after tone mapping, built-in 5 x 9 bitmap font): crosshair, mode, tool, frame rate, key hints, menu. ImGui is only the F3 debug overlay (hidden by default) and the F1 editor. Windowed behaviour (lock on Wayland / X11, focus, menu clicks) is not confirmed yet: headless runs cannot exercise it. |
-| Voxel world | Streaming window of sparse 32^3 chunks, generation on worker threads, editing (set / fill / carve with material hardness), region-file persistence of modified chunks (offline game and map editor, when `saveDirectory` is set; a session server's world is memory only). The game's window is **full height** (view distance stage 1): a fixed -48..128 m (55 rows) that follows the camera in x / z only, so climbing never unloads anything; a column pass installs sky and rock without jobs; buried chunks farther than 16 m stay **Packed** (RLE bytes, no slot); a build ceiling at 128 m. |
-| Terrain | Built-in generator: hills, mountains, beaches, sea, caves, trees. Custom generators through `IWorldGenerator`. The voxel size is a world setting (0.1 m by default; the game's `--voxel-size` previews 0.125 / 0.15 m). |
+| Voxel world | Streaming window of sparse 32^3 chunks, generation on worker threads, editing (set / fill / carve with material hardness), region-file persistence of modified chunks (offline game and map editor, when `saveDirectory` is set; a session server's world is memory only; a region file records its voxel size and a world of another size refuses it). The game's window is **full height** (view distance stage 1): a fixed -48..128 m (44 rows at 0.125 m) that follows the camera in x / z only, so climbing never unloads anything; a column pass installs sky and rock without jobs; buried chunks farther than 16 m stay **Packed** (RLE bytes, no slot); a build ceiling at 128 m. |
+| Terrain | Built-in generator: hills, mountains, beaches, sea, caves, trees. Custom generators through `IWorldGenerator`. The voxel size is a world setting: **0.125 m** by default since view distance stage 3 (4 m chunks; the game's `--voxel-size` still previews 0.1 / 0.15 m offline). Content and debris thresholds keep their metre size. |
 | Ray queries | One traversal shared by GPU and CPU (`shaders/shared/trace.glsl`), world + dynamic objects through a BVH. |
 | Objects | Voxel models of any size shared between instances, collider boxes, mass from material density. |
 | Scene | `vortex.scene`: EnTT entities with transform, voxel body, rigid body, point light and lifetime components; destroying an entity releases its body and chunk slots; part of the GPU-free `Vortex::Sim` and tested without a GPU. |
-| Destruction | Terrain carving with floating-terrain detection; objects lose voxels and split into pieces (`Scene::Damage`). A blast is `sim::Blast` (integer-exact world operations: carve, one `Detach` per floating island of 16+ voxels, one `ClearMask` for all smaller ones; object damage, impulses) plus `sim::PresentBlast` via `Engine::PresentBlast` (particles, local rubble, flash); `Engine::Explode` does both. Fragments below 16 voxels are particles, small pieces are rubble with a lifetime, a distance rule and a global cap. |
+| Destruction | Terrain carving with floating-terrain detection; objects lose voxels and split into pieces (`Scene::Damage`). A blast is `sim::Blast` (integer-exact world operations: carve, one `Detach` per floating island of 8+ voxels (0.016 m^3), one `ClearMask` for all smaller ones; object damage, impulses) plus `sim::PresentBlast` via `Engine::PresentBlast` (particles, local rubble, flash); `Engine::Explode` does both. Fragments below 8 voxels are particles, small pieces (under 25 voxels, 0.048 m^3) are rubble with a lifetime, a distance rule and a global cap. |
 | Import | MagicaVoxel `.vox` read / write, glTF voxelisation. |
 | Physics | Jolt behind an engine interface, fixed time step, character controller. Terrain colliders streamed around the camera and requested by every moving body; bodies without ready terrain are frozen in place and resume when it is there, so nothing falls through unloaded or uncooked terrain. |
 | Particles | CPU pool with emitters, voxel collision, effect presets. |
 | Renderer | Ray-marched G-buffer, ray-traced sun shadows, ambient occlusion, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping, ImGui. Headless mode with screenshots. Validation-clean on Intel UHD 620. |
 | Editor | `vortex.editor`: in-game editor toggled with F1 - fly camera, entity selection with a translate / rotate gizmo, inspector, terrain brush, primitive spawning, `.vox` / glTF import, environment / render / profiler / world panels. Tool logic is separate from the widgets and unit tested. |
 | Simulation | `vortex.sim`: `sim::Simulation` owns world, physics, terrain colliders and scene and steps them on a numbered fixed tick; `sim::WorldOp` / `ApplyOp` replay terrain changes exactly; `sim::Blast`. Library `Vortex::Sim` links no renderer or window. `Engine` owns one and draws it. |
-| Tests | 412 unit tests (one disabled measurement), none needing a GPU. |
+| Tests | 419 unit tests (one disabled measurement), none needing a GPU. |
 
 ## Performance (Intel UHD 620, 1280x720 output, 768x432 internal)
 
@@ -33,9 +33,11 @@ What exists today, and what was designed for but is not built yet. See
 | composite, TAA, present | ~2.5 ms |
 | HUD (play: ~150 quads; pause menu: ~70 quads, backdrop dimmed in the present pass) | 0.01 ms (median of 120 frames, measured headless at 1280x720) |
 
-World window 48 x 55 x 48 chunks (154 m across, -48..128 m, at 0.1 m voxels; view radius 73.6 m with an edge fog
-over its last 15 %), 5500-6600 dense chunks and 17 000-18 000 Packed ones (24-25 MiB of RLE) once filled, 473 MiB
-of GPU memory. (Before view distance stage 1: 48 x 8 x 48 around the camera, about 8100 dense chunks.) Measured cost of the lighting features: sun shadows ~4.7 ms, ambient occlusion
+World window 48 x 44 x 48 chunks (192 m across, -48..128 m, at 0.125 m voxels; view radius 92 m with an edge fog
+over its last 15 %), 5300-5600 dense chunks and about 14 800 Packed ones (23-24 MiB of RLE) once filled, 473 MiB
+of GPU memory; gbuffer / lighting 6.2 / 8.9-9.2 ms at the furniture probe, 12.2 / 7.3-7.6 ms on the peak looking
+over the valley (view-distance.md, "Stage 3 as built"). (At 0.1 m: 48 x 55 x 48, 154 m across, 5500-6600 dense;
+before view distance stage 1: 48 x 8 x 48 around the camera, about 8100 dense chunks.) Measured cost of the lighting features: sun shadows ~4.7 ms, ambient occlusion
 ~5.9 ms, emissive pickup ~1.5 ms; each can be switched off (`--no-shadows`, `--no-ao`, `--no-emissive`).
 
 Known costs worth attacking, in order of expected gain:
@@ -123,7 +125,7 @@ State (stages are those of [design/networking.md](design/networking.md)):
   same picture; chunk and body counts vary between runs of either build by a few percent (streaming timing).
   **Not done / open:** the tick-rate scale of `Engine` (stage 4, with time sync); nothing yet stops a network client
   from running with a `saveDirectory` (stage 3: `net::Client` must refuse or clear it); on a server scene pieces of
-  16 voxels and more stay for good until `Scene::Damage` gets its threshold (stage 2 / 6); lifetimes run per tick
+  16 voxels (0.1 m) and more stay for good until `Scene::Damage` gets its threshold (stage 2 / 6); lifetimes run per tick
   in `Step` but per rendered frame in the engine, so nothing replicated may depend on them. The choices made where
   the design was open are in `design/networking.md`, "Stage 1 as built".
 - **Stage 2, world operations and the blast split - done.** Replicated terrain edits take integer parameters only:
@@ -144,7 +146,7 @@ State (stages are those of [design/networking.md](design/networking.md)):
   the blast that freed it (it is still pushed the same way). **Not done / open:** nothing acts on the skipped /
   unsynced report yet (stage 7); object particles are still spawned inside `Damage`; no `opSeq` or encoding
   (stage 3). Choices where the design was open: `design/networking.md`, "Stage 2 as built".
-  **Crumbs (follow-up):** islands under 16 voxels (`scene::kMinPieceVoxels`) are no longer a `Detach` each but one
+  **Crumbs (follow-up):** islands under the piece volume (0.016 m^3, `scene::MinPieceVoxels`; 16 voxels of 0.1 m then) are no longer a `Detach` each but one
   `ClearMask` per blast over their tight box, shown as particles only (`sim::PresentBlast`, now GPU-free and tested;
   no model, entity or body). Measured on generated terrain: 2051 operations for 44 blasts (worst 299) became 75 (at
   most 2), est. 65 KB -> 7.2 KB of wire. Found, open: the island search takes 70-200 ms per 1.2 m blast in the `dev`
@@ -257,11 +259,16 @@ State (stages are those of [design/networking.md](design/networking.md)):
   screenshots in its "Stage 2 as built" (0.1 / 0.125 / 0.15 m: view radius 73.6 / 92 / 110 m, far-view gbuffer
   10.6 / 12.2 / 11.5 ms; at 0.15 m thin boards merge and shelf pitches go uneven). Found there: a terrain piece that
   breaks off loses its blast push when its first physics step is not frozen (stale terrain collider, open).
-  Waiting for the owner's choice of size; next: stage 3 (switch to 0.125 m: debris thresholds, tree rule, goldens),
-  then the LOD levels (stage 6) that give the 2x view distance. Not checked at other sizes: windowed play, `--climb` /
-  `--fly`.
+  The owner chose 0.125 m. Stage 3 (switch to 0.125 m) is **done**: engine defaults 0.125 m (`voxel::kDefaultVoxelSize`;
+  the game no longer sets a size, `--voxel-size` stays an offline preview), debris thresholds in metres (8 / 25 / 5
+  voxels, server 262; every `SimulationConfig` resolves them from its world's size, and the blast's crumb rule
+  follows the session's size), tree trunks sized in metres (1 or 3 voxels), region files record the voxel size and
+  refuse another size or an unreadable file without ever overwriting it (saves report regions left unwritten), `Terrain.GoldenChunkHashes` regenerated (probes mapped to 4 m chunks; noise and height bits unchanged), lod.md
+  rebased; numbers in its "Stage 3 as built" (timers within 5 % of the stage-2 0.125 m run). Owner decisions taken
+  with it: furniture stays blocky world voxels, step height stays 0.35 m. Next: the distance budgets (stage 4), then
+  the LOD levels (stage 6) that give the 2x view distance. Not checked: windowed play at 0.125 m (the owner).
 - **Level of detail**: clip-map cascades with doubled voxel size for long view distances. The current
-  view radius is 73.6 m (the 48-chunk window at 0.1 m voxels).
+  view radius is 92 m (the 48-chunk window at 0.125 m voxels).
 - **Chunk memory**: chunks are dense (37 KiB each). Palette-compressed or brick-sparse payloads.
 - **Water**: liquids have an animated, sky-reflecting surface shaded in the composite pass
   (ARCHITECTURE.md 5.7; about 0.15 ms on a UHD 620 with half of the screen under water). Still opaque voxels:

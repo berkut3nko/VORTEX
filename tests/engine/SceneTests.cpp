@@ -33,7 +33,17 @@ using scene::kNoEntity;
 
 namespace {
     constexpr float kStep = 1.0f / 60.0f;
+    // The scene tests are written in voxels of 0.1 m (positions, radii and expected voxel counts
+    // were placed on that grid). They keep testing at 0.1 m explicitly; the debris thresholds
+    // then resolve to their metre size there (16 / 48 / 6 voxels: what the tests were written
+    // against). SceneDebris.DefaultThresholdsAtTheEngineVoxelSize runs the real defaults.
     constexpr float kVoxel = 0.1f;
+
+    scene::SceneConfig TestConfig() {
+        scene::SceneConfig config;
+        config.voxelSize = kVoxel;
+        return config;
+    }
 
     physics::PhysicsConfig SmallConfig() {
         physics::PhysicsConfig config;
@@ -46,7 +56,7 @@ namespace {
 
     /// The subsystems a scene references, then the scene itself (declared last: destroyed first).
     struct Fixture {
-        explicit Fixture(uint32_t chunkCapacity = 256, bool withPhysics = true, const scene::SceneConfig& config = {},
+        explicit Fixture(uint32_t chunkCapacity = 256, bool withPhysics = true, const scene::SceneConfig& config = TestConfig(),
                          const physics::PhysicsConfig& physicsConfig = SmallConfig())
             : store(chunkCapacity), particles(4096), scene(store, materials, physics, particles, config) {
             ids = voxel::RegisterDefaultWorldMaterials(materials);
@@ -610,7 +620,7 @@ TEST(Scene, GatherInstancesDescribesEveryPartOfVisibleObjects) {
     EXPECT_EQ(instances[2].boundsMin, glm::ivec3(0, 1, 1));
     EXPECT_EQ(instances[2].boundsMax, glm::ivec3(8, 6, 4));
     // The first voxel of the second chunk is 32 voxels along the object's X axis.
-    ExpectVecNear(glm::vec3(instances[2].localToWorld[3]), moved + rotation * glm::vec3(3.2f, 0.0f, 0.0f), 1e-5f);
+    ExpectVecNear(glm::vec3(instances[2].localToWorld[3]), moved + rotation * glm::vec3(32.0f * kVoxel, 0.0f, 0.0f), 1e-5f);
 
     // The next frame without movement has no motion left.
     f.scene.BeginFrame();
@@ -960,7 +970,7 @@ TEST(SceneDamage, WorksInAFullChunkStore) {
 TEST(SceneDamage, PieceWithoutABodyIsDropped) {
     physics::PhysicsConfig config = SmallConfig();
     config.maxBodies = 1;                         // room for the beam, not for a second half
-    Fixture f(256, true, {}, config);
+    Fixture f(256, true, TestConfig(), config);
     ASSERT_TRUE(f.initialized);
     const Entity beam = f.scene.CreateVoxelObject({.model = f.Box({24, 3, 3}), .position = {0.0f, 5.0f, 0.0f}});
     ASSERT_NE(beam, kNoEntity);
@@ -1021,7 +1031,7 @@ TEST(SceneDamage, LooseFragmentsBecomeParticles) {
     EXPECT_EQ(f.scene.TryGet<scene::VoxelBody>(entity)->model->Size(), glm::ivec3(8, 3, 3));
 
     // With a lower threshold the same nub is a piece of its own instead.
-    scene::SceneConfig config;
+    scene::SceneConfig config = TestConfig();
     config.minPieceVoxels = 2;
     Fixture lenient(256, true, config);
     const Entity again = build(lenient, true);
@@ -1101,15 +1111,11 @@ TEST(SceneDebris, SmallPiecesSplitOffAreRubbleTheDamagedEntityIsNot) {
     EXPECT_EQ(f.scene.DebrisCount(), 1u);
 }
 
-TEST(SceneDebris, DefaultsKeepTinyFragmentsOutOfTheScene) {
-    const scene::SceneConfig defaults;
-    EXPECT_GE(defaults.minPieceVoxels, 6u);                    // nothing of 1-5 voxels is ever an object
-    EXPECT_GT(defaults.debrisBodyVoxels, defaults.minPieceVoxels);
-    EXPECT_GT(defaults.debrisLifetime, 0.0f);
-    EXPECT_GT(defaults.maxDebris, 0u);
-
-    // A 12-voxel end of a beam is below the default piece size: particles, not an entity.
+TEST(SceneDebris, TinyFragmentsStayOutOfTheScene) {
+    // A 12-voxel end of a beam of 0.1 m voxels (0.012 m^3) is below the piece volume
+    // (0.016 m^3, 16 voxels there): particles, not an entity.
     Fixture f;
+    ASSERT_EQ(f.scene.Config().minPieceVoxels, 16u);
     voxel::VoxelVolume volume(glm::ivec3(24, 2, 2));
     volume.FillBox({0, 0, 0}, {24, 2, 2}, f.ids.stone);
     const Entity beam = f.scene.CreateVoxelObject({.model = std::make_shared<voxel::VoxelModel>(std::move(volume), voxel::kWorldPalette),
@@ -1117,10 +1123,98 @@ TEST(SceneDebris, DefaultsKeepTinyFragmentsOutOfTheScene) {
     const scene::DamageResult cut = f.scene.Damage(beam, glm::dvec3(0.4, 5.1, 0.1), 0.12f);
     EXPECT_GT(cut.removed, 0u);
     EXPECT_GT(cut.loose, 0u);
-    EXPECT_LT(cut.loose, defaults.minPieceVoxels);
+    EXPECT_LT(cut.loose, f.scene.Config().minPieceVoxels);
     EXPECT_TRUE(cut.pieces.empty());
     EXPECT_EQ(f.scene.VoxelObjectCount(), 1u);
     EXPECT_EQ(f.physics.BodyCount(), 1u);
+}
+
+// The thresholds of a default SceneConfig (the engine's voxel size), as behaviour: rubble of one
+// voxel less than the piece size crumbles, of the piece size is an entity; rubble below the
+// debris-body size is cleaned-up rubble, at that size it is an ordinary body.
+TEST(SceneDebris, DefaultThresholdsAtTheEngineVoxelSize) {
+    const scene::SceneConfig defaults;
+    EXPECT_EQ(defaults.minPieceVoxels, scene::kFromMetres);     // resolved by the scene
+    Fixture f(256, true, defaults);
+    ASSERT_TRUE(f.initialized);
+    const scene::SceneConfig& c = f.scene.Config();
+    EXPECT_FLOAT_EQ(c.voxelSize, voxel::kDefaultVoxelSize);
+    EXPECT_EQ(c.minPieceVoxels, scene::kMinPieceVoxels);
+    EXPECT_GE(c.minPieceVoxels, 6u);                           // nothing of 1-5 voxels is ever an object
+    EXPECT_GT(c.debrisBodyVoxels, c.minPieceVoxels);
+    EXPECT_GT(c.thinBodyVoxels, 1u);
+    EXPECT_GT(defaults.debrisLifetime, 0.0f);
+    EXPECT_GT(defaults.maxDebris, 0u);
+    if (voxel::kDefaultVoxelSize == 0.125f) {
+        EXPECT_EQ(c.minPieceVoxels, 8u);
+        EXPECT_EQ(c.debrisBodyVoxels, 25u);
+        EXPECT_EQ(c.thinBodyVoxels, 5u);
+    }
+    // A bar of `n` voxels thrown in as rubble, each in its own place.
+    float x = 0.0f;
+    const auto rubble = [&](uint32_t n) {
+        x += 6.0f;
+        return f.scene.CreateVoxelObject({.model = f.Box({static_cast<int>(n), 1, 1}), .position = {x, 5.0f, 0.0f}, .debris = true});
+    };
+    const size_t particlesBefore = f.particles.AliveCount();
+    EXPECT_EQ(rubble(c.minPieceVoxels - 1), kNoEntity);
+    EXPECT_GT(f.particles.AliveCount(), particlesBefore);      // it crumbled
+    const Entity piece = rubble(c.minPieceVoxels);
+    ASSERT_NE(piece, kNoEntity);
+    EXPECT_NE(f.scene.TryGet<scene::Debris>(piece), nullptr);   // small: rubble
+    const Entity small = rubble(c.debrisBodyVoxels - 1);
+    ASSERT_NE(small, kNoEntity);
+    EXPECT_NE(f.scene.TryGet<scene::Debris>(small), nullptr);
+    const Entity big = rubble(c.debrisBodyVoxels);
+    ASSERT_NE(big, kNoEntity);
+    EXPECT_EQ(f.scene.TryGet<scene::Debris>(big), nullptr);     // not small: an ordinary body
+    EXPECT_EQ(f.scene.VoxelObjectCount(), 3u);
+    EXPECT_EQ(f.scene.DebrisCount(), 2u);
+
+    // An explicit voxel count is kept as it is.
+    scene::SceneConfig fixed;
+    fixed.minPieceVoxels = 3;
+    Fixture g(256, false, fixed);
+    EXPECT_EQ(g.scene.Config().minPieceVoxels, 3u);
+    EXPECT_EQ(g.scene.Config().debrisBodyVoxels, c.debrisBodyVoxels);
+}
+
+// The debris thresholds were tuned in voxels of 0.1 m (16 and 48 voxels, 6 voxels thin; a server
+// replicates object pieces of 512 voxels and more). They are metre sizes: at the engine's voxel
+// size the defaults hold the same volume / length, to the nearest voxel (view-distance.md stage 3).
+TEST(SceneDebris, ThresholdsKeepTheirMetreSize) {
+    const scene::SceneConfig defaults = scene::ResolveThresholds({});
+    const double vs = static_cast<double>(voxel::kDefaultVoxelSize);
+    EXPECT_FLOAT_EQ(defaults.voxelSize, voxel::kDefaultVoxelSize);
+    const auto expectVolume = [vs](uint32_t voxels, double reference, const char* what) {
+        const double cube = vs * vs * vs;
+        // The nearest voxel count: within half a voxel of the metre volume.
+        EXPECT_LE(std::abs(static_cast<double>(voxels) * cube - reference), 0.5 * cube) << what << ": " << voxels << " voxels";
+    };
+    expectVolume(defaults.minPieceVoxels, 16 * 0.001, "minPieceVoxels");
+    expectVolume(scene::kMinPieceVoxels, 16 * 0.001, "kMinPieceVoxels");
+    expectVolume(defaults.debrisBodyVoxels, 48 * 0.001, "debrisBodyVoxels");
+    EXPECT_LE(std::abs(static_cast<double>(defaults.thinBodyVoxels) * vs - 0.6), 0.5 * vs) << defaults.thinBodyVoxels;
+    // At 0.125 m: 8, 25 and 5 voxels (the numbers of the design).
+    if (voxel::kDefaultVoxelSize == 0.125f) {
+        EXPECT_EQ(defaults.minPieceVoxels, 8u);
+        EXPECT_EQ(scene::kMinPieceVoxels, 8u);
+        EXPECT_EQ(defaults.debrisBodyVoxels, 25u);
+        EXPECT_EQ(defaults.thinBodyVoxels, 5u);
+    }
+    // At 0.1 m the conversion gives back exactly the values the rules were tuned with.
+    const scene::SceneConfig tenth = scene::ResolveThresholds(TestConfig());
+    EXPECT_EQ(tenth.minPieceVoxels, 16u);
+    EXPECT_EQ(tenth.debrisBodyVoxels, 48u);
+    EXPECT_EQ(tenth.thinBodyVoxels, 6u);
+    EXPECT_EQ(scene::MinPieceVoxels(0.1), 16u);
+    EXPECT_EQ(scene::MinPieceVoxels(0.15), 5u);
+    EXPECT_EQ(scene::VoxelsForVolume(scene::kMinPieceVolume, 0.1), 16u);
+    EXPECT_EQ(scene::VoxelsForVolume(scene::kDebrisBodyVolume, 0.1), 48u);
+    EXPECT_EQ(scene::VoxelsForLength(scene::kThinBodyLength, 0.1), 6u);
+    // And never 0, whatever the voxel size.
+    EXPECT_EQ(scene::VoxelsForVolume(scene::kMinPieceVolume, 10.0), 1u);
+    EXPECT_EQ(scene::VoxelsForLength(scene::kThinBodyLength, 10.0), 1u);
 }
 
 TEST(SceneDebris, RubbleTooSmallToBeAPieceCrumblesInsteadOfBecomingAnEntity) {
@@ -1152,7 +1246,7 @@ TEST(SceneDebris, RubbleTooSmallToBeAPieceCrumblesInsteadOfBecomingAnEntity) {
 }
 
 TEST(SceneDebris, RubbleExpiresIntoParticlesAndReleasesEverything) {
-    scene::SceneConfig config;
+    scene::SceneConfig config = TestConfig();
     config.debrisLifetime = 2.0f;
     Fixture f(256, true, config);
     const Entity lump = Lump(f, {0.0f, 2.0f, 0.0f});
@@ -1179,7 +1273,7 @@ TEST(SceneDebris, RubbleExpiresIntoParticlesAndReleasesEverything) {
     EXPECT_TRUE(f.scene.IsValid(crate));
 
     // No bursts configured: it just disappears. No lifetime configured: it stays.
-    scene::SceneConfig silent;
+    scene::SceneConfig silent = TestConfig();
     silent.debrisLifetime = 1.0f;
     silent.debrisDespawnBursts = 0;
     Fixture quiet(256, true, silent);
@@ -1188,7 +1282,7 @@ TEST(SceneDebris, RubbleExpiresIntoParticlesAndReleasesEverything) {
     EXPECT_FALSE(quiet.scene.IsValid(gone));
     EXPECT_EQ(quiet.particles.AliveCount(), 0u);
 
-    scene::SceneConfig forever;
+    scene::SceneConfig forever = TestConfig();
     forever.debrisLifetime = 0.0f;
     Fixture keep(256, true, forever);
     const Entity kept = Lump(keep, {0.0f, 2.0f, 0.0f});
@@ -1197,7 +1291,7 @@ TEST(SceneDebris, RubbleExpiresIntoParticlesAndReleasesEverything) {
 }
 
 TEST(SceneDebris, CapRemovesTheOldestFirst) {
-    scene::SceneConfig config;
+    scene::SceneConfig config = TestConfig();
     config.maxDebris = 3;
     config.debrisLifetime = 100.0f;
     Fixture f(256, true, config);
@@ -1224,7 +1318,7 @@ TEST(SceneDebris, CapRemovesTheOldestFirst) {
 }
 
 TEST(SceneDebris, RestingRubbleFarFromTheViewerGoesSooner) {
-    scene::SceneConfig config;
+    scene::SceneConfig config = TestConfig();
     config.debrisLifetime = 100.0f;
     config.debrisFarDistance = 20.0f;
     config.debrisFarLifetime = 1.0f;
@@ -1282,7 +1376,7 @@ TEST(SceneDebris, ThinBodiesDoNotTunnelWhateverTheirVoxelCount) {
     // flat at 30 m/s: 0.5 m per step, five times its thickness. Without the thin-body rule
     // (thinBodyVoxels = 0) it is below the floor after one step and never comes back.
     for (const bool thinRule : {true, false}) {
-        scene::SceneConfig config;
+        scene::SceneConfig config = TestConfig();
         if (!thinRule) config.thinBodyVoxels = 0;
         Fixture f(256, true, config);
         const Entity floor = f.scene.CreateVoxelObject(
@@ -1302,7 +1396,7 @@ TEST(SceneDebris, ThinBodiesDoNotTunnelWhateverTheirVoxelCount) {
 
 TEST(SceneDebris, RemnantOfADamagedObjectBecomesRubbleOnceItIsSmall) {
     for (const bool remnants : {true, false}) {
-        scene::SceneConfig config;
+        scene::SceneConfig config = TestConfig();
         config.debrisRemnants = remnants;
         Fixture f(256, true, config);
         const Entity crate = f.scene.CreateVoxelObject({.model = f.Box({4, 4, 4}), .position = {0.0f, 5.0f, 0.0f}});
@@ -1313,7 +1407,7 @@ TEST(SceneDebris, RemnantOfADamagedObjectBecomesRubbleOnceItIsSmall) {
 
         // A dent: 64 voxels minus a corner is still an object.
         ASSERT_GT(f.scene.Damage(crate, glm::dvec3(0.0, 5.0, 0.0), 0.12f).removed, 0u);
-        ASSERT_GE(f.scene.TryGet<scene::VoxelBody>(crate)->model->SolidCount(), config.debrisBodyVoxels);
+        ASSERT_GE(f.scene.TryGet<scene::VoxelBody>(crate)->model->SolidCount(), f.scene.Config().debrisBodyVoxels);
         EXPECT_EQ(f.scene.TryGet<scene::Debris>(crate), nullptr);
 
         // Half of it gone: what is left is a lump (two of the four layers, 32 voxels).
@@ -1322,8 +1416,8 @@ TEST(SceneDebris, RemnantOfADamagedObjectBecomesRubbleOnceItIsSmall) {
         ASSERT_TRUE(f.scene.IsValid(crate));
         ASSERT_TRUE(f.scene.IsValid(fixed));
         const uint32_t left = f.scene.TryGet<scene::VoxelBody>(crate)->model->SolidCount();
-        ASSERT_LT(left, config.debrisBodyVoxels);
-        ASSERT_GE(left, config.minPieceVoxels);
+        ASSERT_LT(left, f.scene.Config().debrisBodyVoxels);
+        ASSERT_GE(left, f.scene.Config().minPieceVoxels);
         EXPECT_EQ(f.scene.TryGet<scene::Debris>(crate) != nullptr, remnants);
         EXPECT_EQ(f.scene.TryGet<scene::Debris>(fixed), nullptr);          // dented, still static: never rubble
         EXPECT_EQ(f.scene.DebrisCount(), remnants ? 1u : 0u);

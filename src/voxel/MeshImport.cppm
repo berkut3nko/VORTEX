@@ -40,7 +40,7 @@ export namespace vortex::voxel {
 
     struct MeshImportSettings {
         std::filesystem::path file;         ///< .gltf or .glb
-        float voxelsPerUnit = 10.0f;        ///< Mesh unit (metre) -> voxels.
+        float voxelsPerUnit = 8.0f;         ///< Mesh unit (metre) -> voxels (8: true scale at the default 0.125 m voxel).
         bool fillInterior = true;
         int maxVoxelsPerAxis = 512;
     };

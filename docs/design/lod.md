@@ -1,6 +1,8 @@
 # Level of detail for distant terrain and objects
 
-Rebased to 0.125 m base voxels (levels 0.125 * 2^L) by [view-distance.md](view-distance.md); mechanisms below unchanged.
+Rebased to 0.125 m base voxels (levels 0.125 * 2^L) and a full-height window by [view-distance.md](view-distance.md);
+mechanisms below unchanged. The numbers below were rewritten for 0.125 m when the engine switched to it (view-distance
+stage 3, 2026-11-12); figures marked *(0.1 m)* are kept from the original 0.1 m text where nothing was re-measured.
 
 Status: design decision, nothing built or measured for it. Millisecond figures not quoted from
 `ROADMAP.md` are estimates; every stage names the measurement that confirms or kills them.
@@ -10,8 +12,9 @@ Claims about today's code were checked against the sources (uncommitted physics 
 
 1. **Distance budgets first** (lighting rate, AO cut-off, shadow-BVH membership, debris and
    particle scaling). No data-layout change, and it is the only part that makes fights cheaper.
-2. **Far terrain = filled clip-map cascades**: level L is a full 48 x 8 x 48 window with voxel
-   size `0.1 * 2^L` m around the same focus, *including* the region the finer levels cover. A ray
+2. **Far terrain = filled clip-map cascades**: level L is a full 48-chunk-wide window over the same
+   height range (-48..128 m: 44 / 22 / 11 rows at levels 0 / 1 / 2) with voxel size `0.125 * 2^L` m
+   around the same focus, *including* the region the finer levels cover. A ray
    traces the finest level and continues in the next one where the finer box ends. Level 1 is a
    second `voxel::World` on the shared `ChunkStore` in the existing chunk format (proposal A);
    shader, uniforms and CPU twin are level-indexed for up to 4 levels from the start (proposal B).
@@ -25,17 +28,18 @@ Rejected, and why:
 
 - **Height-map far field.** Second traversal that `trace.glsl` / `Trace.cpp` and its tests do
   not share (ARCHITECTURE 4.5), no trees, overhangs, craters with undercut or built structures.
-- **Bigger level-0 window.** 96 x 8 x 96 is about 32 000 slots = 1.1 GiB.
+- **Bigger level-0 window.** 96 x 8 x 96 was about 32 000 slots = 1.1 GiB *(0.1 m)*; at full height 80-96 wide is
+  22 000-32 000 slots (view-distance.md).
 - **Hollow rings.** Save 25 % of the columns per level but make every unloaded fine chunk a hole
   and forbid coarse shadow rays. Filled levels also give a fallback for streaming holes.
 - **Compact `LodChunk` format + `LodStore` now (B).** 28 MiB per level instead of 113 MiB, but a
   second chunk format through `World`, the region store, the generator interface, the upload path
   and `VX_VOXEL_ID` before the first far pixel is seen. Level 1 fits in slots that are already
   allocated. Revisited in stage 4, where memory actually decides.
-- **Cone LOD for primary rays (B).** A 0.2 m voxel is 1 px only at 75 m; using level 1 from 37 m
+- **Cone LOD for primary rays (B).** A 0.25 m voxel is 1 px only at 94 m; using level 1 from 47 m
   would show 2 px voxels inside the level-0 window. Coarser levels are used only where the
   finer one ends, and for secondary rays of far pixels.
-- **Model mips (B) and impostors.** Mip 1 is pixel-exact from 75 m; objects end at 77 m. There is
+- **Model mips (B) and impostors.** Mip 1 is pixel-exact from 94 m; objects end at 96 m. There is
   no distance at which a mip is both valid and visible at 768x432, and each mip costs slots plus
   a re-bake on every `Scene::Damage`. The proxy box already is the impostor.
 - **Physics tiers with Kinematic switching / `Deactivate` (both).** Superseded: the working tree
@@ -48,29 +52,32 @@ Rejected, and why:
 
 - 768x432, `fovY` 60 deg: one pixel = 2 tan(30 deg) / 432 = 0.00267 rad. Voxel = 1 px at:
 
-| Level | voxel | 1 px at | window (48 x 8 x 48) | view | fog transmittance at edge |
+| Level | voxel | 1 px at | window (48 chunks wide, -48..128 m) | view (half width) | fog transmittance at edge |
 |---|---|---|---|---|---|
-| 0 | 0.1 m | 37 m | 154 x 25.6 x 154 m | 77 m | 66 % |
-| 1 | 0.2 m | 75 m | 307 x 51 x 307 m | 154 m | 42 % |
-| 2 | 0.4 m | 150 m | 614 x 102 x 614 m | 307 m | 17 % |
-| 3 | 0.8 m | 300 m | 1229 x 205 x 1229 m | 614 m | 2.7 % |
+| 0 | 0.125 m | 47 m | 192 x 176 x 192 m (44 rows) | 96 m | 59 % |
+| 1 | 0.25 m | 94 m | 384 x 176 x 384 m (22 rows) | 192 m | 33 % |
+| 2 | 0.5 m | 187 m | 768 x 176 x 768 m (11 rows) | 384 m | 10 % |
+| 3 | 1 m | 375 m | 1536 x 176 x 1536 m (6 rows, 192 m) | 768 m | 1 % |
 
   Each level starts about where its voxel becomes one pixel, so the swap is sub-pixel. Fog
-  (`density` 0.006 / m, start 8 m) hides the end only at level 3. The vertical extent matters as
-  much as the horizontal: level 0 is 25.6 m tall and generator mountains reach 55 m.
+  (`density` 0.006 / m, start 8 m) hides the end only at level 3; the horizontal edge fog of
+  view-distance.md fades the last 15 % of the outermost level. The vertical extent no longer limits
+  anything: every level spans the full height range, so level boundaries are horizontal only.
+  (At 0.1 m, level 0 was 48 x 8 x 48 chunks, 25.6 m tall, and the generator's mountains reach 55 m.)
 - Today a ray leaving the window is a miss (`gbuffer_world.frag` discards, `lighting.frag` returns
   for sky), so **far terrain is new cost, not a saving**. Far pixels are about 6 % of the screen
   on flat ground and 30-50 % facing a hillside; every "by distance" saving scales with that share.
-- GPU store: `chunkCapacity` 12 288 x 36 936 B = 433 MiB, already allocated; about 8100 slots
-  used, about half of them unseen cave chunks (ROADMAP known cost 1).
-- `TerrainGenerator` works in metres; `TerrainSettings::voxelSize = 0.2`, `caves = false` yields
+- GPU store: `chunkCapacity` 12 288 x 36 936 B = 433 MiB, already allocated; at 0.125 m with
+  `Packed` buried chunks 5300-5600 slots are used after a full fill (measured, view-distance.md
+  stage 3; it was about 8100 at 0.1 m before the full-height window, half of them unseen caves).
+- `TerrainGenerator` works in metres; `TerrainSettings::voxelSize = 0.25`, `caves = false` yields
   the same terrain at half resolution with no new generator code.
 - Every `GpuInstance` enters the per-frame BVH (`Renderer.cpp:1146`); frustum culling affects
   only the draw list, so every shadow and AO ray can visit every pebble.
 
 ### Terrain cascades
 
-**Data.** One `voxel::World` per level, sharing the `ChunkStore`. Level 1: `voxelSize = 0.2`,
+**Data.** One `voxel::World` per level, sharing the `ChunkStore`. Level 1: `voxelSize = 0.25`,
 same `windowSize`, `saveDirectory = save/"lod1"`, `maxJobsInFlight = 2`, generator without
 caves. Estimated 1.4 dense chunks per column = about 3200 slots = 113 MiB of CPU memory, **no new
 GPU memory** (free slots), grid +74 KiB. Slot use becomes about 11 300 of 12 288; the real count is
@@ -96,7 +103,8 @@ secondary rays of far pixels skip the fine levels (legal only because levels are
 `VxHit` gains `level`; the voxel hash is keyed on (absolute voxel at that level, level).
 
 **Streaming holes (stage 3).** A level-0 cell that is unloaded or not uploaded is written as
-`VX_GRID_PENDING` (0x40000000) instead of 0. `VxTraceGrid` then traces the matching octant of the
+`VX_GRID_PENDING` (`0x80000000`, the uniform flag with id 0, since view-distance stage 1) instead of 0.
+`VxTraceGrid` then traces the matching octant of the
 level-1 chunk: `VxTraceChunk` with `bmin` / `bmax` clipped to that 16^3 sub-box (a fine chunk face
 is an integer coarse voxel coordinate, so the existing entry rule stays exact).
 
@@ -133,7 +141,7 @@ All in `lighting.frag` from the `t` already reconstructed per pixel, thresholds 
   to 4 frames late (explosion flash on a distant wall).
 - **Shadow-BVH membership.** An instance casts if it is within 15 m of the camera or
   `boundsRadius / distance >= 0.008` (3 px: a 0.5 m piece stops casting at 62 m, a 3-voxel piece
-  at 19 m). Partition `gpuInstances` casters-first **before** the instance upload and build the
+  at 23 m at 0.125 m). Partition `gpuInstances` casters-first **before** the instance upload and build the
   BVH over that prefix; leaf index = instance index stays valid, no shader change. Stateless, so
   a small shadow can pop at the threshold. Gain is unknown (the instance share of lighting was
   never isolated); add a BVH-leaf-visit counter first.
@@ -146,8 +154,9 @@ All in `lighting.frag` from the `t` already reconstructed per pixel, thresholds 
   free. Addition: an entity with a `Lifetime` whose body has been frozen outside the level-0
   window for longer than 2 s is destroyed; authored entities stay frozen.
 - **Debris threshold.** `Scene::SetViewPoint(pos)`; in `Scene::Damage` the piece threshold is
-  `minPieceVoxels * clamp((d / 15 m)^2, 1, 16)`: with the 24 of `collapse.md`, 24 voxels up to
-  15 m, 96 at 30 m, 384 from 60 m. Smaller pieces become particles as today.
+  `minPieceVoxels * clamp((d / 15 m)^2, 1, 16)`: with the 24 voxels of 0.1 m of `collapse.md`
+  (0.024 m^3, 12 voxels of 0.125 m), 12 voxels up to 15 m, 48 at 30 m, 197 (0.38 m^3) from 60 m.
+  Smaller pieces become particles as today.
 - **Particles.** Effect counts (fx presets, the 400-voxel sample in `Engine::Explode`) scale by
   `clamp(20 m / d, 0.1, 1)^2`; the `SolidQuery` lambda at `Engine.cpp:234` returns false beyond
   30 m (saves one `World::IsSolidAt` per far particle per frame); 25 % of the pool is reserved
@@ -175,11 +184,11 @@ No existing exported signature changes; defaults keep every current test valid.
    counter, sub-pixel culling, distance-scaled piece threshold, particle scaling and query radius.
    *Verify*: pass timers with the camera facing a hillside and on flat ground, before / after
    (target: lighting -2 ms on the hillside, no change in a near-only view); unit tests: a
-   3-voxel piece at 60 m is outside the BVH prefix, `Damage` at 60 m creates no entity below 384
+   3-voxel piece at 60 m is outside the BVH prefix, `Damage` at 60 m creates no entity below 197
    voxels; headless and editor runs stay validation-clean with "Beam cut: ... 1 new object(s)".
 2. **One terrain level** (1-1.5 weeks). Second `World`, `windowSnap`, level-indexed trace and
    uniforms, concatenated grid, far-pixel lighting, CPU twin, `--lod 0/1`.
-   *Verify*: unit test: a ray leaving level 0 hits level 1 within one coarse voxel of a 0.1 m
+   *Verify*: unit test: a ray leaving level 0 hits level 1 within one coarse voxel of a 0.125 m
    reference; logged dense level-1 chunk count <= 3500; screenshot at a mountain view with
    `--lod 0` and `--lod 1`; gbuffer + lighting <= +2.5 ms with `VX_DEBUG_STEPS` showing no steps in
    level 1 under level 0. If slots run out: 40 x 8 x 40 level-1 window, or ROADMAP memory item 1 first.
@@ -205,10 +214,10 @@ No existing exported signature changes; defaults keep every current test valid.
 - **Is +1-2.5 ms acceptable for doubled view distance** on the UHD 620, where a frame already
   costs 21 ms, or should `--lod` default to off on integrated GPUs?
 - **Do distant caves and thin structures matter?** Coarse levels have no caves and erode 1-voxel
-  walls; a player-built thin tower may vanish beyond 77 m.
+  walls; a player-built thin tower may vanish beyond 96 m.
 - **Should far mountains cast shadows on the player** (estimated +0.3-1 ms), or is fog enough?
-- **Objects beyond 77 m are not drawn.** Acceptable for creatures and loose props, or must
+- **Objects beyond 96 m are not drawn.** Acceptable for creatures and loose props, or must
   something (bosses, flying objects, other players) be visible further out?
 - **Late far lighting**: an explosion lights distant walls up to 4 frames late. Acceptable?
-- **Debris at range**: pieces under 384 voxels (about 0.7 m) hit beyond 60 m become particles
+- **Debris at range**: pieces under 197 voxels of 0.125 m (0.38 m^3, about 0.7 m) hit beyond 60 m become particles
   only. Is a fight ever watched from that far (ranged spells, sieges)?

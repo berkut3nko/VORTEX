@@ -246,9 +246,11 @@ namespace vortex {
         if (s.config.exitAfterFrames != 0) {
             const voxel::WorldStats ws = sim.World().Stats();
             // Store-full loads / decodes: chunks drawn as a rock stand-in for want of a slot (must be 0).
-            Log::Info("World: {} dense, {} uniform, {} empty chunks; store {}/{}, {} store-full loads, {} store-full decodes",
+            // Refused regions: save files of another voxel size or unreadable (their edits are not shown, never overwritten).
+            Log::Info("World: {} dense, {} uniform, {} empty chunks; store {}/{}, {} store-full loads, {} store-full decodes; "
+                      "{} refused region file(s) ({} with unwritten edits)",
                       ws.denseChunks, ws.uniformChunks, ws.emptyChunks, sim.Chunks().UsedCount(), sim.Chunks().Capacity(), ws.storeFullLoads,
-                      ws.storeFullDecodes);
+                      ws.storeFullDecodes, ws.refusedRegions, ws.unwrittenRegions);
             const voxel::World& world = sim.World();
             Log::Info("World: window {} x {} x {} chunks (rows {}..{}{}), {} packed chunks in {:.1f} MiB, {} pending; "
                       "{} unloads inside the view radius",

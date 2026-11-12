@@ -19,7 +19,7 @@ export namespace vortex::sim {
         SwapSphere = 3,    ///< `sphere`, `from` -> `id`
         FillBox = 4,       ///< voxel box [`min`, `max`), `id`
         Detach = 5,        ///< terrain island: `min` = origin, `mask`, `velocity`, `netId`
-        /// Terrain crumbs (islands under scene::kMinPieceVoxels): `min` = origin, `mask`. The
+        /// Terrain crumbs (islands under scene::MinPieceVoxels(world voxel size)): `min` = origin, `mask`. The
         /// voxels are cleared like a Detach's; whoever draws shows them as particles, nobody
         /// makes a piece or a body of them.
         ClearMask = 6,
@@ -29,7 +29,7 @@ export namespace vortex::sim {
      * @brief One replicated change of the terrain (docs/design/networking.md, "World operations").
      * @details Integer parameters only, so applying the same operations in the same order to two
      * worlds with equal voxels gives equal voxels on any machine (ApplyOp). A blast is one
-     * CarveSphere, one Detach per terrain island of at least scene::kMinPieceVoxels that broke
+     * CarveSphere, one Detach per terrain island of at least scene::MinPieceVoxels(world voxel size) that broke
      * off, then at most one ClearMask for all smaller islands together (sim::Blast).
      *
      * One struct for every kind; only the fields the kind lists are meaningful, the others keep

@@ -47,7 +47,7 @@ namespace vortex::voxel {
             std::vector<int> savedRows;      // rows outside the band that hold a saved chunk
         };
 
-        explicit Shared(std::filesystem::path saveDir) : regions(std::move(saveDir)) {}
+        Shared(std::filesystem::path saveDir, float voxelSize) : regions(std::move(saveDir), voxelSize) {}
 
         std::shared_ptr<const IWorldGenerator> generator;
         RegionStore regions;
@@ -128,7 +128,7 @@ namespace vortex::voxel {
         Verify(s.x > 0 && s.y > 0 && s.z > 0, "WorldConfig::windowSize components must be positive");
         Verify(s.y <= kMaxRows, "World: at most 128 rows of chunks");
 
-        m_Shared = std::make_shared<Shared>(m_Config.saveDirectory);
+        m_Shared = std::make_shared<Shared>(m_Config.saveDirectory, m_Config.voxelSize);
         m_Shared->generator = std::move(generator);
 
         m_CellCount = static_cast<uint32_t>(static_cast<size_t>(s.x) * static_cast<size_t>(s.y) * static_cast<size_t>(s.z));
@@ -1250,13 +1250,16 @@ namespace vortex::voxel {
         return m_Packed[CellIndex(chunk)];
     }
 
-    void World::Save() {
+    WorldSaveResult World::Save() {
         for (Cell& cell : m_Cells) {
             if (!cell.assigned || !cell.modified) continue;
             if (cell.state == CellState::Dense || cell.state == CellState::Uniform || cell.state == CellState::Empty) PersistCell(cell);
         }
-        const size_t files = m_Shared->regions.Flush();
-        if (files > 0) Log::Info("World saved ({} region file(s))", files);
+        WorldSaveResult result;
+        result.files = static_cast<uint32_t>(m_Shared->regions.Flush());
+        result.unwrittenRegions = static_cast<uint32_t>(m_Shared->regions.UnwrittenRegionCount());
+        if (result.files > 0) Log::Info("World saved ({} region file(s))", result.files);
+        return result;
     }
 
     WorldStats World::Stats() const {
@@ -1274,6 +1277,8 @@ namespace vortex::voxel {
         stats.generatedChunks = m_Shared->generated.load(std::memory_order_relaxed);
         stats.generatedDense = m_Shared->generatedDense.load(std::memory_order_relaxed);
         stats.generateMs = static_cast<double>(m_Shared->generateNs.load(std::memory_order_relaxed)) * 1.0e-6;
+        stats.refusedRegions = static_cast<uint32_t>(m_Shared->regions.RefusedRegionCount());
+        stats.unwrittenRegions = static_cast<uint32_t>(m_Shared->regions.UnwrittenRegionCount());
         return stats;
     }
 

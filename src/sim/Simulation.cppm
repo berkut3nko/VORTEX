@@ -38,13 +38,20 @@ export namespace vortex::sim {
         /// session; a world that loaded saved chunks would not be the world the other side
         /// generated): ServerConfig clears it, and a network client must leave it empty.
         voxel::WorldConfig world;
-        scene::SceneConfig scene;             ///< `voxelSize` is overwritten with the world's.
+        /// `voxelSize` is overwritten with the world's, and the debris thresholds left at
+        /// scene::kFromMetres (the default) become their metre size in voxels of it
+        /// (scene::ResolveThresholds; Config() reports the counts).
+        scene::SceneConfig scene;
         physics::PhysicsConfig physics;
     };
 
-    /// SceneConfig::replicatedPieceVoxels of a server: object pieces below it are client rubble
-    /// (start value of docs/design/networking.md, owner decision 6; tuned in stage 6).
-    inline constexpr uint32_t kServerReplicatedPieceVoxels = 512;
+    /// SceneConfig::replicatedPieceVoxels of a server, in metres: object pieces smaller than this
+    /// are client rubble (start value of docs/design/networking.md, owner decision 6, chosen as
+    /// 512 voxels of 0.1 m; tuned in stage 6).
+    inline constexpr double kServerReplicatedPieceVolume = 0.512;
+    /// kServerReplicatedPieceVolume in voxels of voxel::kDefaultVoxelSize: 262 voxels of 0.125 m.
+    inline constexpr uint32_t kServerReplicatedPieceVoxels =
+        scene::VoxelsForVolume(kServerReplicatedPieceVolume, voxel::kDefaultVoxelSize);
 
     /**
      * @brief Turns a configuration into the one a session server runs: nothing is drawn there
@@ -54,8 +61,9 @@ export namespace vortex::sim {
      * (`scene.bakeModels = false`), and the scene never marks anything as rubble
      * (`scene.debrisRemnants = false`, `scene.markDebris = false`): which entities exist on a
      * server must not depend on a viewer, an age or a cap that clients do not share. Object
-     * pieces below `kServerReplicatedPieceVoxels` get no entity (`scene.replicatedPieceVoxels`):
-     * they are client rubble. Everything else is kept.
+     * pieces below `kServerReplicatedPieceVolume` get no entity (`scene.replicatedPieceVoxels`,
+     * that volume in voxels of `world.voxelSize`): they are client rubble. Everything else is
+     * kept (the other debris thresholds are resolved from the world's size by the Simulation).
      */
     SimulationConfig ServerConfig(SimulationConfig config = {});
 

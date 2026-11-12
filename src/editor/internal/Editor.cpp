@@ -841,8 +841,14 @@ namespace vortex::editor {
             ImGui::TextDisabled("(no save directory)");
         }
         if (save) {
-            world.Save();
-            SetStatus(std::format("World saved to '{}'", world.Config().saveDirectory.string()));
+            const voxel::WorldSaveResult saved = world.Save();
+            if (saved.unwrittenRegions == 0) SetStatus(std::format("World saved to '{}'", world.Config().saveDirectory.string()));
+            else {
+                SetStatus(std::format("World saved to '{}', but {} region(s) with edits were not written: their files are of another "
+                                      "voxel size or unreadable",
+                                      world.Config().saveDirectory.string(), saved.unwrittenRegions),
+                          true);
+            }
         }
     }
 

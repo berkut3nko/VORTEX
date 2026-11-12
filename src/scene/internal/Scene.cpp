@@ -21,7 +21,8 @@ namespace vortex::scene {
     struct Scene::Impl {
         Impl(voxel::ChunkStore& chunkStore, const voxel::MaterialLibrary& materialLibrary, physics::PhysicsWorld& physicsWorld,
              fx::ParticleSystem& particleSystem, const SceneConfig& sceneConfig)
-            : store(chunkStore), materials(materialLibrary), physics(physicsWorld), particles(particleSystem), config(sceneConfig) {
+            : store(chunkStore), materials(materialLibrary), physics(physicsWorld), particles(particleSystem),
+              config(ResolveThresholds(sceneConfig)) {
             config.debrisParticleStride = std::max<uint32_t>(1, config.debrisParticleStride);
             // The body belongs to the component: whatever removes the component (Destroy,
             // registry.destroy / remove / clear) releases the body with it.
@@ -55,7 +56,7 @@ namespace vortex::scene {
             body.layer = motion == physics::MotionType::Static ? physics::Layer::Static
                        : (model.SolidCount() < config.debrisBodyVoxels ? physics::Layer::Debris : physics::Layer::Dynamic);
             // Small or thin bodies pass through the terrain mesh within one step once they are
-            // fast: a 0.1 m slab falling flat is beyond the triangles after a 3 m drop, whatever
+            // fast: a one-voxel slab falling flat is beyond the triangles after a 3 m drop, whatever
             // its voxel count. Continuous detection costs nothing while a body is slow.
             bool thin = false;
             glm::ivec3 solidMin, solidMax;

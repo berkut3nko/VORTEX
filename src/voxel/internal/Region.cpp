@@ -2,6 +2,7 @@ module;
 
 #include <glm/glm.hpp>
 
+#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -80,9 +81,11 @@ namespace vortex::voxel {
         struct Region {
             std::unordered_map<uint16_t, std::vector<uint8_t>> chunks;
             bool dirty = false;
+            bool refused = false;      // the file on disk is of another voxel size: never read into, never overwritten
         };
 
         std::filesystem::path directory;
+        float voxelSize = 0.0f;
         mutable std::mutex mutex;
         std::unordered_map<uint64_t, Region> regions;
 
@@ -119,15 +122,40 @@ namespace vortex::voxel {
             return region;
         }
 
+        // Header: "VXR2", u32 voxel size (float bits), u32 count; "VXR1" files have no voxel size.
+        // A file this build cannot read (another magic - a newer format -, a header cut short, an
+        // impossible count) is refused like one of another voxel size: never overwritten, since
+        // it may hold edits. Only an empty file is replaced.
         void ReadFile(const glm::ivec3& r, Region& region) const {
             std::ifstream in(FilePath(r), std::ios::binary);
-            if (!in) return;
+            if (!in || in.peek() == std::ifstream::traits_type::eof()) return;
+            const auto unreadable = [&](const char* why) {
+                region.refused = true;
+                Log::Error("Region file {} {}: refused (not loaded, never overwritten)", FilePath(r).string(), why);
+            };
             char magic[4];
             uint32_t count = 0;
             in.read(magic, 4);
+            const bool legacy = in && std::memcmp(magic, "VXR1", 4) == 0;
+            if (!in || (!legacy && std::memcmp(magic, "VXR2", 4) != 0)) {
+                unreadable("is not a region file this build reads");
+                return;
+            }
+            float fileVoxelSize = kLegacyVoxelSize;
+            if (!legacy) {
+                uint32_t bits = 0;
+                in.read(reinterpret_cast<char*>(&bits), 4);
+                fileVoxelSize = std::bit_cast<float>(bits);
+            }
             in.read(reinterpret_cast<char*>(&count), 4);
-            if (!in || std::memcmp(magic, "VXR1", 4) != 0 || count > 4096) {
-                Log::Warn("Region file {} is corrupt and was ignored", FilePath(r).string());
+            if (!in || count > 4096) {
+                unreadable("has a corrupt header");
+                return;
+            }
+            if (std::bit_cast<uint32_t>(fileVoxelSize) != std::bit_cast<uint32_t>(voxelSize)) {
+                region.refused = true;
+                Log::Error("Region file {} was written at {} m voxels, this world uses {} m: refused (not loaded, never overwritten)",
+                           FilePath(r).string(), fileVoxelSize, voxelSize);
                 return;
             }
             for (uint32_t i = 0; i < count; ++i) {
@@ -156,7 +184,9 @@ namespace vortex::voxel {
                 std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
                 if (!out) return false;
                 const uint32_t count = static_cast<uint32_t>(region.chunks.size());
-                out.write("VXR1", 4);
+                const uint32_t bits = std::bit_cast<uint32_t>(voxelSize);
+                out.write("VXR2", 4);
+                out.write(reinterpret_cast<const char*>(&bits), 4);
                 out.write(reinterpret_cast<const char*>(&count), 4);
                 for (const auto& [local, bytes] : region.chunks) {
                     const uint32_t size = static_cast<uint32_t>(bytes.size());
@@ -172,8 +202,9 @@ namespace vortex::voxel {
         }
     };
 
-    RegionStore::RegionStore(std::filesystem::path directory) : m_Impl(std::make_unique<Impl>()) {
+    RegionStore::RegionStore(std::filesystem::path directory, float voxelSize) : m_Impl(std::make_unique<Impl>()) {
         m_Impl->directory = std::move(directory);
+        m_Impl->voxelSize = voxelSize;
     }
 
     RegionStore::~RegionStore() = default;
@@ -202,9 +233,13 @@ namespace vortex::voxel {
     size_t RegionStore::Flush() {
         std::scoped_lock lock(m_Impl->mutex);
         if (m_Impl->directory.empty()) return 0;
-        size_t written = 0;
+        size_t written = 0, unwritten = 0;
         for (auto& [key, region] : m_Impl->regions) {
             if (!region.dirty) continue;
+            if (region.refused) {
+                ++unwritten;
+                continue;
+            }
             const glm::ivec3 r = Impl::Unkey(key);
             if (m_Impl->WriteFile(r, region)) {
                 region.dirty = false;
@@ -213,7 +248,26 @@ namespace vortex::voxel {
                 Log::Error("Failed to write region file {}", m_Impl->FilePath(r).string());
             }
         }
+        if (unwritten > 0) {
+            Log::Warn("{} region(s) with edits of this session were not written: their files are of another voxel size or "
+                      "unreadable (kept as they are; the edits are lost when the world is closed)",
+                      unwritten);
+        }
         return written;
+    }
+
+    size_t RegionStore::UnwrittenRegionCount() const {
+        std::scoped_lock lock(m_Impl->mutex);
+        size_t n = 0;
+        for (const auto& [key, region] : m_Impl->regions) n += region.refused && region.dirty ? 1u : 0u;
+        return n;
+    }
+
+    size_t RegionStore::RefusedRegionCount() const {
+        std::scoped_lock lock(m_Impl->mutex);
+        size_t n = 0;
+        for (const auto& [key, region] : m_Impl->regions) n += region.refused ? 1u : 0u;
+        return n;
     }
 
     size_t RegionStore::StoredChunkCount() const {

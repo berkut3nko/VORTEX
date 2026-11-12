@@ -23,6 +23,8 @@ namespace vortex::sim {
         /// The configuration a simulation really runs with (see SimulationConfig).
         SimulationConfig Resolve(SimulationConfig config) {
             config.scene.voxelSize = config.world.voxelSize;
+            // The debris thresholds left at kFromMetres keep their metre size in this world.
+            config.scene = scene::ResolveThresholds(config.scene);
             return config;
         }
     }
@@ -33,7 +35,9 @@ namespace vortex::sim {
         config.scene.bakeModels = false;
         config.scene.debrisRemnants = false;
         config.scene.markDebris = false;
-        config.scene.replicatedPieceVoxels = kServerReplicatedPieceVoxels;
+        // The metre volume in voxels of this world (kServerReplicatedPieceVoxels at the default size).
+        config.scene.replicatedPieceVoxels =
+            scene::VoxelsForVolume(kServerReplicatedPieceVolume, static_cast<double>(config.world.voxelSize));
         return config;
     }
 

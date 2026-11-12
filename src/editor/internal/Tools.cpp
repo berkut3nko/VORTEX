@@ -259,7 +259,7 @@ namespace vortex::editor {
         if (extension == ".gltf" || extension == ".glb") {
             voxel::MeshImportSettings mesh;
             mesh.file = settings.file;
-            mesh.voxelsPerUnit = std::isfinite(settings.voxelsPerUnit) && settings.voxelsPerUnit > 0.0f ? settings.voxelsPerUnit : 10.0f;
+            mesh.voxelsPerUnit = std::isfinite(settings.voxelsPerUnit) && settings.voxelsPerUnit > 0.0f ? settings.voxelsPerUnit : 1.0f / voxel::kDefaultVoxelSize;
             mesh.fillInterior = settings.fillInterior;
             mesh.maxVoxelsPerAxis = std::max(settings.maxVoxelsPerAxis, 1);
             voxel::MeshImportResult imported = voxel::ImportMesh(mesh);

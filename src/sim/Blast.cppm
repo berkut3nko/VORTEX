@@ -38,7 +38,7 @@ export namespace vortex::sim {
      */
     struct BlastResult {
         /// ops[0] is the CarveSphere; one Detach (netId 0) per terrain island of at least
-        /// scene::kMinPieceVoxels follows, in the order ExtractFloatingIslands found them; last,
+        /// scene::MinPieceVoxels(world voxel size) follows, in the order ExtractFloatingIslands found them; last,
         /// if there were smaller islands ("crumbs"), one ClearMask over the box of all of them.
         /// Applying the `op`s in this order to a world that was equal before gives the same
         /// voxels (ApplyOp).
@@ -51,7 +51,7 @@ export namespace vortex::sim {
         /// blast whose island box was not loaded then (no CarveSphere; PresentBlast shows no
         /// explosion and no flash for it).
         bool deferred = false;
-        uint32_t crumbs = 0;           ///< Islands under scene::kMinPieceVoxels, all in the one ClearMask.
+        uint32_t crumbs = 0;           ///< Islands under scene::MinPieceVoxels(world voxel size), all in the one ClearMask.
         uint32_t objectsHit = 0;       ///< Objects that lost voxels (Scene::Damage removed > 0).
         uint32_t objectVoxels = 0;     ///< Voxels removed from objects.
         /// Object pieces below SceneConfig::replicatedPieceVoxels (none while it is 0), their
@@ -62,7 +62,7 @@ export namespace vortex::sim {
 
         /// @brief Union of the skipped / unsynced chunks of all operations.
         voxel::EditReport Report() const;
-        /// @brief Detach operations: islands of at least scene::kMinPieceVoxels (crumbs not counted).
+        /// @brief Detach operations: islands of at least scene::MinPieceVoxels(world voxel size) (crumbs not counted).
         uint32_t IslandCount() const;
         /// @brief Voxels the ClearMask removed (0 without crumbs).
         uint32_t CrumbVoxels() const;
@@ -91,7 +91,7 @@ export namespace vortex::sim {
      * @details In order:
      *  1. `WorldOp::Carve(sphere, power)` is applied (voxel::World::CarveSphereQ).
      *  2. ExtractFloatingIslands over the box `floor(centre) +- (radius / 16 + 24)` voxels, without
-     *     removing anything; each island of at least scene::kMinPieceVoxels becomes a
+     *     removing anything; each island of at least scene::MinPieceVoxels(world voxel size) becomes a
      *     `WorldOp::Detach` (mask of its voxels, netId 0, velocity = BlastPush at its minimum
      *     corner) that is applied at once with ApplyOp - the same call a client makes. The
      *     smaller islands (crumbs) become one `WorldOp::Clear` whose mask is the union of their

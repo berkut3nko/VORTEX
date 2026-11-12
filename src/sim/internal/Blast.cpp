@@ -74,9 +74,11 @@ namespace vortex::sim {
                 world, &simulation.Materials(), IslandBoxMin(sphere), IslandBoxMax(sphere), kMaxIslandVoxels, false, voxel::MaterialFlag_Liquid,
                 &searched);
             // Islands under the piece threshold are crumbs: no Detach each, one ClearMask for all.
+            // The threshold is the piece volume in voxels of the session's size (shared bit for bit).
+            const uint32_t minPiece = scene::MinPieceVoxels(static_cast<double>(world.VoxelSize()));
             glm::ivec3 crumbMin(std::numeric_limits<int32_t>::max()), crumbMax(std::numeric_limits<int32_t>::min());
             for (voxel::FloatingIsland& island : islands) {
-                if (island.voxelCount < scene::kMinPieceVoxels) {
+                if (island.voxelCount < minPiece) {
                     ++result.crumbs;
                     crumbMin = glm::min(crumbMin, island.origin);
                     crumbMax = glm::max(crumbMax, island.origin + island.volume.Size());
@@ -94,7 +96,7 @@ namespace vortex::sim {
                 // depend on the order the islands come in.
                 voxel::VoxelMask mask(crumbMax - crumbMin);
                 for (const voxel::FloatingIsland& island : islands) {
-                    if (island.voxelCount >= scene::kMinPieceVoxels) continue;
+                    if (island.voxelCount >= minPiece) continue;
                     const glm::ivec3 size = island.volume.Size();
                     const glm::ivec3 offset = island.origin - crumbMin;
                     for (int z = 0; z < size.z; ++z)

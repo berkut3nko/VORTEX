@@ -134,7 +134,7 @@ columns, each a contiguous run, and moves no data.
 
 **Full-height window** (`WorldConfig::fullHeight`, the game's setting; `docs/design/view-distance.md`, stage 1).
 The window covers a fixed range of rows - `heightRange`, or the generator's `IWorldGenerator::VerticalBounds()` plus
-`buildHeadroom` (32 m), rounded outwards to `heightSnap` (16 m): -48..128 m = 55 rows at 0.1 m for the built-in
+`buildHeadroom` (32 m), rounded outwards to `heightSnap` (16 m): -48..128 m = 44 rows at the default 0.125 m (55 at 0.1 m) for the built-in
 terrain - and follows the focus in x and z only, so climbing or flying never unloads anything. The top of the range
 is the **build ceiling** (`World::BuildCeiling()`): an edit that would write a solid voxel above it is refused whole
 (`EditReport::outOfBounds`, decided from integers), `Scene::CreateVoxelObject` refuses a model reaching above it, and
@@ -562,8 +562,8 @@ parked dynamic ones - was put or left there on purpose and is never touched, so 
 in the editor deletes nothing. Removals are logged.
 
 Small bodies (`Layer::Debris`) and **thin** ones (solid extent below
-`SceneConfig::thinBodyVoxels` = 6 voxels along any axis, whatever the voxel count) use
-continuous collision detection: a 0.2 m fragment at 20 m/s, or a 0.1 m slab falling flat from
+`SceneConfig::thinBodyVoxels` = 5 voxels of 0.125 m (0.6 m, `scene::kThinBodyLength`) along any axis, whatever
+the voxel count) use continuous collision detection: a 0.2 m fragment at 20 m/s, or a one-voxel slab falling flat from
 3 m, moves further than its own thickness per step and would pass through the terrain mesh
 between two steps.
 
@@ -670,7 +670,7 @@ A blast is split into simulation and presentation:
 * `sim::Blast(simulation, sphereQ, power)` (or `BlastDesc` in metres, quantised first): apply
   `WorldOp::Carve`; search the box `floor(centre) +- (radius + 24)` voxels for floating terrain
   (`ExtractFloatingIslands` without removing) and turn each island of at least
-  `scene::kMinPieceVoxels` (16) into a `WorldOp::Detach` (an occupancy mask, `netId = 0`, the
+  `scene::MinPieceVoxels(world voxel size)` (8 at 0.125 m) into a `WorldOp::Detach` (an occupancy mask, `netId = 0`, the
   blast's push at its corner as velocity) applied with `ApplyOp` = `World::ClearMask`; all smaller
   islands ("crumbs") together become one `WorldOp::Clear` (kind `ClearMask`: the union of their
   voxels over the smallest box holding them), applied last; `Scene::Damage` for every body in range (a snapshot first);
@@ -696,10 +696,18 @@ Destruction must not fill the world with tiny rigid bodies: each costs a body, a
 
 | size (solid voxels) | what it is | default |
 |---|---|---|
-| `< minPieceVoxels` | never an entity: particles on the spot (`Damage` fragments, floating terrain crumbs). The default is `scene::kMinPieceVoxels`, which is also `sim::Blast`'s rule for terrain islands (smaller ones are one `ClearMask` per blast, not a `Detach` each) | 16 |
-| `< debrisBodyVoxels` | a *small* body: `Layer::Debris` (no collisions among each other), continuous collision detection; rubble of this size gets the `Debris` component | 48 |
+| `< minPieceVoxels` | never an entity: particles on the spot (`Damage` fragments, floating terrain crumbs). The default is the piece volume in voxels of the scene's size (`scene::MinPieceVoxels`; `kMinPieceVoxels` at the default size), which is also `sim::Blast`'s rule (at the world's size) for terrain islands (smaller ones are one `ClearMask` per blast, not a `Detach` each) | 8 (0.016 m^3, `kMinPieceVolume`) |
+| `< debrisBodyVoxels` | a *small* body: `Layer::Debris` (no collisions among each other), continuous collision detection; rubble of this size gets the `Debris` component | 25 (0.048 m^3) |
 | larger | an ordinary object that stays | |
-| `< replicatedPieceVoxels` | a piece `Damage` makes no entity for: returned in `DamageResult::fragments` (model, pose, velocities) for whoever draws to create as local rubble; also the damaged entity itself when it is that small and Dynamic (`toRubble`). Off (0) offline; 512 on a server (`sim::ServerConfig`) | 0 |
+| `< replicatedPieceVoxels` | a piece `Damage` makes no entity for: returned in `DamageResult::fragments` (model, pose, velocities) for whoever draws to create as local rubble; also the damaged entity itself when it is that small and Dynamic (`toRubble`). Off (0) offline; 0.512 m^3 on a server (`sim::ServerConfig`: 262 voxels of 0.125 m) | 0 |
+
+The defaults are metre sizes (`scene::kMinPieceVolume`, `kDebrisBodyVolume`, `kThinBodyLength`,
+`sim::kServerReplicatedPieceVolume`: what 16 / 48 / 6 / 512 voxels of 0.1 m were) in voxels of the default 0.125 m
+(`scene::VoxelsForVolume` / `VoxelsForLength`). The three scene thresholds default to `scene::kFromMetres` and are
+resolved in voxels of the scene's own `voxelSize` when it is built (`scene::ResolveThresholds`; `sim::Simulation`
+does it with the world's size, `sim::ServerConfig` converts the replicated volume the same way), so any voxel size
+keeps the metre sizes; a value given in voxels is kept. The blast's crumb rule is
+`scene::MinPieceVoxels(world.VoxelSize())`, computed from the session's voxel size that server and clients share.
 
 `Debris` is added to small pieces that `Damage` splits off, to small dynamic objects created
 with `VoxelObjectDesc::debris`, and to the damaged entity itself once what is left of it is
@@ -867,8 +875,8 @@ World (statistics, save).
   rubble, effects dropped by an empty particle pool, the replicated-piece threshold (fragments,
   a survivor going to rubble, an anchored one staying). World operations: `ApplyOp` per kind,
   the skipped report for chunks outside the window and still loading, a detached piece built from
-  the removed voxels; `sim::Blast`: islands as `Detach` without entities, crumbs under 16 voxels
-  as one `ClearMask` (the 15 / 16 boundary; offline `sim::PresentBlast` makes particles and no
+  the removed voxels; `sim::Blast`: islands as `Detach` without entities, crumbs under `scene::MinPieceVoxels(world voxel size)`
+  as one `ClearMask` (the 7 / 8 boundary; offline `sim::PresentBlast` makes particles and no
   entity or body for them), an island box that is not loaded, objects damaged and pushed,
   fragments on a server; and the stage-2 acceptance: two simulations with different worker counts
   fed the same operations (islands and crumbs included) have equal world hashes, a slightly
