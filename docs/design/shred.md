@@ -2,7 +2,8 @@
 
 Status: **stages 0, 1, 1b, 1c, 1d and 1e built and reviewed** (2026-11-12, see "Stage 0-1c as built", "Stages 1d-1e
 as built" and "Review of stages 0-1e" at the end of Part 1); the owner took the recommended answers to open questions 1, 2, 3 and 7 ("Yes, build
-1-1e"). The rest is a draft. Written read-only against the working tree of 2026-11-12, while the
+1-1e"). **Stage 4 built** (2026-11-12, owner's answer to question 4: yes, before networking stage 3; see "Stage 4 as
+built" in Part 4; not yet reviewed by a second reader). The rest is a draft. Written read-only against the working tree of 2026-11-12, while the
 voxel size moves from 0.1 to 0.125 m (the game already defaults to 0.125 m, `src/main.cpp:23-24`). Line numbers are
 from the working tree. Every millisecond figure that does not cite a measurement is an estimate and is marked **(e)**.
 Every CPU time in the docs before 2026-11-12 comes from a build without `-O` (CLAUDE.md:120-121); `build/` is now
@@ -67,7 +68,7 @@ Relation to other designs:
 | Stage 4: no whole-object work per hit | Kept unchanged. |
 | Stage 5: terrain structures | **Moved first** (here stages 4-5). The game's buildings are terrain `FillBox` boxes (`src/main.cpp:686-712`), castles must exceed 12.8 m (ROADMAP.md:174), terrain ops already replicate, object pieces need networking stage 6. |
 | "What is wrong today": `minPieceVoxels = 6`, no `Lifetime`, `Engine::Explode` does islands (collapse.md:41-50) | **Stale.** Pieces under `MinPieceVoxels` (8 at 0.125 m, `scene/Scene.cppm:53-55`) are particles; rubble under `debrisBodyVoxels` (25 at 0.125 m, `Scene.cppm:41,73-75`) has `Debris`, 15 s life and a cap of 192 (`Scene.cppm:114,119`, `Scene.cpp:222`); larger rubble had neither (built: stage 1e); islands run in `sim::Blast` (`sim/internal/Blast.cpp:68-114`). The "tower stays in the air" line (collapse.md:47-48) is the bug of stage 1 here. |
-| Cell format "more than 8 components merge into node 7" (collapse.md:74-75) | Kept, but it over-connects, so the graph is **not** equal to voxel connectivity in such cells (stage 4 tests say so). |
+| Cell format "more than 8 components merge into node 7" (collapse.md:74-75) | **Replaced in stage 4** (as built): every component of a cell is its own node in a per-chunk node list, so the graph equals voxel connectivity everywhere, over-full cells included (counted, `Structure.GraphEqualsLabelComponentsInOverfullCells`). |
 | Rejected "CSR node/edge graph with bond areas, masses and a load check (B)" (collapse.md:28-31) | **Kept rejected for the default.** Revisited only as optional stage 7, with a spawn guard that answers the rejection. |
 
 ## Part 1 - The "second shot" bug (verified)
@@ -312,7 +313,7 @@ What was built, as designed above unless this table says otherwise:
 
 | Item | As built | Why / what later stages must know |
 |---|---|---|
-| Per-blast log (stage 0) | `Engine::PresentBlast` logs one `Blast:` line per blast (`Blast (late search):` for a retry): total ms = carve + islands + flood + ops + objects (from `BlastResult::times`, wall clock in `sim::Blast`) + present; island / crumb counts; face candidates, proven, merged, attached by limit / known / budget / unloaded; face components over the limit; oversize islands; decodes; deferral, skipped chunks, dropped / given-up searches; edited chunks + rubble slots and the bytes they upload (36 936 B each). | Times are logged only. The counters (`BlastResult::search`, `IslandSearchStats`) are integer work and the same on every machine: what R5's work budget will count. |
+| Per-blast log (stage 0) | `Engine::PresentBlast` logs one `Blast:` line per blast (`Blast (late search):` for a retry): total ms = carve + islands + flood + ops + objects (from `BlastResult::times`, wall clock in `sim::Blast`) + present; island / crumb counts; face candidates, proven, merged, attached by limit / known / budget / unloaded; face components over the limit; oversize islands; decodes; deferral, skipped chunks, dropped / given-up searches; edited chunks + rubble slots and the bytes they upload (36 936 B each). | Times are logged only. The counters (`BlastResult::search`, `IslandSearchStats`) are integer work and the same on every machine: what R5's work budget will count - except `chunksDecoded` and stage 4's `graphsBuilt`, which depend on streaming and on what the graph cache held (logged only, never a budget input; stage 4 review). |
 | Chunk gather (stage 0) | `ExtractFloatingIslands` reads each chunk once: `StateOf` + `GetChunk`, empty 4^3 blocks skipped by `blockMask`, Uniform chunks filled by rows, a Packed chunk decoded once (`DecodeChunk` rebuilds its occupancy). `FloatingIslands.GatherByChunkEqualsPerVoxel` compares it with the old per-voxel gather on 80 random boxes over packed and unpacked built-in terrain with holes (Dense, Uniform, Packed, Empty chunks and water). | The labelling (`LabelComponents`, about 20-25 ns per solid voxel) is now most of the island search. |
 | Flood API | As sketched, plus `IslandBoxScan` (the optional last parameter of `ExtractFloatingIslands`: labels, face components, `faceOversize`, `oversizeIslands`, `boxVoxels`), `ComponentLabels::firstIndex` (each component's seed = first voxel in scan order), `FloodLimits::deferOnUnloaded`, `FloodResult::merged` / `unloadedChunk`; `ignoreFlags` is `uint32_t` like `ExtractFloatingIslands`'. `sim::IslandBox` / `sim::FloodBox` give both boxes. | |
 | "Visits" (rules 5, R5) | A visit is a voxel **enqueued** (marked) by a flood, the seed included. A flood gives up by limit when it has marked `maxVoxels + 1`; the budget is spent when the call has marked more than `maxVisitsPerSearch` (`kFloodVisitBudget` = 240 000). | Three floods that each reach the limit spend 180 003 visits; a fourth runs out of budget at visit 240 001 (`Blast.SmallIslandProvenBeforeTheBudgetIsSpent`: the small island's 32 visits, 1 proven, exactly 3 by limit, 1 by budget, `floodVisits` 240 001). |
@@ -362,8 +363,9 @@ At 0.1 m (`--voxel-size 0.1 --tower-blast`) the tower is freed by shot 7 of 7 to
 
 **The 3 ms rule ("Budgets"): search + flood is over 3 ms per cast** - 3.3-5.6 ms in the tower and castle cases on a
 quiet CPU, and the island search alone is 3-5 ms at the tower and 9-12 ms underground. The chunk gather is not enough,
-so by this document's rule **stage 4 (cell graph) must move before networking stage 3**. That is open question 4,
-which the owner has not answered yet (recommendation: yes).
+so by this document's rule **stage 4 (cell graph) must move before networking stage 3**. That was open question 4;
+the owner answered yes and stage 4 is built (Part 4, "Stage 4 as built": 0.06-1.0 ms per cast in the same quiet
+cases on flat ground and game terrain, cold graph builds included; cold builds in game are slower).
 
 **Headless (validation on, all exit 0):** the standard game run (`Beam cut: 13 voxels removed, 1 new object(s)`, HUD
 149 quads, `on the ground`), the editor run, `--climb` (`0 unloads inside view radius, window y fixed`; its blast
@@ -542,13 +544,15 @@ like dirt.
   `EditRegion` queues a change, so editor and game `FillBox` edits are seen too. Memory: a 32 m castle = 512 chunks
   = 1 MB of cells (e), only near edits or structures.
 - **Connectivity on the graph replaces the voxel search** (stage 4), inside the same flood box as stage 1 (+-96
-  voxels; no new server margin). Graph connectivity equals voxel 6-connectivity **except in cells with more than 8
+  voxels; no new server margin). *(Design; superseded by "Stage 4 as built": no merge, every component is a node, so
+  the rest of this item and the next describe what was not built.)* Graph connectivity equals voxel 6-connectivity **except in cells with more than 8
   components**, which merge into node 7 and over-connect (collapse.md:74-75). Cells over 8 components are resolved
   by the exact per-voxel search for those cells (decided in stage 4 from a measured count; fallback: keep the merge
   and accept "the graph never detaches what the voxel search keeps"). A per-search counter `overfullCells` is
   logged. Only released nodes are re-labelled per voxel to build `Detach` masks.
-- Switching from the voxel search to the graph **can change server results** where cells are over-full; networking.md
-  says so in stage 4's commit (it is a server decision, clients only apply).
+- *(Design, superseded.)* Switching from the voxel search to the graph **can change server results** where cells are
+  over-full. As built it cannot: over-full cells are exact, and results equal stage 1 except where a work budget runs
+  out (networking.md "Changed by shred.md stage 4"; it is a server decision, clients only apply).
 - **Overhang rule inside registered structures** (stage 5). `sim::StructureRegistry` holds integer voxel boxes:
   the playground buildings now, prefab placements in M3/M4. Inside a box: collapse.md's 0-1-2 bucketed search
   (up 0, side 1, hang 2; collapse.md:94-97) from anchors = solid nodes in the ring of cells outside the box (the
@@ -556,6 +560,125 @@ like dirt.
   iron 10 cells). **Outside structures: connectivity only**, so cliffs never fail by themselves.
 - **No-fall-on-spawn guard**: registering a structure runs the solve once; nodes that would fall are reported and
   pinned (a per-cell flag), as collapse.md:127-128 asks.
+
+### Stage 4 as built (2026-11-12)
+
+The owner answered open question 4 with yes: the cell graph replaces the voxel island search **before** networking
+stage 3. Built as designed above unless this table says otherwise. Reviewed by three readers ("Review of stage 4" below).
+
+| Item | As built | Why / what later stages must know |
+|---|---|---|
+| Cell format | `vortex.voxel:structure` (`voxel/Structure.cppm`, `internal/Structure.cpp`). A **node** is one 6-connected component of solid, not ignored voxels inside one 8^3 cell; a `ChunkGraph` holds every node of a chunk's 64 cells (`GraphNode`, 72 bytes: 6 face masks of 8 x 8 bits, `voxels`, `mass`, `firstVoxel`, cell-local bounds, its links) and its links inside the chunk (`GraphLink`: node, face, `bond`). Nodes are ordered by cell, then by first voxel in scan order; links by face, then node. collapse.md's fixed 32-byte `SupportCell` (8 nodes, node 7 over-connects) is **not** used. | The owner's forward requirement (a whole tower on a 4-voxel bridge must not hold, stage 7) needs per node its voxel count and an integer mass, and per link its bond: `GraphNode::voxels`, `GraphNode::mass` (sum of `densityQ` = material density in kg/m^3, rounded; kg = mass x vs^3), `GraphLink::bond` (voxel faces shared, 1..64) inside a chunk, `BondVoxels(a, b, face)` = popcount of the two face masks across a chunk face. A load check can walk the cached graph without rebuilding anything. `Structure.NodesCarryMassAndLinksTheirBond` (a 2 x 2 iron neck under a stone block: bond 4). |
+| Over-full cells | **Measured, then decided: exact, no merge.** Count over the game's terrain at 0.125 m (`Structure.DISABLED_GraphBuildCost`, a 12 x 8 x 12 window with packing): 22 cells with more than 8 components in 1301 Dense and Packed chunks; in the headless runs 0 at the probe, the castle and `--climb`, 3 on the first tower shot (crater crumbs); random noise volumes in the tests: hundreds. They are rare, but they sit exactly where blasts leave crumbs, and the merge would leave those crumbs hanging. Since a node list per chunk costs nothing extra for a normal cell, every component is its own node: the design's "exact per-voxel search for those cells" is done once when the chunk graph is built, not per search. `overfullCells` is still counted (graphs a search used) and logged. | The graph equals voxel 6-connectivity **everywhere** (`Structure.GraphEqualsLabelComponentsWithoutOverfullCells`, `...InOverfullCells`), so results do **not** change in over-full cells. They can change only where a work budget runs out (next rows). |
+| Liquids, Uniform, Packed | Solid = id != 0 and not ignored (`GraphMaterials`: `MaterialFlag_Liquid`, as the island search). Each 4^3 block is read once: a block of one id costs no per-voxel work; otherwise one table lookup per voxel sums the density and says whether anything was ignored (if not, the occupancy mask is the solid mask). A Uniform chunk copies a prebuilt full-chunk graph (a uniform liquid chunk has no nodes), Empty has none, Packed is decoded once (`ReadChunk`). The cell flood is bitwise: z slices of 64 bits, an occluded (Kogge-Stone) fill per slice, a worklist of slices. | Measured build per chunk (quiet, -O2, game terrain 0.125 m): Dense 26-33 us (16.5 us with the chunk in the CPU cache), Packed 32-38 us (decode included), Uniform 1.1-3.9 us, Empty 0.1 us. The design estimated 20-50 us. |
+| Cache and revision | `World::ChunkRevision(chunk)`: a per-World counter given to a chunk whenever `QueueChange` reports it (every edit through `EditRegion`: game, editor, `FillBox`, replicated ops; and loads), when it unloads, is re-targeted or placed by the column pass; 0 = not loaded; never reused; packing / unpacking keep it. `voxel::TerrainGraphCache` (owned by `sim::Simulation`, `TerrainGraphs()`) keeps one graph per chunk with the revision it was built from and rebuilds a chunk on the first lookup after its revision changed - lazily, only chunks a search reaches. Dense and Packed chunks own their graph; every Uniform chunk of one id shares one graph (and every empty or uniform-liquid chunk the empty one), built once per material table (review: each Uniform chunk held a 6.6 KB copy before). Graphs keep no vector growth slack. At most 4096 entries: when a search starts over the cap, entries whose chunk changed or unloaded go first, then the least recently used, down to 3/4 of the cap; cleared when the World or the material tables change. **Measured memory** (`TerrainGraphStats::bytes`, logged in the `Blast:` line; `DISABLED_GraphBuildCost`, game terrain at 0.125 m): 5.2 KB per Dense graph, 6.5 KB per Packed one, 1.3 KB per chunk over a whole full-height window (most chunks are Uniform or empty), so at most about 27 MB at the cap if every entry were a surface chunk, about 5 MB for a typical mix. | Which graphs are cached never changes a result (`Structure.RefreshEqualsRebuild`: random carves, fills, liquids and ClearMasks over terrain with Packed chunks; the kept cache equals a fresh one chunk for chunk and rebuilt exactly the changed chunks; `Structure.EvictionNeverChangesAGraph`: a 64-entry cache over a 704-chunk window, edits between passes, eviction exercised, every graph equal to a fresh build, the byte count equal to what the graphs hold). **Stale graphs (review):** a re-labelled island node whose voxel count, face masks or bounds differ from its graph (an edit path that missed the revision) is counted (`relabelMismatch`), nothing of it is written (before the review it wrote outside the island volume: heap corruption), the cache is dropped and the search runs again on fresh graphs (`staleGraphRetries`, an error line); if that still differs no island is returned. `Structure.StaleGraphNeverDetachesAttachedVoxels` (a test hook keeps a graph from before a 1-voxel bridge: before the fix 68 attached voxels were detached). Only island nodes are checked: a stale attached neighbour is not seen, the revision rule stays the guard. |
+| Search | `voxel::SearchIslandsOnGraph` (GPU-free, no world change), same boxes as stage 1: the island box (rows below a full-height window cut off) and the flood box. (1) Seeds = nodes whose bounds meet the island box (chunks of the box must be loaded, as before, or the search is refused: offline deferral / server error unchanged). (2) Box components = seeds joined by links between seeds (union-find; no chunk outside the island box is read). (3) A box component over `kMaxIslandVoxels` (whole-node count) is attached (`faceOversize`; `oversizeIslands` if it lies inside the box interior: exact). One inside the box interior is a whole component: an island without a flood. (4) The others are flooded **smallest first** (whole-node voxel count, ties by first seed), FIFO over nodes, faces -x +x -y +y -z +z, links in their order: a node with a voxel on the flood box face layer (or on the window's bottom row) ends the flood (`attachedByFace`), so does passing `kMaxIslandVoxels` voxels (`attachedByLimit`), reaching a node an earlier flood gave up on (`attachedByKnown`), the budget (`attachedByBudget`) or a chunk that is not loaded (offline: face islands withheld, the search waits for that chunk; server: `attachedByUnloaded`, an error). (5) Only island nodes are re-labelled per voxel (`NodeVoxels`: the cell flooded again from the node's first voxel) to build the island volumes. (6) Islands are placed where the voxel search puts them: inside the box interior by first voxel in box scan order; across the box face by their smallest in-box component (`LabelComponents` on the island's in-box voxels, only when two or more must be ordered), ties by its first voxel. | A node touching the flood box face layer is attached because any voxel path from the interior to outside the box crosses that layer, so the voxel flood would have reached the face too; nodes off the face read no chunk outside the flood box (`Blast.FaceFloodIndependentOfLoadingOutsideTheFloodBox` holds for the graph counters too). Equal voxels in the flood box give equal islands in equal order, whatever is cached or loaded outside it. |
+| Budget (R5) | `sim::kGraphNodeVisitBudget` = 32 768 node visits per blast (e: a flood gives up at 60 000 voxels, about 120 nodes of solid cells, about 940 of 1-voxel walls). The stage-1 budget (240 000 voxel visits) applies to the voxel search only. | **The only place results may differ from stage 1:** where either budget runs out. `Blast.SmallIslandProvenBeforeTheBudgetIsSpent`: the voxel search spends its budget on the fourth slab; the graph gives up on all four slabs by limit after about 500 node visits, far inside its budget - the operations are the same. `Structure.GraphBudgetIsCountedInNodeVisits` reaches a small budget (150) at visit 151, the small island still first, with every counter a budget may read equal cold vs warm cache (same world, three workers) and one vs three workers (both cold); only `graphsBuilt` differs. **Also differs (review):** when a chunk of the flood box is not loaded, the two searches flood in another order, so offline one may defer (`complete` false) while the other returns its face islands, and on a server one may count `attachedByUnloaded` where the other counts `attachedByFace` (both attached: the same operations). A flood that closes reads the same chunks in both. `checkIslandSearch` compares only in-box islands then. |
+| `sim::Blast` | `SimulationConfig::islandSearch` = `IslandSearchKind::Graph` (default) or `Voxel` (the stage-1 search, kept as the reference); `checkIslandSearch` (tests) runs the other one on the same voxels before anything is applied and counts differences (`Simulation::IslandSearchCheck()`, `IslandSearchStats::referenceMismatch`, `BlastResult::reference` = the other search's counters, `BlastTimes::referenceMs`). Emission is unchanged: carve; in-box islands; face islands; one `ClearMask`. `IslandSearchStats` gained the graph counters (`graph`, `seedNodes`, `boxComponents`, `graphFloods`, `attachedByFace`, `nodeVisits`, `chunkGraphs`, `graphsBuilt`, `overfullCells`, `relabelledNodes`, `outsideBox`), `BlastTimes` `graphBuildMs`, `graphFloodMs`, `relabelMs` (parts of `searchMs`). The `Blast:` line logs them. | No `WorldOpKind`, `Detach` / `ClearMask` or wire change; `Blast.TwoSimulationsFedTheSameOperationsHaveEqualHashes` and `Blast.FaceFloodTwoSimulationsEqualHashes` green. `faceCandidates`, `floodVisits` and `boxVoxels` are voxel-search counters (0 for the graph). |
+| Game | `--after-fill` counts the `--probe-blast` / `--tower-blast` / `--castle-blast` script frames from `World: window filled` (costs on a CPU no longer shared with generation; run with `--frames 700` or more). The tower and castle log lines print the graph counters. | |
+
+**Tests** (12 new, 477 in all after the review, 3 of them disabled measurements). VortexCoreTests (`tests/core/StructureTests.cpp`):
+`Structure.GraphEqualsLabelComponentsWithoutOverfullCells`, `GraphEqualsLabelComponentsInOverfullCells` (random boxes
+and noise over 2 x 2 x 2 chunks with water: the same partition as `LabelComponents`, node voxels / first voxel / mass
+re-checked, link bonds = face masks), `UniformAndEmptyChunks`, `NodesCarryMassAndLinksTheirBond`,
+`ChunkRevisionChangesWithEveryContentChange`, `RefreshEqualsRebuild`, `EvictionNeverChangesAGraph` and
+`StaleGraphNeverDetachesAttachedVoxels` (review), `GraphNeverDetachesWhatTheVoxelSearchKeeps`
+(built-in terrain at 0.5 m with and without Packed chunks, full height, 80 searches after blasts at random pillars,
+arms, roofs, noise and water: no voxel the voxel search keeps is detached, and where no budget ran out the same
+in-box and face islands in the same order - 926 islands, 138 across the box face, 0 of 80 searches with a budget
+spent; over-full cells summed per search 320, a cell repeating across searches; the subset check is skipped where the
+voxel search ran out of budget),
+`GraphBudgetIsCountedInNodeVisits`, the disabled `DISABLED_GraphBuildCost`. VortexSimTests:
+`Structure.GraphFloatingEqualsFaceFlood` (every stage-1 case - pillars, ledge, ground, arm, slabs and small island,
+plank arm, forest, two legs, 60 000 / 60 001 voxels, water channel, oversize island, full-height bottom, server and
+offline unloaded chunk with the late search - in two simulations, graph and voxel: equal operations per result and
+equal hashes). Besides, every `Blast.*` and `Rubble.*` arena (`FaceFloodTests.cpp`, `BlastTests.cpp`,
+`RubbleTests.cpp`) now runs with `checkIslandSearch`, fails on any difference and checks that every search it ran was
+compared (`IslandSearchChecks::run`): every stage-1 test compares the two searches on its own voxels, except face
+islands where a work budget ran out on either side or a flood met an unloaded chunk (those cases are compared op for op
+in `GraphFloatingEqualsFaceFlood`). Stage-1 asserts on voxel-search counters read `BlastResult::reference`; graph
+counterparts were added where they mean something (limit / face, node visits equal with 1 and 3 workers, one flood for
+two legs). Order of work, plainly: the tests were written after a first draft of the search, then each was checked
+against sabotaged builds - floods disabled together with revisions ignored by the cache (3 core tests failed:
+`RefreshEqualsRebuild`, `GraphNeverDetachesWhatTheVoxelSearchKeeps`, `GraphBudgetIsCountedInNodeVisits`; 15 sim tests,
+`GraphFloatingEqualsFaceFlood` and the checked stage-1 tests among them), a cell flood that does not cross z slices
+(5 core tests failed) - and passes on the real one.
+
+**Measured** (-O2, UHD 620 laptop). Quiet: `Blast.DISABLED_CostOfTheTowerAndCastleCases`, 0.125 m, 1.2 m power-6
+shots, three fresh worlds per row, on two grounds: **flat** (`CreateFlatGenerator` with FillBox structures: Uniform
+chunks and one-id blocks, the build's fast paths) and **game terrain** (`CreateTerrainGenerator`, Packed chunks on:
+caves, ores, mixed blocks). Since the stage-4 review the graph search runs in one simulation and the stage-1 voxel
+search in a second one with the same voxels and shots (`checkIslandSearch` off), so neither warms the CPU cache for
+the other; both end with equal `WorldHash`. (The first table, before the review, ran both in one simulation on flat
+ground only: its cold numbers flattered the game.)
+
+| Case (all cold = first shot at a site) | Flat: graph search per cast (builds) | Game terrain: graph search per cast (builds, graphs built) | Voxel search, flat / terrain |
+|---|---|---|---|
+| Underground 1.5 m, 6 m under the surface | 0.28-0.34 ms (0.17-0.20) | 0.70-0.83 ms (0.59-0.73, 27 at 22-27 us) | 14.6-19.2 / 8.9-12.4 ms |
+| Watch tower ring shot 1 (cold) | 0.18-0.21 ms (0.12-0.14) | 0.58-0.60 ms (0.43-0.46, 21 at 21-22 us) | 5.6-10.5 / 3.7-4.2 ms |
+| Watch tower ring shots 2-6 | 0.06-0.16 ms | 0.13-0.40 ms (3-14 built, 6-49 us each) | 3.7-7.1 / 3.3-6.6 ms |
+| Watch tower, the freeing shot | 0.22-0.26 ms (8516 voxels, shot 7) | 0.22-0.31 ms (9506 voxels: on the terrain the tower falls at shot 3, the ground there is higher) | 5.3-5.5 / 4.3-6.6 ms |
+| Castle curtain / keep / corner tower (cold) | 0.27-0.72 ms (0.22-0.58, 19-27 built) | 0.34-1.00 ms (0.29-0.88, 20-49 built at 15-21 us) | 3.6-5.8 / 4.2-8.5 ms |
+
+Graph builds on game terrain cost 15-27 us per graph in a quiet process (up to 49 us when only a few are built: the
+per-call overhead of a cold cache line), against 8-14 us on flat ground. `Structure.DISABLED_GraphBuildCost` (a whole
+12 x 44 x 12 full-height window): Dense 25-28 us, Packed 20-23 us (decode included), 16.6 us with the chunk in the
+CPU cache; Uniform and empty chunks share a graph per id (no build).
+
+Game, headless, validation on, after `World: window filled` (`--after-fill`), two runs each (before and after the
+review fixes, which do not change the work; the spread is run to run): `--probe-blast` 1.19-1.82 ms per cast (18
+graphs built at 58-90 us each); tower ring shots 0.24-2.91 ms (cold shots 0.77-2.91 ms: 13-21 graphs at 26-105 us
+each; cached 0.24-0.75 ms), the freeing shot 0.33-0.36 ms (freed by shot 7 of 7); castle first shots 0.50-3.66 ms
+(27-45 graphs at 16-70 us each). **The ramp-up check:** `--probe-blast --castle-blast` blasts the untouched probe site,
+then the castle sites 10, 20 and 30 frames later: 90 us per graph at the probe, then 24-32 us at the castle; the castle
+alone gave 27-70 us per graph for its first site in two runs. So the in-game per-graph cost varies 3-4x from run to
+run for the same chunks and is highest for the first blast after the window filled, but it is not simply cold memory
+(the quiet game-terrain build is 15-27 us) and not proven to be clock ramp-up: est. power-state / frequency effects of
+the laptop with the GPU working, unmeasured. While streaming: the `--climb` blast 4.75 ms, of which 4.32 ms build 36
+graphs (120 us each; 4.0 ms in an earlier run).
+
+**Against the targets (corrected in the review):** the 3 ms rule holds on a quiet CPU (worst 1.00 ms on game terrain,
+cold graph builds included) and in game after the window filled in these runs (worst 3.66 ms once - over 3 ms: the
+first castle shot of one run, 45 cold graphs at 70 us; otherwise at most 2.91 ms), **but not while the world streams**
+(`--climb`: 4.0-4.75 ms, all of it cold graph builds) **and not as a bound**: graph builds have no work budget (the
+budget is node visits, `kGraphNodeVisitBudget`), and a cast can build up to the island box's chunks (up to 4^3 = 64 for
+a 1.2 m blast) plus any chunk of the flood box a flood reaches (up to 7^3 = 343): 64 cold chunks at the in-game 70-120
+us is 4.5-7.7 ms. Stage 3's work budget must therefore charge `chunkGraphs` (chunk graphs used: a function of the
+voxels, unlike `graphsBuilt`, which depends on the cache's history and must never decide a tick) at the measured cold
+in-game price per chunk (networking.md "Changed by shred.md stage 4"). **"Island search <= 0.5 ms optimised at the
+probe blast" holds for every blast at a site whose graphs are cached (refresh of the edited chunks included), not for
+the first blast at an untouched site** (1.2-1.8 ms in game, mostly cold graph builds). Building graphs ahead of the
+first blast - on a worker when a chunk near the player loads or changes, the graph being a pure function of the chunk -
+would remove that and the budget charge; not built, for the owner to decide. Its memory cost: the game window is 48 x
+44 x 48 chunks, about 9 Dense / Packed chunks per column on this terrain, so about 21 000 graphs at 5-7 KB = about
+125 MB, far over today's 4096-entry cap (about 27 MB at most); prebuilding only near the player (say 16 x 16 columns:
+about 2300 graphs, 15 MB) fits under the cap.
+
+### Review of stage 4 (2026-11-12)
+
+Three reviewers read the uncommitted stage 4. What was changed (failing test first where it was a bug):
+
+| Finding | Verdict | Change |
+|---|---|---|
+| A stale graph only logged; its islands were still emitted | Real, and worse: the re-label wrote voxels outside the island volume (heap corruption) | Island nodes are checked (count, face masks, bounds) before anything is written; on a mismatch the cache is dropped and the search runs again (`staleGraphRetries`), no island if it still differs. `Structure.StaleGraphNeverDetachesAttachedVoxels` failed first (68 attached voxels detached, then a double free). |
+| `graphsBuilt` among the "same on every machine" counters; networking.md wanted the cast budget to count it | Real (two reviewers) | `graphsBuilt` and `chunksDecoded` documented as logged only, never a budget input (`Blast.cppm`, `Structure.cppm`); the stage-3 budget charges `chunkGraphs` at a cold price instead; `GraphBudgetIsCountedInNodeVisits` shows `chunkGraphs` equal cold and warm. |
+| Cold graph builds have no budget; the 3 ms rule text contradicted its own numbers | Real (docs) | Targets above rewritten; networking.md gives the cold worst case. The budget charge is stage 3's work. |
+| The quiet benchmark ran on flat ground with the reference search warming the cache | Real | Benchmark on game terrain too, reference in a second simulation; tables above. |
+| Cache memory unmeasured; Uniform chunks held full copies; vectors kept growth slack; stale entries stayed | Real | Shared Uniform / empty graphs, no slack, `TerrainGraphStats::bytes` (logged), eviction drops changed / unloaded entries first; measured above. |
+| Ordering two face islands scanned each island's whole bounding box | Real (cost) | The scan is clamped to the island's in-box bounds. |
+| shred.md still said results change in over-full cells | Real (docs) | Design text marked superseded; row 4 corrected. |
+| Offline deferral and the attach reason may differ between the searches when a flood box chunk is not loaded | Real (docs, check) | Stated in `Structure.cppm`, `Simulation.cppm`, `Blast.cppm`, networking.md; `checkIslandSearch` compares only in-box islands then. No test pins the difference (both are correct). |
+| `GraphNeverDetachesWhatTheVoxelSearchKeeps` asserted the subset when the voxel budget had run out | Real (test) | Guarded; trials with a budget spent counted and printed (0 of 80 today). |
+| LRU eviction never exercised | Real (test) | `Structure.EvictionNeverChangesAGraph` (64-entry cache, 704 chunks, edits; byte count checked). |
+| Link symmetry claimed, not checked | Real (test) | The partition tests check every link's reverse and the (face, node) order. The library's cross-chunk lookup (`AcrossChunkFace`) is still covered only by the search-equality tests. |
+| Arena checks could pass without comparing | Real (test) | Arenas check `IslandSearchChecks::searches == run`; doc wording narrowed. |
+| Budget test mixed cache state and worker count | Real (test) | Cold vs warm in one world, 1 vs 3 workers both cold, every budget counter compared. |
+| Over-full counts summed per search read as distinct cells | Real (docs) | Reworded. |
+
+**Not done / not confirmed:** windowed play (the probe chair and tower falling) is for the owner; the load check the
+stored masses and bonds are for (stage 7) is not built; graph builds are not yet charged to a work budget (stage 3,
+`chunkGraphs` at a cold price); graphs are not prebuilt (owner question above); a stale attached neighbour of an
+island node is not detected (only island nodes are re-checked).
 
 ### Propagation over ticks (server or offline)
 
@@ -658,7 +781,7 @@ edges. Est. 0.1-0.3 ms per structure solve (e).
 | Island search after stage 0's chunk gather | est. 2-8 ms (gather is about half the per-voxel work, e); stage 0 measures it |
 | Face flood (stage 1) | 0-6 ms per blast, bounded by `maxVisitsPerSearch` |
 | **Search + flood per cast (stages 0-1)** | **est. 2-14 ms: one castle cast can use the whole 6 ms cast phase**; the work budget then moves later casts to later ticks (cast delay, logged) |
-| Graph connectivity + face flood on nodes (stage 4) | 0.1-0.5 ms per blast including cell refresh |
+| Graph connectivity + face flood on nodes (stage 4) | **Measured** (quiet, -O2): 0.13-1.00 ms per cast on game terrain, 0.06-0.72 ms on flat ground, cold graph builds included; in game after the window filled 0.24-0.75 ms at a cached site, 0.5-3.7 ms at the first blast of an untouched site; while streaming 4.0-4.75 ms (`--climb`). Cold worst case unbounded by the node budget: island-box chunks (up to 64) x 70-120 us in game = 4.5-7.7 ms, so stage 3 charges `chunkGraphs` x a cold price |
 | Overhang solve, one structure (<= 5k nodes) | 0.05-0.3 ms |
 | Per release: mask + `ClearMask` | 0.05-0.2 ms |
 | Per server body: colliders + body, no bake | 0.1-0.3 ms |
@@ -708,7 +831,7 @@ screenshot, review, ROADMAP update in the same commit.
 | 1e | Rubble budget: lifetime by size for all rubble, `maxRubbleBodies`, `maxRubbleSlots`, failed bake crumbles | `Rubble.TowerCutsStayUnderCaps`; `--tower-blast` `store a/b` under 7000 | none (presentation) | 0.5-1 day | now, same review as 1 |
 | 2 | Crumble profiles, fracture-surface dust, carve lumps (client) | fx caps hold with `--stress-fx 10` (fx-budget stage 1); particles GPU <= 2.5 ms; screenshots per material | none | 2-3 days | M2, with fx-budget stages 1-2 |
 | 3 | `MaterialPhysicsQ` + `voxel:fracture`; client rubble fractured with LOD (presentation-only distance rule; lod.md stage 1 changed to match) | `Fracture.*` tests (cover exactly, disjoint, same seed same result, cell size controls count, wood splinters along grain, small pieces are crumbs); `MaterialQ.SaturatesAndKeepsIndestructible`; fracture stays under 1e's caps; table hash stable | material table hash in `buildHash` | 3-4 days | M2 |
-| 4 | Cell graph cached per terrain chunk (liquid-masked); graph connectivity + node face flood replace the voxel search in the same flood box | `Structure.GraphNeverDetachesWhatTheVoxelSearchKeeps` (random volumes, liquids included), `Structure.GraphEqualsLabelComponentsWithoutOverfullCells`, `RefreshEqualsRebuild`, `GraphFloatingEqualsFaceFlood` on every stage-1 test; `overfullCells` logged; island search <= 0.5 ms optimised at the probe blast | same op kinds; **results may change in over-full cells** (networking.md notes it) | 4-6 days | M3, **or before networking stage 3 if stage 0 shows search + flood over 3 ms** |
+| 4 | **Built 2026-11-12** ("Stage 4 as built"). Cell graph cached per terrain chunk (liquid-masked); graph connectivity + node face flood replace the voxel search in the same flood box | `Structure.GraphNeverDetachesWhatTheVoxelSearchKeeps` (random volumes, liquids included), `Structure.GraphEqualsLabelComponentsWithoutOverfullCells`, `RefreshEqualsRebuild`, `GraphFloatingEqualsFaceFlood` on every stage-1 test; `overfullCells` logged; island search <= 0.5 ms optimised at the probe blast | same op kinds; results equal stage 1 except where a work budget runs out, and offline deferral / the attach reason when a flood box chunk is not loaded (over-full cells are exact: "Stage 4 as built"; networking.md notes it) | 4-6 days | M3, **or before networking stage 3 if stage 0 shows search + flood over 3 ms** |
 | 5 | `StructureRegistry`, overhang rule inside structures, `StructuralSolver` with tick budgets and release queue, spawn guard, `OpBatch` / `PresentOps`, client queued-piece handling, headless `--collapse` | `Structure.StoneOverhang3HoldsAnd4Falls`, `PristineStructureStable`, `SolveIndependentOfDirtyOrder`; `Collapse.TowerReleasedOverTicksWithinBudget`, `Collapse.SameOpsTwoSimulationsEqualHash`, `Collapse.ReplayGivesIdenticalOpList` (casts fed at fixed ticks); `--collapse` logs `Collapse: N releases over T ticks, max B bodies/tick, X ms max`, physics step p99, `store a/b` under 7000, validation exit 0 | `Detach` with `netId 0` and `ClearMask` only. **Server bodies (`Detach` with `netId != 0`, `EntitySpawn`, `EntityRest`) need networking stage 6** (networking.md:295); before it every release is a `netId 0` Detach | 1.5-2 weeks | M3 |
 | 5b | collapse.md stages 3-4 on objects (same graph code) | collapse.md's own criteria | `ObjectModel`, `EntitySpawn` / `EntityDespawn` (networking stage 6) | 1 week | M3 |
 | 6 | Contacts drained and extended, `ColliderMaterials`, ownership bit, `sim::Impact` with total order, cooldowns and budgets; crush check | `ContactQueueNeverFillsWhenSimulationDrains` (10k ticks), `Impact.HeavyDropCarvesLightDoesNot`, `CooldownAndFatigue`, `BudgetCapsBodiesPerTick`, `ShuffledEventsSameOps` (shuffles include several events with an equal netId pair across two terrain chunks), `ClientRubbleNeverCausesImpacts` on the offline **and** the server config, `Crush.FallingServerBodyDamagesPlayer`, `Crush.RubbleNeverDamages` | terrain side: `CarveSphere` (kind 1, later 7); body side: `ObjectModel`, `EntitySpawn` / `EntityDespawn` (**networking stage 6**); crush: a damage event (M2). Before networking stage 6 impacts act on terrain only | 1-1.5 weeks | M3 / M5 (thrown matter) |
@@ -745,6 +868,8 @@ screenshot, review, ROADMAP update in the same commit.
    Recommendation: not in M1; counted (stage 1c). In M3 the structure stages split them into pieces under the cap.
 4. **If stage 0 shows search + flood over 3 ms per cast, move stage 4 (cell graph) before networking stage 3?**
    Recommendation: yes; a 5v5 at 10 casts/s cannot afford a 4-14 ms search on the server tick or the offline frame.
+   **Answered yes (2026-11-12); stage 4 is built.** New for the owner: build chunk graphs ahead of the first blast
+   (on a worker when a chunk near the player loads or changes) so the first blast at a site also stays under 0.5 ms?
 5. **Do floors drop when a wall goes (overhang limits on) or only when fully cut (connectivity only)?**
    Recommendation: overhang limits on, inside registered structures only; natural terrain connectivity only.
 6. **How long may a collapse take to unfold?** Recommendation: up to 2 s, released largest and lowest first;

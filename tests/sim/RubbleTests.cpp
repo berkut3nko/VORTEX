@@ -42,6 +42,7 @@ namespace {
         config.physics.maxBodyPairs = 4096;
         config.physics.maxContactConstraints = 4096;
         config.physics.threads = 1;
+        config.checkIslandSearch = true;      // the graph search is compared with the voxel search (shred.md stage 4)
         return config;
     }
 
@@ -56,6 +57,13 @@ namespace {
             initialized = simulation.Initialize(Ground());
             if (initialized) simulation.World().LoadBlocking(kFocus);
         }
+        ~RubbleArena() {
+            const sim::Simulation::IslandSearchChecks& checks = simulation.IslandSearchCheck();
+            EXPECT_EQ(checks.mismatches, 0u) << "the graph and the voxel island search differed";
+            EXPECT_EQ(checks.searches, checks.run) << "island searches run without the comparison (checkIslandSearch lost on the way?)";
+        }
+        RubbleArena(const RubbleArena&) = delete;
+        RubbleArena& operator=(const RubbleArena&) = delete;
         voxel::World& World() { return simulation.World(); }
         const voxel::WorldMaterials& Ids() const { return simulation.WorldMaterialIds(); }
         /// A frame of the engine: streaming around the focus, one physics tick, lifetimes.

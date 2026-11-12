@@ -15,5 +15,6 @@ export import :world;
 export import :hash;
 export import :collider;
 export import :connectivity;
+export import :structure;
 export import :voxformat;
 export import :meshimport;

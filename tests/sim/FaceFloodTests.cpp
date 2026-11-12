@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <functional>
 #include <memory>
 #include <span>
 #include <vector>
@@ -41,6 +42,11 @@ namespace {
         config.physics.maxBodyPairs = 4096;
         config.physics.maxContactConstraints = 4096;
         config.physics.threads = 1;
+        // docs/design/shred.md stage 4: every island search of these tests (the graph, the
+        // default) also runs the stage-1 voxel search on the same voxels; FloodArena fails the
+        // test if they ever found different islands. Voxel-only counters are read from
+        // BlastResult::reference.
+        config.checkIslandSearch = true;
         return config;
     }
 
@@ -105,6 +111,17 @@ namespace {
             initialized = simulation.Initialize(std::move(generator));
             if (initialized && load) simulation.World().LoadBlocking(kFocus);
         }
+        ~FloodArena() {
+            const sim::Simulation::IslandSearchChecks& checks = simulation.IslandSearchCheck();
+            EXPECT_EQ(checks.mismatches, 0u) << "the graph and the voxel island search differed in " << checks.mismatches << " of "
+                                             << checks.searches << " search(es)";
+            if (expectChecked)
+                EXPECT_EQ(checks.searches, checks.run) << "island searches run without the comparison (checkIslandSearch lost on the way?)";
+        }
+        /// false for the arenas that run one search on purpose (checkIslandSearch off).
+        bool expectChecked = true;
+        FloodArena(const FloodArena&) = delete;
+        FloodArena& operator=(const FloodArena&) = delete;
         voxel::World& World() { return simulation.World(); }
         const voxel::WorldMaterials& Ids() const { return simulation.WorldMaterialIds(); }
         voxel::WorldHashResult Hash() const {
@@ -153,9 +170,11 @@ TEST(Blast, IslandReachingTheSearchBoxFaceIsDetachedByTheBlastThatFreedIt) {
     // Rows g+8..g+39 minus the centre voxel of row g+8.
     EXPECT_EQ(detach.op.mask.Count(), 32u * 9u - 1u);
     EXPECT_EQ(detach.result.changed, detach.op.mask.Count());
-    EXPECT_EQ(blast.search.faceCandidates, 1u);
+    EXPECT_TRUE(blast.search.graph);
+    EXPECT_EQ(blast.reference.faceCandidates, 1u);
     EXPECT_EQ(blast.search.facePieces, 1u);
     EXPECT_EQ(blast.search.attachedByUnloaded, 0u);
+    EXPECT_EQ(blast.search.referenceMismatch, 0u);
     EXPECT_EQ(a.World().GetVoxel({1, g + 30, 1}), 0);
     EXPECT_EQ(a.World().GetVoxel({1, g + 39, 1}), 0);
     EXPECT_EQ(a.World().GetVoxel({0, g, 0}), a.Ids().stone);     // the stump stays
@@ -185,7 +204,8 @@ TEST(Blast, ShortPillarControl) {
     const sim::BlastResult blast = sim::Blast(a.simulation, kBaseCut, kStrong);
     ASSERT_EQ(blast.IslandCount(), 1u);
     EXPECT_EQ(blast.ops[1].op.mask.Count(), 17u * 9u - 1u);
-    EXPECT_EQ(blast.search.faceCandidates, 0u);     // inside the island box: the old path
+    EXPECT_EQ(blast.reference.faceCandidates, 0u);  // inside the island box: no flood
+    EXPECT_EQ(blast.search.graphFloods, 0u);
     EXPECT_EQ(blast.search.facePieces, 0u);
     EXPECT_EQ(a.World().GetVoxel({1, g + 20, 1}), 0);
 }
@@ -217,9 +237,10 @@ TEST(Blast, FaceFloodGivesUpOnTheGround) {
     const sim::BlastResult blast = sim::Blast(a.simulation, voxel::SphereQ{glm::ivec3(24, (g + 50) * 16 + 8, 24), 64}, 0);
     EXPECT_TRUE(blast.islandsSearched);
     EXPECT_EQ(blast.IslandCount(), 0u);
-    EXPECT_GE(blast.search.faceCandidates, 1u);
+    EXPECT_GE(blast.reference.faceCandidates, 1u);
     EXPECT_EQ(blast.search.facePieces, 0u);
-    EXPECT_GE(blast.search.attachedByLimit, 1u);
+    EXPECT_GE(blast.reference.attachedByLimit, 1u);
+    EXPECT_GE(blast.search.attachedByLimit + blast.search.attachedByFace, 1u);
     EXPECT_EQ(a.World().GetVoxel({1, g + 60, 1}), a.Ids().stone);
 }
 
@@ -250,10 +271,16 @@ TEST(Blast, FaceFloodIndependentOfLoadingOutsideTheFloodBox) {
     EXPECT_TRUE(b.islandsSearched);
     EXPECT_EQ(OpsOf(a), OpsOf(b));
     EXPECT_EQ(a.IslandCount(), 1u);           // P2
-    EXPECT_EQ(a.search.faceCandidates, b.search.faceCandidates);
+    EXPECT_EQ(a.reference.faceCandidates, b.reference.faceCandidates);
+    EXPECT_EQ(a.reference.attachedByLimit, b.reference.attachedByLimit);
+    EXPECT_EQ(a.reference.floodVisits, b.reference.floodVisits);
+    EXPECT_GE(a.reference.attachedByLimit, 1u);  // P1 and its arm
+    // The graph search alike: it never reads a chunk outside the flood box either.
     EXPECT_EQ(a.search.attachedByLimit, b.search.attachedByLimit);
-    EXPECT_EQ(a.search.floodVisits, b.search.floodVisits);
-    EXPECT_GE(a.search.attachedByLimit, 1u);  // P1 and its arm
+    EXPECT_EQ(a.search.attachedByFace, b.search.attachedByFace);
+    EXPECT_EQ(a.search.nodeVisits, b.search.nodeVisits);
+    EXPECT_EQ(a.search.chunkGraphs, b.search.chunkGraphs);
+    EXPECT_GE(a.search.attachedByLimit + a.search.attachedByFace, 1u);
     EXPECT_EQ(small.World().GetVoxel({-50, g + 21, 1}), ids.planks);
 }
 
@@ -393,7 +420,8 @@ TEST(Blast, ServerFloodBoxAlwaysLoaded) {
         EXPECT_FALSE(blast.search.floodDeferred) << corner;
         EXPECT_EQ(blast.search.attachedByUnloaded, 0u) << corner;
         EXPECT_EQ(blast.IslandCount(), 0u) << corner;
-        limit += blast.search.attachedByLimit;
+        EXPECT_EQ(blast.reference.attachedByUnloaded, 0u) << corner;
+        limit += blast.search.attachedByLimit + blast.search.attachedByFace;
     }
     EXPECT_GE(limit, 4u);
     EXPECT_TRUE(a.simulation.DeferredIslandSearches().empty());
@@ -424,15 +452,20 @@ TEST(Blast, SmallIslandProvenBeforeTheBudgetIsSpent) {
     static_assert(sim::kFloodVisitBudget == 4 * sim::kMaxIslandVoxels);
     const sim::BlastResult blast = sim::Blast(a.simulation, voxel::SphereQ{glm::ivec3(8, 112 * 16 + 8, 8), 64}, 0);
     EXPECT_TRUE(blast.islandsSearched);
-    EXPECT_EQ(blast.search.faceCandidates, 5u);
+    EXPECT_EQ(blast.reference.faceCandidates, 5u);
     ASSERT_EQ(blast.IslandCount(), 1u);
     EXPECT_EQ(blast.search.facePieces, 1u);
     EXPECT_EQ(blast.ops[1].op.mask.Count(), 5u + 27u);
-    // The small island costs 32 visits; three slabs give up by limit at 60 001 visits each
-    // (180 035 in all); the fourth runs out of budget at visit 240 001.
-    EXPECT_EQ(blast.search.attachedByLimit, 3u);
-    EXPECT_EQ(blast.search.attachedByBudget, 1u);
-    EXPECT_EQ(blast.search.floodVisits, sim::kFloodVisitBudget + 1u);
+    // Voxel search: the small island costs 32 visits; three slabs give up by limit at 60 001
+    // visits each (180 035 in all); the fourth runs out of budget at visit 240 001.
+    EXPECT_EQ(blast.reference.attachedByLimit, 3u);
+    EXPECT_EQ(blast.reference.attachedByBudget, 1u);
+    EXPECT_EQ(blast.reference.floodVisits, sim::kFloodVisitBudget + 1u);
+    // Graph search: four slab floods of about 120 nodes each give up by the size limit, far
+    // inside its node budget.
+    EXPECT_EQ(blast.search.attachedByLimit, 4u);
+    EXPECT_EQ(blast.search.attachedByBudget, 0u);
+    EXPECT_LT(blast.search.nodeVisits, sim::kGraphNodeVisitBudget / 8);
     EXPECT_EQ(a.World().GetVoxel({20, 142, 20}), 0);
     EXPECT_EQ(a.World().GetVoxel({50, 110, 0}), ids.stone);
 }
@@ -479,14 +512,22 @@ TEST(Blast, FaceFloodBudgetIsCountedInVisits) {
         const sim::BlastResult a = sim::Blast(one.simulation, cut, 0);
         const sim::BlastResult b = sim::Blast(three.simulation, cut, 0);
         EXPECT_EQ(OpsOf(a), OpsOf(b));
-        EXPECT_EQ(a.search.faceCandidates, 20u);
-        EXPECT_EQ(a.search.faceCandidates, b.search.faceCandidates);
-        EXPECT_EQ(a.search.attachedByLimit, b.search.attachedByLimit);
-        EXPECT_EQ(a.search.attachedByKnown, b.search.attachedByKnown);
-        EXPECT_EQ(a.search.floodVisits, b.search.floodVisits);
+        EXPECT_EQ(a.reference.faceCandidates, 20u);
+        EXPECT_EQ(a.reference.faceCandidates, b.reference.faceCandidates);
+        EXPECT_EQ(a.reference.attachedByLimit, b.reference.attachedByLimit);
+        EXPECT_EQ(a.reference.attachedByKnown, b.reference.attachedByKnown);
+        EXPECT_EQ(a.reference.floodVisits, b.reference.floodVisits);
         // The first trunk floods into the ground and gives up; the others stop at its voxels.
-        EXPECT_EQ(a.search.attachedByLimit, 1u);
-        EXPECT_EQ(a.search.attachedByKnown, 19u);
+        EXPECT_EQ(a.reference.attachedByLimit, 1u);
+        EXPECT_EQ(a.reference.attachedByKnown, 19u);
+        // The graph search counts nodes, the same with one and three workers.
+        EXPECT_EQ(a.search.boxComponents, b.search.boxComponents);
+        EXPECT_EQ(a.search.graphFloods, b.search.graphFloods);
+        EXPECT_EQ(a.search.attachedByLimit, b.search.attachedByLimit);
+        EXPECT_EQ(a.search.attachedByFace, b.search.attachedByFace);
+        EXPECT_EQ(a.search.attachedByKnown, b.search.attachedByKnown);
+        EXPECT_EQ(a.search.nodeVisits, b.search.nodeVisits);
+        EXPECT_GT(a.search.nodeVisits, 0u);
         EXPECT_EQ(a.IslandCount(), 0u);
     }
     // The budget itself is reached: the same visit at which it runs out, whatever the workers.
@@ -498,11 +539,124 @@ TEST(Blast, FaceFloodBudgetIsCountedInVisits) {
     const sim::BlastResult a = sim::Blast(one.simulation, cut, 0);
     const sim::BlastResult b = sim::Blast(three.simulation, cut, 0);
     EXPECT_EQ(OpsOf(a), OpsOf(b));
-    EXPECT_GE(a.search.attachedByBudget, 1u);
-    EXPECT_EQ(a.search.attachedByBudget, b.search.attachedByBudget);
+    EXPECT_GE(a.reference.attachedByBudget, 1u);
+    EXPECT_EQ(a.reference.attachedByBudget, b.reference.attachedByBudget);
+    EXPECT_EQ(a.reference.attachedByLimit, b.reference.attachedByLimit);
+    EXPECT_EQ(a.reference.floodVisits, sim::kFloodVisitBudget + 1u);
+    EXPECT_EQ(b.reference.floodVisits, sim::kFloodVisitBudget + 1u);
+    EXPECT_EQ(a.search.nodeVisits, b.search.nodeVisits);
     EXPECT_EQ(a.search.attachedByLimit, b.search.attachedByLimit);
-    EXPECT_EQ(a.search.floodVisits, sim::kFloodVisitBudget + 1u);
-    EXPECT_EQ(b.search.floodVisits, sim::kFloodVisitBudget + 1u);
+}
+
+// --- stage 4: the graph search gives the stage-1 results ------------------------------------------
+
+namespace {
+    /// One stage-1 test case: a world, its setup and its casts.
+    struct Stage1Case {
+        const char* name;
+        std::vector<sim::WorldOp> setup;
+        std::vector<std::pair<voxel::SphereQ, uint16_t>> casts;
+        sim::SimulationConfig config = FloodConfig();
+        bool unclassified = false;           // UnclassifiedGround, window moved up before the casts
+    };
+
+    std::vector<Stage1Case> Stage1Cases(const voxel::WorldMaterials& ids) {
+        std::vector<Stage1Case> cases;
+        const auto Add = [&cases](const char* name, std::vector<sim::WorldOp> setup, std::vector<std::pair<voxel::SphereQ, uint16_t>> casts) {
+            cases.push_back({name, std::move(setup), std::move(casts)});
+            return &cases.back();
+        };
+        Add("pillar 40, base cut", {Pillar(ids, 40)}, {{kBaseCut, kStrong}});
+        Add("second shot", {Pillar(ids, 40)}, {{kBaseCut, kStrong}, {voxel::SphereQ{glm::ivec3(24, (g + 24) * 16 + 8, 24), 64}, 0}});
+        Add("short pillar", {Pillar(ids, 25)}, {{kBaseCut, kStrong}});
+        Add("ledge", {sim::WorldOp::Box({0, g, 0}, {3, g + 30, 3}, ids.stone), sim::WorldOp::Box({3, g + 20, 0}, {63, g + 23, 3}, ids.stone)},
+            {{voxel::SphereQ{glm::ivec3(6 * 16 + 8, (g + 21) * 16 + 8, 24), 64}, kStrong}});
+        Add("ground", {Pillar(ids, 70)}, {{voxel::SphereQ{glm::ivec3(24, (g + 50) * 16 + 8, 24), 64}, 0}});
+        Add("arm out of the flood box",
+            {sim::WorldOp::Box({0, g, 0}, {3, g + 30, 3}, ids.stone), sim::WorldOp::Box({-95, g + 20, 0}, {0, g + 23, 3}, ids.planks),
+             sim::WorldOp::Box({5, g, 0}, {8, g + 40, 3}, ids.stone)},
+            {{voxel::SphereQ{glm::ivec3(8, (g + 4) * 16 + 8, 8), 128}, kStrong}});
+        Add("slabs and a small island", SlabsAndASmallIsland(ids), {{voxel::SphereQ{glm::ivec3(8, 112 * 16 + 8, 8), 64}, 0}});
+        Add("pillar with a plank arm", {Pillar(ids, 40), sim::WorldOp::Box({3, g + 30, 0}, {40, g + 33, 3}, ids.planks)}, {{kBaseCut, kStrong}});
+        {
+            std::vector<sim::WorldOp> forest;
+            for (int i = 0; i < 20; ++i) {
+                const int x = -20 + (i % 5) * 9, z = -16 + (i / 5) * 9;
+                forest.push_back(sim::WorldOp::Box({x, g, z}, {x + 2, g + 70, z + 2}, ids.wood));
+            }
+            Add("forest", forest, {{voxel::SphereQ{glm::ivec3(8, (g + 40) * 16 + 8, 8), 64}, 0}});
+        }
+        Add("two legs and a bridge",
+            {sim::WorldOp::Box({0, g, 0}, {3, g + 40, 3}, ids.stone), sim::WorldOp::Box({6, g, 0}, {9, g + 40, 3}, ids.stone),
+             sim::WorldOp::Box({0, g + 40, 0}, {9, g + 43, 3}, ids.stone)},
+            {{voxel::SphereQ{glm::ivec3(72, (g + 4) * 16 + 8, 24), 96}, kStrong}});
+        for (const bool oneMore : {false, true}) {
+            std::vector<sim::WorldOp> setup{Pillar(ids, 40), sim::WorldOp::Box({-19, g + 40, -19}, {21, g + 77, 21}, ids.stone),
+                                            sim::WorldOp::Box({-19, g + 77, -19}, {8, g + 78, 0}, ids.stone)};
+            if (oneMore) setup.push_back(sim::WorldOp::Box({20, g + 77, 20}, {21, g + 78, 21}, ids.stone));
+            Add(oneMore ? "60 001 voxels" : "60 000 voxels", setup, {{kBaseCut, kStrong}});
+        }
+        Add("water channel",
+            {Pillar(ids, 40), sim::WorldOp::Box({3, g + 20, 0}, {60, g + 22, 3}, ids.water), sim::WorldOp::Box({60, g, 0}, {63, g + 22, 3}, ids.stone)},
+            {{kBaseCut, kStrong}});
+        Add("oversize island", {sim::WorldOp::Box({-20, 96, -20}, {20, 134, 20}, ids.stone)}, {{voxel::SphereQ{glm::ivec3(8, 115 * 16 + 8, 8), 0}, 0}});
+        {
+            Stage1Case* c = Add("full-height bottom", {Pillar(ids, 40)}, {{kBaseCut, kStrong}});
+            c->config.world.fullHeight = true;
+            c->config.world.heightRange = {6.4f, 19.2f};
+            c->config.world.heightSnap = 3.2f;
+        }
+        {
+            Stage1Case* c = Add("server, unloaded chunk", {Pillar(ids, 80)}, {{kBaseCut, kStrong}});
+            c->config = sim::ServerConfig(FloodConfig());
+            c->unclassified = true;
+        }
+        Add("offline, unloaded chunk", {Pillar(ids, 80)}, {{kBaseCut, kStrong}})->unclassified = true;
+        return cases;
+    }
+}
+
+// shred.md stage 4's acceptance: every stage-1 case gives the same operations, in the same order,
+// and the same world with the graph search as with the voxel search - two independent
+// simulations, late searches included. (Every stage-1 test above also compares both searches on
+// the same voxels: FloodConfig sets checkIslandSearch.)
+TEST(Structure, GraphFloatingEqualsFaceFlood) {
+    const voxel::WorldMaterials ids = DefaultIds();
+    uint32_t detaches = 0, late = 0;
+    for (const Stage1Case& c : Stage1Cases(ids)) {
+        std::vector<std::vector<sim::WorldOp>> ops[2];
+        uint64_t hash[2] = {};
+        for (int k = 0; k < 2; ++k) {
+            sim::SimulationConfig config = c.config;
+            config.checkIslandSearch = false;
+            config.islandSearch = k == 0 ? sim::IslandSearchKind::Graph : sim::IslandSearchKind::Voxel;
+            FloodArena a(config, c.unclassified ? std::shared_ptr<voxel::IWorldGenerator>(std::make_shared<UnclassifiedGround>()) : Ground());
+            a.expectChecked = false;
+            ASSERT_TRUE(a.initialized) << c.name;
+            Apply(a.World(), c.setup, false);
+            const glm::dvec3 up = kFocus + glm::dvec3(0.0, 3.2, 0.0);
+            if (c.unclassified) a.World().Update(up);
+            for (const auto& [sphere, power] : c.casts) {
+                const sim::BlastResult blast = sim::Blast(a.simulation, sphere, power);
+                EXPECT_EQ(blast.search.graph, k == 0) << c.name;
+                ops[k].push_back(OpsOf(blast));
+            }
+            if (c.unclassified) {
+                a.World().LoadBlocking(up);
+                for (const sim::BlastResult& r : sim::RetryIslandSearches(a.simulation)) ops[k].push_back(OpsOf(r));
+            }
+            hash[k] = a.Hash().hash;
+        }
+        ASSERT_EQ(ops[0].size(), ops[1].size()) << c.name;
+        for (size_t i = 0; i < ops[0].size(); ++i) {
+            EXPECT_EQ(ops[0][i], ops[1][i]) << c.name << ", result " << i;
+            for (const sim::WorldOp& op : ops[0][i]) detaches += op.kind == sim::WorldOpKind::Detach ? 1u : 0u;
+        }
+        late += static_cast<uint32_t>(ops[0].size() - c.casts.size());
+        EXPECT_EQ(hash[0], hash[1]) << c.name;
+    }
+    EXPECT_GE(detaches, 12u);
+    EXPECT_GE(late, 1u);
 }
 
 // --- stage 1b: the carve of a blast into chunks that were still loading --------------------------
@@ -581,7 +735,9 @@ TEST(Blast, FaceFloodMergesAPieceThatCrossesTheFaceTwice) {
     // Radius 6 voxels around (4.5, g+4.5, 1.5): rows g..g+8 of both legs go.
     const sim::BlastResult blast = sim::Blast(a.simulation, voxel::SphereQ{glm::ivec3(72, (g + 4) * 16 + 8, 24), 96}, kStrong);
     EXPECT_TRUE(blast.islandsSearched);
-    EXPECT_EQ(blast.search.faceCandidates, 2u);
+    EXPECT_EQ(blast.reference.faceCandidates, 2u);
+    EXPECT_EQ(blast.reference.merged, 1u);
+    EXPECT_EQ(blast.search.graphFloods, 1u);       // the legs' two box components: one flood
     EXPECT_EQ(blast.search.merged, 1u);
     EXPECT_EQ(blast.search.facePieces, 1u);
     ASSERT_EQ(blast.IslandCount(), 1u);
@@ -611,7 +767,7 @@ TEST(Blast, FaceFloodLimitIsTheInBoxLimit) {
         static_assert(sim::kMaxIslandVoxels == 60000);
         const sim::BlastResult blast = sim::Blast(a.simulation, kBaseCut, kStrong);
         EXPECT_TRUE(blast.islandsSearched) << oneMore;
-        EXPECT_EQ(blast.search.faceCandidates, 1u) << oneMore;
+        EXPECT_EQ(blast.reference.faceCandidates, 1u) << oneMore;
         if (!oneMore) {
             ASSERT_EQ(blast.IslandCount(), 1u);
             EXPECT_EQ(blast.ops[1].op.mask.Count(), 60000u);
@@ -619,8 +775,9 @@ TEST(Blast, FaceFloodLimitIsTheInBoxLimit) {
             EXPECT_EQ(a.World().GetVoxel({1, g + 30, 1}), 0);
         } else {
             EXPECT_EQ(blast.IslandCount(), 0u);
+            EXPECT_EQ(blast.reference.attachedByLimit, 1u);
+            EXPECT_EQ(blast.reference.floodVisits, 60001u);
             EXPECT_EQ(blast.search.attachedByLimit, 1u);
-            EXPECT_EQ(blast.search.floodVisits, 60001u);
             EXPECT_EQ(a.World().GetVoxel({1, g + 30, 1}), ids.stone);
         }
     }
@@ -712,34 +869,73 @@ TEST(Blast, DeferredSearchIsGivenUpOnlyOnceItsFloodBoxLeftTheWindow) {
     EXPECT_TRUE(a.simulation.DeferredIslandSearches().empty());
 }
 
-// --- stage 0: the measurement cases (not a gate) ---------------------------------------------------
-// The playground's watch tower and a castle of FillBox walls at the game's 0.125 m, on flat ground
-// in a quiet process (no streaming, no renderer): what one 1.2 m, power-6 shot costs in the island
-// search (the chunk gather and, for comparison, the per-voxel gather it replaced) and in the face
-// flood. Three fresh worlds each. Run with
+// --- stage 0 / 4: the measurement cases (not a gate) -----------------------------------------------
+// The playground's watch tower and a castle of FillBox walls at the game's 0.125 m, and a 1.5 m
+// blast 6 m under the surface (the `--climb` case), on two grounds: flat (mostly Uniform chunks and
+// blocks of one id: the fast paths of the graph build) and the built-in terrain generator with
+// Packed chunks (caves, ores, mixed blocks: what the game builds graphs from). What one 1.2 m,
+// power-6 shot costs in the island search, in a quiet process (no streaming, no renderer): the
+// graph search (stage 4; its chunk graph builds counted separately) in one simulation, and the
+// stage-1 voxel search in a second simulation with the same voxels and shots, so neither warms the
+// CPU cache for the other (checkIslandSearch off). Three fresh worlds each. Run with
 //   VortexSimTests --gtest_also_run_disabled_tests --gtest_filter='*CostOfTheTowerAndCastleCases*'
 
 namespace {
-    /// The island search as it was before stage 0: World::GetVoxel per voxel, then the labelling.
-    double PerVoxelSearchMs(const voxel::World& world, const voxel::MaterialLibrary& materials, const voxel::SphereQ& sphere) {
-        glm::ivec3 lo, hi;
-        sim::IslandBox(sphere, lo, hi);
-        const auto start = std::chrono::steady_clock::now();
-        voxel::VoxelVolume local(hi - lo);
-        for (int z = lo.z; z < hi.z; ++z)
-            for (int y = lo.y; y < hi.y; ++y)
-                for (int x = lo.x; x < hi.x; ++x) {
-                    const uint8_t id = world.GetVoxel({x, y, z});
-                    if (id != 0 && (materials.Get(voxel::kWorldPalette, id).flags & voxel::MaterialFlag_Liquid) == 0)
-                        local.Set(x - lo.x, y - lo.y, z - lo.z, id);
-                }
-        const voxel::ComponentLabels labels = voxel::LabelComponents(local);
-        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-        return labels.count >= 0u ? ms : 0.0;
-    }
-
     voxel::SphereQ ShotAt(const glm::dvec3& metres, double voxelSize) {
         return voxel::QuantizeSphere(metres / voxelSize, 1.2 / voxelSize);
+    }
+
+    struct CostShot {
+        const char* name;
+        voxel::SphereQ sphere;
+        uint16_t power;
+    };
+
+    /// One measurement scene: a world of `window` chunks around `focus` (metres), built by `build`
+    /// (FillBox ops from the site's corner), then `shots` in order.
+    struct CostScene {
+        const char* name;
+        glm::ivec3 window;
+        glm::dvec3 focus;
+        std::function<void(voxel::World&, const voxel::WorldMaterials&)> build;
+        std::vector<CostShot> shots;
+    };
+
+    struct CostRow {
+        double searchMs = 0.0, buildMs = 0.0, floodMs = 0.0, relabelMs = 0.0;
+        uint32_t built = 0, used = 0, visits = 0, overfull = 0, islands = 0;
+    };
+
+    std::vector<CostRow> RunCostScene(const CostScene& scene, bool terrain, sim::IslandSearchKind kind, uint64_t& hash) {
+        constexpr float vs = 0.125f;
+        sim::SimulationConfig config = FloodConfig(3, scene.window);
+        config.world.voxelSize = vs;
+        config.world.packHidden = terrain;
+        config.chunkCapacity = 8192;
+        config.checkIslandSearch = false;
+        config.islandSearch = kind;
+        FloodArena a(config, terrain ? nullptr : Ground(), false);
+        a.expectChecked = false;
+        std::vector<CostRow> rows;
+        if (!a.initialized) return rows;
+        a.World().LoadBlocking(scene.focus);
+        scene.build(a.World(), a.Ids());
+        for (const CostShot& shot : scene.shots) {
+            const sim::BlastResult blast = sim::Blast(a.simulation, shot.sphere, shot.power);
+            CostRow row;
+            row.searchMs = blast.times.searchMs + blast.times.floodMs;
+            row.buildMs = blast.times.graphBuildMs;
+            row.floodMs = blast.times.graphFloodMs;
+            row.relabelMs = blast.times.relabelMs;
+            row.built = blast.search.graphsBuilt;
+            row.used = blast.search.chunkGraphs;
+            row.visits = kind == sim::IslandSearchKind::Graph ? blast.search.nodeVisits : blast.search.floodVisits;
+            row.overfull = blast.search.overfullCells;
+            row.islands = blast.IslandCount();
+            rows.push_back(row);
+        }
+        hash = a.Hash().hash;
+        return rows;
     }
 }
 
@@ -747,86 +943,87 @@ TEST(Blast, DISABLED_CostOfTheTowerAndCastleCases) {
     constexpr float vs = 0.125f;
     const auto S = [](int units) { return static_cast<int>(std::lround(units * 0.8)); };      // 0.1 m units -> 0.125 m voxels
     const auto SV = [&S](glm::ivec3 v) { return glm::ivec3(S(v.x), S(v.y), S(v.z)); };
-    for (int run = 0; run < 3; ++run) {
-        // The watch tower of src/main.cpp (BuildPlayground), its floor at y = g.
+    voxel::TerrainSettings settings;
+    settings.voxelSize = vs;
+    for (const bool terrain : {false, true}) {
+        // The ground under a site: y = g on flat ground; the generator's surface on the terrain.
+        const auto GroundAt = [&](double x, double z) {
+            return terrain ? static_cast<int>(std::floor(voxel::TerrainHeight(settings, static_cast<float>(x), static_cast<float>(z)) / vs)) + 1 : g;
+        };
+        std::vector<CostScene> scenes;
         {
-            sim::SimulationConfig config = FloodConfig(3, {8, 8, 8});
-            config.world.voxelSize = vs;
-            config.chunkCapacity = 2048;
-            FloodArena a(config, Ground(), false);
-            ASSERT_TRUE(a.initialized);
-            a.World().LoadBlocking(glm::dvec3(0.0, g * vs, 0.0));
-            const voxel::WorldMaterials& m = a.Ids();
-            const glm::ivec3 c(0, g, 0);
-            const auto box = [&](glm::ivec3 lo, glm::ivec3 hi, uint8_t id) { a.World().FillBox(c + SV(lo), c + glm::max(SV(hi), SV(lo) + 1), id); };
-            box({30, 0, -60}, {58, 70, -32}, m.stone);
-            box({33, 0, -57}, {55, 66, -35}, 0);
-            box({41, 0, -35}, {47, 20, -32}, 0);
-            box({28, 66, -62}, {60, 70, -30}, m.planks);
-            for (int i = 0; i < 4; ++i) {
-                const glm::ivec3 p(i & 1 ? 58 : 28, 70, i & 2 ? -32 : -62);
-                box(p, p + glm::ivec3(2, 8, 2), m.wood);
-                box(p + glm::ivec3(0, 8, 0), p + glm::ivec3(2, 10, 2), m.torch);
-            }
-            // The --climb case: a 1.5 m blast 6 m under the surface (the box is solid ground).
-            {
-                const voxel::SphereQ deep = voxel::QuantizeSphere(glm::dvec3(-40.0, g - 48.0, 40.0), 1.5 / vs);
-                const sim::BlastResult blast = sim::Blast(a.simulation, deep, voxel::QuantizePower(6.0f));
-                const double perVoxel = PerVoxelSearchMs(a.World(), a.simulation.Materials(), deep);
-                std::printf("run %d underground 1.5 m: carve %.2f ms (%u voxels), search %.2f ms (%llu box voxels; per-voxel gather %.2f ms)\n", run,
-                            blast.times.carveMs, blast.ops[0].result.changed, blast.times.searchMs,
-                            static_cast<unsigned long long>(blast.search.boxVoxels), perVoxel);
-            }
+            // The watch tower of src/main.cpp (BuildPlayground), its floor on the ground at the origin.
+            const glm::ivec3 c(0, GroundAt(4.4, -5.8), 0);
+            CostScene t{"tower", {8, 8, 8}, glm::dvec3(0.0, c.y * vs, 0.0), nullptr, {}};
+            t.build = [c, SV](voxel::World& w, const voxel::WorldMaterials& m) {
+                const auto box = [&](glm::ivec3 lo, glm::ivec3 hi, uint8_t id) { w.FillBox(c + SV(lo), c + glm::max(SV(hi), SV(lo) + 1), id); };
+                box({30, 0, -60}, {58, 70, -32}, m.stone);
+                box({33, 0, -57}, {55, 66, -35}, 0);
+                box({41, 0, -35}, {47, 20, -32}, 0);
+                box({28, 66, -62}, {60, 70, -30}, m.planks);
+                for (int i = 0; i < 4; ++i) {
+                    const glm::ivec3 p(i & 1 ? 58 : 28, 70, i & 2 ? -32 : -62);
+                    box(p, p + glm::ivec3(2, 8, 2), m.wood);
+                    box(p + glm::ivec3(0, 8, 0), p + glm::ivec3(2, 10, 2), m.torch);
+                }
+            };
+            // The --climb case first: a 1.5 m blast 6 m under the surface.
+            t.shots.push_back({"underground 1.5 m (cold)", voxel::QuantizeSphere(glm::dvec3(-40.0, c.y - 48.0, 40.0), 1.5 / vs),
+                               voxel::QuantizePower(6.0f)});
             static constexpr glm::dvec2 kShots[] = {{31.5, -58.5}, {44.0, -58.5}, {56.5, -58.5}, {56.5, -46.0},
                                                     {56.5, -33.5}, {31.5, -33.5}, {31.5, -46.0}};
+            static constexpr const char* kNames[] = {"tower ring shot 1 (cold)", "tower ring shot 2", "tower ring shot 3", "tower ring shot 4",
+                                                     "tower ring shot 5", "tower ring shot 6", "tower ring shot 7 (frees it)"};
             for (size_t k = 0; k < 7; ++k) {
                 const glm::dvec3 at = glm::dvec3(c) * static_cast<double>(vs) + glm::dvec3(kShots[k].x, 5.0, kShots[k].y) * 0.1;
-                const voxel::SphereQ shot = ShotAt(at, vs);
-                const sim::BlastResult blast = sim::Blast(a.simulation, shot, voxel::QuantizePower(6.0f));
-                const double perVoxel = PerVoxelSearchMs(a.World(), a.simulation.Materials(), shot);
-                std::printf("run %d tower shot %zu: carve %.2f ms, search %.2f ms (per-voxel gather %.2f ms), flood %.2f ms (%u candidates, %u visits), "
-                            "%u island(s) (%u by the flood, largest %u voxels)\n",
-                            run, k + 1, blast.times.carveMs, blast.times.searchMs, perVoxel, blast.times.floodMs, blast.search.faceCandidates,
-                            blast.search.floodVisits, blast.IslandCount(), blast.search.facePieces,
-                            blast.IslandCount() ? blast.ops[1].op.mask.Count() : 0u);
+                t.shots.push_back({kNames[k], ShotAt(at, vs), voxel::QuantizePower(6.0f)});
             }
+            scenes.push_back(std::move(t));
         }
-        // The castle of src/main.cpp (BuildCastle), centred on the origin.
         {
-            sim::SimulationConfig config = FloodConfig(3, {10, 8, 10});
-            config.world.voxelSize = vs;
-            config.chunkCapacity = 4096;
-            FloodArena a(config, Ground(), false);
-            ASSERT_TRUE(a.initialized);
-            a.World().LoadBlocking(glm::dvec3(0.0, g * vs + 4.0, 0.0));     // rows up to 28 m: the towers' island boxes
-            const voxel::WorldMaterials& m = a.Ids();
-            const glm::ivec3 c(0, g, -S(260));
-            const auto box = [&](glm::ivec3 lo, glm::ivec3 hi, uint8_t id) { a.World().FillBox(c + SV(lo), c + glm::max(SV(hi), SV(lo) + 1), id); };
-            box({-100, 0, 160}, {100, 100, 165}, m.stone);
-            box({-100, 0, 355}, {100, 100, 360}, m.stone);
-            box({-100, 0, 160}, {-95, 100, 360}, m.stone);
-            box({95, 0, 160}, {100, 100, 360}, m.stone);
-            for (int i = 0; i < 4; ++i) {
-                const glm::ivec3 lo(i & 1 ? 78 : -118, 0, i & 2 ? 338 : 142);
-                box(lo, lo + glm::ivec3(40, 120, 40), m.stone);
-                box(lo + glm::ivec3(5, 0, 5), lo + glm::ivec3(35, 115, 35), 0);
-            }
-            box({-40, 0, 220}, {40, 120, 300}, m.brick);
-            box({-35, 0, 225}, {35, 115, 295}, 0);
-            for (int y : {30, 60, 90}) box({-35, y, 225}, {35, y + 2, 295}, m.planks);
+            // The castle of src/main.cpp (BuildCastle), centred on the origin.
+            const glm::ivec3 c(0, GroundAt(0.0, 0.0), -S(260));
+            CostScene k{"castle", {10, 8, 10}, glm::dvec3(0.0, c.y * vs + 4.0, 0.0), nullptr, {}};
+            k.build = [c, SV](voxel::World& w, const voxel::WorldMaterials& m) {
+                const auto box = [&](glm::ivec3 lo, glm::ivec3 hi, uint8_t id) { w.FillBox(c + SV(lo), c + glm::max(SV(hi), SV(lo) + 1), id); };
+                box({-100, 0, 160}, {100, 100, 165}, m.stone);
+                box({-100, 0, 355}, {100, 100, 360}, m.stone);
+                box({-100, 0, 160}, {-95, 100, 360}, m.stone);
+                box({95, 0, 160}, {100, 100, 360}, m.stone);
+                for (int i = 0; i < 4; ++i) {
+                    const glm::ivec3 lo(i & 1 ? 78 : -118, 0, i & 2 ? 338 : 142);
+                    box(lo, lo + glm::ivec3(40, 120, 40), m.stone);
+                    box(lo + glm::ivec3(5, 0, 5), lo + glm::ivec3(35, 115, 35), 0);
+                }
+                box({-40, 0, 220}, {40, 120, 300}, m.brick);
+                box({-35, 0, 225}, {35, 115, 295}, 0);
+                for (int y : {30, 60, 90}) box({-35, y, 225}, {35, y + 2, 295}, m.planks);
+            };
             static constexpr glm::dvec3 kAt[] = {{0.0, 50.0, 162.5}, {-37.5, 45.0, 260.0}, {115.5, 100.0, 357.5}};
-            static constexpr const char* kName[] = {"curtain wall at 5 m", "keep wall at 4.5 m", "corner tower at 10 m"};
-            for (size_t k = 0; k < 3; ++k) {
-                const glm::dvec3 at = glm::dvec3(c) * static_cast<double>(vs) + kAt[k] * 0.1;
-                const voxel::SphereQ shot = ShotAt(at, vs);
-                const sim::BlastResult blast = sim::Blast(a.simulation, shot, voxel::QuantizePower(6.0f));
-                const double perVoxel = PerVoxelSearchMs(a.World(), a.simulation.Materials(), shot);
-                std::printf("run %d castle %s: carve %.2f ms, search %.2f ms (per-voxel gather %.2f ms), flood %.2f ms (%u candidates, %u visits, "
-                            "attached %u limit / %u known / %u budget), %u island(s)\n",
-                            run, kName[k], blast.times.carveMs, blast.times.searchMs, perVoxel, blast.times.floodMs, blast.search.faceCandidates,
-                            blast.search.floodVisits, blast.search.attachedByLimit, blast.search.attachedByKnown, blast.search.attachedByBudget,
-                            blast.IslandCount());
+            static constexpr const char* kName[] = {"castle curtain wall at 5 m (cold)", "castle keep wall at 4.5 m (cold)",
+                                                    "castle corner tower at 10 m (cold)"};
+            for (size_t i = 0; i < 3; ++i) {
+                const glm::dvec3 at = glm::dvec3(c) * static_cast<double>(vs) + kAt[i] * 0.1;
+                k.shots.push_back({kName[i], ShotAt(at, vs), voxel::QuantizePower(6.0f)});
             }
+            scenes.push_back(std::move(k));
         }
+        for (const CostScene& scene : scenes)
+            for (int run = 0; run < 3; ++run) {
+                uint64_t hash[2] = {};
+                const std::vector<CostRow> graph = RunCostScene(scene, terrain, sim::IslandSearchKind::Graph, hash[0]);
+                const std::vector<CostRow> voxel = RunCostScene(scene, terrain, sim::IslandSearchKind::Voxel, hash[1]);
+                ASSERT_EQ(graph.size(), scene.shots.size());
+                ASSERT_EQ(voxel.size(), scene.shots.size());
+                EXPECT_EQ(hash[0], hash[1]) << scene.name;
+                for (size_t k = 0; k < graph.size(); ++k) {
+                    const CostRow& r = graph[k];
+                    std::printf("%s run %d %s: graph search %.2f ms (builds %.2f ms: %u of %u graphs, %.1f us each; floods %.2f ms, %u node "
+                                "visits; re-label %.2f ms; %u over-full cells); voxel search %.2f ms (%u visits); %u / %u island(s)\n",
+                                terrain ? "terrain" : "flat", run, scene.shots[k].name, r.searchMs, r.buildMs, r.built, r.used,
+                                r.built ? 1000.0 * r.buildMs / r.built : 0.0, r.floodMs, r.visits, r.relabelMs, r.overfull,
+                                voxel[k].searchMs, voxel[k].visits, r.islands, voxel[k].islands);
+                }
+            }
     }
 }

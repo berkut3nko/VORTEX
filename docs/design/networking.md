@@ -91,8 +91,10 @@ generator golden hash; the token is compared in plain text with the session file
 ## Time and ticks
 
 - Server tick `T`, fixed 1/60 s, never dropped; after a hitch it catches up at most 2 ticks per loop pass. Order:
-  receive -> streaming -> `StepPlayer` per player in slot order -> queued casts within a **work budget** (island-box
-  voxels scanned + face-flood visits + operations + event bytes per tick, calibrated once to about 6 ms on the
+  receive -> streaming -> `StepPlayer` per player in slot order -> queued casts within a **work budget** (graph node
+  visits + chunk graphs used (`chunkGraphs`) at a fixed cold price per chunk since shred.md stage 4 - island-box voxels
+  scanned + face-flood visits with the reference voxel search - + operations + event bytes per tick; never graphs
+  *built* or chunks decoded, which depend on the server's cache and streaming history, calibrated once to about 6 ms on the
   reference machine from shred.md stage 0's measurement; wall clock is only logged, so a replayed server puts every
   cast on the same tick; shred.md R5) and the event byte budget -> `GuardBodies`, `physics.Step`, `SyncFromPhysics` -> lifetimes -> snapshots on even ticks.
 - The client runs ahead by RTT/2 plus a margin of 2 ticks + measured jitter. Each snapshot reports the margin of the
@@ -345,7 +347,7 @@ open or disagreed with the code, this was chosen:
 
 | Question | Choice | Why, and what later stages must know |
 |---|---|---|
-| Rounding of the float -> q conversion. | `std::llround(x * 16)` in double (halves away from zero), centre clamped to the int32 range (+-2^27 voxels), radius to [0, 65535] q (4095 voxels), non-finite input = radius 0. Metres are divided by the voxel size in double first (`sim::Blast(sim, BlastDesc)`). | Quantisation runs only where an operation is made (server, offline); clients receive the integers. Every later decision uses only the integers: the island box is `floor(centre / 16) +- (radius / 16 + 24)` from the q values, plus the face flood inside the flood box `floor(centre / 16) +- 96` (shred.md stage 1). |
+| Rounding of the float -> q conversion. | `std::llround(x * 16)` in double (halves away from zero), centre clamped to the int32 range (+-2^27 voxels), radius to [0, 65535] q (4095 voxels), non-finite input = radius 0. Metres are divided by the voxel size in double first (`sim::Blast(sim, BlastDesc)`). | Quantisation runs only where an operation is made (server, offline); clients receive the integers. Every later decision uses only the integers: the island box is `floor(centre / 16) +- (radius / 16 + 24)` from the q values, plus the face flood inside the flood box `floor(centre / 16) +- 96` (shred.md stage 1); since stage 4 both are searched on the cell graph (same boxes). |
 | Sphere bounds. | `SphereVoxelBounds` is the per-axis box `abs(16 v + 8 - c) <= r`, which can be one voxel larger than the tight bounds per side; the voxel test decides. Edit boxes are clipped to +-2^30 voxels (`kMaxEditVoxel`), `FillBox` too, so no `ChunkToVoxel(chunk) + 32` overflows. | `InSphereQ` returns early when one axis exceeds the radius, so squares stay below 2^34 for any `int` voxel. |
 | How is `power` compared with a float hardness without rounding? | A voxel survives when `hardness * 16 > power` in float: multiplying by 16 is exact and so is converting a 16-bit integer, so the compare has no rounding. A per-carve table of 256 flags is built from it. | The material table must be equal on both sides (`buildHash` in `Hello`, stage 3). A hardness that is not a multiple of 1/16 (0.6 = 9.6 units) compares exactly: power 9 leaves it, 10 removes it (tested). |
 | "Skipped / unsynced chunk report": which chunks? | Only chunks the operation would really touch (exact for sphere, box and mask), in visit order (y, z, x). `skipped` = not loaded: outside the window, `Unloaded` or `Loading`; `unsynced` = loaded but Empty / Uniform and the store had no slot. A chunk is all-or-nothing: a non-dense chunk is materialised at its first change, so a failed slot leaves it untouched. | Stage 7 turns a skipped chunk into replay from the ring or a `ChunkRequest`, an unsynced one into the "unsynced" client state. Today the offline game ignores the report, as it ignored the silent skip before. |
@@ -412,6 +414,29 @@ whose RLE mask exceeds the 16 kB event burst is still sent (correctness first) a
 Offline only: a flood that meets a chunk that is not loaded defers the search; a carve that skipped loading chunks is
 replayed on exactly those chunks as each one loads, before the late search (`World::CarveSphereQInChunk`; such a
 replay is never sent; a client replays skipped ops in stage 7 instead).
+
+**Changed by shred.md stage 4 (2026-11-12, before stage 3 by the owner's decision).** The server searches islands on
+the cell graph cached per terrain chunk (`voxel::SearchIslandsOnGraph`, `sim::IslandSearchKind::Graph`, the default)
+instead of the voxel search, in the same island and flood boxes, with the same emission order. The graph is exact
+(every component of an 8^3 cell is a node; collapse.md's "more than 8 components merge" was not built), so the
+**results** equal the stage-1 search except where a work budget runs out (the graph counts node visits,
+`sim::kGraphNodeVisitBudget` = 32 768 per blast, the voxel search voxel visits, 240 000) and, when a chunk of the flood
+box is not loaded, in the offline deferral and the reason a flood counts as attached (they flood in another order; on a
+server both attach, so the operations are equal). That is a server decision;
+clients still only apply, and no `WorldOpKind`, `Detach`, `ClearMask` or wire format changed. Tested: every stage-1
+case gives equal operations and hashes with either search (`Structure.GraphFloatingEqualsFaceFlood`), every stage-1
+test compares the two on its own voxels (`SimulationConfig::checkIslandSearch`; face islands only where no budget ran
+out and every flood box chunk was loaded), and the graph never detaches what the
+voxel search keeps on random terrain with liquids (`Structure.GraphNeverDetachesWhatTheVoxelSearchKeeps`). A cast now
+costs 0.06-1.0 ms of island search on a quiet CPU, cold graph builds included (game terrain and flat ground; the voxel
+search 3.3-19 ms). In game a cold chunk graph costs 70-120 us (15-27 us quiet; shred.md "Stage 4 as built"), and the
+node budget does not bound builds: the first cast at an untouched site builds up to the island box's chunks (up to 64
+for a 1.2 m blast) plus chunks its floods reach, so the cold worst case is about 64 x 120 us = 7.7 ms. **Stage 3's cast
+budget must charge `IslandSearchStats::chunkGraphs` (graphs used, a function of the flood box voxels) at that cold
+price**, not `graphsBuilt`: which graphs are cached depends on earlier casts, eviction and streaming, so a budget
+charged by builds would put a replayed cast on another tick. Prebuilding graphs on a worker (shred.md owner question)
+would lower the price. The graph cache is per `sim::Simulation` and invalidated by
+`World::ChunkRevision`, so a server needs nothing new at stage 9 beyond the flood box it already keeps loaded.
 
 ## Out of scope for M1
 

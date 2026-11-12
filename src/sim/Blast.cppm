@@ -36,31 +36,69 @@ export namespace vortex::sim {
     /// stage 0). Logged only: nothing is ever decided from a time.
     struct BlastTimes {
         double carveMs = 0.0;      ///< The CarveSphere (or its replay in a late search).
-        double searchMs = 0.0;     ///< The island box gathered and labelled (ExtractFloatingIslands).
-        double floodMs = 0.0;      ///< The face flood (voxel::ProveFaceComponents).
+        /// The island search: the graph search (seeds, floods, re-labelling; graph builds included),
+        /// or with the voxel search the island box gathered and labelled (ExtractFloatingIslands).
+        double searchMs = 0.0;
+        double graphBuildMs = 0.0; ///< Graph search: chunk graphs (re)built, part of searchMs.
+        double graphFloodMs = 0.0; ///< Graph search: the floods over nodes, part of searchMs.
+        double relabelMs = 0.0;    ///< Graph search: island nodes re-labelled per voxel and ordered, part of searchMs.
+        double floodMs = 0.0;      ///< Voxel search: the face flood (voxel::ProveFaceComponents). Graph search: 0.
         double opsMs = 0.0;        ///< Detach / ClearMask built and applied.
         double objectsMs = 0.0;    ///< Scene::Damage and the push.
+        /// SimulationConfig::checkIslandSearch only: the other search (not in the total; nothing
+        /// it found was applied).
+        double referenceMs = 0.0;
     };
 
     /// @brief What the island search of a blast saw (docs/design/shred.md stage 1c: nothing
-    /// silent). Counts of work and decisions; equal on every machine for equal voxels.
+    /// silent). Counts of work and decisions; equal on every machine for equal voxels (and equal
+    /// loaded chunks in the flood box), except `chunksDecoded` and `graphsBuilt`, which depend on
+    /// streaming and on what the graph cache held: those two are logged only and never an input
+    /// to a decision or a work budget (docs/design/networking.md R5).
     struct IslandSearchStats {
-        uint64_t boxVoxels = 0;          ///< Island box voxels gathered.
-        uint32_t faceCandidates = 0;     ///< Face components of at most kMaxIslandVoxels in the box: flooded.
+        /// The search that ran: the cell graph (SimulationConfig::islandSearch Graph, the default)
+        /// or the voxel search. Counters marked "voxel" stay 0 for the graph and the other way round.
+        bool graph = false;
+        uint64_t boxVoxels = 0;          ///< Voxel: island box voxels gathered.
+        uint32_t faceCandidates = 0;     ///< Voxel: face components of at most kMaxIslandVoxels in the box: flooded.
         uint32_t facePieces = 0;         ///< Proven by the flood and detached (a Detach each).
         uint32_t faceCrumbs = 0;         ///< Proven by the flood, under the piece size: in the ClearMask.
-        uint32_t faceOversize = 0;       ///< Face components over kMaxIslandVoxels in the box: attached, not flooded.
+        /// Face components over kMaxIslandVoxels in the box: attached, not flooded (graph: box
+        /// components over it by whole-node voxel count).
+        uint32_t faceOversize = 0;
         /// Floating components inside the box over kMaxIslandVoxels: they stay in the air.
         uint32_t oversizeIslands = 0;
-        uint32_t merged = 0;             ///< Candidates that were part of an earlier proven island.
-        uint32_t attachedByLimit = 0;    ///< voxel::FloodResult counters, summed.
+        uint32_t merged = 0;             ///< Candidates (graph: box components) that were part of an earlier proven island.
+        /// voxel::FloodResult / voxel::GraphSearchResult counters, summed. Voxel: limit = over the
+        /// size limit, at the flood box face or below the window; graph: over the size limit only
+        /// (the face is `attachedByFace`).
+        uint32_t attachedByLimit = 0;
         uint32_t attachedByKnown = 0;
         uint32_t attachedByBudget = 0;
         /// A flood met a chunk that is not loaded on a session server: an error (its window holds
         /// every flood box by construction), logged; the candidate stayed attached.
         uint32_t attachedByUnloaded = 0;
-        uint32_t chunksDecoded = 0;
-        uint32_t floodVisits = 0;
+        uint32_t chunksDecoded = 0;      ///< Packed chunks decoded: depends on streaming, logged only.
+        uint32_t floodVisits = 0;        ///< Voxel: voxels visited by the face flood.
+        // Graph search (voxel::GraphSearchResult):
+        uint32_t seedNodes = 0;          ///< Nodes whose bounds meet the island box.
+        uint32_t boxComponents = 0;      ///< Their components (over links between them).
+        uint32_t graphFloods = 0;        ///< Box components flooded through the flood box.
+        uint32_t attachedByFace = 0;     ///< A flood reached the flood box face (or the window's bottom row).
+        uint32_t nodeVisits = 0;         ///< Nodes the floods visited (kGraphNodeVisitBudget's unit).
+        /// Chunk graphs used (with nodes): follows from the voxels of the flood box, whatever was
+        /// cached; what a work budget charges for graph builds (the cold worst case).
+        uint32_t chunkGraphs = 0;
+        /// Graphs (re)built for this search, the rest came from the cache. Depends on cache
+        /// history (earlier blasts, eviction, loading order): logged only, never a budget input.
+        uint32_t graphsBuilt = 0;
+        /// Cells with more than voxel::kMaxCellNodes nodes in those graphs (collapse.md's merge
+        /// would have over-connected them; here they are exact). Summed per graph used.
+        uint32_t overfullCells = 0;
+        uint32_t relabelledNodes = 0;    ///< Island nodes re-labelled per voxel.
+        uint32_t outsideBox = 0;         ///< Closed floods without a voxel in the island box (not this blast's).
+        /// SimulationConfig::checkIslandSearch: the other search found other islands (logged).
+        uint32_t referenceMismatch = 0;
         /// A chunk of the island box was not loaded on a session server: an error (its window holds
         /// every island box by construction), logged; nothing was searched and nothing waits.
         uint32_t islandBoxUnloaded = 0;
@@ -106,6 +144,9 @@ export namespace vortex::sim {
         /// window (logged). Such a result has no operations.
         uint32_t deferredGivenUp = 0;
         IslandSearchStats search;
+        /// SimulationConfig::checkIslandSearch only: the counters of the other search (the voxel
+        /// search when the graph ran), which ran on the same voxels and applied nothing.
+        IslandSearchStats reference;
         BlastTimes times;
         uint32_t crumbs = 0;           ///< Islands under scene::MinPieceVoxels(world voxel size), all in the one ClearMask.
         uint32_t objectsHit = 0;       ///< Objects that lost voxels (Scene::Damage removed > 0).
@@ -130,6 +171,10 @@ export namespace vortex::sim {
     inline constexpr int32_t kIslandSearchMargin = 24;
     /// Work budget of one blast's face flood, in voxel visits (docs/design/shred.md, R5).
     inline constexpr uint32_t kFloodVisitBudget = 4 * kMaxIslandVoxels;
+    /// Work budget of one blast's graph search, in node visits (docs/design/shred.md stage 4, R5).
+    /// A flood gives up at kMaxIslandVoxels voxels: 118 nodes of solid cells, about 940 of
+    /// one-voxel walls; the budget is spent only by dozens of large separate pieces.
+    inline constexpr uint32_t kGraphNodeVisitBudget = 32768;
     /// Island searches waiting at once (Simulation::DeferredIslandSearches). When the list is full,
     /// a new one replaces the one whose box is farthest from the window's centre (ties: the oldest);
     /// the new search itself is always kept (it is the blast the player just made).
@@ -158,11 +203,16 @@ export namespace vortex::sim {
      * presentation (PresentBlast), made from the returned result.
      * @details In order:
      *  1. `WorldOp::Carve(sphere, power)` is applied (voxel::World::CarveSphereQ).
-     *  2. ExtractFloatingIslands over the island box `floor(centre) +- (radius / 16 + 24)` voxels,
-     *     without removing anything. Components touching the box face (attached there) with at
-     *     most kMaxIslandVoxels voxels in the box are then proven by voxel::ProveFaceComponents
-     *     inside the flood box (`floor(centre) +- 96` voxels, budget kFloodVisitBudget visits):
-     *     a flood that closes is an island too. Each island of at least
+     *  2. The island search over the island box `floor(centre) +- (radius / 16 + 24)` voxels and
+     *     the flood box (`floor(centre) +- 96` voxels), without removing anything: by default on
+     *     the cell graph cached per terrain chunk (voxel::SearchIslandsOnGraph, budget
+     *     kGraphNodeVisitBudget node visits; docs/design/shred.md stage 4), or with
+     *     SimulationConfig::islandSearch Voxel the stage-1 search it reproduces: ExtractFloatingIslands
+     *     over the island box, then components touching its face with at most kMaxIslandVoxels
+     *     voxels in the box proven by voxel::ProveFaceComponents inside the flood box (budget
+     *     kFloodVisitBudget visits). Both give the same islands in the same order unless a budget
+     *     runs out or (a chunk of the flood box not loaded) one defers or attaches where the other
+     *     closes first. Each island of at least
      *     scene::MinPieceVoxels(world voxel size) becomes a `WorldOp::Detach` (mask of its voxels,
      *     netId 0, velocity = BlastPush at its minimum corner) that is applied at once with
      *     ApplyOp - the same call a client makes: in-box islands first, then proven ones. The

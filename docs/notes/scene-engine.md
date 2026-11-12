@@ -20,7 +20,9 @@ here. Line numbers in `src/scene`, `src/sim` and `src/engine` are as of M1 stage
 - `src/sim/Blast.cppm`, `internal/Blast.cpp` - `BlastDesc`, `AppliedOp`, `BlastResult`, `BlastPush`, `Blast` (the
   simulation half of a blast), `PresentBlast` (the presentation half, GPU-free; `Engine::PresentBlast` forwards),
   `kMaxIslandVoxels`, `kIslandSearchMargin`, `kFloodVisitBudget`, `kMaxDeferredIslandSearches`, `kServerWindowMarginChunks`,
-  `IslandBox` / `FloodBox`, `BlastTimes` / `IslandSearchStats` (shred.md stages 0-1c), `RetryIslandSearches`. The crumb
+  `kGraphNodeVisitBudget`, `IslandBox` / `FloodBox`, `BlastTimes` / `IslandSearchStats` (shred.md stages 0-1c and 4),
+  `RetryIslandSearches`. In Blast.cpp the search is `GraphSearch` (default) or `VoxelSearch` (the stage-1 reference),
+  both returning a `Found`; `SearchIslands` emits the operations from either. The crumb
   threshold is `scene::MinPieceVoxels(world.VoxelSize())` (Scene.cppm; 8 at 0.125 m).
 - `src/sim/Simulation.cppm` - `SimulationConfig`, `ServerConfig`, the `Simulation` interface. Its doc comment is the
   contract (tick, phases, what is not stepped).
@@ -39,7 +41,12 @@ here. Line numbers in `src/scene`, `src/sim` and `src/engine` are as of M1 stage
   `StemCut`. `tests/sim/FaceFloodTests.cpp` - `Blast.*` of shred.md stages 1-1c (face flood, carve replay, deferred
   searches) and the disabled cost case `Blast.DISABLED_CostOfTheTowerAndCastleCases`; helpers `FloodArena`,
   `UnclassifiedGround` (no column pass: a chunk that enters the window stays Loading until the next `Update`),
-  `MushroomGround` (a generated mushroom, for a carve into a loading chunk), `Pillar`, `kBaseCut`.
+  `MushroomGround` (a generated mushroom, for a carve into a loading chunk), `Pillar`, `kBaseCut`; and
+  `Structure.GraphFloatingEqualsFaceFlood` (every stage-1 case in a graph and a voxel simulation, `Stage1Cases`).
+  `FloodArena`, `Arena` (BlastTests) and `RubbleArena` set `checkIslandSearch` and fail a test whose searches differ
+  or that ran a search without comparing it (`IslandSearchChecks::run`; `FloodArena::expectChecked = false` for the
+  arenas that run one search on purpose);
+  voxel-search counters are in `BlastResult::reference` there.
 - `tests/sim/SimulationTests.cpp` - suite `Simulation`; helpers `FlatWorld` (a simulation on flat ground, window
   loaded) and `Playground` (crates, a static block, a lamp, a flash). `tests/sim/ServerSceneTests.cpp` - suite
   `ServerScene`; helper `Bench` (store + materials + physics + particles + scene, no world). Both are
@@ -210,9 +217,11 @@ Scene
   index a stale id is valid again. Nothing in the scene guards against it; rubble churn is how it would happen.
 
 Engine
-- Blast order. `sim::Blast` (Blast.cpp): carve (`ApplyOp(WorldOp::Carve)`) -> island search with
-  `removeFromWorld = false` -> face flood (`voxel::ProveFaceComponents`) of the components that touch the island box
-  face (shred.md stage 1) -> per island of at least `scene::MinPieceVoxels(world voxel size)` `WorldOp::Detach`
+- Blast order. `sim::Blast` (Blast.cpp): carve (`ApplyOp(WorldOp::Carve)`) -> island search: by default
+  `voxel::SearchIslandsOnGraph` on `Simulation::TerrainGraphs()` (shred.md stage 4), with
+  `SimulationConfig::islandSearch = Voxel` the stage-1 search (`ExtractFloatingIslands` with
+  `removeFromWorld = false`, then the face flood `voxel::ProveFaceComponents` of the components that touch the island
+  box face); the same islands in the same order unless a budget runs out -> per island of at least `scene::MinPieceVoxels(world voxel size)` `WorldOp::Detach`
   applied with `ApplyOp` (no entity), in-box islands in scan order first, then proven ones in candidate order -> one
   `WorldOp::Clear` for all smaller islands of both kinds (the union mask over their tight box) -> snapshot
   (`QueryBodies`) -> `Damage` each (fragments get `BlastPush` added) -> impulses -> `ActivateInBox`.
@@ -235,7 +244,8 @@ Engine
 - Budgets: 400 to 799 terrain debris bursts per blast (stride = removed / 400, rounded down, in `PresentBlast`), at
   most 400 crumb bursts,
   islands up to `kMaxIslandVoxels` (60 000), search box radius + `kIslandSearchMargin` (24) voxels, face flood inside
-  `voxel::kFloodHalfExtent` (96) voxels of the centre with `kFloodVisitBudget` (240 000) visits per blast. Flash lifetime
+  `voxel::kFloodHalfExtent` (96) voxels of the centre with `kGraphNodeVisitBudget` (32 768) node visits per blast
+  (graph search) or `kFloodVisitBudget` (240 000) voxel visits (voxel search). Flash lifetime
   `ln(40*radius / 0.05) / 9` s (0.7 s for 0.7 m). Call `Explode` / `Blast` from `OnUpdate` / `OnFixedUpdate`, never
   inside a registry view.
 - Before `Initialize()` succeeds `World()` and `Explode` dereference a null `world`; the other accessors return
@@ -254,6 +264,9 @@ Engine
   (`deferredGivenUp`, a `Log::Warn`). A full list drops the search farthest from the window centre (`deferredDropped`
   on the new blast's result, a `Log::Warn`). A replayed carve is `ops[0]` of the late result (`carveReplayed`), so
   `PresentBlast` shows its debris; late results never get an explosion or flash.
+- `SimulationConfig::checkIslandSearch` (tests) runs the other search on the same voxels before any operation is
+  applied; it doubles the search cost and must stay off in the game. The chunk graphs live in the `Simulation`
+  (`TerrainGraphs()`, cleared by `Shutdown`); nothing else invalidates them than `World::ChunkRevision`.
 - `SimulationConfig::sessionServer` (set by `ServerConfig` only) turns the flood's "chunk not loaded" from a deferral
   into an error: counted in `IslandSearchStats::attachedByUnloaded`, `Log::Error`, the piece stays. Nothing else in the
   simulation reads it.

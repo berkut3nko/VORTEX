@@ -87,6 +87,8 @@ namespace vortex::sim {
         uint32_t tick = 0;
         bool initialized = false;
         std::vector<DeferredIslandSearch> deferredIslands;
+        voxel::TerrainGraphCache graphs;
+        IslandSearchChecks checks;
     };
 
     Simulation::Simulation(const SimulationConfig& config) : m_Impl(std::make_unique<Impl>(config)) {}
@@ -121,6 +123,7 @@ namespace vortex::sim {
         s.terrain.reset();
         s.world.reset();
         s.deferredIslands.clear();
+        s.graphs.Clear();
         s.physics.Shutdown();
         s.initialized = false;
     }
@@ -145,6 +148,8 @@ namespace vortex::sim {
     uint32_t Simulation::Tick() const { return m_Impl->tick; }
 
     std::vector<DeferredIslandSearch>& Simulation::DeferredIslandSearches() { return m_Impl->deferredIslands; }
+    voxel::TerrainGraphCache& Simulation::TerrainGraphs() { return m_Impl->graphs; }
+    Simulation::IslandSearchChecks& Simulation::IslandSearchCheck() { return m_Impl->checks; }
 
     void Simulation::Step(std::span<const glm::dvec3> focusPoints) {
         Impl& s = *m_Impl;

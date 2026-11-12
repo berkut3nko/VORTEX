@@ -21,13 +21,14 @@ Line numbers are as of engine commit `ec073a8`; if a number no longer matches, s
 | `Trace.cppm`, `internal/Trace.cpp` | `TraceScene`, `Trace`/`TraceWorld`/`TraceChunk`; `TraceKernel` includes `shared/trace.glsl`. |
 | `Collider.cppm`, `internal/Collider.cpp` | `BuildColliderBoxes`, `ComputeMassProperties`, `CollisionFilter`, `BuildChunkCollisionMesh`. |
 | `Connectivity.cppm`, `internal/Connectivity.cpp` | `LabelComponents`, `SplitComponents`, `ExtractFloatingIslands` (+ `IslandBoxScan`), `ProveFaceComponents` (the face flood, shred.md stage 1; `FaceComponent`, `FloodLimits`, `FloodResult`, `kFloodHalfExtent`). |
+| `Structure.cppm`, `internal/Structure.cpp` | The cell graph (shred.md stage 4): `GraphNode`, `GraphLink`, `ChunkGraph`, `BondVoxels`, `GraphMaterials` / `MakeGraphMaterials`, `BuildChunkGraph`, `NodeVoxels`, `TerrainGraphCache`, `SearchIslandsOnGraph` (+ `GraphSearchLimits`, `GraphSearchResult`), `kCellSize`, `kMaxCellNodes`. |
 | `Material.cppm`, `internal/Material.cpp` | `Material`, `GpuMaterial`, `MaterialLibrary` (palettes), `RegisterDefaultWorldMaterials`. |
 | `VoxFormat.cppm`, `internal/VoxFormat.cpp` | MagicaVoxel `.vox` read/write, `RegisterVoxPalette`. |
 | `MeshImport.cppm`, `internal/MeshImport.cpp` | `VoxelizeTriangles` (SAT), interior fill, glTF import through tinygltf. |
 | `internal/ThirdPartyImpl.cpp` | The one non-module TU with the tinygltf / stb implementations. |
 | `shaders/shared/trace.glsl` | Traversal compiled as GLSL and C++: `VxTraceChunk/World/Instances/Scene`. |
 | `shaders/shared/shading.glsl`, `cube.glsl`, `vx_cpp.h`, `vx_glsl.glsl` | Shared shading helpers, proxy-cube corners, and the two language shims (rules: `vx_cpp.h:22-27`). |
-| `tests/core/*.cpp` | `VortexCoreTests`: Chunk (+ChunkStore), World (+Region, Terrain), WorldOps (`QuantizedEdits.*`), Hash (+golden terrain), Trace (+Bvh), Collider, Connectivity, VoxFormat, MeshImport, ViewDistance (with `FloatingIslands.GatherByChunkEqualsPerVoxel` and `.RowsAboveTheBuildCeilingAreAir`, which need its terrain fixtures). `ParticleTests.cpp` in the same binary belongs to `fx`, not to this module. |
+| `tests/core/*.cpp` | `VortexCoreTests`: Chunk (+ChunkStore), World (+Region, Terrain), WorldOps (`QuantizedEdits.*`), Hash (+golden terrain), Trace (+Bvh), Collider, Connectivity, VoxFormat, MeshImport, ViewDistance (with `FloatingIslands.GatherByChunkEqualsPerVoxel` and `.RowsAboveTheBuildCeilingAreAir`, which need its terrain fixtures), Structure (`Structure.*`: graph = `LabelComponents`, cache refresh = rebuild, graph search vs the voxel search, `DISABLED_GraphBuildCost`). `ParticleTests.cpp` in the same binary belongs to `fx`, not to this module. |
 
 Who compiles the shared files as C++ today: `trace.glsl` in `Trace.cpp`, `cube.glsl` in
 `tests/graphics/ContractTests.cpp`. `shading.glsl` says it is C++-compatible but no C++ file includes it, so nothing
@@ -355,6 +356,33 @@ the `VX_*` accessor macros defined there and, with the same names, in the shader
 - `BuildChunkCollisionMesh`: vertices are chunk-local voxel units, triangles counter-clockwise seen from the empty
   side. With a null `outside` every border face is emitted (the neighbour counts as open).
   `CollisionFilter::FromMaterials` with an unknown palette returns "everything collides" plus a warning.
+- **Cell graph (shred.md stage 4).** A node is a 6-connected component of solid, not ignored voxels inside one 8^3
+  cell; **every** component is a node (collapse.md's 8-node limit with a merge into node 7 was not built), so graph
+  connectivity equals voxel connectivity everywhere. Over-full cells (more than `kMaxCellNodes` = 8 nodes) are only
+  counted. Node order: by cell (cx + 4 cy + 16 cz), then first voxel in (z, y, x) scan order; link order: face
+  (-x +x -y +y -z +z), then node. Links inside a chunk are stored with their `bond`; across a chunk face they are
+  computed from the face masks (`BondVoxels`, a face bit is y + 8z / x + 8z / x + 8y for x / y / z faces) - a graph
+  never depends on a neighbour chunk, so a chunk is rebuilt only when it changes. `mass` = sum of `densityQ` (kg/m^3,
+  integer); keep the masses, voxel counts and bonds: they are what a load check (stage 7) will use.
+- `World::ChunkRevision(chunk)` changes on every content change and load / unload of a chunk (0 = not loaded, never
+  reused). **An edit path that changes chunk ids without `QueueChange` would leave a stale graph**; all edits go
+  through `EditRegion`. A stale *island* node is caught when it is re-labelled (count, face masks, bounds:
+  `relabelMismatch`, an error line), nothing of it is written, the cache is dropped and the search runs again
+  (`staleGraphRetries`; `Structure.StaleGraphNeverDetachesAttachedVoxels`); a stale attached neighbour is not caught.
+  Packing / unpacking keep the revision.
+- `TerrainGraphCache` is main-thread only, like the `World`. `Get` returns a pointer valid for the current pass;
+  `BeginPass` (one per search) evicts above the cap (4096 graphs, least recently used) and clears everything when the
+  `World` (`InstanceId`) or the material tables change. Over the cap, changed / unloaded entries go first, then the
+  least recently used. Dense / Packed chunks own their graph (no growth slack); every Uniform chunk of one id shares
+  one graph (empty and uniform-liquid chunks the empty one), so a cached graph's `chunk` is (0, 0, 0) for those.
+  `TerrainGraphStats::bytes` counts the memory (5.2 KB per Dense, 6.5 KB per Packed graph at 0.125 m). Stats
+  (`built`, `graphsBuilt`, `chunksDecoded`) depend on the cache's history: never use them to decide anything.
+- `SearchIslandsOnGraph` returns the islands `ExtractFloatingIslands` + `ProveFaceComponents` would, in their order,
+  except where a budget runs out (it counts node visits). A node with a voxel on the flood box face layer (or on the
+  bottom row of a full-height window) is attached; such nodes are never expanded, so no chunk outside the flood box is
+  read. The box island order is rebuilt from per-voxel keys of released nodes only (`LabelComponents` on an island's
+  in-box voxels, and only when two face islands must be ordered). Build cost (quiet, -O2, 0.125 m terrain): Dense
+  25-33 us, Packed 20-38 us, Uniform / empty: shared, no build.
 - Connectivity is 6-connected: pieces touching only by an edge or a corner are separate components, and different
   materials still connect (`Connectivity.CubesTouchingOnlyByAnEdgeOrCornerAreSeparate`, `.DifferentMaterialsStillConnect`).
   Changing this changes what every destruction produces.

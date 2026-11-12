@@ -22,7 +22,7 @@ What exists today, and what was designed for but is not built yet. See
 | Renderer | Ray-marched G-buffer, ray-traced sun shadows, ambient occlusion, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping, ImGui. Headless mode with screenshots. Validation-clean on Intel UHD 620. |
 | Editor | `vortex.editor`: in-game editor toggled with F1 - fly camera, entity selection with a translate / rotate gizmo, inspector, terrain brush, primitive spawning, `.vox` / glTF import, environment / render / profiler / world panels. Tool logic is separate from the widgets and unit tested. |
 | Simulation | `vortex.sim`: `sim::Simulation` owns world, physics, terrain colliders and scene and steps them on a numbered fixed tick; `sim::WorldOp` / `ApplyOp` replay terrain changes exactly; `sim::Blast`. Library `Vortex::Sim` links no renderer or window. `Engine` owns one and draws it. |
-| Tests | 465 unit tests (two disabled measurements), none needing a GPU. |
+| Tests | 477 unit tests (three disabled measurements), none needing a GPU. |
 
 ## Performance (Intel UHD 620, 1280x720 output, 768x432 internal)
 
@@ -152,7 +152,10 @@ State (stages are those of [design/networking.md](design/networking.md)):
   most 2), est. 65 KB -> 7.2 KB of wire. Found, open: the island search takes 70-200 ms per 1.2 m blast in the `dev`
   build, and that build has no `-O` flag at all (empty `CMAKE_CXX_FLAGS_RELWITHDEBINFO` with CMake 4.4).
 - Stages 3-9: not started. Before stage 3: shred.md stage 1 changed the search result (face flood), the server
-  window margin (3 chunks, flood box) and the cast budget (a work budget); see networking.md "Changed by shred.md".
+  window margin (3 chunks, flood box) and the cast budget (a work budget); shred.md stage 4 (built, the owner's answer
+  to its question 4) moved the island search onto the cell graph - same results except where a work budget runs out,
+  node visits and chunk graphs used (at a cold price; never graphs built, which depend on the cache) to count in stage
+  3's cast budget; see networking.md "Changed by shred.md".
 
 ### M2 - Fight feel under authority
 - Spell framework: data-driven casts (projectile, beam, area) producing world operations,
@@ -270,8 +273,25 @@ State (stages are those of [design/networking.md](design/networking.md)):
   defers (island box not loaded = counted error), the carve replay touches only the chunks it skipped, as they load,
   the far-rest rule is for small rubble only, removing a body wakes what rests on it, pieces of old rubble start a new
   lifetime, the split cap removes resting rubble first, the unseen-edit list keeps only chunks under frozen bodies,
-  the per-blast log no longer sorts one entry per voxel. Open: later stages 2-7; the windowed fall of towers and walls
-  and their push are not confirmed by the owner.
+  the per-blast log no longer sorts one entry per voxel. **Stage 4 is built** (owner: yes to question 4; shred.md
+  "Stage 4 as built"): `vortex.voxel:structure` - a node list per terrain chunk (every component of an 8^3 cell is a
+  node, so the graph equals voxel connectivity, over-full cells included: 22 in 1301 Dense / Packed chunks of game
+  terrain), with voxel counts, integer masses and per-link bonds stored for a later load check ("a tower on a
+  4-voxel bridge must not hold", stage 7), cached in the `Simulation` and rebuilt per chunk on `World::ChunkRevision`;
+  `sim::Blast` searches islands on it (seeds in the island box, box components, floods over nodes inside the same
+  flood box, only released nodes re-labelled per voxel) and emits exactly the stage-1 operations (every stage-1 test
+  checks both searches; `Structure.GraphFloatingEqualsFaceFlood`, `GraphNeverDetachesWhatTheVoxelSearchKeeps`,
+  `GraphEqualsLabelComponents*`, `RefreshEqualsRebuild`, `EvictionNeverChangesAGraph`,
+  `StaleGraphNeverDetachesAttachedVoxels`; 12 new tests). Measured island search per cast: 0.06-1.0 ms quiet on flat
+  ground and game terrain, cold graph builds included (voxel search 3.3-19 ms), in game 0.24-0.75 ms at a site already
+  searched and 0.5-3.7 ms at the first blast of an untouched site, where cold graph builds (18-45 chunks, 16-120 us
+  each in game, 15-27 us quiet) are most of it; 4.0-4.75 ms while streaming (`--climb`): over the 0.5 ms target and,
+  while streaming, over 3 ms for the first blast at a site (pre-building graphs on a worker would fix it; an owner
+  question in shred.md). Reviewed by three readers (shred.md "Review of stage 4"): a stale graph now never detaches
+  (it corrupted the heap before), Uniform graphs are shared, cache memory is measured (5-7 KB per surface chunk
+  graph, about 5 MB typical, 27 MB at most at the cap). `--after-fill`
+  runs the blast scripts after the window has filled. Open: later stages 2, 3, 5-7; the windowed fall of towers and
+  walls and their push are not confirmed by the owner; graph builds are not yet charged to a work budget (stage 3).
 - **Frame rate** (`design/perf.md`, draft): measure the present path and CPU frame time first, then fog-radius ray
   cut and one modulo per ray, then lod.md stage 1 and half-resolution lighting. The owner calls the 0.125 m view
   radius (92 m) the sweet spot on the UHD 620: frame rate comes before more distance there.

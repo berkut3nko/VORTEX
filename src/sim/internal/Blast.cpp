@@ -98,6 +98,129 @@ namespace vortex::sim {
             return glm::all(glm::lessThanEqual(lo, whi)) && glm::all(glm::lessThanEqual(wlo, hi));
         }
 
+        /// What one island search found, before anything is applied.
+        struct Found {
+            bool searched = false;            ///< false: a chunk of the island box is not loaded
+            bool complete = true;             ///< false (offline): a flood met `waitChunk`, not loaded
+            glm::ivec3 waitChunk{0};
+            std::vector<voxel::FloatingIsland> boxIslands;     ///< in-box islands, scan order
+            std::vector<voxel::FloatingIsland> faceIslands;    ///< proven ones, candidate order
+            IslandSearchStats stats;
+            double searchMs = 0.0, floodMs = 0.0, graphBuildMs = 0.0, graphFloodMs = 0.0, relabelMs = 0.0;
+        };
+
+        /// The stage-1 search: ExtractFloatingIslands over the island box, then the face flood.
+        Found VoxelSearch(Simulation& simulation, const voxel::SphereQ& sphere) {
+            voxel::World& world = simulation.World();
+            Found out;
+            glm::ivec3 boxMin, boxMax;
+            IslandBox(sphere, boxMin, boxMax);
+            Clock::time_point start = Clock::now();
+            voxel::IslandBoxScan scan;
+            out.boxIslands = voxel::ExtractFloatingIslands(world, &simulation.Materials(), boxMin, boxMax, kMaxIslandVoxels, false,
+                                                           voxel::MaterialFlag_Liquid, &out.searched, &scan);
+            out.searchMs = MsSince(start);
+            if (!out.searched) return out;
+            IslandSearchStats& stats = out.stats;
+            stats.boxVoxels = scan.boxVoxels;
+            stats.faceOversize = scan.faceOversize;
+            stats.oversizeIslands = scan.oversizeIslands;
+            stats.faceCandidates = static_cast<uint32_t>(scan.faceComponents.size());
+            // Face components: attached inside the box, maybe floating outside it.
+            start = Clock::now();
+            if (!scan.faceComponents.empty()) {
+                voxel::FloodLimits limits;
+                FloodBox(sphere, limits.floodMin, limits.floodMax);
+                limits.maxVoxels = kMaxIslandVoxels;
+                limits.maxVisitsPerSearch = kFloodVisitBudget;
+                limits.deferOnUnloaded = !simulation.Config().sessionServer;
+                // The labelled box: the island box without rows below a full-height window.
+                voxel::FloodResult flood = voxel::ProveFaceComponents(world, &simulation.Materials(), scan.faceComponents, scan.boxMin,
+                                                                      scan.boxMax, scan.labels, voxel::MaterialFlag_Liquid, limits);
+                stats.merged = flood.merged;
+                stats.attachedByLimit = flood.attachedByLimit;
+                stats.attachedByKnown = flood.attachedByKnown;
+                stats.attachedByBudget = flood.attachedByBudget;
+                stats.attachedByUnloaded = flood.attachedByUnloaded;
+                stats.chunksDecoded = flood.chunksDecoded;
+                stats.floodVisits = flood.visits;
+                out.complete = flood.complete;
+                out.waitChunk = flood.unloadedChunk;
+                if (flood.complete) out.faceIslands = std::move(flood.islands);
+            }
+            out.floodMs = MsSince(start);
+            return out;
+        }
+
+        /// Stage 4: the same islands from the cell graph cached per terrain chunk.
+        Found GraphSearch(Simulation& simulation, const voxel::SphereQ& sphere) {
+            Found out;
+            voxel::GraphSearchLimits limits;
+            IslandBox(sphere, limits.boxMin, limits.boxMax);
+            FloodBox(sphere, limits.floodMin, limits.floodMax);
+            limits.maxIslandVoxels = kMaxIslandVoxels;
+            limits.maxNodeVisits = kGraphNodeVisitBudget;
+            limits.deferOnUnloaded = !simulation.Config().sessionServer;
+            voxel::TerrainGraphCache& cache = simulation.TerrainGraphs();
+            const double buildBefore = cache.Stats().buildMs;
+            const Clock::time_point start = Clock::now();
+            voxel::GraphSearchResult r = voxel::SearchIslandsOnGraph(
+                simulation.World(), cache, voxel::MakeGraphMaterials(&simulation.Materials(), voxel::MaterialFlag_Liquid), limits);
+            out.searchMs = MsSince(start);
+            out.graphBuildMs = cache.Stats().buildMs - buildBefore;
+            out.graphFloodMs = r.floodMs;
+            out.relabelMs = r.relabelMs;
+            out.searched = r.searched;
+            out.complete = r.complete;
+            out.waitChunk = r.unloadedChunk;
+            out.boxIslands = std::move(r.boxIslands);
+            out.faceIslands = std::move(r.faceIslands);
+            IslandSearchStats& stats = out.stats;
+            stats.graph = true;
+            stats.faceOversize = r.faceOversize;
+            stats.oversizeIslands = r.oversizeIslands;
+            stats.merged = r.merged;
+            stats.attachedByLimit = r.attachedByLimit;
+            stats.attachedByKnown = r.attachedByKnown;
+            stats.attachedByBudget = r.attachedByBudget;
+            stats.attachedByUnloaded = r.attachedByUnloaded;
+            stats.chunksDecoded = r.chunksDecoded;
+            stats.seedNodes = r.seedNodes;
+            stats.boxComponents = r.boxComponents;
+            stats.graphFloods = r.floods;
+            stats.attachedByFace = r.attachedByFace;
+            stats.nodeVisits = r.nodeVisits;
+            stats.chunkGraphs = r.chunkGraphs;
+            stats.graphsBuilt = static_cast<uint32_t>(r.graphsBuilt);
+            stats.overfullCells = r.overfullCells;
+            stats.relabelledNodes = r.relabelledNodes;
+            stats.outsideBox = r.outsideBox;
+            return out;
+        }
+
+        bool SameIslands(const std::vector<voxel::FloatingIsland>& a, const std::vector<voxel::FloatingIsland>& b) {
+            if (a.size() != b.size()) return false;
+            for (size_t i = 0; i < a.size(); ++i) {
+                if (a[i].origin != b[i].origin || a[i].voxelCount != b[i].voxelCount || a[i].volume.Size() != b[i].volume.Size() ||
+                    a[i].volume.Data() != b[i].volume.Data())
+                    return false;
+            }
+            return true;
+        }
+
+        /// SimulationConfig::checkIslandSearch: the two searches on the same voxels must find the
+        /// same islands in the same order. Face islands are not compared where a work budget ran
+        /// out on either side, nor where either met a chunk of the flood box that is not loaded
+        /// (they flood in another order: one may defer while the other closes first).
+        bool SameResult(const Found& a, const Found& b) {
+            if (a.searched != b.searched) return false;
+            if (!a.searched) return true;
+            if (!SameIslands(a.boxIslands, b.boxIslands)) return false;
+            if (a.stats.attachedByBudget != 0 || b.stats.attachedByBudget != 0) return true;
+            if (!a.complete || !b.complete || a.stats.attachedByUnloaded != 0 || b.stats.attachedByUnloaded != 0) return true;
+            return SameIslands(a.faceIslands, b.faceIslands);
+        }
+
         /// Step 2 of Blast: islands in the island box of `sphere`, and face components the flood
         /// proves, become Detach operations, crumbs one ClearMask, each applied at once and
         /// appended to `result.ops`. BoxNotLoaded: a chunk of the island box is not loaded,
@@ -108,16 +231,32 @@ namespace vortex::sim {
             voxel::World& world = simulation.World();
             const glm::vec3 center(result.center);
             const float radius = result.radius;
-            glm::ivec3 boxMin, boxMax;
-            IslandBox(sphere, boxMin, boxMax);
-
-            Clock::time_point start = Clock::now();
-            bool searched = false;
-            voxel::IslandBoxScan scan;
-            std::vector<voxel::FloatingIsland> islands = voxel::ExtractFloatingIslands(
-                world, &simulation.Materials(), boxMin, boxMax, kMaxIslandVoxels, false, voxel::MaterialFlag_Liquid, &searched, &scan);
-            result.times.searchMs += MsSince(start);
-            if (!searched) {
+            const bool graph = simulation.Config().islandSearch == IslandSearchKind::Graph;
+            Found found = graph ? GraphSearch(simulation, sphere) : VoxelSearch(simulation, sphere);
+            result.times.searchMs += found.searchMs;
+            result.times.floodMs += found.floodMs;
+            result.times.graphBuildMs += found.graphBuildMs;
+            result.times.graphFloodMs += found.graphFloodMs;
+            result.times.relabelMs += found.relabelMs;
+            ++simulation.IslandSearchCheck().run;
+            if (simulation.Config().checkIslandSearch) {
+                // Nothing has been applied yet: the other search reads the same voxels.
+                const Found other = graph ? VoxelSearch(simulation, sphere) : GraphSearch(simulation, sphere);
+                result.reference = other.stats;
+                result.times.referenceMs += other.searchMs + other.floodMs;
+                Simulation::IslandSearchChecks& checks = simulation.IslandSearchCheck();
+                ++checks.searches;
+                if (!SameResult(found, other)) {
+                    ++checks.mismatches;
+                    ++found.stats.referenceMismatch;
+                    Log::Error("Blast: the graph and the voxel island search differ at ({:.2f}, {:.2f}, {:.2f}) m: searched {} / {}, "
+                               "complete {} / {}, {} / {} in-box island(s), {} / {} face island(s)",
+                               result.center.x, result.center.y, result.center.z, found.searched, other.searched, found.complete,
+                               other.complete, found.boxIslands.size(), other.boxIslands.size(), found.faceIslands.size(),
+                               other.faceIslands.size());
+                }
+            }
+            if (!found.searched) {
                 if (!simulation.Config().sessionServer) return SearchOutcome::BoxNotLoaded;
                 // A session window holds every island box by construction: never wait, say so.
                 ++result.search.islandBoxUnloaded;
@@ -127,61 +266,64 @@ namespace vortex::sim {
                 return SearchOutcome::Refused;
             }
             IslandSearchStats& stats = result.search;
-            stats.boxVoxels += scan.boxVoxels;
-            stats.faceOversize += scan.faceOversize;
-            stats.oversizeIslands += scan.oversizeIslands;
-            stats.faceCandidates += static_cast<uint32_t>(scan.faceComponents.size());
-
-            // Face components: attached inside the box, maybe floating outside it.
-            start = Clock::now();
-            voxel::FloodResult flood;
-            if (!scan.faceComponents.empty()) {
-                voxel::FloodLimits limits;
-                FloodBox(sphere, limits.floodMin, limits.floodMax);
-                limits.maxVoxels = kMaxIslandVoxels;
-                limits.maxVisitsPerSearch = kFloodVisitBudget;
-                limits.deferOnUnloaded = !simulation.Config().sessionServer;
-                // The labelled box: the island box without rows below a full-height window.
-                flood = voxel::ProveFaceComponents(world, &simulation.Materials(), scan.faceComponents, scan.boxMin, scan.boxMax,
-                                                   scan.labels, voxel::MaterialFlag_Liquid, limits);
-                stats.merged += flood.merged;
-                stats.attachedByLimit += flood.attachedByLimit;
-                stats.attachedByKnown += flood.attachedByKnown;
-                stats.attachedByBudget += flood.attachedByBudget;
-                stats.attachedByUnloaded += flood.attachedByUnloaded;
-                stats.chunksDecoded += flood.chunksDecoded;
-                stats.floodVisits += flood.visits;
-                if (flood.attachedByUnloaded > 0) {
-                    Log::Error("Blast: {} face flood(s) met a chunk that is not loaded inside the flood box of the blast at ({:.2f}, {:.2f}, "
-                               "{:.2f}) m; what they would have freed stays (a session window must hold every flood box)",
-                               flood.attachedByUnloaded, result.center.x, result.center.y, result.center.z);
-                }
+            {
+                const IslandSearchStats& f = found.stats;
+                // Sums over the searches of one result (a late result has one).
+                stats.graph = f.graph;
+                stats.boxVoxels += f.boxVoxels;
+                stats.faceCandidates += f.faceCandidates;
+                stats.faceOversize += f.faceOversize;
+                stats.oversizeIslands += f.oversizeIslands;
+                stats.merged += f.merged;
+                stats.attachedByLimit += f.attachedByLimit;
+                stats.attachedByKnown += f.attachedByKnown;
+                stats.attachedByBudget += f.attachedByBudget;
+                stats.attachedByUnloaded += f.attachedByUnloaded;
+                stats.chunksDecoded += f.chunksDecoded;
+                stats.floodVisits += f.floodVisits;
+                stats.seedNodes += f.seedNodes;
+                stats.boxComponents += f.boxComponents;
+                stats.graphFloods += f.graphFloods;
+                stats.attachedByFace += f.attachedByFace;
+                stats.nodeVisits += f.nodeVisits;
+                stats.chunkGraphs += f.chunkGraphs;
+                stats.graphsBuilt += f.graphsBuilt;
+                stats.overfullCells += f.overfullCells;
+                stats.relabelledNodes += f.relabelledNodes;
+                stats.outsideBox += f.outsideBox;
+                stats.referenceMismatch += f.referenceMismatch;
             }
-            result.times.floodMs += MsSince(start);
-            if (!flood.complete) {
+            if (found.stats.attachedByUnloaded > 0) {
+                Log::Error("Blast: {} face flood(s) met a chunk that is not loaded inside the flood box of the blast at ({:.2f}, {:.2f}, "
+                           "{:.2f}) m; what they would have freed stays (a session window must hold every flood box)",
+                           found.stats.attachedByUnloaded, result.center.x, result.center.y, result.center.z);
+            }
+            if (!found.complete) {
                 stats.floodDeferred = true;
-                waitChunk = flood.unloadedChunk;
-                flood.islands.clear();
+                waitChunk = found.waitChunk;
+                found.faceIslands.clear();
             }
+            const std::vector<voxel::FloatingIsland>& islands = found.boxIslands;
+            const std::vector<voxel::FloatingIsland>& proven = found.faceIslands;
 
             // Islands under the piece threshold are crumbs: no Detach each, one ClearMask for all.
             // The threshold is the piece volume in voxels of the session's size (shared bit for bit).
-            start = Clock::now();
+            const Clock::time_point start = Clock::now();
             const uint32_t minPiece = scene::MinPieceVoxels(static_cast<double>(world.VoxelSize()));
             glm::ivec3 crumbMin(std::numeric_limits<int32_t>::max()), crumbMax(std::numeric_limits<int32_t>::min());
             uint32_t crumbs = 0;
             // In-box islands in scan order, then proven ones in candidate order.
-            for (std::vector<voxel::FloatingIsland>* list : {&islands, &flood.islands}) {
-                const bool proven = list == &flood.islands;
-                for (voxel::FloatingIsland& island : *list) {
+            for (const std::vector<voxel::FloatingIsland>* list : {&islands, &proven}) {
+                const bool face = list == &proven;
+                for (const voxel::FloatingIsland& island : *list) {
                     if (island.voxelCount < minPiece) {
                         ++crumbs;
-                        if (proven) ++stats.faceCrumbs;
+                        if (face) ++stats.faceCrumbs;
                         crumbMin = glm::min(crumbMin, island.origin);
                         crumbMax = glm::max(crumbMax, island.origin + island.volume.Size());
                         continue;
                     }
-                    if (proven) ++stats.facePieces;
+                    if (face) ++stats.facePieces;
                     AppliedOp detach;
                     const glm::vec3 corner(world.VoxelToWorld(island.origin));
                     detach.op = WorldOp::Detach(island.origin, voxel::VoxelMask::FromVolume(island.volume), BlastPush(center, radius, corner));
@@ -195,7 +337,7 @@ namespace vortex::sim {
                 // voxels per axis. Bits are set from the islands' own voxels, so the mask does not
                 // depend on the order the islands come in.
                 voxel::VoxelMask mask(crumbMax - crumbMin);
-                for (const std::vector<voxel::FloatingIsland>* list : {&islands, &flood.islands})
+                for (const std::vector<voxel::FloatingIsland>* list : {&islands, &proven})
                     for (const voxel::FloatingIsland& island : *list) {
                         if (island.voxelCount >= minPiece) continue;
                         const glm::ivec3 size = island.volume.Size();
@@ -213,7 +355,7 @@ namespace vortex::sim {
                 result.crumbs += crumbs;
             }
             result.times.opsMs += MsSince(start);
-            return flood.complete ? SearchOutcome::Done : SearchOutcome::FloodWaits;
+            return found.complete ? SearchOutcome::Done : SearchOutcome::FloodWaits;
         }
 
         /// Squared distance (voxels) from the centre of the island box of `sphere` to the middle of

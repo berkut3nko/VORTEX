@@ -416,6 +416,7 @@ namespace vortex::voxel {
         cell.assigned = true;
         cell.state = CellState::Unloaded;
         cell.fromSave = false;
+        BumpRevision(cell);
     }
 
     void World::RetargetColumn(uint32_t ci, const glm::ivec2& coord) {
@@ -513,6 +514,7 @@ namespace vortex::voxel {
         cell.changeQueued = false;
         cell.fromSave = false;
         ++cell.generation;   // results of jobs still in flight for the old chunk are now stale
+        BumpRevision(cell);
         WriteGrid(index, 0u);
     }
 
@@ -626,6 +628,7 @@ namespace vortex::voxel {
     }
 
     ChunkChange& World::QueueChange(Cell& cell) {
+        BumpRevision(cell);       // every caller changed the chunk's content (an edit, a load)
         if (!cell.changeQueued) {
             cell.changeQueued = true;
             cell.changeIndex = static_cast<uint32_t>(m_ChangedChunks.size());
@@ -673,6 +676,7 @@ namespace vortex::voxel {
                 if (cell.uniformId == 0) cell.state = CellState::Empty;
             }
             cell.modified = false;
+            BumpRevision(cell);
             SetGrid(index, cell);
             if (cell.state == CellState::Uniform) QueueChange(cell);
             return;
@@ -1105,6 +1109,7 @@ namespace vortex::voxel {
                     break;
                 }
             }
+            BumpRevision(cell);
             SetGrid(r.cellIndex, cell);
             if (cell.state == CellState::Dense || cell.state == CellState::Uniform || cell.state == CellState::Packed) QueueChange(cell);
             // An edit of an earlier visit (a crater, a tunnel) exposes its face neighbours,
@@ -1297,6 +1302,14 @@ namespace vortex::voxel {
     CellState World::StateOf(const glm::ivec3& chunk) const {
         const Cell* cell = FindCell(chunk);
         return cell ? cell->state : CellState::Unloaded;
+    }
+
+    uint64_t World::ChunkRevision(const glm::ivec3& chunk) const {
+        const Cell* cell = FindCell(chunk);
+        if (!cell) return 0;
+        const CellState state = cell->state;
+        const bool loaded = state == CellState::Empty || state == CellState::Uniform || state == CellState::Dense || state == CellState::Packed;
+        return loaded ? cell->revision : 0;
     }
 
     bool World::IsChunkLoaded(const glm::ivec3& chunk) const {

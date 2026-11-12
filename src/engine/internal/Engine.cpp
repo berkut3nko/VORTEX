@@ -146,15 +146,27 @@ namespace vortex {
         const sim::IslandSearchStats& q = blast.search;
         const uint32_t carved = (!blast.ops.empty() && blast.ops[0].op.kind == sim::WorldOpKind::CarveSphere) ? blast.ops[0].result.changed : 0u;
         if (blast.deferred && blast.ops.empty() && blast.deferredGivenUp == 0) return;
-        Log::Info("Blast{}: {:.2f} ms = carve {:.2f} ({} voxels{}) + islands {:.2f} ({} box voxels) + flood {:.2f} ({} visits) + ops {:.2f} + "
-                  "objects {:.2f} + present {:.2f}; {} island(s) ({} by the flood), {} crumb(s) of {} voxels; face {} candidate(s): {} proven, "
-                  "{} merged, attached {} limit / {} known / {} budget / {} unloaded, {} over the limit; {} oversize island(s); {} decode(s); "
-                  "{}{}{}{}{} edited chunk(s) + {} rubble slot(s) = {:.2f} MB to upload; rubble {} small, {}/{} bodies, {}/{} slots{}",
+        // The island search: the cell graph (shred.md stage 4, the default) or the stage-1 voxel search.
+        const std::string search =
+            q.graph ? std::format("islands {:.2f} (graph: {} seeds, {} box component(s), {} flood(s) of {} node visits in {:.2f} ms; {} graph(s) "
+                                  "built in {:.2f} ms, {} used, {} over-full cell(s); {} island node(s) re-labelled in {:.2f} ms; cache {} "
+                                  "chunk(s), {:.1f} MB)",
+                                  t.searchMs, q.seedNodes, q.boxComponents, q.graphFloods, q.nodeVisits, t.graphFloodMs, q.graphsBuilt,
+                                  t.graphBuildMs, q.chunkGraphs, q.overfullCells, q.relabelledNodes, t.relabelMs, sim.TerrainGraphs().Size(),
+                                  static_cast<double>(sim.TerrainGraphs().Stats().bytes) / 1.0e6)
+                    : std::format("islands {:.2f} ({} box voxels) + flood {:.2f} ({} visits)", t.searchMs, q.boxVoxels, t.floodMs, q.floodVisits);
+        const std::string attached =
+            q.graph ? std::format("box face: {} merged, attached {} limit / {} face / {} known / {} budget / {} unloaded, {} over the limit", q.merged,
+                                  q.attachedByLimit, q.attachedByFace, q.attachedByKnown, q.attachedByBudget, q.attachedByUnloaded, q.faceOversize)
+                    : std::format("face {} candidate(s): {} proven, {} merged, attached {} limit / {} known / {} budget / {} unloaded, {} over the limit",
+                                  q.faceCandidates, q.facePieces + q.faceCrumbs, q.merged, q.attachedByLimit, q.attachedByKnown, q.attachedByBudget,
+                                  q.attachedByUnloaded, q.faceOversize);
+        Log::Info("Blast{}: {:.2f} ms = carve {:.2f} ({} voxels{}) + {} + ops {:.2f} + objects {:.2f} + present {:.2f}; {} island(s) ({} across the "
+                  "island box face), {} crumb(s) of {} voxels; {}; {} oversize island(s); {} decode(s); {}{}{}{}{} edited chunk(s) + {} rubble "
+                  "slot(s) = {:.2f} MB to upload; rubble {} small, {}/{} bodies, {}/{} slots{}",
                   blast.deferred ? " (late search)" : "", t.carveMs + t.searchMs + t.floodMs + t.opsMs + t.objectsMs + presentMs, t.carveMs,
-                  carved, blast.carveReplayed ? ", replayed" : "", t.searchMs, q.boxVoxels, t.floodMs, q.floodVisits, t.opsMs, t.objectsMs,
-                  presentMs, blast.IslandCount(), q.facePieces, blast.crumbs, blast.CrumbVoxels(), q.faceCandidates,
-                  q.facePieces + q.faceCrumbs, q.merged, q.attachedByLimit, q.attachedByKnown, q.attachedByBudget, q.attachedByUnloaded,
-                  q.faceOversize, q.oversizeIslands, q.chunksDecoded,
+                  carved, blast.carveReplayed ? ", replayed" : "", search, t.opsMs, t.objectsMs, presentMs, blast.IslandCount(), q.facePieces,
+                  blast.crumbs, blast.CrumbVoxels(), attached, q.oversizeIslands, q.chunksDecoded,
                   blast.islandsSearched ? "" : (q.floodDeferred ? "flood deferred (chunk not loaded); " : "search deferred (box not loaded); "),
                   skipped == 0 ? "" : std::format("{} skipped chunk(s); ", skipped),
                   blast.deferredDropped ? "an older deferred search dropped; " : "", blast.deferredGivenUp ? "given up; " : "",
@@ -163,6 +175,7 @@ namespace vortex {
                   rubble.crumbledByCap + rubble.crumbledByBake > crumbledBefore
                       ? std::format(", {} piece(s) crumbled by the budget", rubble.crumbledByCap + rubble.crumbledByBake - crumbledBefore)
                       : std::string());
+        if (q.referenceMismatch != 0) Log::Error("Blast: the graph and the voxel island search differed (checkIslandSearch)");
     }
 
     int Engine::Run(Application& app) {

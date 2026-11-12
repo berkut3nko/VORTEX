@@ -19,6 +19,15 @@ import vortex.scene;
 export namespace vortex::sim {
 
     /// @brief What a Simulation is built from. The defaults are those of an offline game.
+    /// @brief Which island search a blast runs (docs/design/shred.md stage 4).
+    enum class IslandSearchKind : uint8_t {
+        /// The cell graph cached per terrain chunk (voxel::SearchIslandsOnGraph): the default.
+        Graph,
+        /// The stage-1 voxel search (voxel::ExtractFloatingIslands + voxel::ProveFaceComponents):
+        /// the reference the graph is tested against.
+        Voxel,
+    };
+
     struct SimulationConfig {
         uint32_t chunkCapacity = 8192;        ///< Slots of the chunk store (terrain + baked models).
         /// Size of the particle pool. 0 = no particles at all: every effect the scene asks for is
@@ -36,6 +45,15 @@ export namespace vortex::sim {
         /// in IslandSearchStats::attachedByUnloaded, logged) and the piece stays, instead of the
         /// offline answer of deferring the search until the chunk has loaded.
         bool sessionServer = false;
+        /// The island search of a blast. Both give the same islands in the same order, except
+        /// where a work budget runs out (they count work differently) and, when a chunk of the
+        /// flood box is not loaded, in whether the face islands wait offline and why a flood is
+        /// attached on a server (they flood in another order).
+        IslandSearchKind islandSearch = IslandSearchKind::Graph;
+        /// Tests: every island search also runs the other kind on the same voxels (before any
+        /// operation is applied) and compares the islands; a difference is logged and counted
+        /// (Simulation::IslandSearchChecks, IslandSearchStats::referenceMismatch).
+        bool checkIslandSearch = false;
         unsigned jobThreads = 0;              ///< Worker threads of the job system (0 = one per core, minus one).
         /// The terrain. With a `saveDirectory` the world loads modified chunks from there and
         /// saves them on shutdown and on World().Save() (an offline game, the map editor). A
@@ -158,6 +176,18 @@ export namespace vortex::sim {
         /// @brief Island searches waiting for their box to load (sim::Blast adds, at most
         /// kMaxDeferredIslandSearches; sim::RetryIslandSearches runs and removes them).
         std::vector<DeferredIslandSearch>& DeferredIslandSearches();
+        /// @brief The cell graphs of the world's chunks, kept between blasts (sim::Blast's graph
+        /// search builds what it needs; an edit makes the next search rebuild that chunk only).
+        voxel::TerrainGraphCache& TerrainGraphs();
+        /// @brief Island searches run so far (`run`, whatever the config), and with
+        /// SimulationConfig::checkIslandSearch the ones compared with the other search and how
+        /// many differed. A test arena checks `searches == run`.
+        struct IslandSearchChecks {
+            uint32_t run = 0;
+            uint32_t searches = 0;
+            uint32_t mismatches = 0;
+        };
+        IslandSearchChecks& IslandSearchCheck();
 
         /**
          * @brief Simulates one tick: streaming, physics, lifetimes; then `Tick()` is one higher.

@@ -297,6 +297,15 @@ export namespace vortex::voxel {
         // --- queries ---------------------------------------------------------------------
         CellState StateOf(const glm::ivec3& chunk) const;
         bool IsChunkLoaded(const glm::ivec3& chunk) const;
+        /**
+         * @brief A number that changes whenever the content of a loaded chunk may have changed:
+         * an edit (wherever EditRegion queues a change: game, editor, FillBox, replicated ops),
+         * a load or an unload. 0 if the chunk is not loaded. Never reused for one World, so a
+         * value cached with derived data (voxel::TerrainGraphCache, docs/design/shred.md stage 4)
+         * tells whether that data is still current. Packing and unpacking keep it (never a
+         * content change).
+         */
+        uint64_t ChunkRevision(const glm::ivec3& chunk) const;
         /// @brief Material id of a voxel; 0 for air and for chunks that are not loaded.
         uint8_t GetVoxel(const glm::ivec3& v) const;
         bool IsSolid(const glm::ivec3& v) const { return GetVoxel(v) != 0; }
@@ -381,6 +390,7 @@ export namespace vortex::voxel {
             uint32_t changeIndex = 0;
             bool assigned = false;          // coord is valid
             bool fromSave = false;          // loaded from the RegionStore (an edit of an earlier visit)
+            uint64_t revision = 0;          // ChunkRevision: bumped by every content or state change (BumpRevision)
         };
         /// One column of cells (fixed chunk x, z): classification and loading state.
         struct Column {
@@ -440,6 +450,8 @@ export namespace vortex::voxel {
         /// Reports the cell's chunk as changed (once until the next take); its entry, valid until
         /// the next call.
         ChunkChange& QueueChange(Cell& cell);
+        /// A new ChunkRevision for the cell (its content or its loaded state changed).
+        void BumpRevision(Cell& cell) { cell.revision = ++m_ContentRevision; }
         bool Materialize(uint32_t index);
         bool Unpack(uint32_t index);
         void PromoteNear();
@@ -492,6 +504,7 @@ export namespace vortex::voxel {
         glm::dvec3 m_NearScanFocus{0.0};               // focus of the last PromoteNear scan
         uint32_t m_DecodeBudget = 0;                   // decodes left in this Update
         uint64_t m_InstanceId = 0;
+        uint64_t m_ContentRevision = 0;                // last ChunkRevision handed out
         std::vector<uint32_t> m_Fallback;              // per cell: grid word before it became dense
         std::vector<uint32_t> m_Resident;              // Dense cells that keep RLE bytes (re-pack candidates)
         size_t m_ResidentCursor = 0;
