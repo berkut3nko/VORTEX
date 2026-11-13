@@ -24,8 +24,19 @@ namespace vortex::net {
             case RefuseReason::Token: return "wrong token";
             case RefuseReason::Full: return "the session is full";
             case RefuseReason::Malformed: return "malformed message";
+            case RefuseReason::LogTooLarge: return "the session's event log is too large to join (networking stage 7)";
         }
         return "unknown reason";
+    }
+
+    const char* ToString(CastRejection rejection) {
+        switch (rejection) {
+            case CastRejection::None: return "none";
+            case CastRejection::Cooldown: return "cooldown";
+            case CastRejection::Missed: return "out of range";
+            case CastRejection::Outside: return "outside the play area";
+        }
+        return "unknown";
     }
 
     namespace {
@@ -119,6 +130,8 @@ namespace vortex::net {
             w.U8(o.flags);
             w.U8(o.cooldownTicks);
             w.U8(o.lastButtons);
+            w.U32(m.lastCastTick);
+            w.U8(static_cast<uint8_t>(m.castRejected));
         }
         w.U8(static_cast<uint8_t>(std::min<size_t>(m.others.size(), 255)));
         for (size_t i = 0; i < std::min<size_t>(m.others.size(), 255); ++i) {
@@ -248,12 +261,18 @@ namespace vortex::net {
         if (in.Failed() || hasOwner > 1) return false;
         out.hasOwner = hasOwner != 0;
         out.owner = sim::PlayerState{};
+        out.lastCastTick = 0;
+        out.castRejected = CastRejection::None;
         if (out.hasOwner) {
             sim::PlayerState& o = out.owner;
             for (float* f : {&o.position.x, &o.position.y, &o.position.z, &o.velocity.x, &o.velocity.y, &o.velocity.z}) *f = in.F32();
             o.flags = in.U8();
             o.cooldownTicks = in.U8();
             o.lastButtons = in.U8();
+            out.lastCastTick = in.U32();
+            const uint8_t rejected = in.U8();
+            if (in.Failed() || rejected > kMaxCastRejection) return false;
+            out.castRejected = static_cast<CastRejection>(rejected);
             if (!Finite(o.position) || !Finite(o.velocity)) return false;
         }
         const uint32_t count = in.U8();

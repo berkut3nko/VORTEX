@@ -11,6 +11,7 @@ module;
 #include <cstdint>
 #include <filesystem>
 #include <format>
+#include <functional>
 #include <memory>
 #include <string>
 #include <tuple>
@@ -42,6 +43,7 @@ namespace vortex {
 
         /// The simulation of an offline game: the engine's own settings, everything else default.
         static sim::SimulationConfig SimulationConfigFor(const EngineConfig& c) {
+            if (c.simulation) return *c.simulation;   // a session's: the world and steps are the server's
             sim::SimulationConfig config;
             config.chunkCapacity = c.chunkCapacity;
             config.maxParticles = c.maxParticles;
@@ -71,6 +73,8 @@ namespace vortex {
         std::vector<fx::GpuParticle> gpuParticles;
         bool exitRequested = false;
         float stepAlpha = 0.0f;
+        std::function<uint32_t(double, uint32_t)> tickSource;
+        bool tickSourceOverReported = false;
         bool initialized = false;
     };
 
@@ -225,7 +229,9 @@ namespace vortex {
             }
 
             const double now = NowSeconds();
-            // Headless runs use a fixed frame time so they are reproducible.
+            // Headless runs use a fixed frame time so they are reproducible (a tick source still gets
+            // the wall clock: a network client's clock follows the server's, which is real time).
+            const double wallDt = std::min(now - last, 0.25);
             float dt = s.config.headless ? fixedDt : static_cast<float>(std::min(now - last, 0.1));
             last = now;
 
@@ -241,7 +247,8 @@ namespace vortex {
                 // the player. Bodies ask for their own colliders and are frozen while they have
                 // none (TerrainColliders::GuardBodies).
                 const glm::dvec3 focus[] = {camera.position};
-                sim.UpdateStreaming(camera.position, focus);
+                if (s.config.windowFollowsCamera) sim.UpdateStreaming(camera.position, focus);
+                else sim.UpdateStreaming(focus);   // a session: the window is the region's
                 // Island searches of earlier blasts whose box has loaded since (sim::Blast had
                 // asked the world for it): what broke off falls now.
                 for (const sim::BlastResult& late : sim::RetryIslandSearches(sim)) PresentBlast(late);
@@ -261,20 +268,38 @@ namespace vortex {
             // --- fixed-step simulation -------------------------------------------------------
             {
                 ProfileScope scope("CPU: simulation");
-                accumulator += dt;
-                int steps = 0;
                 sim.Scene().BeginFrame();   // what was drawn last frame becomes "previous"
-                while (accumulator >= fixedDt && steps < 4) {
-                    app.OnFixedUpdate(*this, fixedDt);
-                    // Guard, physics step, pose sync; the tick is counted. Whatever the game or
-                    // the last frame's update created or moved since the last guard is checked
-                    // before it is simulated.
-                    sim.StepPhysics();
-                    accumulator -= fixedDt;
-                    ++steps;
+                if (s.tickSource) {
+                    // The source's clock decides (a network client); the accumulator only gives the
+                    // view an interpolation fraction. The source is asked for at most what a frame
+                    // runs and keeps the rest (a tick it hands out and is not run is lost to it).
+                    const uint32_t due = s.tickSource(wallDt, kMaxSourceTicksPerFrame);
+                    if (due > kMaxSourceTicksPerFrame && !s.tickSourceOverReported) {
+                        s.tickSourceOverReported = true;
+                        Log::Error("Engine: the tick source returned {} ticks, more than the {} asked for (the rest is lost)", due,
+                                   kMaxSourceTicksPerFrame);
+                    }
+                    const uint32_t ticks = std::min(due, kMaxSourceTicksPerFrame);
+                    for (uint32_t i = 0; i < ticks; ++i) {
+                        app.OnFixedUpdate(*this, fixedDt);
+                        sim.StepPhysics();
+                    }
+                    accumulator = std::clamp(accumulator + wallDt - static_cast<double>(ticks) * fixedDt, 0.0, static_cast<double>(fixedDt));
+                } else {
+                    accumulator += dt;
+                    int steps = 0;
+                    while (accumulator >= fixedDt && steps < 4) {
+                        app.OnFixedUpdate(*this, fixedDt);
+                        // Guard, physics step, pose sync; the tick is counted. Whatever the game or
+                        // the last frame's update created or moved since the last guard is checked
+                        // before it is simulated.
+                        sim.StepPhysics();
+                        accumulator -= fixedDt;
+                        ++steps;
+                    }
+                    if (steps == 4) accumulator = 0.0;   // do not spiral when the frame is too slow
                 }
-                if (steps == 4) accumulator = 0.0;   // do not spiral when the frame is too slow
-                s.stepAlpha = static_cast<float>(accumulator / fixedDt);
+                s.stepAlpha = static_cast<float>(std::min(accumulator / fixedDt, 1.0));
             }
 
             app.OnUpdate(*this, dt);
@@ -394,6 +419,7 @@ namespace vortex {
         return m_Impl->sim.IsInitialized() ? m_Impl->sim.Terrain().Stats() : physics::TerrainColliderStats{};
     }
     float Engine::StepAlpha() const { return m_Impl->stepAlpha; }
+    void Engine::SetTickSource(std::function<uint32_t(double seconds, uint32_t maxTicks)> source) { m_Impl->tickSource = std::move(source); }
     void Engine::RequestExit() { m_Impl->exitRequested = true; }
     const EngineConfig& Engine::Config() const { return m_Impl->config; }
     sim::Simulation& Engine::Simulation() { return m_Impl->sim; }

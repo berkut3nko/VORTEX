@@ -17,8 +17,10 @@ import :wire;
 export namespace vortex::net {
 
     /// Bumped whenever a message or an event changes its bytes. Part of Hello. 2: stage 4 (inputs,
-    /// snapshots, the player tuning in Welcome; ServerStatus retired).
-    inline constexpr uint16_t kProtocolVersion = 3;
+    /// snapshots, the player tuning in Welcome; ServerStatus retired). 3: Snapshot::marginTick, the
+    /// tick length and gravity in Welcome. 4: stage 5 (the owner block's lastCastTick / castRejected).
+    /// 5: review of stage 5 (RefuseReason::LogTooLarge).
+    inline constexpr uint16_t kProtocolVersion = 5;
 
     /// @brief First byte of every message. Wire format.
     enum class MessageType : uint8_t {
@@ -47,6 +49,7 @@ export namespace vortex::net {
         Token = 3,        ///< wrong token
         Full = 4,         ///< no free slot
         Malformed = 5,    ///< a message that does not decode
+        LogTooLarge = 6,  ///< the event log a joiner would receive is over ServerSettings::maxJoinLogBytes (until stage 7)
     };
     const char* ToString(RefuseReason reason);
 
@@ -118,12 +121,22 @@ export namespace vortex::net {
         friend bool operator==(const RemotePlayer&, const RemotePlayer&) = default;
     };
 
+    /// @brief Why the server did not run a player's cast (Snapshot owner block). Wire format.
+    enum class CastRejection : uint8_t {
+        None = 0,       ///< queued (it runs when the cast queue reaches it) or run
+        Cooldown = 1,   ///< the cooldown at the input's tick had not run out
+        Missed = 2,     ///< the ray from the eye met no terrain within PlayerTuning::castRange (cast at dequeue)
+        Outside = 3,    ///< the hit is outside the play bounds or the window's rows (sim::CastFitsRegion)
+    };
+    inline constexpr uint8_t kMaxCastRejection = 3;
+    const char* ToString(CastRejection rejection);
+
     /// `Snapshot::inputMargin` before the server has had an input from this client.
     inline constexpr int16_t kNoInputMargin = -32768;
     /// Header (type, tick, lastOpSeq, ackInputTick, marginTick, inputMargin, owner flag, player
     /// count), owner state and one other player, in bytes.
     inline constexpr size_t kSnapshotHeaderBytes = 21;
-    inline constexpr size_t kSnapshotOwnerBytes = 27;
+    inline constexpr size_t kSnapshotOwnerBytes = 32;
     inline constexpr size_t kSnapshotPlayerBytes = 16;
 
     /**
@@ -146,6 +159,10 @@ export namespace vortex::net {
         int16_t inputMargin = kNoInputMargin;
         bool hasOwner = false;
         sim::PlayerState owner;
+        /// Owner block (stage 5): the input tick of the newest cast edge the server took from this
+        /// player (0 = none yet) and, if it was not run, why. A cast still queued is None.
+        uint32_t lastCastTick = 0;
+        CastRejection castRejected = CastRejection::None;
         std::vector<RemotePlayer> others;
     };
 

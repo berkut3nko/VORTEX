@@ -49,6 +49,12 @@ export namespace vortex::net {
         uint32_t closeGraceTicks = 120;
         /// CastRecords kept (the most recent; running totals are in ServerStats).
         uint32_t castRecordLimit = 4096;
+        /// The event log grows for the whole session and a joiner receives all of it (until stage 7's
+        /// chunk sync; review of stage 5): above `joinLogWarnBytes` the server logs a warning once,
+        /// above `maxJoinLogBytes` it refuses new clients (RefuseReason::LogTooLarge) so that a late
+        /// join fails visibly instead of loading for minutes. Clients already in play on.
+        size_t joinLogWarnBytes = size_t{32} << 20;
+        size_t maxJoinLogBytes = size_t{128} << 20;
         /// Movement and cast tuning of every player; sent in Welcome (clients predict with it).
         sim::PlayerTuning player;
         /// Inputs a player may be ahead of the server (docs/design/networking.md "Time and ticks": the
@@ -115,12 +121,14 @@ export namespace vortex::net {
         uint64_t inputsLate = 0;          ///< inputs for a tick already simulated: they only refreshed the last input
         uint64_t inputsDuplicate = 0;     ///< inputs the server already had (every packet repeats the unacknowledged ones)
         uint64_t inputsTooEarly = 0;      ///< inputs inputQueueTicks or more ahead: dropped
+        uint64_t inputsBeforeJoin = 0;    ///< inputs for a tick before the player joined (no client makes them): ignored
         uint64_t ticksRepeated = 0;       ///< player ticks without an input: the last movement repeated
         uint64_t ticksStood = 0;          ///< ... and after repeatInputTicks of them: no movement
         uint64_t heldTicks = 0;           ///< player ticks the gate held (terrain without a collider)
-        uint32_t castsFromInputs = 0;     ///< cast edges the cooldown accepted, queued as casts
-        uint32_t castsFromLateInputs = 0; ///< ... of them, found in a late input
-        uint32_t castsMissed = 0;         ///< cast edges whose ray met no terrain within castRange
+        uint32_t castsFromInputs = 0;     ///< cast edges the cooldown accepted, captured and queued (stage 5: the ray waits for the dequeue)
+        uint32_t castsFromLateInputs = 0; ///< ... of them, found in a late input (judged and captured at the input's tick)
+        uint32_t castsOnCooldown = 0;     ///< cast edges the cooldown at their input's tick refused (CastRejection::Cooldown)
+        uint32_t castsMissed = 0;         ///< captured casts whose ray, cast at dequeue, met no terrain within castRange
         /// Jump edges found in a late input: carried to the next tick the server simulates (the
         /// client jumped at the input's tick, so this is a correction of the jump's timing, not a
         /// missing jump; review of stage 4).
@@ -134,10 +142,12 @@ export namespace vortex::net {
      * as opSeq 1..k, an event stream with a byte budget, a cast queue with a work budget, joiners
      * who receive the whole event log, and one player per joined client moved by its inputs.
      * GPU-free.
-     * @details Tick order (one call of Tick): receive (inputs into each player's queue) ->
-     * streaming (colliders around the players) -> sim::StepPlayer per player in slot order (its
-     * input for this tick, or the last movement repeated; a cast edge is captured from the
-     * player's state and queued) -> queued casts within the work and event budgets -> body guard,
+     * @details Tick order (one call of Tick): receive (inputs into each player's queue; a cast
+     * edge in a late input is judged and captured at the input's tick) -> streaming (colliders
+     * around the players) -> sim::StepPlayer per player in slot order (its input for this tick, or
+     * the last movement repeated; a cast edge the cooldown accepts is captured as {eye, look,
+     * input tick, loadout} and queued) -> queued casts within the work and event budgets (a
+     * player's ray is cast into the world when its cast runs) -> body guard,
      * physics, pose sync -> lifetimes -> each joined client's next batches while its bytes in
      * flight are under maxEventBytesInFlight -> a snapshot per client on even ticks. Operations and casts given between ticks (ApplyOp, QueueCast) are applied / queued at
      * once and go out with the next tick. Once Failed, the session is over: peers are

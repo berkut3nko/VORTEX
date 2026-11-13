@@ -5,7 +5,9 @@ module;
 #include <glm/gtc/quaternion.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -51,6 +53,15 @@ export namespace vortex {
         /// overwritten with the world's.
         scene::SceneConfig scene;
         graphics::RenderSettings render;
+        /// A network session (docs/design/networking.md stage 5): the whole simulation configuration
+        /// comes from the session (net::Client::MakeSimulationConfig: the region's world, tick,
+        /// gravity, character layers, a store capped to what the GPU buffer may hold) and the
+        /// fields above that it covers (chunkCapacity, maxParticles, fixedTimeStep, colliderRadius,
+        /// fallOutDepth, world, scene) are ignored. Unset = an offline game built from them.
+        std::optional<sim::SimulationConfig> simulation;
+        /// The world window follows the camera (offline). A session's window is the region's and
+        /// never moves: false.
+        bool windowFollowsCamera = true;
 
         /// @brief Applies --headless --validation --frames N --screenshot F --width W --height H --scale S
         /// --ao-distance M --no-shadows --no-ao --no-emissive --no-taa.
@@ -156,6 +167,19 @@ export namespace vortex {
         physics::TerrainColliderStats TerrainStats() const;
         /// @brief Fraction (0..1) of a fixed step elapsed since the last simulation step, for interpolation.
         float StepAlpha() const;
+        /**
+         * @brief Hands the decision how many fixed ticks a frame runs to `source` (a network client's
+         * clock, net::Client::TicksDue: it runs ahead of the server, jumps, bleeds and holds;
+         * networking.md "the tick-rate scale"). It gets the frame's wall-clock seconds (also in a
+         * headless run, whose own frames use a fixed time step; at most 0.25 s a frame) and
+         * `maxTicks` (kMaxSourceTicksPerFrame), and returns the ticks to run, at most `maxTicks`:
+         * every tick it returns is run, so the source keeps what is over for the next frames (the
+         * client clock does). Without a source the engine keeps its own accumulator (at most 4 ticks
+         * per frame, the rest dropped). Set it before Run.
+         */
+        void SetTickSource(std::function<uint32_t(double seconds, uint32_t maxTicks)> source);
+        /// @brief The most ticks one frame runs for a tick source.
+        static constexpr uint32_t kMaxSourceTicksPerFrame = 8;
 
         /**
          * @brief An offline blast: `PresentBlast(sim::Blast(Simulation(), {center, radius, power}))`.

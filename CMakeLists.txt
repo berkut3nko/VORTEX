@@ -141,7 +141,9 @@ add_library(Vortex::Sim ALIAS VortexSim)
 
 # --- Net: the session protocol (docs/design/networking.md), still no GPU and no window --
 vortex_add_module_library(VortexNet net)
-target_link_libraries(VortexNet PUBLIC VortexSim)
+# ENet (stage 5) is private: only VortexNet's implementation includes it; what links VortexNet (the
+# server, the game, VortexNetTests) gets the static library, Core / Physics / Sim never do.
+target_link_libraries(VortexNet PUBLIC VortexSim PRIVATE vortex_enet)
 add_library(Vortex::Net ALIAS VortexNet)
 
 # --- Graphics ------------------------------------------------------------------
@@ -216,6 +218,23 @@ vortex_assert_gpu_free(VortexCore)
 vortex_assert_gpu_free(VortexPhysics)
 vortex_assert_gpu_free(VortexSim)
 vortex_assert_gpu_free(VortexNet)
+vortex_assert_gpu_free(vortex_enet)
+
+# The network transport (ENet, networking.md stage 5) belongs to VortexNet and what links it (the
+# session server, the game, VortexNetTests): the simulation below must stay free of sockets.
+function(vortex_assert_no_network target)
+    vortex_collect_link_closure(${target} _closure)
+    foreach(_item ${_closure})
+        if(_item MATCHES "^(VortexNet|Vortex::Net|vortex_enet|enet)$")
+            message(FATAL_ERROR "VORTEX: ${target} must not link '${_item}': the network transport belongs to "
+                                "VortexNet only (docs/design/networking.md, stage 5).")
+        endif()
+    endforeach()
+endfunction()
+
+vortex_assert_no_network(VortexCore)
+vortex_assert_no_network(VortexPhysics)
+vortex_assert_no_network(VortexSim)
 
 # --- Tools & tests ---------------------------------------------------------------
 if(VORTEX_BUILD_TOOLS)

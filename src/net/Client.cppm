@@ -4,6 +4,7 @@ module;
 
 #include <cstdint>
 #include <array>
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -39,6 +40,12 @@ export namespace vortex::net {
         /// A snapshot whose events have not arrived this many ticks (250 ms) after it did is given
         /// up: counted, no replay (the newest snapshot whose events are applied is compared meanwhile).
         uint32_t eventWaitTicks = 15;
+        /// Attach refuses a world that leaves fewer free chunk-store slots than this after loading
+        /// the region (0 = no check). A client whose store is capped below the region's cell count
+        /// (MakeSimulationConfig's `storeLimit`: the game's GPU store) needs room for what a session
+        /// adds: chunks a carve materialises or decodes, its own rubble models (networking.md
+        /// "Stage 5 as built").
+        uint32_t minFreeStoreSlots = 0;
     };
 
     enum class ClientState : uint8_t {
@@ -89,6 +96,7 @@ export namespace vortex::net {
         uint64_t behind = 0;              ///< Snapshots at or past the tick being predicted: the state was taken as it is
         uint32_t clockJumps = 0, clockJumpTicks = 0;
         uint32_t hardResyncs = 0, resyncHoldTicks = 0;
+        uint32_t castsRejected = 0;       ///< Casts the server reported it did not run (Snapshot::castRejected, stage 5)
         uint64_t bleedTicks = 0;          ///< Ticks run while the clock bled a surplus
         uint64_t catchUpTicks = 0;        ///< Ticks run while the clock made up a deficit
         int32_t lastMargin = 0, minMargin = 0, maxMargin = 0;
@@ -126,8 +134,11 @@ export namespace vortex::net {
         void Poll();
 
         /// @brief The clock: ticks to run now for `seconds` of the owner's time (rate 1 before the
-        /// prediction starts; then kept ahead of the server: jumps, a 2 % bleed, holds).
-        uint32_t TicksDue(double seconds);
+        /// prediction starts; then kept ahead of the server: jumps, a 2 % bleed, holds), at most
+        /// `maxTicks`: what is over is kept for the next calls (TickClock), so an owner that can run
+        /// only so many ticks a frame (the engine: 8) asks for that many and must run every tick it
+        /// is given - a tick handed out and not run is lost to the clock (review of stage 5).
+        uint32_t TicksDue(double seconds, uint32_t maxTicks = 30);
         /**
          * @brief One predicted tick of the own player, between the simulation's streaming and
          * physics phases: `controls` (its `tick` is ignored) become the input of the next tick,
@@ -150,6 +161,13 @@ export namespace vortex::net {
         /// @brief The other players at the server time this client draws them (in the past):
         /// net::ServerTime, advanced by TicksDue, so it only moves forward.
         std::vector<RemotePlayerView> RemotePlayers() const;
+        /// @brief The server's word on this player's newest cast (the newest snapshot's owner block):
+        /// the input tick of the cast edge it took (0 = none yet) and, if it was not run, why.
+        struct CastStatus {
+            uint32_t tick = 0;
+            CastRejection rejected = CastRejection::None;
+        };
+        CastStatus LastCast() const;
         /// @brief The session's player tuning (from Welcome).
         const sim::PlayerTuning& Tuning() const;
         const PredictionStats& Prediction() const;
@@ -165,7 +183,10 @@ export namespace vortex::net {
         /// (the client holds the whole window until stage 7), the server's tick length and gravity
         /// (Welcome), and the session's character mask (sim::kSessionCharacterLayers: terrain only
         /// until stage 6, as on the server). Valid from Welcomed on.
-        sim::SimulationConfig MakeSimulationConfig(sim::SimulationConfig base = {}) const;
+        /// @param storeLimit 0, or the most slots this client's store may have (the game's GPU chunk
+        /// buffer mirrors the store): the store is then min(region cells, limit), and the region fits
+        /// only if its loaded window leaves ClientSettings::minFreeStoreSlots free (Attach checks).
+        sim::SimulationConfig MakeSimulationConfig(sim::SimulationConfig base = {}, uint32_t storeLimit = 0) const;
         /// @brief The region's generator with the default world material ids.
         std::shared_ptr<voxel::IWorldGenerator> MakeGenerator() const;
         /**
@@ -174,10 +195,13 @@ export namespace vortex::net {
          * memory only), or its voxel size, window, height range, material table, tick length,
          * gravity or character mask differ from the session's. Loads the whole window (World::LoadBlocking) and refuses it when the window did
          * not land on the region's, the store filled, or a probe chunk is not what this client's
-         * generator makes (another generator, or edited before Attach). Then applies the events
-         * received so far.
+         * generator makes (another generator, or edited before Attach), or it leaves fewer than
+         * ClientSettings::minFreeStoreSlots free. Then applies the events received so far.
+         * @param whileLoading Called between streaming steps while the window loads (the game polls
+         * its transport there, so a long load does not look like a dead peer); without it the
+         * window is loaded in one blocking call.
          */
-        bool Attach(sim::Simulation& simulation);
+        bool Attach(sim::Simulation& simulation, const std::function<void()>& whileLoading = {});
 
         uint32_t AppliedOpSeq() const;    ///< The last event applied.
         uint32_t ServerOpSeq() const;     ///< The last event the server said it made (status or batch).

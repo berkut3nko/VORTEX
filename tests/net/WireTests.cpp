@@ -290,7 +290,8 @@ TEST(Wire, MessagesRoundTripAndRefuseTrailingOrMissingBytes) {
         none.firstTick = 1;
         EXPECT_FALSE(net::Decode(net::Encode(none), back));      // at least one input
 
-        // Snapshots: header 21, owner 27, 16 per other player; positions bit for bit.
+        // Snapshots: header 21, owner 32 (stage 5: lastCastTick, castRejected), 16 per other player;
+        // positions bit for bit.
         net::Snapshot snap;
         snap.tick = 120;
         snap.lastOpSeq = 4567;
@@ -303,6 +304,8 @@ TEST(Wire, MessagesRoundTripAndRefuseTrailingOrMissingBytes) {
         snap.owner.flags = sim::PlayerFlag_OnGround;
         snap.owner.cooldownTicks = 7;
         snap.owner.lastButtons = sim::PlayerButton_Run;
+        snap.lastCastTick = 117;
+        snap.castRejected = net::CastRejection::Missed;
         snap.others = {{2, glm::vec3(1.0f, 2.0f, 3.0f), 1234, 1}, {9, glm::vec3(-4.0f, 5.0f, -6.0f), 65535, 2}};
         const std::vector<uint8_t> sb = net::Encode(snap);
         EXPECT_EQ(sb.size(), net::kSnapshotHeaderBytes + net::kSnapshotOwnerBytes + 2 * net::kSnapshotPlayerBytes);
@@ -315,8 +318,15 @@ TEST(Wire, MessagesRoundTripAndRefuseTrailingOrMissingBytes) {
         EXPECT_EQ(sback.inputMargin, -3);
         ASSERT_TRUE(sback.hasOwner);
         EXPECT_EQ(sback.owner, snap.owner);
+        EXPECT_EQ(sback.lastCastTick, 117u);
+        EXPECT_EQ(sback.castRejected, net::CastRejection::Missed);
         EXPECT_EQ(sback.others, snap.others);
         EXPECT_FALSE(net::Decode(std::span(sb).first(sb.size() - 1), sback));
+        {
+            std::vector<uint8_t> bad = sb;                       // an unknown rejection is refused
+            bad[net::kSnapshotHeaderBytes - 1 + net::kSnapshotOwnerBytes - 1] = 4;
+            EXPECT_FALSE(net::Decode(bad, sback));
+        }
         snap.owner.velocity.y = std::nanf("");                   // a non-finite state is refused
         EXPECT_FALSE(net::Decode(net::Encode(snap), sback));
         net::Snapshot empty;

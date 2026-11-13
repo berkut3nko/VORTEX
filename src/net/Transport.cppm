@@ -40,8 +40,9 @@ export namespace vortex::net {
      * deliver every message exactly once and in order, the state channel may lose, duplicate or
      * reorder. Messages are whole byte strings (no stream framing). Main thread only.
      * @details Implemented by LoopbackTransport (in process), ImpairedTransport (a decorator that
-     * delays, loses, duplicates, reorders, rate-limits and cuts packets) and, from stage 4/5,
-     * EnetTransport.
+     * delays, loses, duplicates, reorders, rate-limits and cuts packets) and EnetTransport (UDP,
+     * networking stage 5). Sends may wait inside the transport until Poll or Flush (ENet sends its
+     * queued datagrams then): an owner that sends during a tick flushes at its end.
      */
     class ITransport {
     public:
@@ -50,12 +51,18 @@ export namespace vortex::net {
         virtual void Send(PeerId peer, Channel channel, std::span<const uint8_t> data) = 0;
         /// @brief Next event, false when there is none now.
         virtual bool Poll(TransportEvent& out) = 0;
-        /// @brief Round-trip estimate to `peer` in seconds (0 for a loopback).
+        /// @brief Round-trip estimate to `peer` in seconds (0 for a loopback): a recent one that a
+        /// stall of this side (a long frame, a blocking load) does not inflate - the client sizes
+        /// its lead from it (review of stage 5; ENet: the lowest smoothed round trip of the last
+        /// 5-10 s, EnetTransport::SmoothedRoundTripSeconds is ENet's own smoothed value).
         virtual double RoundTripSeconds(PeerId peer) const = 0;
         /// @brief Bytes on reliable channels sent to `peer` and not yet delivered.
         virtual size_t ReliableBytesInFlight(PeerId peer) const = 0;
-        /// @brief Closes the connection; both sides get a Disconnected event.
+        /// @brief Closes the connection; both sides get a Disconnected event (this side at once).
         virtual void Disconnect(PeerId peer) = 0;
+        /// @brief Hands whatever Send queued to the network now (ENet: one datagram per peer instead
+        /// of waiting for the next Poll). In-process transports deliver at once and need nothing.
+        virtual void Flush() {}
     };
 
     /**
@@ -136,6 +143,8 @@ export namespace vortex::net {
         double RoundTripSeconds(PeerId peer) const override;
         size_t ReliableBytesInFlight(PeerId peer) const override;
         void Disconnect(PeerId peer) override;
+        /// @brief Hands the packets that are due to the inner transport and flushes it.
+        void Flush() override;
 
         const ImpairmentStats& Stats() const { return m_Stats; }
         Impairment& Settings() { return m_Impairment; }
@@ -150,7 +159,7 @@ export namespace vortex::net {
             Channel channel = Channel::State;
             std::vector<uint8_t> data;
         };
-        void Flush();
+        void Release();
         double Uniform();
         bool InOutage(double t, double& end) const;
 

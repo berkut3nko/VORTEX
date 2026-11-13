@@ -150,10 +150,15 @@ namespace vortex::net {
             ++m_Stats.duplicated;
         }
         insert(std::move(packet));
-        Flush();
+        Release();
     }
 
     void ImpairedTransport::Flush() {
+        Release();
+        m_Inner.Flush();
+    }
+
+    void ImpairedTransport::Release() {
         const double now = m_Clock();
         while (!m_Queue.empty() && m_Queue.front().due <= now) {
             Packet packet = std::move(m_Queue.front());
@@ -163,7 +168,7 @@ namespace vortex::net {
     }
 
     bool ImpairedTransport::Poll(TransportEvent& out) {
-        Flush();
+        Release();
         return m_Inner.Poll(out);
     }
 

@@ -123,7 +123,12 @@ Order within a frame (`Engine::Run`, Engine.cpp:185-271)
    colliderRadius)`.
 3. `scene.BeginFrame()` once (previous = current).
 4. Up to 4 ticks: `OnFixedUpdate(fixedDt)` -> `sim.StepPhysics()` = `terrain->GuardBodies()` -> `physics.Step` ->
-   `scene.SyncFromPhysics()` -> `++tick`. After 4 ticks the accumulator is zeroed (time is dropped).
+   `scene.SyncFromPhysics()` -> `++tick`. After 4 ticks the accumulator is zeroed (time is dropped). With a tick source
+   (`Engine::SetTickSource`, a network session) the source decides instead: it gets the frame's wall-clock seconds
+   (even headless; at most 0.25 s) and `kMaxSourceTicksPerFrame` (8), returns at most that many and keeps the rest
+   (the client clock does; every tick it returns is run), and the accumulator only feeds `StepAlpha`.
+   A session (`EngineConfig::windowFollowsCamera = false`) streams with `sim.UpdateStreaming({camera})`: the window
+   stays the region's.
 5. `OnUpdate(dt)`, `particles.Update`, `OnGui`, `ui.EndFrame`.
 6. Gather instances / lights / particles, `RenderFrame`.
 7. `scene.SetViewer(camera)`, `sim.UpdateLifetimes(dt)` = `scene.Update(dt)`, `scene.DestroyBelow(windowOrigin.y -
@@ -532,3 +537,14 @@ look, jump feel, editor focus) cannot be checked headless: say so.
   should see means adding it there, never `graphsBuilt` / `chunksDecoded` or a time.
 - `sim::kNeckFlowWorkBudget` is 65 536 since stage 3 (was 262 144).
 
+## Networking stage 5 (the game as a client)
+
+- `EngineConfig::simulation` replaces the whole `SimulationConfig` (a session's, from `net::Client::MakeSimulationConfig`);
+  the engine's own fields it covers (chunkCapacity, maxParticles, fixedTimeStep, colliderRadius, fallOutDepth, world,
+  scene) are then ignored. The renderer still sizes its GPU chunk buffer from `Chunks().Capacity()`, so the session
+  store must be capped (`storeLimit` 12 288 in `src/Session.cpp`): never hand the engine a region's raw cell count.
+- `Engine::SetTickSource` must be set before `Run`; offline games never set it, and the offline loop (accumulator, 4
+  ticks, dropped time, `StepAlpha`) is exactly what it was.
+- The game's session application is `../src/Session.cpp` (`SessionGame`): per tick `Client::Poll`, presentations
+  (`Engine::PresentBlast`), `Client::StepPlayer`; a frame without a tick polls in `OnUpdate`. It owns no editor and
+  makes no world change of its own.

@@ -138,6 +138,41 @@ FetchContent_Declare(EnTT
 FetchContent_MakeAvailable(EnTT)
 
 # -----------------------------------------------------------------------------
+#  Network transport: ENet (reliable / unreliable channels over UDP; C, built from
+#  source). docs/design/networking.md stage 5. Linked PRIVATE into VortexNet only:
+#  Core, Physics and Sim must never see it (checked below the targets in
+#  CMakeLists.txt, vortex_assert_no_network).
+# -----------------------------------------------------------------------------
+FetchContent_Declare(enet
+    GIT_REPOSITORY https://github.com/lsalzman/enet.git
+    GIT_TAG        v1.3.18
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  _vortex_headers_only_   # its CMake sets global include dirs; the library is built below
+)
+FetchContent_MakeAvailable(enet)
+add_library(vortex_enet STATIC
+    ${enet_SOURCE_DIR}/callbacks.c
+    ${enet_SOURCE_DIR}/compress.c
+    ${enet_SOURCE_DIR}/host.c
+    ${enet_SOURCE_DIR}/list.c
+    ${enet_SOURCE_DIR}/packet.c
+    ${enet_SOURCE_DIR}/peer.c
+    ${enet_SOURCE_DIR}/protocol.c
+    ${enet_SOURCE_DIR}/unix.c
+    ${enet_SOURCE_DIR}/win32.c
+)
+target_include_directories(vortex_enet SYSTEM PUBLIC ${enet_SOURCE_DIR}/include)
+if(WIN32)
+    target_link_libraries(vortex_enet PUBLIC ws2_32 winmm)
+else()
+    # What ENet's own configure step detects; every one of them exists on Linux (glibc) and macOS.
+    target_compile_definitions(vortex_enet PRIVATE
+        HAS_FCNTL=1 HAS_POLL=1 HAS_GETADDRINFO=1 HAS_GETNAMEINFO=1 HAS_GETHOSTBYNAME_R=1 HAS_GETHOSTBYADDR_R=1
+        HAS_INET_PTON=1 HAS_INET_NTOP=1 HAS_MSGHDR_FLAGS=1 HAS_SOCKLEN_T=1)
+endif()
+set_target_properties(vortex_enet PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+# -----------------------------------------------------------------------------
 #  Asset import: tinygltf (bundles stb_image / stb_image_write / json)
 # -----------------------------------------------------------------------------
 FetchContent_Declare(tinygltf
@@ -199,7 +234,7 @@ if(VORTEX_BUILD_TESTS)
 endif()
 
 # Silence warnings coming from third-party sources we compile ourselves.
-foreach(_t vortex_imgui vortex_imguizmo)
+foreach(_t vortex_imgui vortex_imguizmo vortex_enet)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(${_t} PRIVATE -w)
     endif()

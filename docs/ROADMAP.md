@@ -22,8 +22,8 @@ What exists today, and what was designed for but is not built yet. See
 | Renderer | Ray-marched G-buffer, ray-traced sun shadows, ambient occlusion, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping, ImGui. Headless mode with screenshots. Validation-clean on Intel UHD 620. |
 | Editor | `vortex.editor`: in-game editor toggled with F1 - fly camera, entity selection with a translate / rotate gizmo, inspector, terrain brush, primitive spawning, `.vox` / glTF import, environment / render / profiler / world panels. Tool logic is separate from the widgets and unit tested. |
 | Simulation | `vortex.sim`: `sim::Simulation` owns world, physics, terrain colliders and scene and steps them on a numbered fixed tick; `sim::WorldOp` / `ApplyOp` replay terrain changes exactly; `sim::Blast`. Library `Vortex::Sim` links no renderer or window. `Engine` owns one and draws it. |
-| Sessions | `vortex.net` (`Vortex::Net`, GPU-free): the M1 protocol over in-process loopback transports (`ImpairedTransport`: seeded loss, delay, jitter, duplicates, reordering, rate limit, outages), `net::Server` (fixed region window, template as operations 1..k, event stream with a byte budget, cast queue with a work budget, join = full event log, one player per client moved by its inputs, snapshots at 30 Hz) and `net::Client` (handshake with token and build hash, region from `Welcome`, operations applied in `opSeq` order, the own player predicted with `sim::StepPlayer` and reconciled with the snapshots on a clock kept ahead of the server, other players interpolated); `vortex_server` runs a session file headless with in-process bot players. No real network transport yet (ENet, stage 5); the game does not connect yet. |
-| Tests | 593 unit tests (six disabled measurements), none needing a GPU. |
+| Sessions | `vortex.net` (`Vortex::Net`, GPU-free): the M1 protocol over ENet (UDP, `EnetTransport`) and in-process loopback transports (`ImpairedTransport`: seeded loss, delay, jitter, duplicates, reordering, rate limit, outages), `net::Server` (fixed region window, template as operations 1..k, event stream with a byte budget, cast queue with a work budget, join = full event log, one player per client moved by its inputs, snapshots at 30 Hz) and `net::Client` (handshake with token and build hash, region from `Welcome`, operations applied in `opSeq` order, the own player predicted with `sim::StepPlayer` and reconciled with the snapshots on a clock kept ahead of the server, other players interpolated); `vortex_server` runs a session file headless, listens on UDP (`--listen`, ENet) and runs in-process bot players over loopback or UDP. The game joins a session with `Shredborne --connect HOST[:PORT] --token HEX` (stage 5): its engine is built from the server's region and ticks on the client clock, its player is predicted, other players are voxel figures, every hole is the server's (one round trip after the click). Tested on one machine (server + two headless game clients on localhost: equal world hashes); the two-machine run is the owner's. |
+| Tests | 600 unit tests (six disabled measurements), none needing a GPU (the ENet ones use UDP sockets on 127.0.0.1). |
 
 ## Performance (Intel UHD 620, 1280x720 output, 768x432 internal)
 
@@ -197,8 +197,8 @@ State (stages are those of [design/networking.md](design/networking.md)):
   ground in 30 s at 5 % loss (0.05 per player-minute over 10 seeds), none beside 80 blasts at a chunk border, the
   +50 ms ping step never late and no resync, three lost packets with a cast give one cast, a 150 ms hitch no resync,
   a wall and a teleport converge, forged packets harmless; the drill exits with equal hashes, 6 and 1 corrections in
-  20 s. **Not done / open:** the engine driven by the client clock and `--connect` (stage 5), capture at the input
-  tick and loadouts (5), replicated bodies in the character mask (6), the visual-only timeout branch (7), errors up to
+  20 s. **Not done / open:** the engine driven by the client clock and `--connect` (stage 5, since built), capture at the input
+  tick and loadouts (5, built: one loadout), replicated bodies in the character mask (6), the visual-only timeout branch (7), errors up to
   10 mm after blasts near a player (not isolated). Choices: `design/networking.md`, "Stage 4 as built".
   **Review of stage 4** (15 findings, none rejected, 9 new tests, 593): the clock now hears margins of dropped
   too-early inputs (`Snapshot::marginTick`, protocol 3; a client placed far too early never recovered), the hard
@@ -209,7 +209,36 @@ State (stages are those of [design/networking.md](design/networking.md)):
   `Welcome`, both sides use one character mask, remote players never step back (`ServerTime`), the 250 ms event wait
   times out while snapshots keep coming, a late jump is jumped, and the border, ping-step and flat-ground tests assert
   what they claim. See "Review of stage 4".
-- Stages 5-9: not started. Before stage 3: shred.md stage 1 changed the search result (face flood), the server
+- **Stage 5, ENet and the game as a client - built; the acceptance (two people on two machines) is the owner's.**
+  ENet 1.3.18 (pinned, built from source, PRIVATE to `Vortex::Net`; `vortex_assert_no_network` keeps it out of Core,
+  Physics and Sim) behind `net::EnetTransport` (exact `ReliableBytesInFlight` from ENet's packet releases, graceful
+  disconnects, a test-only receive loss below ENet); `ITransport::Flush`. Casts captured as {eye, look, input tick,
+  loadout}: a late input's cast judged at its own tick (state ring, cooldown as the owner predicted it), the ray cast
+  when the cast runs; the snapshot's owner block says which cast was taken last and why it did not run (protocol 4).
+  `Engine::SetTickSource` (the client clock drives the engine), `EngineConfig::simulation` / `windowFollowsCamera`;
+  the game's `--connect` / `--token` (`src/Session.cpp`): the store is capped at the GPU buffer (12 288 slots) and a
+  region that does not fit with 2048 slots to spare is refused with a clear error - the playground session takes 2084
+  slots; `--voxel-size`, the editor and the offline scripts are refused in a session. `vortex_server --listen [PORT]
+  --bind --seconds --exit-when-empty`, `--enet` for its bots. Verified: 7 new tests, 600 in all (six disabled):
+  ordered exactly-once delivery through 5 % real datagram loss, disconnects, and two walking, casting clients on
+  three UDP sockets ending with the server's world hash; a server and two headless game clients on localhost end at
+  the same opSeq with equal hashes, each sees the other and the other's holes; a game client joins a running UDP drill
+  from a 187 KB log without corrections; the drill over UDP keeps equal hashes and 67/67/66 freed; offline runs
+  unchanged. **Not done / open:** the two-machine run and windowed play of a session (owner; steps in CLAUDE.md and
+  `design/game-ui.md`); the 250 m arena in the game (est. at the edge of the GPU store; stage 7's client window);
+  crates and pieces on clients (6); chunk sync and server terrain mode (7); `vortex_bot` and the soak (8); a Windows
+  client (M6). Choices: `design/networking.md`, "Stage 5 as built".
+  **Review of stage 5** (13 findings, 11 distinct, every bug first a failing GPU-free test; 7 new tests, **607 in all**,
+  six disabled; protocol 5): `Attach` no longer turns a session that ended during the load into Playing; the engine asks
+  the client clock for at most 8 ticks a frame and the clock keeps the rest (it dropped up to 22); a listening ENet
+  transport takes messages of at most 64 KiB (strangers could make it allocate 32 MiB each); the client's RTT is
+  seeded from the connect handshake (ENet's started at 500 ms: the lead it gave made a hard resync in every UDP test
+  run) and is stall-insensitive, the game services the connection while the engine initialises, a bot's load no
+  longer stops the in-process server; late casts update the cooldown history and inputs from before the join are
+  ignored; `vortex_server --new-token` / `--token` and a warning for a public token; a headless session client drains
+  and fails on an unshown hash, `tools/session-check.sh` compares the hashes (PASS); Ctrl-C no longer waits out the
+  drain; a too-large join log refuses joiners (`LogTooLarge`) and is reported. See "Review of stage 5".
+- Stages 6-9: not started. Before stage 3: shred.md stage 1 changed the search result (face flood), the server
   window margin (3 chunks, flood box) and the cast budget (a work budget); shred.md stage 4 (built, the owner's answer
   to its question 4) moved the island search onto the cell graph - same results except where a work budget runs out,
   node visits and chunk graphs used (at a cold price; never graphs built, which depend on the cache) to count in stage

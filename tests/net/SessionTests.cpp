@@ -917,3 +917,27 @@ TEST(CastBudget, DISABLED_CalibrateWorkAgainstTime) {
         }
     }
 }
+
+// Review of stage 5: until stage 7 a joiner receives the whole event log, which grows for the whole
+// session. Past ServerSettings::maxJoinLogBytes a new client is refused with a reason it can show
+// (RefuseReason::LogTooLarge) instead of joining for minutes or timing out; clients already in play on.
+TEST(Session, AJoinIsRefusedOnceTheEventLogIsTooLarge) {
+    net::ServerSettings settings = Settings(DrillRegion());
+    settings.maxJoinLogBytes = 2000;
+    Session s(settings);
+    ASSERT_TRUE(s.started);
+    Session::Bot& first = s.AddClient();
+    for (int i = 0; i < 5; ++i) s.Tick();
+    ASSERT_EQ(first.client->State(), net::ClientState::Playing);
+    for (int i = 0; s.server.LogBytes() <= settings.maxJoinLogBytes; ++i)
+        ASSERT_NE(s.server.ApplyOp(sim::WorldOp::Box({i % 64, kGround, i / 64}, {i % 64 + 1, kGround + 1, i / 64 + 1}, DefaultIds().gold)), 0u);
+    Session::Bot& late = s.AddClient();
+    for (int i = 0; i < 5; ++i) s.Tick();
+    EXPECT_EQ(late.client->State(), net::ClientState::Refused);
+    EXPECT_EQ(late.client->RefusalReason(), net::RefuseReason::LogTooLarge);
+    EXPECT_STREQ(net::ToString(net::RefuseReason::LogTooLarge), "the session's event log is too large to join (networking stage 7)");
+    EXPECT_EQ(first.client->State(), net::ClientState::Playing);
+    late.connected = false;                                       // refused: nothing to drain
+    ASSERT_TRUE(s.Drain());
+    EXPECT_EQ(first.client->Hash().hash, s.server.Hash().hash);
+}

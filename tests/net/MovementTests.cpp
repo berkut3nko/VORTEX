@@ -770,3 +770,192 @@ TEST(Movement, DISABLED_FlatGroundCorrectionRateOverSeeds) {
                 static_cast<unsigned long long>(corrections), static_cast<unsigned long long>(compared),
                 static_cast<double>(corrections) / (static_cast<double>(ticks) / 3600.0), static_cast<unsigned long long>(late));
 }
+
+// Stage 5, cast capture (networking.md "Time and ticks"): a cast in a late input is judged and
+// captured at its input's tick, as its client predicted it. Before stage 5 the server took it when
+// it arrived and started the cooldown then, a few ticks after the client did: the client's next cast,
+// exactly one cooldown after the first, was refused on the server (the client showed two casts, the
+// server ran one). Now both run, and the owner hears of no rejection.
+TEST(Movement, ACastOneCooldownAfterALateCastStillRuns) {
+    Match m(Settings(), Delay(0.03));
+    ASSERT_TRUE(m.started);
+    uint32_t pressAt = 0xFFFFFFFFu;
+    static constexpr uint32_t cooldown = sim::PlayerTuning{}.castCooldownTicks;   // the session's (Settings() keeps the default tuning)
+    net::ClientSettings tight;
+    tight.clock.baseMargin = 0;
+    tight.clock.jitterFactor = 0.0f;
+    Match::Bot& bot = m.AddBot(Scripted([&pressAt](uint32_t tick) {
+        sim::PlayerInput in;
+        in.pitch = sim::QuantizePitch(-0.5f);
+        const uint64_t t = tick, at = pressAt;           // no wrap while pressAt is unset
+        const bool first = t >= at && t < at + 2;
+        const bool second = t >= at + cooldown && t < at + cooldown + 2;
+        if (first || second) in.buttons = sim::PlayerButton_Cast;
+        return in;
+    }), 0, tight);
+    ASSERT_TRUE(m.Join());
+    m.Passes(120);
+    pressAt = bot.client->PredictTick() + 1;
+    bot.link->Settings().outages.push_back({m.clock + 0.5 * m.dt, m.clock + 6.5 * m.dt});   // the first press arrives late
+    m.Passes(240);
+    m.PrintServer();
+    EXPECT_EQ(bot.casts, 2u);                            // the client showed two casts, a cooldown apart
+    EXPECT_GE(m.server.Stats().castsFromLateInputs, 1u);
+    EXPECT_EQ(m.server.Stats().castsOnCooldown, 0u);
+    EXPECT_EQ(m.server.Stats().castsRun, 2u);
+    EXPECT_EQ(bot.client->Prediction().castsRejected, 0u);
+    EXPECT_EQ(bot.client->LastCast().tick, pressAt + cooldown);
+    EXPECT_EQ(bot.client->LastCast().rejected, net::CastRejection::None);
+    EXPECT_EQ(bot.client->AppliedOpSeq(), m.server.LastOpSeq());
+    EXPECT_EQ(bot.client->Hash().hash, m.server.Hash().hash);
+}
+
+// Stage 5: a player's cast is captured as {eye, look, tick, loadout} and its ray is cast when the
+// cast runs, on the world the casts before it left (networking.md "Time and ticks"). A server-side
+// cast queued just before the player's, at the same spot, carves a crater first: the player's ray
+// then meets the crater floor. Before stage 5 the ray was cast at capture, on the uncarved ground.
+TEST(Movement, ACastsRayIsCastWhenTheCastRuns) {
+    Match m(Settings(), Delay(0.03));
+    ASSERT_TRUE(m.started);
+    uint32_t pressAt = 0xFFFFFFFFu;
+    Match::Bot& bot = m.AddBot(Scripted([&pressAt](uint32_t tick) {
+        sim::PlayerInput in;
+        in.pitch = sim::QuantizePitch(-0.5f);
+        if (tick >= pressAt && tick < pressAt + 2) in.buttons = sim::PlayerButton_Cast;
+        return in;
+    }));
+    ASSERT_TRUE(m.Join());
+    m.Passes(120);
+    pressAt = bot.client->PredictTick() + 2;
+    bool queued = false;
+    for (int i = 0; i < 240; ++i) {
+        if (!queued && m.server.TickNumber() == pressAt) {
+            // Where the player's ray would meet the ground now: a 2 m blast there, queued first.
+            const std::optional<sim::PlayerState> p = m.server.GetPlayer(bot.client->Slot());
+            ASSERT_TRUE(p.has_value());
+            const glm::dvec3 eye = glm::dvec3(p->position) + glm::dvec3(0.0, sim::PlayerTuning{}.eyeHeight, 0.0);
+            const voxel::WorldRayHit hit = m.server.Simulation().World().Raycast(eye, sim::LookDirection(0, sim::QuantizePitch(-0.5f)), 60.0f);
+            ASSERT_TRUE(hit.hit);
+            ASSERT_TRUE(m.server.QueueCast(sim::BlastDesc{hit.position, 2.0f, 6.0f}));
+            queued = true;
+        }
+        m.Pass();
+    }
+    ASSERT_TRUE(queued);
+    ASSERT_EQ(m.server.Casts().size(), 2u);
+    const net::CastRecord& first = m.server.Casts()[0];
+    const net::CastRecord& player = m.server.Casts()[1];
+    EXPECT_EQ(first.player, 0u);
+    EXPECT_EQ(player.player, bot.client->Slot() + 1u);
+    EXPECT_EQ(first.tick, player.tick);                  // one tick, the server's cast first
+    // 128 q per metre at 0.125 m: the player's ray (slanted, 0.5 rad down) meets the crater's wall,
+    // measured 0.96 m below the surface the first blast was centred on; on the uncarved ground it
+    // would be at the surface itself.
+    std::printf("server cast centre y %d q, player cast centre y %d q\n", first.sphere.center.y, player.sphere.center.y);
+    EXPECT_LT(player.sphere.center.y, first.sphere.center.y - 64);
+    EXPECT_EQ(m.server.Stats().castsFromLateInputs, 0u);
+    EXPECT_EQ(bot.client->AppliedOpSeq(), m.server.LastOpSeq());
+    EXPECT_EQ(bot.client->Hash().hash, m.server.Hash().hash);
+}
+
+// Stage 5: the owner block of a snapshot says which cast the server took last and why it did not
+// run it. A cast at the sky meets nothing within the cast range: the client predicted a cast (it
+// cannot know), the server reports CastRejection::Missed for that input tick, and nothing is carved.
+TEST(Movement, TheOwnerHearsWhyItsCastDidNotRun) {
+    Match m(Settings(), Delay(0.03));
+    ASSERT_TRUE(m.started);
+    uint32_t pressAt = 0xFFFFFFFFu;
+    Match::Bot& bot = m.AddBot(Scripted([&pressAt](uint32_t tick) {
+        sim::PlayerInput in;
+        in.pitch = sim::QuantizePitch(1.2f);             // up, into the sky
+        if (tick >= pressAt && tick < pressAt + 2) in.buttons = sim::PlayerButton_Cast;
+        return in;
+    }));
+    ASSERT_TRUE(m.Join());
+    m.Passes(60);
+    const uint32_t opSeqBefore = m.server.LastOpSeq();
+    pressAt = bot.client->PredictTick() + 1;
+    m.Passes(120);
+    EXPECT_EQ(bot.casts, 1u);
+    EXPECT_EQ(m.server.Stats().castsFromInputs, 1u);
+    EXPECT_EQ(m.server.Stats().castsMissed, 1u);
+    EXPECT_EQ(m.server.Stats().castsRun, 0u);
+    EXPECT_EQ(m.server.LastOpSeq(), opSeqBefore);
+    EXPECT_EQ(bot.client->LastCast().tick, pressAt);
+    EXPECT_EQ(bot.client->LastCast().rejected, net::CastRejection::Missed);
+    EXPECT_EQ(bot.client->Prediction().castsRejected, 1u);
+}
+
+namespace {
+    /// A player driven by hand: a raw loopback endpoint that says Hello and then sends whatever
+    /// input batches the test writes (no client, no prediction, no clock).
+    struct HandPlayer {
+        explicit HandPlayer(Match& m) {
+            server = net::LoopbackTransport::Connect(end, m.serverLoop);
+            net::Hello hello;
+            hello.token = TestToken();
+            hello.buildHash = m.server.BuildHashValue();
+            end.Send(server, net::Channel::Events, net::Encode(hello));
+        }
+
+        /// Inputs for ticks first, first + 1, ...: a cast (pitch 0.5 rad down) where `cast` says so.
+        void Send(uint32_t first, const std::vector<bool>& cast) {
+            net::InputBatch batch;
+            batch.firstTick = first;
+            for (size_t i = 0; i < cast.size(); ++i) {
+                sim::PlayerInput in;
+                in.tick = first + static_cast<uint32_t>(i);
+                in.pitch = sim::QuantizePitch(-0.5f);
+                in.buttons = cast[i] ? sim::PlayerButton_Cast : 0;
+                batch.inputs.push_back(in);
+            }
+            end.Send(server, net::Channel::State, net::Encode(batch));
+        }
+
+        net::LoopbackTransport end;
+        net::PeerId server = 0;
+    };
+}
+
+// Review of stage 5: a late cast accepted at its own tick must also be what later late edges are
+// judged against. Two cast edges 5 ticks apart arrive in one batch 19 ticks late (an input packet
+// held up in the network): the first is taken; the second is 5 ticks into the cooldown the first
+// started (15 ticks), which its client predicted and refused - so must the server. Before the fix
+// the second was judged against the kept states of those ticks, which still said cooldown 0, and
+// an extra blast ran that its player never saw.
+TEST(Movement, TwoLateCastEdgesAreJudgedAgainstTheCooldownTheFirstStarted) {
+    Match m(Settings());
+    ASSERT_TRUE(m.started);
+    HandPlayer hand(m);
+    m.Passes(40);
+    ASSERT_EQ(m.server.ClientCount(), 1u);
+    const uint32_t t = m.server.TickNumber() - 20;   // 19 ticks simulated after it
+    hand.Send(t, {true, true, false, false, false, true, true, false});
+    m.Passes(30);
+    m.PrintServer();
+    EXPECT_EQ(m.server.Stats().castsFromLateInputs, 1u);
+    EXPECT_EQ(m.server.Stats().castsFromInputs, 1u);
+    EXPECT_EQ(m.server.Stats().castsOnCooldown, 1u);
+    EXPECT_EQ(m.server.Stats().castsRun, 1u);
+}
+
+// Review of stage 5: the server keeps the states of a player's last 32 ticks for late casts. A late
+// input from before the player joined (a buggy or forged first input for tick 0) must not be judged
+// against a state the server never had: before the fix the ring's unused entries said "tick 0, at
+// the world origin, cooldown 0", and such an input cast a blast from the origin.
+TEST(Movement, ALateInputFromBeforeTheJoinCastsNothing) {
+    Match m(Settings());
+    ASSERT_TRUE(m.started);
+    m.Passes(5);                                     // the server is past tick 0 before anyone joins
+    HandPlayer hand(m);
+    m.Passes(10);
+    ASSERT_EQ(m.server.ClientCount(), 1u);
+    const uint32_t opSeq = m.server.LastOpSeq();
+    hand.Send(0, {true});
+    m.Passes(30);
+    m.PrintServer();
+    EXPECT_EQ(m.server.Stats().castsFromInputs, 0u);
+    EXPECT_EQ(m.server.Stats().castsRun, 0u);
+    EXPECT_EQ(m.server.LastOpSeq(), opSeq);
+    EXPECT_GE(m.server.Stats().inputsBeforeJoin, 1u);
+}

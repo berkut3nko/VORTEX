@@ -3,6 +3,7 @@ module;
 #include <glm/glm.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -35,6 +36,10 @@ namespace vortex::net {
             std::vector<uint8_t> bytes;
         };
 
+        /// Ticks of player states the server keeps: a late input older than this (it would also be
+        /// older than the input queue, 16 ticks) captures its cast from the current state.
+        constexpr uint32_t kStateHistory = 32;
+
         /// A joined client's player (docs/design/networking.md "Player movement", "Time and ticks").
         struct Player {
             physics::CharacterId character;
@@ -50,6 +55,32 @@ namespace vortex::net {
             uint32_t marginTick = 0;
             int16_t margin = kNoInputMargin;
             bool lateJump = false;          ///< a jump edge from a late input, made on the next step
+            /// The state after each of the last kStateHistory ticks: a late input's cast is captured
+            /// from the state of its own tick (networking.md "Time and ticks", stage 5). An entry
+            /// never written has the tick kNoTick (review of stage 5: value-initialised entries said
+            /// "tick 0, at the origin, cooldown 0").
+            static constexpr uint32_t kNoTick = 0xFFFFFFFFu;
+            std::array<std::pair<uint32_t, sim::PlayerState>, kStateHistory> history = [] {
+                std::array<std::pair<uint32_t, sim::PlayerState>, kStateHistory> h{};
+                for (auto& e : h) e.first = kNoTick;
+                return h;
+            }();
+            /// The first tick this player was stepped: an input for an earlier tick no client makes.
+            uint32_t joinTick = 0;
+            /// The owner block of its snapshots: the newest cast edge's input tick and its fate.
+            uint32_t lastCastTick = 0;
+            CastRejection castRejected = CastRejection::None;
+
+            /// The state after `tick`, if it is still kept.
+            const sim::PlayerState* StateAt(uint32_t tick) const {
+                const auto& h = history[tick % kStateHistory];
+                return tick != kNoTick && h.first == tick ? &h.second : nullptr;
+            }
+            sim::PlayerState* StateAt(uint32_t tick) {
+                auto& h = history[tick % kStateHistory];
+                return tick != kNoTick && h.first == tick ? &h.second : nullptr;
+            }
+            void Store(uint32_t tick) { history[tick % kStateHistory] = {tick, state}; }
         };
 
         struct Peer {
@@ -62,11 +93,19 @@ namespace vortex::net {
             std::unique_ptr<Player> player;   ///< from the Welcome on
         };
 
+        /// A cast waiting for the cast phase. A player's cast is a ray (captured at its input tick:
+        /// eye and look of that tick), cast into the world when it is dequeued; a server-side cast
+        /// (QueueCast) has its sphere already.
         struct QueuedCast {
             voxel::SphereQ sphere;
             uint16_t power = 0;
             uint32_t queuedTick = 0;
             uint8_t player = 0;           ///< CastRecord::player
+            bool ray = false;
+            glm::dvec3 origin{0.0};       ///< the eye at the input's tick (ray)
+            glm::vec3 direction{0.0f};    ///< LookDirection of the input (ray)
+            uint32_t inputTick = 0;       ///< the input the cast edge came in (ray)
+            uint8_t loadout = 0;          ///< 0 = the tuning's cast (one loadout in M1)
         };
 
         /// Margins further off than this (17 s) are not reported: no clock is, a forged tick is.
@@ -116,6 +155,10 @@ namespace vortex::net {
                           settings.eventBurstBytes);
             }
             log.push_back({Tick(), MaskVoxels(event), w.Take()});
+            if (logBytes <= settings.joinLogWarnBytes && logBytes + bytes > settings.joinLogWarnBytes)
+                Log::Warn("Server: the event log passed {:.1f} MiB: every joiner receives all of it (until networking stage 7); joins are "
+                          "refused above {:.1f} MiB",
+                          static_cast<double>(settings.joinLogWarnBytes) / 1048576.0, static_cast<double>(settings.maxJoinLogBytes) / 1048576.0);
             logBytes += bytes;
             ++stats.events;
             stats.eventBytes += bytes;
@@ -169,23 +212,34 @@ namespace vortex::net {
             return focus;
         }
 
-        /// A cast edge the cooldown accepted: captured from the player's state now (eye and look of
-        /// `input`), its ray cast into the server's world, the hit queued as a blast with the
-        /// tuning's radius and power. A ray that meets nothing within castRange casts nothing.
-        void CaptureCast(const Peer& p, const sim::PlayerInput& input, bool late) {
+        /// A cast edge the cooldown accepted, captured as {origin, direction, tick, loadout}
+        /// (networking.md "Time and ticks"): the eye of the player's state after the input's tick
+        /// (`at`) and the look of `input`. The ray is cast and the blast run when the cast queue
+        /// reaches it (RunCasts), on the world as it is then.
+        void CaptureCast(Peer& p, const sim::PlayerInput& input, const sim::PlayerState& at, bool late) {
             const sim::PlayerTuning& t = settings.player;
-            const glm::dvec3 eye = glm::dvec3(p.player->state.position) + glm::dvec3(0.0, static_cast<double>(t.eyeHeight), 0.0);
-            const glm::vec3 dir = sim::LookDirection(input.yaw, input.pitch);
-            const voxel::WorldRayHit hit = simulation->World().Raycast(eye, dir, t.castRange);
-            if (!hit.hit) {
-                ++stats.castsMissed;
-                return;
-            }
+            QueuedCast q;
+            q.ray = true;
+            q.origin = glm::dvec3(at.position) + glm::dvec3(0.0, static_cast<double>(t.eyeHeight), 0.0);
+            q.direction = sim::LookDirection(input.yaw, input.pitch);
+            q.inputTick = input.tick;
+            q.power = voxel::QuantizePower(t.castPower);
+            q.queuedTick = Tick();
+            q.player = static_cast<uint8_t>(p.slot + 1);
             ++stats.castsFromInputs;
             stats.castsFromLateInputs += late ? 1u : 0u;
-            const double vs = static_cast<double>(simulation->World().VoxelSize());
-            Queue(voxel::QuantizeSphere(hit.position / vs, static_cast<double>(t.castRadius) / vs), voxel::QuantizePower(t.castPower),
-                  static_cast<uint8_t>(p.slot + 1));
+            ++stats.castsQueued;
+            p.player->lastCastTick = input.tick;
+            p.player->castRejected = CastRejection::None;
+            queue.push_back(q);
+        }
+
+        /// A cast edge the cooldown refused: reported to its owner (it predicted the same cooldown,
+        /// so this is a misprediction or a forged input).
+        void RejectCast(Peer& p, uint32_t inputTick) {
+            ++stats.castsOnCooldown;
+            p.player->lastCastTick = inputTick;
+            p.player->castRejected = CastRejection::Cooldown;
         }
 
         bool Queue(const voxel::SphereQ& sphere, uint16_t power, uint8_t player) {
@@ -194,8 +248,66 @@ namespace vortex::net {
                 ++stats.castsRejected;
                 return false;
             }
-            queue.push_back({sphere, power, Tick(), player});
+            QueuedCast q;
+            q.sphere = sphere;
+            q.power = power;
+            q.queuedTick = Tick();
+            q.player = player;
+            queue.push_back(q);
             return true;
+        }
+
+        Peer* PeerOfSlot(uint8_t player) {
+            if (player == 0) return nullptr;
+            for (auto& [id, p] : peers)
+                if (p.joined && p.player && p.slot + 1u == player) return &p;
+            return nullptr;
+        }
+
+        /// A player's cast at dequeue: its ray into the world as it is now. False (counted, reported
+        /// to the owner if it is still there) when it meets no terrain within castRange or the hit
+        /// does not fit the region (sim::CastFitsRegion).
+        bool ResolveRay(QueuedCast& q) {
+            const sim::PlayerTuning& t = settings.player;
+            const voxel::WorldRayHit hit = simulation->World().Raycast(q.origin, q.direction, t.castRange);
+            CastRejection why = CastRejection::None;
+            if (!hit.hit) {
+                ++stats.castsMissed;
+                why = CastRejection::Missed;
+            } else {
+                const double vs = static_cast<double>(simulation->World().VoxelSize());
+                q.sphere = voxel::QuantizeSphere(hit.position / vs, static_cast<double>(t.castRadius) / vs);
+                if (!sim::CastFitsRegion(region, simulation->World(), q.sphere)) {
+                    ++stats.castsRejected;
+                    why = CastRejection::Outside;
+                }
+            }
+            if (why == CastRejection::None) return true;
+            if (Peer* p = PeerOfSlot(q.player); p != nullptr && p->player->lastCastTick == q.inputTick) p->player->castRejected = why;
+            return false;
+        }
+
+        /// A cast edge in a late input (tick `in.tick` < `now`): judged and captured at the input's
+        /// tick, as its client predicted it (networking.md "Time and ticks", stage 5). The cooldown is
+        /// the one the player had after that tick; if it is taken, the cooldown now is what it would
+        /// be had the cast been taken then (the owner predicted exactly that). Origin: the state
+        /// after the input's tick, or the current one if that is no longer kept.
+        void LateCast(Peer& p, const sim::PlayerInput& in, uint32_t now) {
+            Player& pl = *p.player;
+            const sim::PlayerState* at = pl.StateAt(in.tick);
+            const uint8_t cooldownThen = at != nullptr ? at->cooldownTicks : pl.state.cooldownTicks;
+            if (cooldownThen > 0 || pl.state.cooldownTicks > 0) return RejectCast(p, in.tick);
+            const uint32_t elapsed = now - 1 - in.tick;   // ticks simulated after the input's tick
+            const uint32_t full = settings.player.castCooldownTicks;
+            pl.state.cooldownTicks = static_cast<uint8_t>(full > elapsed ? full - elapsed : 0u);
+            CaptureCast(p, in, at != nullptr ? *at : pl.state, true);
+            // The kept states of the ticks since then get the cooldown they would have had, so that a
+            // later late edge in the same stream is judged as its client predicted it (review of
+            // stage 5: they still said 0, and a second edge a few ticks later was taken).
+            // (StepPlayer counts down before it takes a cast: after tick in.tick + j the cooldown is full - j.)
+            for (uint32_t k = std::max(in.tick, now > kStateHistory ? now - kStateHistory : 0u); k < now; ++k)
+                if (sim::PlayerState* kept = pl.StateAt(k))
+                    kept->cooldownTicks = static_cast<uint8_t>(full > k - in.tick ? full - (k - in.tick) : 0u);
         }
 
         /// An InputBatch from a joined client (state channel: lost, duplicated, reordered).
@@ -214,12 +326,17 @@ namespace vortex::net {
                 const uint32_t t = in.tick;
                 if (pl.anyInput && t <= pl.lastRealTick) {
                     ++stats.inputsDuplicate;
+                } else if (t < pl.joinTick) {
+                    // No client makes an input for a tick before its player existed (it predicts from
+                    // its first snapshot on): a forged or broken one is ignored.
+                    ++stats.inputsBeforeJoin;
+                    continue;
                 } else if (t < now) {
                     // Too late for its tick: it only refreshes the last input. Its edges still count
-                    // (a cast in it is cast now, once), derived against the levels the repeats kept.
+                    // (a cast in it is captured once), derived against the levels the repeats kept.
                     ++stats.inputsLate;
                     const uint8_t pressed = sim::PressButtons(pl.state, in.buttons);
-                    if (sim::TakeCast(pl.state, pressed, settings.player)) CaptureCast(p, in, true);
+                    if ((pressed & sim::PlayerButton_Cast) != 0) LateCast(p, in, now);
                     // A jump edge is not spent here without a jump: the next step makes it.
                     if ((pressed & sim::PlayerButton_Jump) != 0 && !pl.lateJump) {
                         pl.lateJump = true;
@@ -294,7 +411,9 @@ namespace vortex::net {
                                                                 settings.player, dt);
                 if (lateJump) pl.state.lastButtons = static_cast<uint8_t>(levels & sim::kPlayerButtonMask);
                 stats.heldTicks += r.held ? 1u : 0u;
-                if (r.cast) CaptureCast(*peer, input, false);
+                pl.Store(now);
+                if (r.cast) CaptureCast(*peer, input, pl.state, false);
+                else if ((r.pressed & sim::PlayerButton_Cast) != 0) RejectCast(*peer, now);
             }
         }
 
@@ -309,6 +428,8 @@ namespace vortex::net {
                 snap.inputMargin = peer->player->margin;
                 snap.hasOwner = true;
                 snap.owner = peer->player->state;
+                snap.lastCastTick = peer->player->lastCastTick;
+                snap.castRejected = peer->player->castRejected;
                 for (const auto& [otherId, other] : players) {
                     if (otherId == id) continue;
                     snap.others.push_back({other->slot, other->player->state.position, other->player->last.yaw, other->player->state.flags});
@@ -389,6 +510,12 @@ namespace vortex::net {
                     used[other.slot] = true;
                 }
             if (joined >= settings.session.maxClients) return Refuse(peer, p, RefuseReason::Full);
+            // Until stage 7 a joiner receives the whole log: past the limit it would load for minutes.
+            if (logBytes > settings.maxJoinLogBytes) {
+                Log::Warn("Server: a join refused: the event log is {:.1f} MiB, over the {:.1f} MiB a joiner may be sent (networking stage 7)",
+                          static_cast<double>(logBytes) / 1048576.0, static_cast<double>(settings.maxJoinLogBytes) / 1048576.0);
+                return Refuse(peer, p, RefuseReason::LogTooLarge);
+            }
             uint8_t slot = 0;
             while (used[slot]) ++slot;
             Welcome welcome;
@@ -411,6 +538,7 @@ namespace vortex::net {
             // before the next step (a gate that held the player here would hold it for another
             // number of ticks than its client's).
             p.player = std::make_unique<Player>();
+            p.player->joinTick = Tick();          // Receive runs at the start of the tick that steps it first
             p.player->state.position = glm::vec3(tmpl.spawn);
             p.player->character = simulation->Physics().CreateCharacter(sim::PlayerCharacterDesc(p.player->state.position, settings.player));
             const std::vector<glm::dvec3> focus = PlayerFocus();
@@ -550,7 +678,7 @@ namespace vortex::net {
                                      -static_cast<int64_t>(settings.eventBurstBytes), static_cast<int64_t>(settings.eventBurstBytes));
             bool waitedForWork = false, waitedForBytes = false;
             while (!queue.empty() && !failed) {
-                const QueuedCast q = queue.front();
+                QueuedCast q = queue.front();
                 const bool overdue = static_cast<int64_t>(Tick() - q.queuedTick) >= maxWait;
                 if (!overdue && castCredit <= 0) {
                     waitedForWork = true;
@@ -561,6 +689,9 @@ namespace vortex::net {
                     break;
                 }
                 queue.pop_front();
+                // A player's ray is cast now, when the cast runs, on the world as the casts before it
+                // left it; one that casts nothing costs nothing and the next cast is looked at.
+                if (q.ray && !ResolveRay(q)) continue;
                 RunCast(q, overdue && (castCredit <= 0 || eventCredit <= 0));
             }
             stats.ticksWaitedForWork += waitedForWork ? 1u : 0u;

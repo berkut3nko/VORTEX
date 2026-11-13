@@ -28,13 +28,26 @@ function(vortex_add_tests name dir)
         VORTEX_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/.."
     )
     add_dependencies(${name} VortexShaders)
-    gtest_discover_tests(${name} DISCOVERY_TIMEOUT 60)
+    # VORTEX_SERIAL_TESTS_<name>: a gtest filter of tests that measure on the wall clock; they are
+    # registered on their own, RUN_SERIAL, so a parallel ctest does not load the machine under them.
+    if(DEFINED VORTEX_SERIAL_TESTS_${name})
+        gtest_discover_tests(${name} DISCOVERY_TIMEOUT 60 TEST_FILTER "-${VORTEX_SERIAL_TESTS_${name}}")
+        gtest_discover_tests(${name} DISCOVERY_TIMEOUT 60 TEST_FILTER "${VORTEX_SERIAL_TESTS_${name}}"
+                             PROPERTIES RUN_SERIAL TRUE LABELS wall-clock)
+    else()
+        gtest_discover_tests(${name} DISCOVERY_TIMEOUT 60)
+    endif()
 endfunction()
 
 vortex_add_tests(VortexCoreTests core VortexCore)
 vortex_add_tests(VortexPhysicsTests physics VortexPhysics)
 vortex_add_tests(VortexSimTests sim VortexSim)
 vortex_assert_gpu_free(VortexSimTests)
+if(TARGET VortexSimTests)
+    vortex_assert_no_network(VortexSimTests)
+endif()
+# The GPU-free stage-5 acceptance asserts prediction quality on the wall clock (networking.md).
+set(VORTEX_SERIAL_TESTS_VortexNetTests "EnetSession.*")
 vortex_add_tests(VortexNetTests net VortexNet)
 vortex_assert_gpu_free(VortexNetTests)
 vortex_add_tests(VortexGraphicsTests graphics VortexGraphics)

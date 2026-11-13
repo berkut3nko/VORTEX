@@ -206,3 +206,29 @@ TEST(RemotePlayers, InterpolatesInThePastExtrapolatesBrieflyAndForgetsWhoLeft) {
     players.Add(18, {{3, glm::vec3(100.0f), 0, 0}});
     EXPECT_NEAR(players.Sample(15.0)[0].position.x, 11.0f, 1.0e-4f);
 }
+
+// Review of stage 5: a caller that can run only `maxTicks` a frame (the engine: 8) gets the rest of a
+// long frame and of a jump on the next frames, never fewer ticks in all: a 0.4 s frame then 1/60 s
+// frames gives as many ticks as 1/60 s frames all along, and a 20-tick jump is run as 8 + 8 + 4.
+TEST(Clock, TicksAboveTheCapAreCarriedToTheNextCalls) {
+    net::TickClock smooth, capped;
+    uint32_t a = 0, b = 0;
+    for (int i = 0; i < 24; ++i) a += smooth.TicksDue(kTick, kTick, 8);
+    b += capped.TicksDue(24 * kTick + 1.0e-9, kTick, 8);   // a 0.4 s frame
+    EXPECT_EQ(b, 8u);
+    for (int i = 0; i < 6; ++i) b += capped.TicksDue(0.0, kTick, 8);
+    EXPECT_EQ(a, b);
+    EXPECT_EQ(capped.TicksDue(0.0, kTick, 8), 0u);
+
+    net::TickClock clock;
+    uint32_t next = 100;
+    (void)clock.Report(-18, 90, next, 80);
+    (void)clock.Report(-18, 92, next, 82);
+    const net::ClockAction jump = clock.Report(-18, 94, next, 84);
+    ASSERT_EQ(jump.jumpTicks, static_cast<uint32_t>(clock.Target() + 18));
+    ASSERT_EQ(jump.jumpTicks, 20u);
+    EXPECT_EQ(clock.TicksDue(0.0, kTick, 8), 8u);
+    EXPECT_EQ(clock.TicksDue(0.0, kTick, 8), 8u);
+    EXPECT_EQ(clock.TicksDue(0.0, kTick, 8), 4u);
+    EXPECT_EQ(clock.TicksDue(0.0, kTick, 8), 0u);
+}

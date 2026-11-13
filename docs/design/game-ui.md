@@ -268,3 +268,24 @@ Wayland session (the log line then says `X11 (pointer grab)`):
 6. With the overlay hidden and the editor closed, no ImGui window appears and keys are never
    swallowed (WASD, Space, E, V, F all work right after closing the editor).
 7. HiDPI / fractional scaling: menu hover matches the pointer.
+
+### Network session (networking.md stage 5; windowed, two machines)
+
+The game as a client of `vortex_server` (`src/Session.cpp`) has its own small interface on the same HUD: a bottom-left
+panel `ONLINE host:port  slot N  WALK/AIR` with `ping`, `players` and the tool, the key hints `Esc menu   V view`,
+`Cast not run: ...` for 2 s when the server reports a cast it did not run, `Disconnected from the server` when the
+connection ends, and a pause menu with Resume / "Leave the session" (the session goes on while it is open). The steps
+(commands, firewall, token) are in the game's `CLAUDE.md`, "Owner's two-machine test": the server is started with
+`--new-token` and the players use the token it prints (the session files' tokens are in the repository). Check on both
+machines:
+9. `Shredborne --connect <server>:27015 --token <token>` opens the window on the plaza; the log says `Session: joined
+   ... as slot N`. The cursor locks as in check 1; mouse look, WASD, Space, Shift work.
+10. The other player is a figure with a gold torso, moving smoothly where they walk (a moment late); it disappears
+    when they leave (`Session: player in slot N left`).
+11. LMB: a small puff at the crosshair at once, the hole (debris, flash) a moment later on both screens; the other
+    player's holes appear too. Walking into a fresh hole may pull the view a little (a correction).
+12. Esc: the menu shows "Leave the session"; the other player keeps moving behind it; Resume does not cast; "Leave the
+    session" closes the game and the server logs the leave. Closing the window does the same.
+13. Stop the server (Ctrl-C) while a client plays: the HUD says "Disconnected from the server" at once (a server that
+    is killed or unplugged: after up to 30 s, ENet's timeout). A wrong token is refused before the window opens
+    (`refused this client: wrong token`); a server that is not there gives `no answer from ... within 15 s`.

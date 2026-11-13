@@ -72,6 +72,9 @@ export namespace vortex::net {
         /// @brief Ticks to run for `seconds` (at the current rate, plus jumps, minus holds), at most
         /// `maxTicks` (the rest is kept for the next call).
         uint32_t TicksDue(double seconds, double tickSeconds, uint32_t maxTicks = 30);
+        /// @brief Forgets ticks kept over a cap and not run yet (the prediction starts: its lead is
+        /// set from the round trip, and ticks owed from before it would push it further ahead).
+        void DropBacklog() { m_PendingJump = 0; }
 
         /**
          * @brief A snapshot's report: the input of tick `inputTick` arrived `margin` ticks before

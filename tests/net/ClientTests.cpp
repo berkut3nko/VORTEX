@@ -271,3 +271,50 @@ TEST(Client, AttachRefusesAStoreTooSmallForTheRegion) {
     ASSERT_TRUE(s.Attach());
     EXPECT_EQ(s.client->State(), net::ClientState::Playing);
 }
+
+// Review of stage 5: Attach polls the transport while the region loads (the game and the bots do),
+// so the session can end during the load. A server that disconnects, or a malformed batch that fails
+// the client, must leave the client Closed / Failed and Attach must say so; before the fix Attach
+// set Playing whatever happened meanwhile and returned true.
+TEST(Client, ASessionThatEndsWhileTheRegionLoadsIsNotAttached) {
+    for (const bool disconnect : {true, false}) {
+        FakeServer s;
+        s.Send(net::Encode(s.MakeWelcome()));
+        s.client->Poll();
+        ASSERT_EQ(s.client->State(), net::ClientState::Welcomed);
+        sim::Simulation simulation(s.client->MakeSimulationConfig(s.base));
+        ASSERT_TRUE(simulation.Initialize(s.client->MakeGenerator()));
+        uint32_t calls = 0;
+        const bool attached = s.client->Attach(simulation, [&] {
+            if (calls++ == 0) {
+                if (disconnect) {
+                    s.serverEnd.Disconnect(s.peer);                       // the server is stopped
+                } else {
+                    std::vector<uint8_t> bytes = net::Encode(net::EventBatch{});
+                    bytes.push_back(0xEE);                                // trailing bytes: malformed
+                    s.Send(bytes);
+                }
+            }
+            s.client->Poll();
+        });
+        EXPECT_GT(calls, 0u) << "the load ended before the callback ran: the test proves nothing";
+        EXPECT_FALSE(attached) << (disconnect ? "disconnect" : "malformed batch");
+        EXPECT_EQ(s.client->State(), disconnect ? net::ClientState::Closed : net::ClientState::Failed);
+        s.client->Poll();                                                 // nothing turns it into Playing later
+        EXPECT_NE(s.client->State(), net::ClientState::Playing);
+    }
+}
+
+// Review of stage 5: the engine runs at most 8 ticks a frame. The client clock must keep what it
+// cannot run now for the next frames (TicksDue's cap), not hand out 30 and have the caller drop
+// the rest: 0.3 s at 60 Hz is 18 ticks, as 8 + 8 + 2.
+TEST(Client, TicksAboveTheCallersCapAreCarriedToTheNextFrames) {
+    FakeServer s;
+    s.Send(net::Encode(s.MakeWelcome()));
+    s.client->Poll();
+    ASSERT_EQ(s.client->State(), net::ClientState::Welcomed);
+    EXPECT_EQ(s.client->TicksDue(0.3 + 1.0e-6, 8), 8u);
+    EXPECT_EQ(s.client->TicksDue(0.0, 8), 8u);
+    EXPECT_EQ(s.client->TicksDue(0.0, 8), 2u);
+    EXPECT_EQ(s.client->TicksDue(0.0, 8), 0u);
+}

@@ -1,8 +1,8 @@
 # Notes: sessions (`src/net`, `src/sim/Region.cppm`, `tests/net`, `tools/server`)
 
 Read `CLAUDE.md`, `docs/ARCHITECTURE.md` 7.5 and `docs/design/networking.md` ("Stage 3 as built", "Stage 4 as
-built") first; nothing from them is repeated here. Paths are relative to `engine/`. Written at networking stage 3,
-extended at stage 4 (2026-11-13).
+built", "Stage 5 as built") first; nothing from them is repeated here. Paths are relative to `engine/`. Written at
+networking stage 3, extended at stages 4 and 5 and the review of stage 5 (2026-11-13). The game's session mode is `../src/Session.cpp`.
 
 ## 1. Map
 
@@ -10,6 +10,9 @@ extended at stage 4 (2026-11-13).
 - `src/net/Transport.cppm`, `internal/Transport.cpp` - `ITransport`, `TransportEvent`, `Channel`,
   `LoopbackTransport` (shared inboxes, `Connect(a, b)`), `Impairment` / `ImpairedTransport` (send-side queue sorted by
   due time; reliable packets keep per peer-and-channel order through `m_LastDue`).
+- `src/net/Enet.cppm`, `internal/Enet.cpp` - `EnetTransport` (stage 5: UDP through ENet; the only file that
+  includes `<enet/enet.h>`), `EnetSettings` (timeouts, test receive loss), `EnetStats`, `ParseEndpoint`,
+  `kDefaultPort`.
 - `src/net/Wire.cppm`, `internal/Wire.cpp` - `ByteWriter` / `ByteReader`, mask runs, `Event` = `variant<WorldOp,
   EntitySpawn>`, `WriteEvent` / `ReadEvent`, `WriteRegion` / `ReadRegion`, `QuantizeVelocity`.
 - `src/net/Messages.cppm`, `internal/Messages.cpp` - message structs, `Encode` / `Decode`, `EncodeBatch` (events
@@ -31,7 +34,8 @@ extended at stage 4 (2026-11-13).
   game's plaza, moved here from `src/main.cpp`).
 - `src/sim/Blast.cppm` (end of the constants) - `CastWork`, `CastWorkOf`, `OpWork`, the weights.
 - `tools/server/main.cpp` - `vortex_server`; `tools/server/sessions/*.session` - examples that `SessionFile.*` parses.
-- `tests/net/` - `WireTests.cpp`, `TransportTests.cpp`, `ClientTests.cpp` (`FakeServer`: a client against a
+- `tests/net/` - `EnetTests.cpp` (stage 5: real UDP sockets on 127.0.0.1, wall clock; the GPU-free acceptance
+  `EnetSession.*`), `WireTests.cpp`, `TransportTests.cpp`, `ClientTests.cpp` (`FakeServer`: a client against a
   hand-written server endpoint - overlaps, gaps, forged `Welcome`s, late-join presentation, refused worlds),
   `SessionTests.cpp` (the `Session` fixture: a server and bots on impaired loopbacks driven by one manual clock; the
   acceptance; pacing; the disabled calibration), `ClockTests.cpp` (`TickClock` and `RemotePlayers` from margin and
@@ -85,6 +89,21 @@ extended at stage 4 (2026-11-13).
   Snapshots wait in arrival order; the newest whose events are applied is compared (older ones are dropped), and one
   that has waited `eventWaitTicks` since it arrived is given up and counted - its age never restarts when a newer one
   comes.
+- **A cast is judged at its input's tick, its ray at its dequeue** (stage 5). On time: the state after the tick's
+  step; late: the state of that tick from the player's 32-tick ring, the cooldown then and now both 0, the cooldown
+  set as if taken then. The sphere is unknown until `RunCasts` pops the cast and `ResolveRay` casts it into the
+  world as it is then; a ray that casts nothing costs nothing. `lastCastTick` / `castRejected` in the owner block
+  tell the owner.
+- **Only `Enet.cpp` sees ENet.** `vortex_enet` is PRIVATE to `VortexNet`; Core, Physics, Sim and `VortexSimTests`
+  must not link it (`vortex_assert_no_network`).
+- **Every tick the clock hands out is run.** `Client::TicksDue(seconds, maxTicks)` keeps what is over `maxTicks` for
+  the next calls; an owner that can run only so many per frame asks for that many (the engine: `Engine::
+  kMaxSourceTicksPerFrame`, 8). A tick handed out and dropped is lost to the clock (review of stage 5).
+- **`Attach` attaches only a live session.** Its callback polls; if the session ended meanwhile (Closed, Failed,
+  Refused) the load stops and `Attach` returns false - never Playing on a dead connection.
+- **A late cast rewrites the cooldown history.** Accepted at tick T, the kept states of T.. get `full - j`, so a
+  later late edge is judged as its client predicted it. Ring entries never written have the tick `0xFFFFFFFF`, and
+  inputs before the player's join tick are ignored (`inputsBeforeJoin`).
 - **Inputs sent are never taken back.** A hard resync holds the clock; nothing rewinds `PredictTick`, except a
   snapshot at or past it (`behind`), which moves it forward.
 
@@ -107,7 +126,36 @@ extended at stage 4 (2026-11-13).
   not cells), even for a carve that would change nothing there: on a server that is a failure, hence the carve-box
   rule in `CastFitsRegion`.
 - `Client::MakeSimulationConfig` raises `chunkCapacity` to the region's cell count: fine for a CPU `Simulation`
-  (slots are allocated on use), not for the engine's GPU store, which mirrors `Capacity()` (stage 5).
+  (slots are allocated on use), not for the engine's GPU store, which mirrors `Capacity()`: the game passes
+  `storeLimit` (12 288) and `ClientSettings::minFreeStoreSlots` (2048), and `Attach` refuses a region that does not
+  fit (stage 5).
+- ENet services the socket only inside `Poll` (and sends in `Flush`): an owner that stops polling for longer than
+  `EnetSettings::timeoutMinimumMs` (10 s) loses its peers. A long load goes through `Attach(simulation,
+  whileLoading)` with a callback that polls.
+- `ENetHost` has no user pointer: the receive-loss hook finds its transport in a process-wide map (main thread only).
+  A transport's per-peer records must outlive the host (packets point at them): the destructor destroys the host
+  first.
+- `EnetTransport::Disconnect` reports `Disconnected` at once and forgets the peer; ENet's own disconnect event for it
+  later only frees the record. Do not expect a second event.
+- The ENet RTT includes the remote's frame time (it acknowledges when it is serviced): a 40 fps headless game client
+  shows 33-44 ms on localhost. ENet starts its smoothed RTT at 500 ms and moves it 1/8 per acknowledged reliable
+  message; a client sends few, so it stayed near 440 ms for seconds and the lead taken from it held the clock in a hard
+  resync. `EnetTransport` seeds it with the connect handshake's round trip (connecting side), and
+  `RoundTripSeconds` is the lowest of the smoothed value and ENet's lowest of this and the last 5 s interval (a stall
+  of this side raises only the first); `SmoothedRoundTripSeconds` is ENet's own (the HUD's ping).
+- ENet's `host->maximumPacketSize` limits what a peer may send here **and** what `enet_peer_send` takes: a listening
+  transport sets it to 64 KiB (`kListenMaxMessageBytes`; strangers' messages are reassembled before any token) and
+  `Send` lifts it for the call. A refused large message is dropped unacknowledged, so its sender times out.
+- `vortex_server`'s in-process bots share one thread. Over UDP a bot's region load runs whole passes of the server and
+  the other bots from `Attach`'s callback (and one after it), so it no longer stops them; but one thread still runs
+  the server, the drill and every bot's simulation, and its margins swing (-30..+28 ticks in the UDP drill). Judge
+  the clock with game clients (separate processes), not with the bots of `--enet`.
+- The game services its connection from a helper thread while `Engine::Initialize` runs; nothing else may touch the
+  client or the transport until that thread is joined (`EnetTransport` is one thread at a time, not thread-safe).
+- A headless game session drains at exit (applied == the server's opSeq, held 1 s, at most 5 s) and exits 1 when it
+  cannot: the hash it logs is then comparable with the server's last one.
+- A wall-clock loop may run no tick in a pass: anything scheduled "on tick T" must remember that it ran (the drill
+  queued a step on every pass of the same tick once).
 - Growth over a session: the event log (about 2 KB per cast) and nothing else; `CastRecord`s are a ring of
   `castRecordLimit`.
 - Players do not join in `PeerId` order: a bot's slot depends on whose `Hello` arrived first. Tests take the slot
@@ -128,6 +176,10 @@ extended at stage 4 (2026-11-13).
 
 ## 4. Recipes
 
+- New cast kind / loadout: the loadout id is in `QueuedCast` only (0 = the tuning's cast); a second one needs a wire
+  field in `PlayerInput` (and `kInputBytes`), its radius / power in the tuning, `kProtocolVersion` + 1, and a
+  `Movement.*` test that a late cast of it is judged at its tick.
+
 - New player rule (crouch, sprint, a second jump): `sim::StepPlayer` and `PlayerTuning` (+ `WritePlayerTuning` /
   `ReadPlayerTuning`, `sim::IsValid`), a button in `PlayerButton` if it needs one (wire format), `kProtocolVersion` + 1,
   a `Player.*` test, then `Movement.NoCorrectionAbove2cmOnFlatGround` must still see 0 corrections.
@@ -142,8 +194,14 @@ extended at stage 4 (2026-11-13).
 
 ## 5. Verifying a change here
 
-- `ctest --test-dir build -R "Wire|Transport|Client|Session|CastBudget|Clock|RemotePlayers|Movement"` (all of
-  `VortexNetTests`, about 13 s) and `-R Player` (`VortexSimTests`).
+- `ctest --test-dir build -R "Wire|Transport|Client|Session|CastBudget|Clock|RemotePlayers|Movement|Enet"` (all of
+  `VortexNetTests`, about 26 s alone, 11 s of it the wall-clock ENet tests) and `-R Player` (`VortexSimTests`).
+- Over UDP: `build/engine/tools/server/vortex_server --session=engine/tools/server/sessions/drill.session --drill=200
+  --clients=3 --join-step 50 --bot-casts 90 --enet --loss=0.05 --delay-ms=40 --jitter-ms=30` (20 s of wall clock) must
+  say "hashes equal" and 67/67, 67/67, 66/66.
+- With the game: `tools/session-check.sh` in the game repository (about 30 s): vortex_server on 127.0.0.1 with a
+  fresh token and two headless game clients; it exits 0 only when all three exit 0 and both clients' drained hashes
+  equal the server's at the same opSeq (logs and screenshots in `build/session-check/`).
 - `VortexNetTests --gtest_also_run_disabled_tests --gtest_filter=Movement.DISABLED_FlatGroundCorrectionRateOverSeeds`
   (20 s) prints the flat-ground correction rate over 10 seeds (stage 4: 1 in 32 326 comparisons; after the review 1 in
   32 318).

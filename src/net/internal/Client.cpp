@@ -10,9 +10,11 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <variant>
@@ -104,6 +106,7 @@ namespace vortex::net {
         uint32_t blendLeft = 0;
         net::RemotePlayers remotes;
         PredictionStats prediction;
+        Client::CastStatus lastCast;
 
         /// The session's tick (Welcome; the attached simulation has the same, Attach checks it).
         float Dt() const { return simulation ? simulation->FixedTimeStep() : welcome.tickSeconds; }
@@ -152,6 +155,9 @@ namespace vortex::net {
             Restore(snap.owner);
             predicting = true;
             nextTick = snap.tick + 1;
+            clock.DropBacklog();
+            // The transport's recent round trip: one that a stall of this side does not inflate
+            // (ITransport::RoundTripSeconds; review of stage 5).
             const double rtt = server != 0 ? transport.RoundTripSeconds(server) : 0.0;
             // The round trip, a tick each way for the sender's and the receiver's tick (a message waits
             // for the next one), and the clock's target.
@@ -239,6 +245,13 @@ namespace vortex::net {
             serverLast = std::max(serverLast, snap.lastOpSeq);
             remotes.Add(snap.tick, snap.others);
             if (!snap.hasOwner) return;
+            if (snap.lastCastTick != lastCast.tick || snap.castRejected != lastCast.rejected) {
+                if (snap.castRejected != CastRejection::None) {
+                    ++prediction.castsRejected;
+                    Log::Info("Client: the server did not run the cast of tick {}: {}", snap.lastCastTick, ToString(snap.castRejected));
+                }
+                lastCast = {snap.lastCastTick, snap.castRejected};
+            }
             // Both are ticks of inputs this client made: never at or past the tick it predicts next
             // (a forged one would stop its sends or blind its clock for good).
             if (predicting && snap.ackInputTick < nextTick) ackTick = std::max(ackTick, snap.ackInputTick);
@@ -435,7 +448,10 @@ namespace vortex::net {
                         }
                         break;
                     case TransportEvent::Type::Disconnected:
-                        if (e.peer == server && state != ClientState::Refused) {
+                        // While connecting there is no server peer yet: the connection failed.
+                        if (state == ClientState::Connecting) {
+                            state = ClientState::Closed;
+                        } else if (e.peer == server && state != ClientState::Refused) {
                             state = ClientState::Closed;
                             server = 0;
                         }
@@ -489,11 +505,11 @@ namespace vortex::net {
         s.TryReconcile();
     }
 
-    uint32_t Client::TicksDue(double seconds) {
+    uint32_t Client::TicksDue(double seconds, uint32_t maxTicks) {
         Impl& s = *m_Impl;
         // Other players are drawn on real time, not on the clock's ticks (which jump and hold).
         s.serverTime.Advance(seconds / static_cast<double>(s.Dt()));
-        return s.clock.TicksDue(seconds, static_cast<double>(s.Dt()));
+        return s.clock.TicksDue(seconds, static_cast<double>(s.Dt()), maxTicks);
     }
 
     sim::PlayerStepResult Client::StepPlayer(const sim::PlayerInput& controls) {
@@ -541,6 +557,7 @@ namespace vortex::net {
         return s.remotes.Sample(s.serverTime.Now());
     }
     const sim::PlayerTuning& Client::Tuning() const { return m_Impl->welcome.player; }
+    Client::CastStatus Client::LastCast() const { return m_Impl->lastCast; }
     const PredictionStats& Client::Prediction() const { return m_Impl->prediction; }
     const TickClock& Client::Clock() const { return m_Impl->clock; }
 
@@ -550,7 +567,7 @@ namespace vortex::net {
     glm::dvec3 Client::Spawn() const { return m_Impl->welcome.spawn; }
     uint8_t Client::Slot() const { return m_Impl->welcome.slot; }
 
-    sim::SimulationConfig Client::MakeSimulationConfig(sim::SimulationConfig base) const {
+    sim::SimulationConfig Client::MakeSimulationConfig(sim::SimulationConfig base, uint32_t storeLimit) const {
         base.world = sim::RegionWorldConfig(m_Impl->welcome.region, base.world);
         base.sessionServer = false;
         // The session's tick and gravity: every predicted step depends on them.
@@ -561,6 +578,9 @@ namespace vortex::net {
         base.physics.characterLayers = sim::kSessionCharacterLayers;
         // The client holds the whole region window until stage 7: its store must hold it too.
         base.chunkCapacity = std::max(base.chunkCapacity, sim::RegionChunkCapacity(m_Impl->welcome.region));
+        // ... unless the owner cannot have that many (the game's GPU store): then Attach decides
+        // whether the region fits.
+        if (storeLimit != 0) base.chunkCapacity = std::min(base.chunkCapacity, storeLimit);
         return base;
     }
 
@@ -568,7 +588,7 @@ namespace vortex::net {
         return sim::MakeRegionGenerator(m_Impl->welcome.region, m_Impl->ids);
     }
 
-    bool Client::Attach(sim::Simulation& simulation) {
+    bool Client::Attach(sim::Simulation& simulation, const std::function<void()>& whileLoading) {
         Impl& s = *m_Impl;
         if (s.state != ClientState::Welcomed) {
             Log::Error("Client: Attach needs the Welcomed state");
@@ -614,7 +634,30 @@ namespace vortex::net {
             return false;
         }
         voxel::World& world = simulation.World();
-        world.LoadBlocking(sim::RegionWindowFocus(region));
+        const glm::dvec3 windowFocus = sim::RegionWindowFocus(region);
+        if (whileLoading) {
+            // Load in streaming steps so the owner can keep its connection alive; LoadBlocking then
+            // only finishes what is left (nothing, normally).
+            uint32_t step = 0;
+            for (world.Update(windowFocus); !world.IsFilled(voxel::LoadScope::Everything); world.Update(windowFocus)) {
+                // World::Stats walks every cell: a store that fills is looked for now and then only.
+                if (++step % 64 == 0) {
+                    const voxel::WorldStats ws = world.Stats();
+                    if (ws.storeFullLoads > 0 || ws.storeFullDecodes > 0) break;
+                }
+                whileLoading();
+                // The callback polls: the session may have ended meanwhile (a disconnect, a refusal,
+                // a malformed message that failed this client).
+                if (s.state != ClientState::Welcomed) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            }
+            if (s.state != ClientState::Welcomed) {
+                Log::Error("Client: the session ended while the region loaded ({}): not attached",
+                           s.state == ClientState::Failed ? "this client failed" : s.state == ClientState::Refused ? "refused" : "disconnected");
+                return false;
+            }
+        }
+        world.LoadBlocking(windowFocus);
         if (!sim::WindowIsRegions(world, region)) {
             Log::Error("Client: refused a simulation whose window landed at ({}, {}, {}), not on the region's", world.WindowMinChunk().x,
                        world.WindowMinChunk().y, world.WindowMinChunk().z);
@@ -623,8 +666,17 @@ namespace vortex::net {
         const voxel::WorldStats ws = world.Stats();
         if (ws.storeFullLoads > 0 || ws.storeFullDecodes > 0) {
             Log::Error("Client: refused a simulation whose chunk store ({} slots) cannot hold the region's window (store full {} / {} "
-                       "times; build it with MakeSimulationConfig)",
+                       "times): the region is too large for this client (a smaller session region, or networking stage 7's client "
+                       "window)",
                        simulation.Chunks().Capacity(), ws.storeFullLoads, ws.storeFullDecodes);
+            return false;
+        }
+        const uint32_t used = simulation.Chunks().UsedCount(), capacity = simulation.Chunks().Capacity();
+        if (capacity - std::min(used, capacity) < s.settings.minFreeStoreSlots) {
+            Log::Error("Client: the region's window takes {} of this client's {} chunk-store slots, leaving fewer than the {} a "
+                       "session needs: the region is too large for this client (a smaller session region, or networking stage 7's "
+                       "client window)",
+                       used, capacity, s.settings.minFreeStoreSlots);
             return false;
         }
         // The world must be what this client's generator makes, untouched: another generator, or a

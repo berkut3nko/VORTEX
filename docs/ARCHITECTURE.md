@@ -39,8 +39,8 @@ engine/
     scene/    vortex.scene     entities (EnTT): components, object lifetime, destruction
     sim/      vortex.sim       the simulation: world + physics + terrain colliders + scene on a numbered tick;
                                world operations, blasts, regions and their templates, the player step
-    net/      vortex.net       the session protocol: transports, wire format, messages, server, client,
-                               the client clock and prediction, bot pilots
+    net/      vortex.net       the session protocol: transports (loopback, impaired, ENet / UDP), wire
+                               format, messages, server, client, the client clock and prediction, bot pilots
     graphics/ vortex.graphics  Vulkan device, window, renderer, UI layer
     engine/   vortex.engine    application loop, render data of the scene, explosions, glue
     editor/   vortex.editor    in-game editor: tool logic (no ImGui), panels, gizmo
@@ -54,17 +54,21 @@ Libraries and what they may depend on (a lower layer never imports a higher one)
 Vortex::Core      core, math, voxel, fx        -> spdlog, glm, tinygltf      (no GPU, no window)
 Vortex::Physics   physics                      -> Core, Jolt
 Vortex::Sim       scene, sim                   -> Core, Physics, EnTT        (no GPU, no window)
-Vortex::Net       net                          -> Sim                        (no GPU, no window)
+Vortex::Net       net                          -> Sim; ENet (private)        (no GPU, no window)
 Vortex::Graphics  graphics                     -> Core, Vulkan, VMA, vk-bootstrap, GLFW, ImGui
 Vortex::Engine    engine, editor               -> all of the above, ImGuizmo
 vortex_server     tools/server                 -> Net                        (no GPU, no window)
+Shredborne (game) ../src                       -> Engine (and so Net and ENet)
 ```
 
 A dedicated server or a tool links `Vortex::Net` (or less) and never sees Vulkan. This is checked
 when the build is configured: `vortex_assert_gpu_free` (`CMakeLists.txt`) walks everything that
 `VortexCore`, `VortexPhysics`, `VortexSim`, `VortexNet`, the test binaries `VortexSimTests` and
 `VortexNetTests` and the executable `vortex_server` link, directly or through their dependencies,
-and stops with an error if Graphics, Engine, Vulkan, GLFW, VMA or ImGui is among it.
+and stops with an error if Graphics, Engine, Vulkan, GLFW, VMA or ImGui is among it (`vortex_enet`, ENet built
+from source, is checked too). A second check, `vortex_assert_no_network`, stops the build if `VortexCore`,
+`VortexPhysics`, `VortexSim` or `VortexSimTests` link `VortexNet` or ENet: the network transport is linked privately
+into `Vortex::Net` and reaches only what links that (the server, `VortexNetTests`, the engine and the game).
 
 Inside `Vortex::Sim`, `scene` is the lower layer: it imports voxel, fx and physics, nothing of
 graphics and not `vortex.sim`. `sim` owns the scene together with the world, physics and the
@@ -811,8 +815,9 @@ network client will predict with (`docs/design/networking.md`).
 
 ### 7.5 Sessions
 
-`vortex.net` (library `Vortex::Net`, GPU-free) is the M1 protocol of `docs/design/networking.md`; stages 3-4 run it
-in one process over loopback transports ("Stage 3 as built" and "Stage 4 as built" there have every choice).
+`vortex.net` (library `Vortex::Net`, GPU-free) is the M1 protocol of `docs/design/networking.md`; it runs over ENet
+(UDP) between `vortex_server` and the game (`Shredborne --connect`) and in one process over loopback transports for
+the tests ("Stage 3 as built", "Stage 4 as built" and "Stage 5 as built" there have every choice).
 
 * **Region.** `sim::RegionDesc` (`vortex.sim:region`) = template id, seed, play bounds (whole chunks), height
   range, generator and `TerrainSettings` (the session's voxel size included). `sim::RegionWorldConfig` turns it into
@@ -823,10 +828,13 @@ in one process over loopback transports ("Stage 3 as built" and "Stage 4 as buil
   the world (the playground plaza is `sim::PlaygroundTemplate`). A server applies `ops` as operations 1..k, sends
   lights as `EntitySpawn`, keeps `objects` as its bodies and sends `spawn` in `Welcome`; the offline game applies
   all of it locally (`ApplyTemplateOps`, `CreateTemplateLights`, `CreateTemplateObjects`).
-* **Transport.** `net::ITransport` (`Send`, `Poll`, `RoundTripSeconds`, `ReliableBytesInFlight`, `Disconnect`;
-  channels state / events / bulk). `LoopbackTransport` links two endpoints in process; `ImpairedTransport` wraps any
-  transport with seeded loss, delay, jitter, duplicates, reordering, a rate limit and outages, keeping ENet's
-  promise on reliable channels (resent, in order).
+* **Transport.** `net::ITransport` (`Send`, `Poll`, `RoundTripSeconds`, `ReliableBytesInFlight`, `Disconnect`,
+  `Flush`; channels state / events / bulk). `EnetTransport` (stage 5) is UDP through ENet 1.3: `Listen` / `Connect`,
+  one ENet channel per channel (state unreliable and sequenced, the others reliable), `ReliableBytesInFlight` exact
+  (bytes until ENet releases the packet), graceful `Disconnect`, a test-only receive loss below ENet.
+  `LoopbackTransport` links two endpoints in process; `ImpairedTransport` wraps any transport with seeded loss,
+  delay, jitter, duplicates, reordering, a rate limit and outages, keeping ENet's promise on reliable channels
+  (resent, in order).
 * **Server.** `net::Server` owns one `sim::Simulation` built with `sim::ServerConfig` and the region's world. A tick:
   receive (handshake: `Hello` with protocol version, `net::BuildHash` and token -> `Welcome` + the whole event log,
   or `Refuse`) -> streaming -> queued casts within the cast work budget (`sim::CastWorkOf`) and the event byte
@@ -845,16 +853,26 @@ in one process over loopback transports ("Stage 3 as built" and "Stage 4 as buil
   movement rule (server, predicting client, offline game): integer inputs (`PlayerInput`: move axes, yaw, pitch,
   button levels), edges derived from the levels before, a cooldown, the `HasCollider` gate. A client sends the inputs
   the server has not acknowledged (at most 8, 30 Hz) on the state channel; the server queues 16 ticks ahead, repeats
-  the last movement for a missing input and captures a cast edge as a blast. Each `Snapshot` carries the tick, the
+  the last movement for a missing input and captures a cast edge as {eye, look, input tick, loadout} - a late one
+  judged at its own tick from a ring of the player's states - and casts its ray when the cast runs (stage 5). Each
+  `Snapshot` carries the tick, the
   event stream position at it, the newest input held, the margin of the newest input that arrived (and its tick,
-  dropped ones included), the owner's state and the other players. The client's `TickClock` keeps inputs a target
+  dropped ones included), the owner's state with the newest cast's input tick and why it did not run, if it did not,
+  and the other players. The client's `TickClock` keeps inputs a target
   margin early (jump when late or well short, 2 % bleed / catch-up, hold the surplus for a hard resync); it predicts
   with its own character (`sim::kSessionCharacterLayers`, the server's mask; the tick length and gravity come in
   `Welcome`), with the colliders under the player flushed before every step on both sides, compares the newest
   snapshot whose events are applied with its history (one that waits 250 ms is given up and counted), and at 2 cm or
   more restores and replays (blended over 100 ms, snapped at 1.5 m). Other players are interpolated in the past
   (`RemotePlayers`) at a server time that only moves forward (`ServerTime`). Driven per tick by `TicksDue` +
-  `RunTick`; the engine is not yet (stage 5).
+  `RunTick` (tests, bots); the engine takes its ticks from `TicksDue(seconds, 8)` through `Engine::SetTickSource` (stage 5; the clock keeps
+  what is over 8 for the next frames).
+* **The game as a client (stage 5).** `Shredborne --connect HOST[:PORT] --token HEX` (`src/Session.cpp` of the game):
+  handshake, then an `Engine` built from `EngineConfig::simulation` = `Client::MakeSimulationConfig(base, 12288)`
+  (the store capped at the GPU buffer's size; `Attach` refuses a region that does not leave
+  `ClientSettings::minFreeStoreSlots` free) and `windowFollowsCamera = false`; `Attach` loads the region while it
+  polls; per tick `Poll`, presentations, `StepPlayer`. Other players are voxel figures; the editor, flight, crates
+  and the offline scripts are not available in a session.
 * **Agreement.** `net::RegionHash` is `voxel::WorldHash` over the region window; probe chunks in `Welcome` compare
   the generators; `buildHash` covers the generator's golden values (`voxel::kGeneratorGoldenHash`) and the material
   table (`voxel::MaterialTableHash`).
@@ -976,7 +994,11 @@ World (statistics, save).
   sequences, and the movement acceptance with player bots on their own clocks (no correction on
   flat ground over 5 % loss, a blast at a chunk border beside a walking player, a +50 ms ping
   step, three lost input packets carrying a cast, a 150 ms server hitch, forced mispredictions,
-  forged packets).
+  forged packets). Stage 5: casts judged at their input tick and rays cast at dequeue, the cast
+  rejection in the owner block, and real UDP on 127.0.0.1 (wall clock, ENet resending through
+  5 % receive loss): reliable order, exactly-once delivery and `ReliableBytesInFlight`, disconnects
+  and failed connects, and a server with two walking, casting clients over three sockets ending
+  with equal world hashes.
 * `VortexGraphicsTests` - SPIR-V reflection of the real shader binaries, C++ / GLSL struct
   layout parity (`VxHudQuad` included), the material surface-kind and HUD cell-grid constants
   (C++ vs. the text of `common.glsl`) and
@@ -1014,8 +1036,9 @@ World (statistics, save).
 * **Networking / dedicated server**: `Vortex::Core`, `Vortex::Physics`, `Vortex::Sim` and
   `Vortex::Net` have no GPU or window dependency, `sim::Simulation` runs the whole simulation on a
   numbered fixed tick (7.4), generation is a pure function of the seed (pinned bit for bit by
-  golden tests) and every terrain change is an integer operation (7.5). Stages 4-9 of
-  `docs/design/networking.md` add the real transport, players, entities and chunk sync.
+  golden tests) and every terrain change is an integer operation (7.5). Stages 6-9 of
+  `docs/design/networking.md` add entities, chunk sync, a soak and the on-demand world (the transport and players are
+  built: stages 4-5).
 * **Memory**: chunks are dense; palette-compressed or brick-sparse chunk payloads can replace
   `ids[]` behind `VX_VOXEL_ID` without touching traversal.
 
