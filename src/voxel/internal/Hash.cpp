@@ -2,6 +2,7 @@ module;
 
 #include <glm/glm.hpp>
 
+#include <bit>
 #include <cstdint>
 #include <span>
 
@@ -125,5 +126,19 @@ namespace vortex::voxel {
                     ++result.solidChunks;
                 }
         return result;
+    }
+
+    uint64_t HashMix64(uint64_t h, uint64_t value) { return Mix(h + 0x9e3779b97f4a7c15ull + value); }
+
+    uint64_t MaterialTableHash(const MaterialLibrary& materials) {
+        uint64_t h = Mix(kSeed ^ 0x4d4154ull);   // "MAT"
+        for (uint32_t id = 1; id < kPaletteSize; ++id) {
+            const Material& m = materials.Get(kWorldPalette, static_cast<uint8_t>(id));
+            h = HashMix64(h, std::bit_cast<uint32_t>(m.hardness));
+            h = HashMix64(h, m.flags);
+            h = HashMix64(h, std::bit_cast<uint32_t>(m.density));
+            for (const uint32_t s : m.strength) h = HashMix64(h, s);
+        }
+        return Finish(h);
     }
 }

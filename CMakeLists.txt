@@ -9,6 +9,8 @@ cmake_minimum_required(VERSION 3.28)
 #    Vortex::Physics   Jolt integration
 #    Vortex::Sim       scene (ECS) + the simulation: world, physics, entities on a
 #                      numbered fixed tick (no GPU, no window: what a session server runs)
+#    Vortex::Net       the session protocol: transports, messages, server, client
+#                      (no GPU, no window: vortex_server links only this)
 #    Vortex::Graphics  Vulkan renderer, window, UI
 #    Vortex::Engine    application loop, editor                <- games link this
 #    VortexShaders     GLSL -> SPIR-V
@@ -137,6 +139,11 @@ vortex_add_module_library(VortexSim scene sim)
 target_link_libraries(VortexSim PUBLIC VortexCore VortexPhysics EnTT::EnTT)
 add_library(Vortex::Sim ALIAS VortexSim)
 
+# --- Net: the session protocol (docs/design/networking.md), still no GPU and no window --
+vortex_add_module_library(VortexNet net)
+target_link_libraries(VortexNet PUBLIC VortexSim)
+add_library(Vortex::Net ALIAS VortexNet)
+
 # --- Graphics ------------------------------------------------------------------
 vortex_add_module_library(VortexGraphics graphics)
 target_link_libraries(VortexGraphics
@@ -148,7 +155,7 @@ add_library(Vortex::Graphics ALIAS VortexGraphics)
 # --- Engine (what games link) ----------------------------------------------------
 vortex_add_module_library(VortexEngine engine editor)
 target_link_libraries(VortexEngine
-    PUBLIC  VortexCore VortexPhysics VortexSim VortexGraphics EnTT::EnTT vortex_imgui
+    PUBLIC  VortexCore VortexPhysics VortexSim VortexNet VortexGraphics EnTT::EnTT vortex_imgui
     PRIVATE vortex_imguizmo glfw
 )
 add_dependencies(VortexEngine VortexShaders)
@@ -208,6 +215,7 @@ endfunction()
 vortex_assert_gpu_free(VortexCore)
 vortex_assert_gpu_free(VortexPhysics)
 vortex_assert_gpu_free(VortexSim)
+vortex_assert_gpu_free(VortexNet)
 
 # --- Tools & tests ---------------------------------------------------------------
 if(VORTEX_BUILD_TOOLS)

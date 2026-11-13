@@ -5,6 +5,8 @@
 #  tests/physics/  -> VortexPhysicsTests  Jolt integration
 #  tests/sim/      -> VortexSimTests      sim::Simulation and the server scene; links Vortex::Sim only,
 #                                         so nothing of Vulkan, GLFW or ImGui is in the binary
+#  tests/net/      -> VortexNetTests      the session protocol: transports, messages, server and clients
+#                                         in one process; links Vortex::Net only (GPU-free, checked)
 #  tests/graphics/ -> VortexGraphicsTests shader reflection / layout contracts (CPU only, no Vulkan device)
 #  tests/engine/   -> VortexEngineTests   scene / engine / editor logic that needs no GPU
 #
@@ -33,5 +35,7 @@ vortex_add_tests(VortexCoreTests core VortexCore)
 vortex_add_tests(VortexPhysicsTests physics VortexPhysics)
 vortex_add_tests(VortexSimTests sim VortexSim)
 vortex_assert_gpu_free(VortexSimTests)
+vortex_add_tests(VortexNetTests net VortexNet)
+vortex_assert_gpu_free(VortexNetTests)
 vortex_add_tests(VortexGraphicsTests graphics VortexGraphics)
 vortex_add_tests(VortexEngineTests engine VortexEngine)

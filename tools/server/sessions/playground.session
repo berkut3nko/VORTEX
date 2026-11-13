@@ -1,0 +1,14 @@
+# The Shredborne playground (template playground) on the built-in terrain, 96 m across:
+#   vortex_server --session playground.session --clients 2 --ticks 300
+token = 7a3f19c2e4b80d5661a2c3e4f5061728
+template = playground
+seed = 1337
+play_min = -12 -12
+play_max = 12 12
+height = -48 128
+voxel_size = 0.125
+generator = terrain
+terrain_seed = 1337
+max_clients = 16
+chunk_capacity = 0
+pack_hidden = 1

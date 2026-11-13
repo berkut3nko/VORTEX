@@ -213,7 +213,10 @@ export namespace vortex::sim {
     inline constexpr uint32_t kNeckMaxNetworkNodes = 8192;
     inline constexpr uint32_t kNeckMaxArcPairs = 65535;
     inline constexpr uint32_t kNeckExteriorVisitBudget = 16384;
-    inline constexpr uint32_t kNeckFlowWorkBudget = 262144;
+    /// Lowered from 262 144 with the session's cast work budget (networking stage 3; shred.md open
+    /// question 7): 262 144 arc scans took 5-6 ms of preflow alone, every measured cast needs at
+    /// most 13 000. Spent means "released by a later cast" (R7).
+    inline constexpr uint32_t kNeckFlowWorkBudget = 65536;
     /// What one check may release (R5, R7): parts in piece order while both fit; the rest stays,
     /// still overloaded, for a later cast (counted). One piece of the largest island size always fits.
     inline constexpr uint32_t kNeckMaxReleasedVoxels = kMaxIslandVoxels;
@@ -227,6 +230,47 @@ export namespace vortex::sim {
     /// (docs/design/networking.md, "Server world without a camera").
     inline constexpr int32_t kServerWindowMarginChunks = 3;
     static_assert(kServerWindowMarginChunks * voxel::kChunkSize >= voxel::kFloodHalfExtent);
+    /// The largest cast radius a session server runs (1/16 voxel): its island box (radius / 16 +
+    /// kIslandSearchMargin voxels per side) and its carve then stay inside the margin for any centre
+    /// in the play bounds. 72 voxels = 9 m at 0.125 m.
+    inline constexpr uint16_t kMaxCastRadiusQ =
+        static_cast<uint16_t>((kServerWindowMarginChunks * voxel::kChunkSize - kIslandSearchMargin) * voxel::kQuantaPerVoxel);
+    static_assert(kMaxCastRadiusQ / voxel::kQuantaPerVoxel + kIslandSearchMargin <= kServerWindowMarginChunks * voxel::kChunkSize);
+
+    // --- the cast work budget (docs/design/networking.md "Time and ticks", shred.md R5) ----------
+    //  A session server runs queued casts while the tick has work left. Work is counted, never
+    //  timed: only counters that follow from the voxels of the flood box and from the operations'
+    //  integers are charged, so a replayed server puts every cast on the same tick. Never charged:
+    //  `graphsBuilt` and `chunksDecoded` (they depend on the graph cache and on streaming) and the
+    //  object half of a blast (it depends on Jolt's float poses). A work unit is about 0.1 us on the
+    //  reference machine (the UHD 620 laptop, -O2; calibrated once, networking.md "Stage 3 as built").
+
+    /// Work a session server may spend on casts per tick (about 6 ms of the 16.7 ms tick).
+    inline constexpr uint64_t kCastWorkPerTick = 60000;
+    /// One chunk graph used by a search, at the price of building it cold (`IslandSearchStats::
+    /// chunkGraphs` whatever the cache held). Calibrated: 20 us per graph on a quiet CPU (in a
+    /// game that also streams and renders, 70-120 us: shred.md "Stage 4 as built").
+    inline constexpr uint64_t kColdChunkGraphWork = 200;
+    /// One node visit of the graph floods (est.: too few visits in the calibration to fit).
+    inline constexpr uint64_t kNodeVisitWork = 2;
+    /// The load check's counted work (shred.md "Work bound per cast": exterior visits + arc pairs +
+    /// flow work / 8 + 64 x split relabels + released voxels / 64) is multiplied by this
+    /// (calibrated: 0.18 us per unit of that formula).
+    inline constexpr uint64_t kNeckWorkScale = 2;
+    /// Every operation, plus its box: carve / fill / swap / box voxels / 16, mask voxels / 128.
+    inline constexpr uint64_t kOpWork = 100;
+
+    /// @brief The work of one cast, by part (all integers from counters and operations).
+    struct CastWork {
+        uint64_t search = 0;     ///< Graph node visits, chunk graphs at the cold price; voxel search: box voxels / 8 + flood visits.
+        uint64_t neck = 0;       ///< The load check.
+        uint64_t ops = 0;        ///< The operations the cast applied.
+        uint64_t Total() const { return search + neck + ops; }
+    };
+    /// @brief The work of one operation (kOpWork plus its box, from its integers only).
+    uint64_t OpWork(const WorldOp& op);
+    /// @brief The work of a blast as `sim::Blast` returned it (the object half is not counted).
+    CastWork CastWorkOf(const BlastResult& blast);
 
     /// @brief The flood box of a blast: floor(centre / 16) +- voxel::kFloodHalfExtent voxels, [min, max).
     void FloodBox(const voxel::SphereQ& sphere, glm::ivec3& min, glm::ivec3& max);

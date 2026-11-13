@@ -4,7 +4,8 @@ Status: **stages 0, 1, 1b, 1c, 1d and 1e built and reviewed** (2026-11-12, see "
 as built" and "Review of stages 0-1e" at the end of Part 1); the owner took the recommended answers to open questions 1, 2, 3 and 7 ("Yes, build
 1-1e"). **Stage 4 built** (2026-11-12, owner's answer to question 4: yes, before networking stage 3; see "Stage 4 as
 built" in Part 4; not yet reviewed by a second reader). **Stage 4b, weak necks (load check), designed and judged**
-(2026-11-12, Part 4b; the owner: "Yes, weak necks next"). The rest is a draft. Written read-only against the working tree of 2026-11-12, while the
+(2026-11-12, Part 4b; the owner: "Yes, weak necks next"). Networking stage 3 (2026-11-13) built the cast work budget
+(R5), hashed the material table into `buildHash` (R6) and lowered the flow budget (open question 7). The rest is a draft. Written read-only against the working tree of 2026-11-12, while the
 voxel size moves from 0.1 to 0.125 m (the game already defaults to 0.125 m, `src/main.cpp:23-24`). Line numbers are
 from the working tree. Every millisecond figure that does not cite a measurement is an estimate and is marked **(e)**.
 Every CPU time in the docs before 2026-11-12 comes from a build without `-O` (CLAUDE.md:120-121); `build/` is now
@@ -474,9 +475,17 @@ frozen with its velocity at +1, 2.71 m/s awake at +5; store 5273/12288, rubble 1
   stage 0's optimised measurement to about 6 ms on the reference machine (e); wall-clock is only logged. Then the
   tick a cast runs on depends only on the queue, and a replayed server makes the same decisions. Replay tests feed
   casts at fixed ticks. Only client presentation uses millisecond budgets (fx-budget `FxDirector`).
+  *Built in networking stage 3 (2026-11-13): `sim::CastWorkOf` charges node visits, `chunkGraphs` at the cold price,
+  the load check's formula above and the operations' boxes (never `graphsBuilt`, `chunksDecoded` or the object half);
+  `kCastWorkPerTick` = 60 000 units, calibrated to 1.09 ms per 10 000 units on the reference machine; the event byte
+  budget is a credit of its own. `CastBudget.ScheduleFollowsCountsNotTimeOrCache` replays a server with 1 and 3
+  workers and an emptied graph cache: same ticks, same operations.*
 - **R6 One integer material table** (`MaterialPhysicsQ`, stage 3) hashed into `Hello::buildHash` (networking.md:88).
   This also makes explicit what `CarvableIds` already relies on (float hardness read on both sides,
   `World.cpp:1547-1560`).
+  *Networking stage 3 (2026-11-13) hashes the inputs instead: `voxel::MaterialTableHash` (raw bits of `hardness` and
+  `density`, `flags`, `strength[3]` per world-palette id) is part of `buildHash`, so a strength-table drift refuses
+  the session. The integer `MaterialPhysicsQ` table itself is not built.*
 - **R7 Over budget means later or cosmetic, never lost.** A release over the tick budget waits, static and solid; a
   piece over the body cap becomes `netId 0` rubble or crumbs (networking.md:28: "never dropped silently"); rubble
   over its cap becomes particles. Impacts are the one exception: they are derived and may be dropped after 30 ticks,
@@ -993,7 +1002,8 @@ chunks resolved once, `chunkGraphs` counted once, `ForEachLink` order -x +x -y +
    ties by index (the "gravity sweep": in a structure that holds, all mass flows down in this one pass), then FIFO,
    current-arc pointers in arc order, a global relabel every `max(64, n / 4)` relabels (a count, not a time). Stop
    when no active node has a label below n. Work = arc scans (discharges and BFS) against `kNeckFlowWorkBudget`
-   (262 144); if it is spent, nothing is released (`neckFlowBudget`, a warning).
+   (262 144 as built in stage 4b; **65 536** since networking stage 3, open question 7); if it is spent, nothing is
+   released (`neckFlowBudget`, a warning).
 5. **Released set and pieces.** If all supply reached t: done. Otherwise a reverse BFS from t over residual arcs; A =
    the nodes it does not reach. **Pieces** = connected parts of A over network links (loads expand to their member
    nodes), ordered by their smallest network index. Per piece: voxels, load (MU), cut (sum of the real capacities of
@@ -1046,7 +1056,7 @@ chunks resolved once, `chunkGraphs` counted once, `ForEachLink` order -x +x -y +
 
 New constants next to `kGraphNodeVisitBudget` (`sim/Blast.cppm:177`): `kNeckMaxNetworkNodes` = 8192,
 `kNeckMaxArcPairs` = 65 535, `kNeckExteriorVisitBudget` = 16 384 node visits, `kNeckFlowWorkBudget` = 262 144 arc
-scans; since the review also `kNeckMaxReleasedVoxels` = 60 000 and `kNeckMaxReleasedParts` = 64 per check (what the
+scans (65 536 since networking stage 3, open question 7); since the review also `kNeckMaxReleasedVoxels` = 60 000 and `kNeckMaxReleasedParts` = 64 per check (what the
 re-label, the `Detach` ops and the wire may carry from one cast). Counters (`IslandSearchStats`, the `Blast:` line): `neckNodes`, `neckSplit`, `neckLoads`, `neckAnchors`,
 `neckArcs`, `neckExteriorVisits`, `neckFlowWork`, `neckSplitRelabels`, `neckPieces`, `neckCrumbs`, `neckVoxels`,
 `neckOversize`, `neckSkipped`, `neckExteriorBudget`, `neckFlowBudget`, `neckUnloaded`; `neckMs` logged only. All of
@@ -1241,6 +1251,9 @@ owner: the fall seen in a window, its rubble, and the cost on a busy UHD 620.
    lower `kNeckFlowWorkBudget` to 65 536 (about 1.5 ms, 5x the largest measured need; spent means "released next
    cast", R7) when stage 3's cast budget is built, and charge `neckFlowWork` there; not changed now because it changes
    which casts release (only in networks far larger than any measured).
+   *Done with networking stage 3 (2026-11-13): `kNeckFlowWorkBudget` = 65 536, and the cast work budget charges
+   `neckFlowWork` (2 x `neckFlowWork` / 8 units of about 0.1 us, networking.md "Stage 3 as built"). Every test and the
+   `--neck-blast` / `--tower-blast` runs are unchanged (the game's neck release needs 7 055).*
 
 ### Stage 4b as built (2026-11-13)
 
@@ -1436,7 +1449,7 @@ graphs; bending / tipping (failure mode 3) and stage 4c are not built.
 | Face flood (stage 1) | 0-6 ms per blast, bounded by `maxVisitsPerSearch` |
 | **Search + flood per cast (stages 0-1)** | **est. 2-14 ms: one castle cast can use the whole 6 ms cast phase**; the work budget then moves later casts to later ticks (cast delay, logged) |
 | Graph connectivity + face flood on nodes (stage 4) | **Measured** (quiet, -O2): 0.13-1.00 ms per cast on game terrain, 0.06-0.72 ms on flat ground, cold graph builds included; in game after the window filled 0.24-0.75 ms at a cached site, 0.5-3.7 ms at the first blast of an untouched site; while streaming 4.0-4.75 ms (`--climb`). Cold worst case unbounded by the node budget: island-box chunks (up to 64) x 70-120 us in game = 4.5-7.7 ms, so stage 3 charges `chunkGraphs` x a cold price |
-| Weak-neck check (stage 4b, per cast) | **Measured** (quiet, -O2, on the same world as the search without it, "Review of stage 4b"): 0.13-0.46 ms at a cached site on flat ground, 0.30-0.73 ms on game terrain, plus 0.0-1.8 ms of graph builds at a cold site (chunks next to the island box, which the judged nodes' bonds need). **At its budgets far over the design's 3-4 ms:** the preflow alone takes 5-6 ms at about 207 000 of its 262 144 arc scans (8192 nodes, 65 535 arc pairs), a forest of 529 pillars (3574 nodes, 3963 exterior visits) 2.0-2.4 ms; est. 8-12 ms with every budget full. Releases at most 64 parts / 60 000 voxels per cast. Counted work ("Stage 4b as built"); stage 3 must charge it or the flow budget come down (open question 7) |
+| Weak-neck check (stage 4b, per cast) | **Measured** (quiet, -O2, on the same world as the search without it, "Review of stage 4b"): 0.13-0.46 ms at a cached site on flat ground, 0.30-0.73 ms on game terrain, plus 0.0-1.8 ms of graph builds at a cold site (chunks next to the island box, which the judged nodes' bonds need). **At its budgets far over the design's 3-4 ms:** the preflow alone takes 5-6 ms at about 207 000 of its 262 144 arc scans (8192 nodes, 65 535 arc pairs), a forest of 529 pillars (3574 nodes, 3963 exterior visits) 2.0-2.4 ms; est. 8-12 ms with every budget full. Releases at most 64 parts / 60 000 voxels per cast. Counted work ("Stage 4b as built"); stage 3 must charge it or the flow budget come down (open question 7). Done in networking stage 3: both (the cast work budget charges it, the flow budget is 65 536 arc scans, est. 1.5 ms at the budget) |
 | Overhang solve, one structure (<= 5k nodes) | 0.05-0.3 ms |
 | Per release: mask + `ClearMask` | 0.05-0.2 ms |
 | Per server body: colliders + body, no bake | 0.1-0.3 ms |

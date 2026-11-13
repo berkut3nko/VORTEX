@@ -22,7 +22,8 @@ What exists today, and what was designed for but is not built yet. See
 | Renderer | Ray-marched G-buffer, ray-traced sun shadows, ambient occlusion, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping, ImGui. Headless mode with screenshots. Validation-clean on Intel UHD 620. |
 | Editor | `vortex.editor`: in-game editor toggled with F1 - fly camera, entity selection with a translate / rotate gizmo, inspector, terrain brush, primitive spawning, `.vox` / glTF import, environment / render / profiler / world panels. Tool logic is separate from the widgets and unit tested. |
 | Simulation | `vortex.sim`: `sim::Simulation` owns world, physics, terrain colliders and scene and steps them on a numbered fixed tick; `sim::WorldOp` / `ApplyOp` replay terrain changes exactly; `sim::Blast`. Library `Vortex::Sim` links no renderer or window. `Engine` owns one and draws it. |
-| Tests | 522 unit tests (four disabled measurements), none needing a GPU. |
+| Sessions | `vortex.net` (`Vortex::Net`, GPU-free): the M1 protocol over in-process loopback transports (`ImpairedTransport`: seeded loss, delay, jitter, duplicates, reordering, rate limit, outages), `net::Server` (fixed region window, template as operations 1..k, event stream with a byte budget, cast queue with a work budget, join = full event log) and `net::Client` (handshake with token and build hash, region from `Welcome`, operations applied in `opSeq` order); `vortex_server` runs a session file headless. No real network transport yet (ENet, stage 5). |
+| Tests | 561 unit tests (five disabled measurements), none needing a GPU. |
 
 ## Performance (Intel UHD 620, 1280x720 output, 768x432 internal)
 
@@ -72,8 +73,8 @@ has to live under server authority.
 
 ### M1 - Networking skeleton
 Goal: one server and two clients walk in the same region and see each other's destruction.
-- `vortex_server`: an executable built from `Vortex::Core`, `Vortex::Physics` and `Vortex::Sim`
-  (scene + simulation) only; they build and are tested without a GPU. Fixed tick; the client renders
+- `vortex_server`: an executable built from `Vortex::Core`, `Vortex::Physics`, `Vortex::Sim`
+  (scene + simulation) and `Vortex::Net` (the protocol) only; they build and are tested without a GPU. Fixed tick; the client renders
   between ticks as today.
 - Region start-up from `template + seed`: both sides generate the same terrain, so the
   server never sends terrain, only changes.
@@ -151,7 +152,36 @@ State (stages are those of [design/networking.md](design/networking.md)):
   no model, entity or body). Measured on generated terrain: 2051 operations for 44 blasts (worst 299) became 75 (at
   most 2), est. 65 KB -> 7.2 KB of wire. Found, open: the island search takes 70-200 ms per 1.2 m blast in the `dev`
   build, and that build has no `-O` flag at all (empty `CMAKE_CXX_FLAGS_RELWITHDEBINFO` with CMake 4.4).
-- Stages 3-9: not started. Before stage 3: shred.md stage 1 changed the search result (face flood), the server
+- **Stage 3, the protocol on a loopback - done.** Library `Vortex::Net` (`vortex.net`, links `Vortex::Sim` only;
+  `vortex_assert_gpu_free` covers it, `VortexNetTests` and `vortex_server`): `ITransport` with `LoopbackTransport`
+  and the `ImpairedTransport` decorator (ENet semantics: reliable channels resend and keep order, the state channel
+  loses, duplicates and reorders); byte reader / writer, events (world operations at 16-29 bytes plus RLE masks,
+  `EntitySpawn` for lights), `Hello` / `Welcome` / `Refuse` / `EventBatch` / `ServerStatus`, every decoder refusing
+  bad input; session files (`tools/server/sessions/*.session`); `BuildHash` = protocol version + the generator's
+  golden hash + the material table (strengths included, shred.md R6); 64 probe chunks from the seed in `Welcome`.
+  `net::Server`: window = play bounds + 3 chunks at the region's height range, loaded whole at start; the template's
+  operations as 1..k (the game's plaza is now `sim::PlaygroundTemplate`, applied the same way offline), lights as
+  `EntitySpawn`, crates as server bodies; per tick receive -> streaming -> casts within the cast work budget
+  (`sim::CastWorkOf`, 60 000 units of about 0.1 us, calibrated) and the event byte budget (24 kB/s, 16 kB burst) ->
+  physics -> lifetimes -> batches; joiners get the whole log. `net::Client`: refuses a world with a save directory or
+  another voxel size / window / material table, loads the region window, applies events in order, groups them for
+  `sim::PresentBlast`. `sim::kNeckFlowWorkBudget` lowered to 65 536 (shred.md question 7). Verified: 26 new tests
+  (548); the acceptance - an in-process server and two clients, 5 % loss with delay, jitter and an outage, 200
+  server-side blasts that free terrain (67 in-box islands with crumbs, 67 face-flood islands, 66 weak-neck releases),
+  one client joining after 100 blasts from the full log - ends with equal world hashes; a server replayed with other
+  worker counts and an emptied graph cache runs every cast on the same tick. `vortex_server --drill 200 --clients 2
+  --loss 0.05` exits 0 with equal hashes; on a 250 m terrain region the server preloads in 9.6-10.4 s (gate 10 s)
+  with 48.5 MiB of RLE and 463-488 MiB RSS. The game's headless runs are unchanged. **Not done / open:** ENet and the
+  game's `--connect` (stage 5), inputs and snapshots (4), objects and pieces replicated (6), chunk sync and server
+  terrain mode (7; a probe mismatch is only logged), `vortex_bot` (8); a stage-3 client holds the whole region; the
+  join log grows for the session; R6's integer `MaterialPhysicsQ`. Choices: `design/networking.md`, "Stage 3 as built".
+  Review of stage 3 (17 findings, all fixed, 13 new tests, 561 in all): a client refuses a store too small for the
+  region or a world its generator did not make and fails (and leaves) on an operation it cannot apply; casts must
+  fit the window (`sim::CastFitsRegion`, radius <= 9 m at 0.125 m); a failed server ends the session; only live
+  events are presented; `Welcome` probes are range-checked; sends are paced per peer by `ReliableBytesInFlight`
+  (32 kB); batches decode at most 16 MiB of masks; silent and refused peers time out; the default store is capped at
+  2 GiB of chunks; the playground must find its site inside the play bounds; cast wall time is logged.
+- Stages 4-9: not started. Before stage 3: shred.md stage 1 changed the search result (face flood), the server
   window margin (3 chunks, flood box) and the cast budget (a work budget); shred.md stage 4 (built, the owner's answer
   to its question 4) moved the island search onto the cell graph - same results except where a work budget runs out,
   node visits and chunk graphs used (at a cold price; never graphs built, which depend on the cache) to count in stage

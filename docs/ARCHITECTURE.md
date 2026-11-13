@@ -37,12 +37,14 @@ engine/
     fx/       vortex.fx        particle simulation and effect presets
     physics/  vortex.physics   Jolt behind an engine interface, terrain collider streaming
     scene/    vortex.scene     entities (EnTT): components, object lifetime, destruction
-    sim/      vortex.sim       the simulation: world + physics + terrain colliders + scene on a numbered tick
+    sim/      vortex.sim       the simulation: world + physics + terrain colliders + scene on a numbered tick;
+                               world operations, blasts, regions and their templates
+    net/      vortex.net       the session protocol: transports, wire format, messages, server, client
     graphics/ vortex.graphics  Vulkan device, window, renderer, UI layer
     engine/   vortex.engine    application loop, render data of the scene, explosions, glue
     editor/   vortex.editor    in-game editor: tool logic (no ImGui), panels, gizmo
   tests/                 GoogleTest suites, none of which need a GPU
-  tools/                 cpu_render: software renderer built on the shared shader code
+  tools/                 server/: vortex_server (the session server, GPU-free) and example session files
 ```
 
 Libraries and what they may depend on (a lower layer never imports a higher one):
@@ -51,15 +53,17 @@ Libraries and what they may depend on (a lower layer never imports a higher one)
 Vortex::Core      core, math, voxel, fx        -> spdlog, glm, tinygltf      (no GPU, no window)
 Vortex::Physics   physics                      -> Core, Jolt
 Vortex::Sim       scene, sim                   -> Core, Physics, EnTT        (no GPU, no window)
+Vortex::Net       net                          -> Sim                        (no GPU, no window)
 Vortex::Graphics  graphics                     -> Core, Vulkan, VMA, vk-bootstrap, GLFW, ImGui
 Vortex::Engine    engine, editor               -> all of the above, ImGuizmo
+vortex_server     tools/server                 -> Net                        (no GPU, no window)
 ```
 
-A dedicated server or a tool links `Vortex::Sim` (or less) and never sees Vulkan. This is checked
+A dedicated server or a tool links `Vortex::Net` (or less) and never sees Vulkan. This is checked
 when the build is configured: `vortex_assert_gpu_free` (`CMakeLists.txt`) walks everything that
-`VortexCore`, `VortexPhysics`, `VortexSim` and the test binary `VortexSimTests` link, directly or
-through their dependencies, and stops with an error if Graphics, Engine, Vulkan, GLFW, VMA or
-ImGui is among it.
+`VortexCore`, `VortexPhysics`, `VortexSim`, `VortexNet`, the test binaries `VortexSimTests` and
+`VortexNetTests` and the executable `vortex_server` link, directly or through their dependencies,
+and stops with an error if Graphics, Engine, Vulkan, GLFW, VMA or ImGui is among it.
 
 Inside `Vortex::Sim`, `scene` is the lower layer: it imports voxel, fx and physics, nothing of
 graphics and not `vortex.sim`. `sim` owns the scene together with the world, physics and the
@@ -776,7 +780,7 @@ network client will predict with (`docs/design/networking.md`).
   or the map editor (`EngineConfig::world.saveDirectory`, the editor's "Save world" button) keeps
   its edits. A session world is memory only - it is `template + seed`, and a world that loaded
   saved chunks would not be the one the other side generated - so `ServerConfig` clears the
-  directory, and a network client must leave it empty (stage 3).
+  directory, and `net::Client::Attach` refuses a simulation that has one (7.5).
 * **Not stepped: presentation.** `Step` neither advances particles nor calls
   `Scene::BeginFrame()`; the owner that draws does both. Lifetimes run per tick in `Step` but per
   rendered frame, with the frame time, in the engine - nothing a server and a client must agree
@@ -796,6 +800,40 @@ network client will predict with (`docs/design/networking.md`).
   starts physics and the terrain colliders; `Shutdown()` (also the destructor) destroys entities,
   colliders, world and bodies in that order. Outside of that span `World()` and `Terrain()` must
   not be called and the stepping functions do nothing. Main-thread only.
+
+### 7.5 Sessions
+
+`vortex.net` (library `Vortex::Net`, GPU-free) is the M1 protocol of `docs/design/networking.md`; stage 3 runs it
+in one process over loopback transports ("Stage 3 as built" there has every choice).
+
+* **Region.** `sim::RegionDesc` (`vortex.sim:region`) = template id, seed, play bounds (whole chunks), height
+  range, generator and `TerrainSettings` (the session's voxel size included). `sim::RegionWorldConfig` turns it into
+  the one `WorldConfig` both sides use: window = play bounds + `kServerWindowMarginChunks` (3) on every side, full
+  height over the range rounded to 16 m, memory only. `sim::IsValid` must pass before anything is built from
+  network or file input.
+* **Template.** `sim::BuildRegionTemplate` returns `RegionTemplate{ops, lights, objects, spawn}` without changing
+  the world (the playground plaza is `sim::PlaygroundTemplate`). A server applies `ops` as operations 1..k, sends
+  lights as `EntitySpawn`, keeps `objects` as its bodies and sends `spawn` in `Welcome`; the offline game applies
+  all of it locally (`ApplyTemplateOps`, `CreateTemplateLights`, `CreateTemplateObjects`).
+* **Transport.** `net::ITransport` (`Send`, `Poll`, `RoundTripSeconds`, `ReliableBytesInFlight`, `Disconnect`;
+  channels state / events / bulk). `LoopbackTransport` links two endpoints in process; `ImpairedTransport` wraps any
+  transport with seeded loss, delay, jitter, duplicates, reordering, a rate limit and outages, keeping ENet's
+  promise on reliable channels (resent, in order).
+* **Server.** `net::Server` owns one `sim::Simulation` built with `sim::ServerConfig` and the region's world. A tick:
+  receive (handshake: `Hello` with protocol version, `net::BuildHash` and token -> `Welcome` + the whole event log,
+  or `Refuse`) -> streaming -> queued casts within the cast work budget (`sim::CastWorkOf`) and the event byte
+  budget -> physics -> lifetimes -> the tick's `EventBatch`es (paced per peer by `ReliableBytesInFlight`) ->
+  `ServerStatus` on even ticks. Every event is encoded once, numbered (`opSeq`) and kept. Casts must fit the window
+  (`sim::CastFitsRegion`). A full store, an incomplete operation or an island search that meets an unloaded chunk
+  marks it `Failed`, which ends the session (peers disconnected, nothing more sent).
+* **Client.** `net::Client` does not own a simulation: once `Welcomed`, the owner builds one from
+  `MakeSimulationConfig` / `MakeGenerator` and gives it to `Attach`, which checks it against the session, loads the
+  region window, checks that the store held it and that the probe chunks are its generator's, and applies the events
+  in `opSeq` order with `sim::ApplyOp` (duplicates ignored; a gap or an operation it cannot apply in full is a
+  failure, and a failed client disconnects). Terrain is never predicted; no operation is ever sent.
+* **Agreement.** `net::RegionHash` is `voxel::WorldHash` over the region window; probe chunks in `Welcome` compare
+  the generators; `buildHash` covers the generator's golden values (`voxel::kGeneratorGoldenHash`) and the material
+  table (`voxel::MaterialTableHash`).
 
 ## 8. Editor
 
@@ -898,6 +936,16 @@ World (statistics, save).
   fragments on a server; and the stage-2 acceptance: two simulations with different worker counts
   fed the same operations (islands and crumbs included) have equal world hashes, a slightly
   different stream does not.
+* `VortexNetTests` - links `Vortex::Net` only (checked at configure time). The wire format (every
+  event at its byte size, masks, `RegionDesc` bit for bit, messages, forged bytes), the transports
+  (reliable order through loss, jitter and an outage; the state channel's loss, duplicates and
+  reordering; the rate limit), session files, the build hash and probe chunks, the handshake and
+  its refusals, the client's world taken from `Welcome`, the server window, the template split,
+  the cast budget (same ticks with other worker counts and a cold graph cache, a client following
+  the delayed casts), the client against a hand-written server (overlapping batches, gaps, forged
+  `Welcome`s, refused worlds), a failed server or client ending its part, peer timeouts, pacing of a
+  late join, and the stage-3 acceptance: a server and two clients over 5 % loss agree after 200
+  blasts that free terrain.
 * `VortexGraphicsTests` - SPIR-V reflection of the real shader binaries, C++ / GLSL struct
   layout parity (`VxHudQuad` included), the material surface-kind and HUD cell-grid constants
   (C++ vs. the text of `common.glsl`) and
@@ -932,10 +980,11 @@ World (statistics, save).
 * **Bigger worlds**: world positions are already `double` / integer voxels; only render space
   is `float`. Physics is single precision and would need Jolt's double precision build far
   from the origin.
-* **Networking / dedicated server**: `Vortex::Core`, `Vortex::Physics` and `Vortex::Sim` have no
-  GPU or window dependency, `sim::Simulation` runs the whole simulation on a numbered fixed tick
-  (7.4), generation is a pure function of the seed (pinned bit for bit by golden tests) and world
-  state is stored as chunk deltas. The plan is `docs/design/networking.md`.
+* **Networking / dedicated server**: `Vortex::Core`, `Vortex::Physics`, `Vortex::Sim` and
+  `Vortex::Net` have no GPU or window dependency, `sim::Simulation` runs the whole simulation on a
+  numbered fixed tick (7.4), generation is a pure function of the seed (pinned bit for bit by
+  golden tests) and every terrain change is an integer operation (7.5). Stages 4-9 of
+  `docs/design/networking.md` add the real transport, players, entities and chunk sync.
 * **Memory**: chunks are dense; palette-compressed or brick-sparse chunk payloads can replace
   `ids[]` behind `VX_VOXEL_ID` without touching traversal.
 

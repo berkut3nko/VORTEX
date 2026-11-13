@@ -720,3 +720,48 @@ TEST(Terrain, SettingsValidation) {
     bad.treeDensity = 1.5f;
     EXPECT_FALSE(IsValid(bad));
 }
+
+// docs/design/networking.md stage 3: `Hello::buildHash` names the generator by the golden values
+// checked in above. Regenerating the goldens (a deliberate generator change) must change
+// kGeneratorGoldenHash in the same commit, so builds with different generators refuse each other.
+TEST(Terrain, GeneratorGoldenHashNamesTheGoldenTables) {
+    uint64_t h = 0x474f4c44ull;   // "GOLD"
+    for (int s = 0; s < 3; ++s) {
+        h = HashMix64(h, kGoldenSeeds[s]);
+        for (int i = 0; i < kGoldenChunks; ++i) {
+            const ProbeCoord c = kGoldenCoords[s][i];
+            h = HashMix64(h, static_cast<uint32_t>(c.x));
+            h = HashMix64(h, static_cast<uint32_t>(c.y));
+            h = HashMix64(h, static_cast<uint32_t>(c.z));
+            h = HashMix64(h, kGoldenHashes[s][i]);
+        }
+        for (int c = 0; c < kNoiseChannels; ++c) h = HashMix64(h, kGoldenNoiseBits[s][c]);
+        h = HashMix64(h, kGoldenHeightBits[s]);
+    }
+    EXPECT_EQ(h, kGeneratorGoldenHash) << "kGeneratorGoldenHash (src/voxel/Hash.cppm) must be " << Hex(h);
+}
+
+// docs/design/shred.md R6: the material hash sees every property a replicated decision reads,
+// and nothing else.
+TEST(Materials, TableHashSeesWhatDecisionsRead) {
+    MaterialLibrary a, b;
+    const WorldMaterials ids = RegisterDefaultWorldMaterials(a);
+    RegisterDefaultWorldMaterials(b);
+    const uint64_t base = MaterialTableHash(a);
+    EXPECT_EQ(base, MaterialTableHash(b));
+    auto changed = [&](auto edit) {
+        MaterialLibrary c;
+        RegisterDefaultWorldMaterials(c);
+        Material m = c.Get(kWorldPalette, ids.stone);
+        edit(m);
+        const std::string name(c.Name(kWorldPalette, ids.stone));
+        c.Set(kWorldPalette, ids.stone, m, name);
+        return MaterialTableHash(c) != base;
+    };
+    EXPECT_TRUE(changed([](Material& m) { m.hardness += 1.0f / 16.0f; }));
+    EXPECT_TRUE(changed([](Material& m) { m.flags ^= MaterialFlag_Indestructible; }));
+    EXPECT_TRUE(changed([](Material& m) { m.density += 1.0f; }));
+    EXPECT_TRUE(changed([](Material& m) { m.strength[2] += 1; }));
+    EXPECT_FALSE(changed([](Material& m) { m.color = glm::vec3(1.0f, 0.0f, 1.0f); }));   // presentation only
+    EXPECT_FALSE(changed([](Material& m) { m.roughness = 0.1f; }));
+}

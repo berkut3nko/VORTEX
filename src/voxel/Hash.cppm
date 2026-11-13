@@ -8,6 +8,7 @@ export module vortex.voxel:hash;
 
 import :chunk;
 import :generator;
+import :material;
 import :world;
 
 export namespace vortex::voxel {
@@ -55,4 +56,27 @@ export namespace vortex::voxel {
      * hashes are only comparable when both are Complete().
      */
     WorldHashResult WorldHash(const World& world, const glm::ivec3& minChunk, const glm::ivec3& maxChunk);
+
+    /// @brief Absorbs `value` into the running hash `h` (splitmix64 finaliser; not commutative):
+    /// for hashes that must be equal on every machine, such as `Hello::buildHash`.
+    uint64_t HashMix64(uint64_t h, uint64_t value);
+
+    /**
+     * @brief Hash of every material property of the world palette that a replicated decision
+     * reads (docs/design/shred.md R6): per id 1..255 `hardness` (raw float bits: CarveSphereQ
+     * compares `hardness * 16` with the power), `flags` (indestructible, liquid, foliage), `density`
+     * (raw bits: the graph's mass) and `strength[3]` (the load check). Equal hashes mean the
+     * carve, the island search and the load check decide alike. Part of `Hello::buildHash`.
+     */
+    uint64_t MaterialTableHash(const MaterialLibrary& materials);
+
+    /**
+     * @brief Names the generator this build was made with: a hash of the checked-in golden values
+     * of `Terrain.GoldenChunkHashes`, `Terrain.GoldenNoiseBits` and `Terrain.GoldenHeightBits`
+     * (`Terrain.GeneratorGoldenHashNamesTheGoldenTables` recomputes it from the tables). It changes
+     * exactly when the goldens are regenerated, i.e. when the generator changed on purpose; part of
+     * `Hello::buildHash`. A build that rounds differently has the same value (the golden tests
+     * fail on it; at run time the probe hashes catch it).
+     */
+    inline constexpr uint64_t kGeneratorGoldenHash = 0x79cd3f1a21fc15c0ull;
 }

@@ -1,0 +1,15 @@
+# A 250 m arena on the built-in terrain (M1's acceptance size): 63 x 63 chunks of 4 m at
+# 0.125 m, -48..128 m, buried chunks packed. Measures the server's preload and memory:
+#   vortex_server --session arena250.session --ticks 120
+token = 7a3f19c2e4b80d5661a2c3e4f5061728
+template = empty
+seed = 1337
+play_min = -31 -31
+play_max = 32 32
+height = -48 128
+voxel_size = 0.125
+generator = terrain
+terrain_seed = 1337
+max_clients = 16
+chunk_capacity = 0
+pack_hidden = 1

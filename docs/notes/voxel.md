@@ -12,10 +12,10 @@ Line numbers are as of engine commit `ec073a8`; if a number no longer matches, s
 | `Chunk.cppm` (header-only) | `Chunk`, `ChunkOccupancy`, index maths, `VoxelToChunk/Local`, `ChunkToVoxel`. |
 | `Store.cppm`, `internal/Store.cpp` | `ChunkStore`: slot pool, LIFO free list, dirty list, high-water mark. |
 | `World.cppm`, `internal/World.cpp` | Window, cells, grid encoding, load jobs, edits, raycast, change list. Quantised edits (M1 stage 2): `SphereQ`, `QuantizeSphere`, `QuantizePower`, `InSphereQ`, `SphereVoxelBounds`, `EditReport`, `CarveSphereQ`/`FillSphereQ`/`SwapSphereQ`/`ClearMask`. |
-| `Hash.cppm`, `internal/Hash.cpp` | `ChunkHash`, `UniformChunkHash`, `kAirChunkHash`, `WorldHashTerm`, `WorldHash`: content hashes for terrain agreement. |
+| `Hash.cppm`, `internal/Hash.cpp` | `ChunkHash`, `UniformChunkHash`, `kAirChunkHash`, `WorldHashTerm`, `WorldHash`: content hashes for terrain agreement. Since networking stage 3 also `HashMix64`, `MaterialTableHash` (what replicated decisions read of the world palette) and `kGeneratorGoldenHash` (a hash of the golden tables in `tests/core/HashTests.cpp`; both in `Hello::buildHash`). |
 | `Region.cppm`, `internal/Region.cpp` | Chunk RLE codec (`EncodeChunk`/`DecodeChunk`), `RegionStore` (`r.x.y.z.vxr`). |
 | `Generator.cppm`, `internal/Generator.cpp` | `IWorldGenerator`, `TerrainGenerator` (height tiles, caves, trees), `FlatGenerator`. |
-| `Volume.cppm`, `internal/Volume.cpp` | `VoxelVolume`: dense x/y/z array, the authoring form of objects. `VoxelMask`: one bit per voxel of a box, packed 8 per byte in `VoxelVolume::Index` order (the `Detach` / `ClearMask` mask); `AnyInRange` tests a run of bits. |
+| `Volume.cppm`, `internal/Volume.cpp` | `VoxelVolume`: dense x/y/z array, the authoring form of objects. `VoxelMask`: one bit per voxel of a box, packed 8 per byte in `VoxelVolume::Index` order (the `Detach` / `ClearMask` mask); `AnyInRange` tests a run of bits, `SetRange` sets one (the wire decoder). |
 | `Model.cppm`, `internal/Model.cpp` | `VoxelModel`: volume + baked `ModelPart`s (one slot per non-empty 32^3 piece), `Revision()`. |
 | `Instances.cppm`, `internal/Instances.cpp` | `GpuInstance` (224 B), `GpuBvhNode` (32 B), `BuildBvh`. |
 | `Trace.cppm`, `internal/Trace.cpp` | `TraceScene`, `Trace`/`TraceWorld`/`TraceChunk`; `TraceKernel` includes `shared/trace.glsl`. |
@@ -202,6 +202,11 @@ do not bounds-check (0..31 only); `GetSafe` does. A `Chunk` is 36 KB: keep it on
   compared between machines and checked in (`ChunkHash.DependsOnlyOnMaterialIds` pins two chunk hashes,
   `WorldHash.TermDependsOnChunkPosition` two terms, `Terrain.GoldenChunkHashes` 192). Changing `Chunk::VoxelIndex`
   order changes every hash.
+- `kGeneratorGoldenHash` names the goldens: regenerate `Terrain.GoldenChunkHashes` (or the noise / height bits) and
+  `Terrain.GeneratorGoldenHashNamesTheGoldenTables` fails with the new value to paste into `Hash.cppm`. Builds with
+  different values refuse each other's sessions. `MaterialTableHash` reads raw float bits of `hardness` and
+  `density`, `flags` and `strength`: a new material property that a carve, the island search or the load check
+  reads must be added to it (and `Materials.TableHashSeesWhatDecisionsRead`).
 - `Terrain.GoldenChunkHashes` pins the built-in generator with **default** `TerrainSettings` and the default world
   materials for seeds 1337, 77 and 0x9e3779b9. Any change to the generator, to a `TerrainSettings` default or to the
   order of `RegisterDefaultWorldMaterials` fails it. If the change was meant, paste the table the failure prints over

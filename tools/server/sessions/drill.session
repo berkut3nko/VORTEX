@@ -1,0 +1,15 @@
+# A small flat region for the blast drill (networking.md stage 3 acceptance as a binary):
+#   vortex_server --session drill.session --drill 200 --clients 2 --loss 0.05 --delay-ms 40 --jitter-ms 30
+token = 7a3f19c2e4b80d5661a2c3e4f5061728
+template = empty
+seed = 4242
+play_min = -4 -4
+play_max = 3 3
+height = 0 32
+voxel_size = 0.125
+generator = flat
+flat_ground = 96
+terrain_seed = 1337
+max_clients = 16
+chunk_capacity = 0
+pack_hidden = 0

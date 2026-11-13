@@ -360,7 +360,10 @@ without these fixes, same commands):
   player's blast 60 m away (a session needs the server's rule, M1 stage 3).
 - `unloadsInsideRadius` has no negative test for a horizontal window move (no test hook to misplace the window).
 - `RegionDesc.heightRange` / the `Welcome` voxel size for sessions (networking stage 3) are not wired; `WorldConfig::heightRange`
-  is the hook.
+  is the hook. *Wired in networking stage 3 (2026-11-13): `sim::RegionWorldConfig` gives server and client the same
+  voxel size (raw bits from `Welcome`), window and full-height range (`kRegionHeightSnap` 16 m); the client refuses a
+  world built otherwise. Measured on `arena250.session` (250 m at 0.125 m, packed): preload 9.6-10.4 s against the
+  10 s gate, 48.5 MiB of RLE against 150 MiB.*
 - The `dev` build directory has no optimisation flags (above); a reconfigure with
   `-DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -g -DNDEBUG"` would fix it (all CPU numbers in earlier docs are unoptimised).
 

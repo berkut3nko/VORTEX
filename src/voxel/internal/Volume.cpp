@@ -104,6 +104,19 @@ namespace vortex::voxel {
         return false;
     }
 
+    void VoxelMask::SetRange(size_t first, size_t last) {
+        last = std::min(last, VoxelCount());
+        for (size_t i = first; i < last;) {
+            if ((i & 7u) == 0 && i + 8 <= last) {
+                m_Bits[i >> 3] = 0xFFu;
+                i += 8;
+                continue;
+            }
+            m_Bits[i >> 3] = static_cast<uint8_t>(m_Bits[i >> 3] | (1u << (i & 7u)));
+            ++i;
+        }
+    }
+
     uint32_t VoxelMask::Count() const {
         uint32_t n = 0;
         for (const uint8_t b : m_Bits) n += static_cast<uint32_t>(std::popcount(b));

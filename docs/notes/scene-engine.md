@@ -13,8 +13,8 @@ here. Line numbers in `src/scene`, `src/sim` and `src/engine` are as of M1 stage
   `DamageResult`, the `Scene` interface. Its doc comments are the contract.
 - `src/scene/internal/Scene.cpp` - `Impl::CreateBody` (layer, CCD, density), `Crumble`, `DespawnDebris`,
   `UpdateDebris`, `Damage`, `DestroyBelow`. No render data: the module imports nothing of `vortex.graphics`.
-- `src/sim/Sim.cppm` - primary unit of `vortex.sim`; re-exports `:simulation`, `:worldop`, `:blast`. Later stages add
-  partitions here (`RegionDesc`, `StepPlayer`; `docs/design/networking.md`).
+- `src/sim/Sim.cppm` - primary unit of `vortex.sim`; re-exports `:simulation`, `:worldop`, `:blast`, `:region`
+  (networking stage 3: `RegionDesc`, templates; see `notes/net.md`). Stage 4 adds `StepPlayer`.
 - `src/sim/WorldOp.cppm`, `internal/WorldOp.cpp` - `WorldOpKind` (wire values), `WorldOp` + factories + `Bounds`,
   `OpResult`, `ApplyOp`, `BuildDetachedPiece`. Kinds 1-6, the last `ClearMask` (`WorldOp::Clear`: a blast's crumbs).
 - `src/sim/Blast.cppm`, `internal/Blast.cpp` - `BlastDesc`, `AppliedOp`, `BlastResult`, `BlastPush`, `Blast` (the
@@ -519,3 +519,16 @@ look, jump feel, editor focus) cannot be checked headless: say so.
   `RubbleBodyCapRemovesTheOldestRestingPieceOrCrumblesTheNewOne`, `RubbleSlotCapKeepsRubbleModelsInTheirShareOfTheStore`,
   `PiecesCutOffRubbleStayRubble` (VortexEngineTests; all failed with the old rules) and `Rubble.TowerCutsStayUnderCaps`
   (VortexSimTests: 20 tower cuts with caps 6 bodies / 8 slots; every Detach is a body or particles, caps hold).
+
+## Networking stage 3 (regions, templates, the cast work budget)
+
+- `src/sim/Region.cppm` holds `RegionDesc`, `RegionWorldConfig` (the one world config of a session), the templates and
+  their appliers; `src/net` builds on it (`notes/net.md`). The game's plaza is `sim::PlaygroundTemplate` now:
+  `BuildPlayground` in `main.cpp` calls it with `loadSite = true`, then `ApplyTemplateOps`, `CreateTemplateLights`,
+  the probe / castle scripts, the player, `CreateTemplateObjects` - the order the plaza was always built in, so the
+  headless runs log the same numbers. `m_Crate` is the template's crate model (`sim::CrateModel`), E drops more of it.
+- `sim::CastWorkOf(BlastResult)` is the work a session server charges a cast (`Blast.cppm`, end of the constants):
+  only counters that follow from the voxels and the operations. Adding a counter to `IslandSearchStats` that a budget
+  should see means adding it there, never `graphsBuilt` / `chunksDecoded` or a time.
+- `sim::kNeckFlowWorkBudget` is 65 536 since stage 3 (was 262 144).
+

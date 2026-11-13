@@ -54,6 +54,26 @@ namespace vortex::sim {
         return (dist > 1e-3f ? d / dist : glm::vec3(0.0f, 1.0f, 0.0f)) * (6.0f * falloff);
     }
 
+    uint64_t OpWork(const WorldOp& op) {
+        glm::ivec3 mn, mx;
+        op.Bounds(mn, mx);
+        const glm::ivec3 size = glm::max(mx - mn, glm::ivec3(0));
+        const uint64_t voxels = static_cast<uint64_t>(size.x) * static_cast<uint64_t>(size.y) * static_cast<uint64_t>(size.z);
+        const bool mask = op.kind == WorldOpKind::Detach || op.kind == WorldOpKind::ClearMask;
+        return kOpWork + (mask ? voxels / 128 : voxels / 16);
+    }
+
+    CastWork CastWorkOf(const BlastResult& blast) {
+        const IslandSearchStats& s = blast.search;
+        CastWork w;
+        w.search = static_cast<uint64_t>(s.nodeVisits) * kNodeVisitWork + static_cast<uint64_t>(s.chunkGraphs) * kColdChunkGraphWork +
+                   s.boxVoxels / 8 + s.floodVisits;
+        w.neck = kNeckWorkScale * (static_cast<uint64_t>(s.neckExteriorVisits) + s.neckArcs + s.neckFlowWork / 8 +
+                                   64ull * s.neckSplitRelabels + s.neckVoxels / 64);
+        for (const AppliedOp& applied : blast.ops) w.ops += OpWork(applied.op);
+        return w;
+    }
+
     void IslandBox(const voxel::SphereQ& sphere, glm::ivec3& min, glm::ivec3& max) {
         const glm::ivec3 c = math::FloorDiv(sphere.center, voxel::kQuantaPerVoxel);
         const glm::ivec3 half(static_cast<int32_t>(sphere.radius / voxel::kQuantaPerVoxel) + kIslandSearchMargin);
