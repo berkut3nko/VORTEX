@@ -385,6 +385,23 @@ namespace vortex::physics {
             return NeedsNoCollider(coord);
         }
 
+        /// HasCollider's test of one chunk: ChunkReady without the `installed >= exposed` term.
+        bool ChunkBuilt(const glm::ivec3& coord) const {
+            if (!world.IsChunkLoaded(coord)) return ChunkReady(coord);   // the sky over a full-height window, or not ready
+            if (const auto it = chunks.find(coord); it != chunks.end()) return it->second.built;
+            return NeedsNoCollider(coord);
+        }
+
+        bool BoxBuilt(const math::AABB& bounds) const {
+            glm::ivec3 lo, hi;
+            if (!ChunkRange(bounds, glm::vec3(0.0f), world.VoxelSize(), lo, hi)) return false;
+            for (int y = lo.y; y <= hi.y; ++y)
+                for (int z = lo.z; z <= hi.z; ++z)
+                    for (int x = lo.x; x <= hi.x; ++x)
+                        if (!ChunkBuilt(glm::ivec3(x, y, z))) return false;
+            return true;
+        }
+
         bool BoxReady(const math::AABB& bounds, const glm::vec3& travel) const {
             glm::ivec3 lo, hi;
             if (!ChunkRange(bounds, travel, world.VoxelSize(), lo, hi)) return false;
@@ -601,6 +618,50 @@ namespace vortex::physics {
             }
         }
 
+        /// TerrainColliders::FlushBox: every chunk of the box, up to date now, cooked on this thread.
+        uint32_t FlushBox(const math::AABB& bounds) {
+            RefreshFilter();
+            ConsumeChanges();
+            glm::ivec3 lo, hi;
+            if (!ChunkRange(bounds, glm::vec3(0.0f), world.VoxelSize(), lo, hi)) return 0;
+            uint32_t cooked = 0;
+            for (int y = lo.y; y <= hi.y; ++y)
+                for (int z = lo.z; z <= hi.z; ++z)
+                    for (int x = lo.x; x <= hi.x; ++x) {
+                        const glm::ivec3 coord(x, y, z);
+                        auto it = chunks.find(coord);
+                        if (it == chunks.end()) {
+                            const voxel::CellState state = world.StateOf(coord);
+                            if (state != voxel::CellState::Dense && state != voxel::CellState::Uniform &&
+                                state != voxel::CellState::Packed)
+                                continue;   // nothing to collide with, or not loaded
+                            Track(coord);
+                            it = chunks.find(coord);
+                        }
+                        Entry& entry = it->second;
+                        if (entry.installed >= entry.generation) continue;   // the newest content is installed
+                        entry.queued = false;   // its coordinate left in `dirty` is skipped by ProcessDirty
+                        entry.StartCook(entry.generation);
+                        ShapeRef shape;
+                        if (NeedsNoCollider(coord)) {
+                            entry.hasBorder = false;
+                        } else {
+                            const std::shared_ptr<const Snapshot> taken = TakeSnapshot(coord);
+                            entry.border = taken->border;
+                            entry.hasBorder = true;
+                            voxel::ChunkMesh mesh = voxel::BuildChunkCollisionMesh(
+                                taken->chunk, *filter, [&taken](const glm::ivec3& local) { return taken->Outside(local); });
+                            if (!mesh.Empty()) {
+                                for (glm::vec3& v : mesh.vertices) v *= world.VoxelSize();
+                                shape = physics.CreateMeshShape(mesh.vertices, mesh.indices);
+                            }
+                        }
+                        Apply(coord, entry, shape, entry.generation);
+                        ++cooked;
+                    }
+            return cooked;
+        }
+
         /// Starts builds for queued chunks, nearest first, until the job budget is used up.
         void ProcessDirty() {
             if (dirty.empty()) return;
@@ -738,6 +799,8 @@ namespace vortex::physics {
 
     bool TerrainColliders::IsReady(const math::AABB& worldBounds) const { return m_Impl->BoxReady(worldBounds, glm::vec3(0.0f)); }
 
+    bool TerrainColliders::HasCollider(const math::AABB& worldBounds) const { return m_Impl->BoxBuilt(worldBounds); }
+
     void TerrainColliders::Flush() {
         Impl& impl = *m_Impl;
         for (;;) {
@@ -760,6 +823,8 @@ namespace vortex::physics {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
+
+    uint32_t TerrainColliders::FlushBox(const math::AABB& worldBounds) { return m_Impl->FlushBox(worldBounds); }
 
     TerrainColliderStats TerrainColliders::Stats() const {
         TerrainColliderStats stats;

@@ -17,13 +17,13 @@ What exists today, and what was designed for but is not built yet. See
 | Scene | `vortex.scene`: EnTT entities with transform, voxel body, rigid body, point light and lifetime components; destroying an entity releases its body and chunk slots; part of the GPU-free `Vortex::Sim` and tested without a GPU. |
 | Destruction | Terrain carving with floating-terrain detection; objects lose voxels and split into pieces (`Scene::Damage`). A blast is `sim::Blast` (integer-exact world operations: carve, one `Detach` per floating island of 8+ voxels (0.016 m^3), one `ClearMask` for all smaller ones - islands found in the island box and, for parts that reach past it, proven by a bounded face flood inside a +-96-voxel flood box, so a tower falls on the shot that cuts it; then a max-flow load check on the cell graph releases parts whose weight their bonds cannot carry, so a tower on a thin neck falls too (shred.md stage 4b); object damage, impulses) plus `sim::PresentBlast` via `Engine::PresentBlast` (particles, local rubble, flash); `Engine::Explode` does both. Fragments below 8 voxels are particles; every piece of rubble has a lifetime by size (15 s under 25 voxels, 20 s under 1 m^3, 30 s larger), a distance rule for small rubble and global caps (192 small, 48 bodies, 600 chunk-store slots); a piece that does not fit, or cannot be baked, becomes particles. |
 | Import | MagicaVoxel `.vox` read / write, glTF voxelisation. |
-| Physics | Jolt behind an engine interface, fixed time step, character controller. Terrain colliders streamed around the camera and requested by every moving body; bodies without ready terrain are frozen in place and resume when it is there, so nothing falls through unloaded or uncooked terrain; a body overlapping edits its chunk's collider does not show yet waits too, frozen with its velocity, and a body parked over ground edited out of sight is woken when that ground gets its collider. |
+| Physics | Jolt behind an engine interface, fixed time step, character controller (moved by `sim::StepPlayer`, the movement rule a session shares; a state can be restored for a replay). Terrain colliders streamed around the camera and requested by every moving body; bodies without ready terrain are frozen in place and resume when it is there, so nothing falls through unloaded or uncooked terrain; a body overlapping edits its chunk's collider does not show yet waits too, frozen with its velocity, and a body parked over ground edited out of sight is woken when that ground gets its collider. |
 | Particles | CPU pool with emitters, voxel collision, effect presets. |
 | Renderer | Ray-marched G-buffer, ray-traced sun shadows, ambient occlusion, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping, ImGui. Headless mode with screenshots. Validation-clean on Intel UHD 620. |
 | Editor | `vortex.editor`: in-game editor toggled with F1 - fly camera, entity selection with a translate / rotate gizmo, inspector, terrain brush, primitive spawning, `.vox` / glTF import, environment / render / profiler / world panels. Tool logic is separate from the widgets and unit tested. |
 | Simulation | `vortex.sim`: `sim::Simulation` owns world, physics, terrain colliders and scene and steps them on a numbered fixed tick; `sim::WorldOp` / `ApplyOp` replay terrain changes exactly; `sim::Blast`. Library `Vortex::Sim` links no renderer or window. `Engine` owns one and draws it. |
-| Sessions | `vortex.net` (`Vortex::Net`, GPU-free): the M1 protocol over in-process loopback transports (`ImpairedTransport`: seeded loss, delay, jitter, duplicates, reordering, rate limit, outages), `net::Server` (fixed region window, template as operations 1..k, event stream with a byte budget, cast queue with a work budget, join = full event log) and `net::Client` (handshake with token and build hash, region from `Welcome`, operations applied in `opSeq` order); `vortex_server` runs a session file headless. No real network transport yet (ENet, stage 5). |
-| Tests | 561 unit tests (five disabled measurements), none needing a GPU. |
+| Sessions | `vortex.net` (`Vortex::Net`, GPU-free): the M1 protocol over in-process loopback transports (`ImpairedTransport`: seeded loss, delay, jitter, duplicates, reordering, rate limit, outages), `net::Server` (fixed region window, template as operations 1..k, event stream with a byte budget, cast queue with a work budget, join = full event log, one player per client moved by its inputs, snapshots at 30 Hz) and `net::Client` (handshake with token and build hash, region from `Welcome`, operations applied in `opSeq` order, the own player predicted with `sim::StepPlayer` and reconciled with the snapshots on a clock kept ahead of the server, other players interpolated); `vortex_server` runs a session file headless with in-process bot players. No real network transport yet (ENet, stage 5); the game does not connect yet. |
+| Tests | 593 unit tests (six disabled measurements), none needing a GPU. |
 
 ## Performance (Intel UHD 620, 1280x720 output, 768x432 internal)
 
@@ -181,7 +181,35 @@ State (stages are those of [design/networking.md](design/networking.md)):
   events are presented; `Welcome` probes are range-checked; sends are paced per peer by `ReliableBytesInFlight`
   (32 kB); batches decode at most 16 MiB of masks; silent and refused peers time out; the default store is capped at
   2 GiB of chunks; the playground must find its site inside the play bounds; cast wall time is logged.
-- Stages 4-9: not started. Before stage 3: shred.md stage 1 changed the search result (face flood), the server
+- **Stage 4, players - done.** `sim::StepPlayer` (`vortex.sim:player`): integer inputs (move axes, yaw, pitch,
+  button levels with derived edges), a cast cooldown, the gate `TerrainColliders::HasCollider` (chunks with a
+  collider built once: no wait for re-cooks, whose timing differs per side); `PhysicsWorld::SetCharacterState`;
+  `PhysicsConfig::characterLayers` (a client's character collides with terrain only until stage 6). Messages
+  `InputBatch` (the unacknowledged inputs, at most 8, 30 Hz) and `Snapshot` (tick, event position, input ack and
+  margin, owner state, other players; replaces `ServerStatus`), the tuning in `Welcome`, protocol 2. Server: inputs
+  queued up to 16 ticks ahead, a missing one repeats the last movement for 6 ticks, a late one refreshes it and its
+  cast counts once; a cast edge is captured as a ray into the server's world and queued. Client: `TickClock` (jump
+  after three late reports, 2 % bleed and - not in the design - 2 % catch-up, a hold as hard resync), prediction
+  with 128 ticks of history, reconciliation after the snapshot's events (2 cm ignore, replay, 100 ms blend, 1.5 m
+  snap, 250 ms timeout counted), `RemotePlayers`. `net::BotPilot`; `vortex_server`'s clients walk, jump and (with
+  `--bot-casts N`) cast, and the report gives each one's correction rate. The offline game moves its player with
+  `StepPlayer`. Verified: 23 new tests (584 then); over the seeded impaired loopback no correction above 2 cm on flat
+  ground in 30 s at 5 % loss (0.05 per player-minute over 10 seeds), none beside 80 blasts at a chunk border, the
+  +50 ms ping step never late and no resync, three lost packets with a cast give one cast, a 150 ms hitch no resync,
+  a wall and a teleport converge, forged packets harmless; the drill exits with equal hashes, 6 and 1 corrections in
+  20 s. **Not done / open:** the engine driven by the client clock and `--connect` (stage 5), capture at the input
+  tick and loadouts (5), replicated bodies in the character mask (6), the visual-only timeout branch (7), errors up to
+  10 mm after blasts near a player (not isolated). Choices: `design/networking.md`, "Stage 4 as built".
+  **Review of stage 4** (15 findings, none rejected, 9 new tests, 593): the clock now hears margins of dropped
+  too-early inputs (`Snapshot::marginTick`, protocol 3; a client placed far too early never recovered), the hard
+  resync can no longer wrap to 4e9 ticks, three margins 2+ short of the target jump the clock (a +50 ms ping step:
+  back in 0.52 s instead of 2.95 s; the 0.5 s acceptance is met from the first short report, from the step itself
+  only with 0.6 s - an owner question), colliders under a player are flushed before every step on both sides
+  (`TerrainColliders::FlushBox`; slopes went from 1 mm - 2 cm errors to bit-equal), tick length and gravity travel in
+  `Welcome`, both sides use one character mask, remote players never step back (`ServerTime`), the 250 ms event wait
+  times out while snapshots keep coming, a late jump is jumped, and the border, ping-step and flat-ground tests assert
+  what they claim. See "Review of stage 4".
+- Stages 5-9: not started. Before stage 3: shred.md stage 1 changed the search result (face flood), the server
   window margin (3 chunks, flood box) and the cast budget (a work budget); shred.md stage 4 (built, the owner's answer
   to its question 4) moved the island search onto the cell graph - same results except where a work budget runs out,
   node visits and chunk graphs used (at a cold price; never graphs built, which depend on the cache) to count in stage
@@ -271,7 +299,7 @@ State (stages are those of [design/networking.md](design/networking.md)):
   runs (they should be saved and unloaded with their chunks once entities can be serialised);
   a chunk that gains terrain keeps its old collider for the few frames of re-cooking, so a body
   can sink into freshly added voxels; character controllers are still held by the game
-  (`Engine::TerrainReady(bounds)`), not by the guard, and nothing keeps colliders around a
+  (`sim::StepPlayer`'s `HasCollider` gate since networking stage 4), not by the guard, and nothing keeps colliders around a
   character the camera has left (it is held until the camera returns); while a brush or spell
   keeps uncovering faces of a neighbouring chunk, bodies touching that chunk wait for the stroke
   to pause; water lit only by local lights in an enclosed place still reflects sky colour

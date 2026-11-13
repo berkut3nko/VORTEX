@@ -9,6 +9,7 @@
 #include <glm/glm.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cstdint>
 #include <cstdio>
 #include <deque>
@@ -23,6 +24,7 @@
 
 import vortex.core;
 import vortex.voxel;
+import vortex.physics;
 import vortex.scene;
 import vortex.sim;
 import vortex.net;
@@ -333,6 +335,43 @@ TEST(Session, ClientBuildsItsWorldFromWelcomeAndRefusesAnyOther) {
     EXPECT_EQ(right.World().WindowSize(), s.server.Simulation().World().WindowSize());
     EXPECT_EQ(right.World().BuildCeiling(), s.server.Simulation().World().BuildCeiling());
     EXPECT_EQ(bot.client->Hash().hash, s.server.Hash().hash);
+}
+
+// Review of stage 4: the tick length, gravity and the characters' collision set decide every
+// predicted step, so they are the session's: a client takes the server's (MakeSimulationConfig)
+// and refuses a simulation with another tick length or gravity; server and client characters
+// collide with the same layers (terrain only until stage 6).
+TEST(Session, ClientTakesTheServersTickGravityAndCharacterLayers) {
+    net::ServerSettings settings = Settings(DrillRegion());
+    settings.simulation.fixedTimeStep = 1.0f / 30.0f;
+    settings.simulation.physics.gravity = glm::vec3(0.0f, -12.5f, 0.0f);
+    Session s(settings);
+    ASSERT_TRUE(s.started);
+    s.autoAttach = false;
+    Session::Bot& bot = s.AddClient();
+    for (int i = 0; i < 5 && bot.client->State() != net::ClientState::Welcomed; ++i) s.Tick();
+    ASSERT_EQ(bot.client->State(), net::ClientState::Welcomed);
+    const sim::SimulationConfig& server = s.server.Simulation().Config();
+    EXPECT_EQ(server.physics.characterLayers, physics::LayerBit(physics::Layer::Static));
+    const sim::SimulationConfig made = bot.client->MakeSimulationConfig(bot.base);   // its own: 1/60 s, -9.81
+    EXPECT_EQ(std::bit_cast<uint32_t>(made.fixedTimeStep), std::bit_cast<uint32_t>(server.fixedTimeStep));
+    EXPECT_EQ(made.physics.gravity, server.physics.gravity);
+    EXPECT_EQ(made.physics.characterLayers, server.physics.characterLayers);
+
+    sim::SimulationConfig ownTick = made;
+    ownTick.fixedTimeStep = 1.0f / 60.0f;
+    sim::Simulation wrongTick(ownTick);
+    ASSERT_TRUE(wrongTick.Initialize(bot.client->MakeGenerator()));
+    EXPECT_FALSE(bot.client->Attach(wrongTick));
+    sim::SimulationConfig ownGravity = made;
+    ownGravity.physics.gravity = glm::vec3(0.0f, -9.81f, 0.0f);
+    sim::Simulation wrongGravity(ownGravity);
+    ASSERT_TRUE(wrongGravity.Initialize(bot.client->MakeGenerator()));
+    EXPECT_FALSE(bot.client->Attach(wrongGravity));
+    sim::Simulation right(made);
+    ASSERT_TRUE(right.Initialize(bot.client->MakeGenerator()));
+    EXPECT_TRUE(bot.client->Attach(right));
+    EXPECT_EQ(right.FixedTimeStep(), 1.0f / 30.0f);
 }
 
 TEST(Session, ServerWindowIsThePlayBoundsPlusThreeChunks) {
@@ -785,8 +824,8 @@ TEST(SessionAcceptance, TwoClientsAgreeAfter200BlastsAt5PercentLoss) {
     // The network really was bad: resends and lost / duplicated status packets on the way down.
     EXPECT_GT(s.serverLink.Stats().resent, 20u);
     EXPECT_GT(s.serverLink.Stats().lost, 5u);
-    EXPECT_GT(a.client->Stats().statusReceived, 0u);
-    EXPECT_GT(b.client->Stats().statusReceived, 0u);
+    EXPECT_GT(a.client->Stats().snapshotsReceived, 0u);
+    EXPECT_GT(b.client->Stats().snapshotsReceived, 0u);
     // Reliable events are never duplicated by this transport or this server (Client.* tests
     // feed overlapping batches and gaps by hand).
     EXPECT_EQ(a.client->Stats().duplicateEvents, 0u);

@@ -4,6 +4,7 @@ module;
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -19,7 +20,9 @@ module;
 module vortex.net;
 
 import vortex.core;
+import vortex.math;
 import vortex.voxel;
+import vortex.physics;
 import vortex.scene;
 import vortex.sim;
 
@@ -32,6 +35,23 @@ namespace vortex::net {
             std::vector<uint8_t> bytes;
         };
 
+        /// A joined client's player (docs/design/networking.md "Player movement", "Time and ticks").
+        struct Player {
+            physics::CharacterId character;
+            sim::PlayerState state;
+            std::map<uint32_t, sim::PlayerInput> queue;   ///< inputs for ticks not simulated yet
+            sim::PlayerInput last;          ///< the last real input: its movement is repeated while inputs are missing
+            bool anyInput = false;
+            uint32_t lastRealTick = 0;      ///< tick of `last` (a duplicate or older input is ignored)
+            uint32_t ackTick = 0;           ///< newest input tick the server has (queued, used or late)
+            /// The margin and the input it is about: the newest input of the packet with the newest
+            /// last input so far, dropped ones included (Snapshot::marginTick). A reordered or
+            /// duplicated older packet changes neither.
+            uint32_t marginTick = 0;
+            int16_t margin = kNoInputMargin;
+            bool lateJump = false;          ///< a jump edge from a late input, made on the next step
+        };
+
         struct Peer {
             bool joined = false;
             bool closing = false;         ///< refused: disconnect once the refusal is delivered
@@ -39,13 +59,18 @@ namespace vortex::net {
             uint32_t sentUpTo = 0;        ///< last opSeq handed to the transport for it
             uint32_t connectTick = 0;     ///< Hello timeout
             uint32_t closingTick = 0;     ///< refusal grace period
+            std::unique_ptr<Player> player;   ///< from the Welcome on
         };
 
         struct QueuedCast {
             voxel::SphereQ sphere;
             uint16_t power = 0;
             uint32_t queuedTick = 0;
+            uint8_t player = 0;           ///< CastRecord::player
         };
+
+        /// Margins further off than this (17 s) are not reported: no clock is, a forged tick is.
+        constexpr int64_t kMaxReportedMargin = 1024;
 
         uint64_t MaskVoxels(const Event& event) {
             const sim::WorldOp* op = std::get_if<sim::WorldOp>(&event);
@@ -113,12 +138,186 @@ namespace vortex::net {
             if (failed) return;
             Log::Error("Server: the session is broken: {}; ending it ({} client(s) disconnected)", why, JoinedCount());
             failed = true;
-            for (const auto& [id, p] : peers) {
+            for (auto& [id, p] : peers) {
                 stats.clientsDisconnected += p.joined ? 1u : 0u;
+                DropPlayer(p);
                 transport.Disconnect(id);
             }
             peers.clear();
             queue.clear();
+        }
+
+        void DropPlayer(Peer& p) {
+            if (!p.player) return;
+            simulation->Physics().DestroyCharacter(p.player->character);
+            p.player.reset();
+        }
+
+        /// The joined peers with a player, in slot order (the order players are stepped in).
+        std::vector<std::pair<PeerId, Peer*>> PlayersBySlot() {
+            std::vector<std::pair<PeerId, Peer*>> out;
+            for (auto& [id, p] : peers)
+                if (p.joined && p.player) out.emplace_back(id, &p);
+            std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.second->slot < b.second->slot; });
+            return out;
+        }
+
+        std::vector<glm::dvec3> PlayerFocus() const {
+            std::vector<glm::dvec3> focus;
+            for (const auto& [id, p] : peers)
+                if (p.player) focus.push_back(glm::dvec3(p.player->state.position));
+            return focus;
+        }
+
+        /// A cast edge the cooldown accepted: captured from the player's state now (eye and look of
+        /// `input`), its ray cast into the server's world, the hit queued as a blast with the
+        /// tuning's radius and power. A ray that meets nothing within castRange casts nothing.
+        void CaptureCast(const Peer& p, const sim::PlayerInput& input, bool late) {
+            const sim::PlayerTuning& t = settings.player;
+            const glm::dvec3 eye = glm::dvec3(p.player->state.position) + glm::dvec3(0.0, static_cast<double>(t.eyeHeight), 0.0);
+            const glm::vec3 dir = sim::LookDirection(input.yaw, input.pitch);
+            const voxel::WorldRayHit hit = simulation->World().Raycast(eye, dir, t.castRange);
+            if (!hit.hit) {
+                ++stats.castsMissed;
+                return;
+            }
+            ++stats.castsFromInputs;
+            stats.castsFromLateInputs += late ? 1u : 0u;
+            const double vs = static_cast<double>(simulation->World().VoxelSize());
+            Queue(voxel::QuantizeSphere(hit.position / vs, static_cast<double>(t.castRadius) / vs), voxel::QuantizePower(t.castPower),
+                  static_cast<uint8_t>(p.slot + 1));
+        }
+
+        bool Queue(const voxel::SphereQ& sphere, uint16_t power, uint8_t player) {
+            ++stats.castsQueued;
+            if (!sim::CastFitsRegion(region, simulation->World(), sphere)) {
+                ++stats.castsRejected;
+                return false;
+            }
+            queue.push_back({sphere, power, Tick(), player});
+            return true;
+        }
+
+        /// An InputBatch from a joined client (state channel: lost, duplicated, reordered).
+        void OnInputs(Peer& p, std::span<const uint8_t> bytes) {
+            InputBatch batch;
+            if (!p.player || !Decode(bytes, batch)) {
+                ++stats.malformedInputs;
+                return;
+            }
+            ++stats.inputPackets;
+            Player& pl = *p.player;
+            const uint32_t now = Tick();   // the tick simulated next
+            uint32_t newest = 0;
+            bool any = false;
+            for (const sim::PlayerInput& in : batch.inputs) {
+                const uint32_t t = in.tick;
+                if (pl.anyInput && t <= pl.lastRealTick) {
+                    ++stats.inputsDuplicate;
+                } else if (t < now) {
+                    // Too late for its tick: it only refreshes the last input. Its edges still count
+                    // (a cast in it is cast now, once), derived against the levels the repeats kept.
+                    ++stats.inputsLate;
+                    const uint8_t pressed = sim::PressButtons(pl.state, in.buttons);
+                    if (sim::TakeCast(pl.state, pressed, settings.player)) CaptureCast(p, in, true);
+                    // A jump edge is not spent here without a jump: the next step makes it.
+                    if ((pressed & sim::PlayerButton_Jump) != 0 && !pl.lateJump) {
+                        pl.lateJump = true;
+                        ++stats.jumpsFromLateInputs;
+                    }
+                    pl.last = in;
+                    pl.lastRealTick = t;
+                    pl.anyInput = true;
+                    pl.queue.erase(pl.queue.begin(), pl.queue.upper_bound(t));
+                } else if (t - now >= settings.inputQueueTicks) {
+                    ++stats.inputsTooEarly;
+                    continue;
+                } else if (!pl.queue.emplace(t, in).second) {
+                    ++stats.inputsDuplicate;
+                } else {
+                    ++stats.inputsQueued;
+                }
+                newest = any ? std::max(newest, t) : t;
+                any = true;
+            }
+            if (batch.inputs.empty()) return;
+            if (any) pl.ackTick = std::max(pl.ackTick, newest);
+            // The margin of the newest input of the packet, dropped ones too (the client is too far
+            // ahead: exactly what its clock must hear), unless a packet with newer inputs already
+            // arrived (reordered or duplicated: it would pair an older, smaller margin with the tick).
+            const uint32_t last = batch.inputs.back().tick;
+            if (pl.margin != kNoInputMargin && last <= pl.marginTick) return;
+            const int64_t margin = static_cast<int64_t>(last) - static_cast<int64_t>(now);
+            // No client is that far off: a forged tick must not become the newest for good.
+            if (margin > kMaxReportedMargin || margin < -kMaxReportedMargin) return;
+            pl.margin = static_cast<int16_t>(std::clamp<int64_t>(margin, -32767, 32767));
+            pl.marginTick = last;
+        }
+
+        /// Every player, in slot order, steps with its input for this tick or the last movement repeated.
+        void StepPlayers() {
+            const uint32_t now = Tick();
+            const float dt = simulation->FixedTimeStep();
+            for (auto& [id, peer] : PlayersBySlot()) {
+                Player& pl = *peer->player;
+                sim::PlayerInput input;
+                const auto it = pl.queue.find(now);
+                if (it != pl.queue.end()) {
+                    input = it->second;
+                    pl.last = input;
+                    pl.lastRealTick = now;
+                    pl.anyInput = true;
+                } else {
+                    // Missing: the last movement for repeatInputTicks, then none. The levels stay those of
+                    // the last input, so a repeat never makes an edge.
+                    input = pl.last;
+                    input.buttons = pl.state.lastButtons;
+                    ++stats.ticksRepeated;
+                    if (!pl.anyInput || now - pl.lastRealTick > settings.repeatInputTicks) {
+                        input.moveX = input.moveZ = 0;
+                        ++stats.ticksStood;
+                    }
+                }
+                pl.queue.erase(pl.queue.begin(), pl.queue.upper_bound(now));
+                input.tick = now;
+                // The colliders this step can touch hold every edit made so far (never a worker's timing).
+                simulation->Terrain().FlushBox(sim::PlayerReach(pl.state.position, settings.player));
+                const uint8_t levels = input.buttons;
+                const bool lateJump = pl.lateJump;
+                if (lateJump) {
+                    // The edge of a late input's jump is made now; the levels stay this input's.
+                    pl.state.lastButtons = static_cast<uint8_t>(pl.state.lastButtons & ~sim::PlayerButton_Jump);
+                    input.buttons = static_cast<uint8_t>(input.buttons | sim::PlayerButton_Jump);
+                    pl.lateJump = false;
+                }
+                const sim::PlayerStepResult r = sim::StepPlayer(simulation->Physics(), simulation->Terrain(), pl.character, pl.state, input,
+                                                                settings.player, dt);
+                if (lateJump) pl.state.lastButtons = static_cast<uint8_t>(levels & sim::kPlayerButtonMask);
+                stats.heldTicks += r.held ? 1u : 0u;
+                if (r.cast) CaptureCast(*peer, input, false);
+            }
+        }
+
+        void SendSnapshots(uint32_t tick) {
+            const std::vector<std::pair<PeerId, Peer*>> players = PlayersBySlot();
+            for (const auto& [id, peer] : players) {
+                Snapshot snap;
+                snap.tick = tick;
+                snap.lastOpSeq = LastOpSeq();
+                snap.ackInputTick = peer->player->ackTick;
+                snap.marginTick = peer->player->marginTick;
+                snap.inputMargin = peer->player->margin;
+                snap.hasOwner = true;
+                snap.owner = peer->player->state;
+                for (const auto& [otherId, other] : players) {
+                    if (otherId == id) continue;
+                    snap.others.push_back({other->slot, other->player->state.position, other->player->last.yaw, other->player->state.flags});
+                }
+                const std::vector<uint8_t> bytes = Encode(snap);
+                ++stats.snapshots;
+                stats.snapshotBytes += bytes.size();
+                Send(id, Channel::State, bytes);
+            }
         }
 
         uint32_t JoinedCount() const {
@@ -197,6 +396,9 @@ namespace vortex::net {
             welcome.tick = Tick();
             welcome.region = region;
             welcome.spawn = tmpl.spawn;
+            welcome.player = settings.player;
+            welcome.tickSeconds = simulation->FixedTimeStep();
+            welcome.gravity = simulation->Config().physics.gravity;
             welcome.logEnd = LastOpSeq();
             welcome.probes = probes;
             Send(peer, Channel::Events, Encode(welcome));
@@ -205,6 +407,15 @@ namespace vortex::net {
             p.joined = true;
             p.slot = slot;
             p.sentUpTo = 0;
+            // Its player stands at the spawn point; the ground under every player gets its collider
+            // before the next step (a gate that held the player here would hold it for another
+            // number of ticks than its client's).
+            p.player = std::make_unique<Player>();
+            p.player->state.position = glm::vec3(tmpl.spawn);
+            p.player->character = simulation->Physics().CreateCharacter(sim::PlayerCharacterDesc(p.player->state.position, settings.player));
+            const std::vector<glm::dvec3> focus = PlayerFocus();
+            simulation->Terrain().Update(focus, simulation->Config().colliderRadius);
+            simulation->Terrain().Flush();
             ++stats.clientsJoined;
             Log::Info("Server: client {} joined at tick {} (slot {}, {} events / {} bytes of log)", peer, Tick(), slot, LastOpSeq(), logBytes);
         }
@@ -216,7 +427,7 @@ namespace vortex::net {
                     case TransportEvent::Type::Connected: {
                         Peer peer;
                         peer.connectTick = Tick();
-                        peers[e.peer] = peer;
+                        peers[e.peer] = std::move(peer);
                         break;
                     }
                     case TransportEvent::Type::Disconnected:
@@ -225,6 +436,7 @@ namespace vortex::net {
                                 ++stats.clientsDisconnected;
                                 Log::Info("Server: client {} left (slot {})", e.peer, it->second.slot);
                             }
+                            DropPlayer(it->second);
                             peers.erase(it);
                         }
                         break;
@@ -234,8 +446,10 @@ namespace vortex::net {
                         if (!it->second.joined && e.channel == Channel::Events) {
                             if (PeekType(e.data) == MessageType::Hello) OnHello(e.peer, it->second, e.data);
                             else Refuse(e.peer, it->second, RefuseReason::Malformed);
+                        } else if (it->second.joined && e.channel == Channel::State) {
+                            // Unreliable: anything that is not a valid InputBatch is counted and ignored.
+                            OnInputs(it->second, e.data);
                         }
-                        // Stage 3 clients send nothing else (inputs are stage 4).
                         break;
                     }
                 }
@@ -256,6 +470,7 @@ namespace vortex::net {
             }
             for (const PeerId id : close) {
                 transport.Disconnect(id);
+                DropPlayer(peers[id]);
                 peers.erase(id);
             }
         }
@@ -275,6 +490,7 @@ namespace vortex::net {
             const sim::BlastResult r = sim::Blast(*simulation, q.sphere, q.power);
             const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
             CastRecord rec;
+            rec.player = q.player;
             rec.queuedTick = q.queuedTick;
             rec.tick = tick;
             rec.sphere = q.sphere;
@@ -434,17 +650,15 @@ namespace vortex::net {
         if (!s.started) return;
         if (s.failed) return s.ReceiveFailed();
         s.Receive();
-        s.simulation->UpdateStreaming(std::span<const glm::dvec3>{});
+        const std::vector<glm::dvec3> focus = s.PlayerFocus();
+        s.simulation->UpdateStreaming(focus);
+        s.StepPlayers();
         s.RunCasts();
         const uint32_t tick = s.Tick();
         s.simulation->StepPhysics();
         s.simulation->UpdateLifetimes(s.simulation->FixedTimeStep());
         s.Flush();
-        if (tick % 2 == 0 && !s.failed) {
-            const std::vector<uint8_t> status = Encode(ServerStatus{tick, s.LastOpSeq()});
-            for (const auto& [id, p] : s.peers)
-                if (p.joined) s.Send(id, Channel::State, status);
-        }
+        if (tick % 2 == 0 && !s.failed) s.SendSnapshots(tick);
         // World::Stats walks every cell (about 0.3 ms for a 250 m region): twice a second is enough,
         // an edit that found no slot is caught at once by CheckOp.
         if (tick % 30 == 0) s.CheckStore();
@@ -474,13 +688,7 @@ namespace vortex::net {
     bool Server::QueueCast(const voxel::SphereQ& sphere, uint16_t power) {
         Impl& s = *m_Impl;
         if (!s.started || s.failed) return false;
-        ++s.stats.castsQueued;
-        if (!sim::CastFitsRegion(s.region, s.simulation->World(), sphere)) {
-            ++s.stats.castsRejected;
-            return false;
-        }
-        s.queue.push_back({sphere, power, s.Tick()});
-        return true;
+        return s.Queue(sphere, power, 0);
     }
 
     bool Server::QueueCast(const sim::BlastDesc& desc) {
@@ -491,6 +699,32 @@ namespace vortex::net {
     }
 
     size_t Server::QueuedCasts() const { return m_Impl->queue.size(); }
+
+    size_t Server::PlayerCount() const {
+        size_t n = 0;
+        for (const auto& [id, p] : m_Impl->peers) n += p.player ? 1u : 0u;
+        return n;
+    }
+
+    std::optional<sim::PlayerState> Server::GetPlayer(uint8_t slot) const {
+        for (const auto& [id, p] : m_Impl->peers)
+            if (p.player && p.slot == slot) return p.player->state;
+        return std::nullopt;
+    }
+
+    bool Server::TeleportPlayer(uint8_t slot, const glm::vec3& feet) {
+        Impl& s = *m_Impl;
+        if (!std::isfinite(feet.x) || !std::isfinite(feet.y) || !std::isfinite(feet.z)) return false;
+        for (auto& [id, p] : s.peers)
+            if (p.player && p.slot == slot) {
+                p.player->state.position = feet;
+                p.player->state.velocity = glm::vec3(0.0f);
+                p.player->state.flags = 0;
+                sim::RestorePlayer(s.simulation->Physics(), p.player->character, p.player->state);
+                return true;
+            }
+        return false;
+    }
     uint32_t Server::TickNumber() const { return m_Impl->Tick(); }
     uint32_t Server::LastOpSeq() const { return m_Impl->LastOpSeq(); }
     size_t Server::ClientCount() const { return m_Impl->JoinedCount(); }

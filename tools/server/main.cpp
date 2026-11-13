@@ -1,8 +1,8 @@
-// vortex_server: the session server of docs/design/networking.md (stage 3: loopback only).
+// vortex_server: the session server of docs/design/networking.md (stages 3-4: loopback only).
 //
 //   vortex_server --session <file> [--ticks N] [--drill N] [--clients N] [--join-step K]
 //                 [--loss P] [--delay-ms D] [--jitter-ms J] [--outage-ms A,B] [--threads T]
-//                 [--realtime] [--hash-out <file>]
+//                 [--stand] [--no-jumps] [--bot-casts N] [--realtime] [--hash-out <file>]
 //
 // Starts the server from a session file (token, region, template; see sessions/*.session), loads its
 // whole window and applies the template. Until a network transport exists (stage 5) the clients
@@ -12,6 +12,10 @@
 // server-side blasts that free terrain (net::BlastDrill: in-box islands with crumbs, face-flood
 // islands, weak-neck releases), one every 6 ticks. After the ticks (default: until the drill is
 // done) the clients drain the stream and the world hashes are compared.
+// Every client is a player (stage 4): a bot pilot (net::BotPilot) walks, runs, strafes and jumps
+// it through the session (--stand: it stands still; --no-jumps), and with --bot-casts N it casts at
+// the ground ahead every N ticks; each client runs on its own clock (TicksDue), predicts its player
+// and is corrected by the snapshots. The report gives every client's correction statistics.
 // A server that fails (networking.md: a broken server world ends the session) stops at once and
 // reports. Exit code 0 when every client's hash equals the server's and nothing failed; 1 otherwise;
 // 2 on a bad command line or session file.
@@ -55,8 +59,10 @@ namespace {
         std::unique_ptr<net::ImpairedTransport> link;
         std::unique_ptr<net::Client> client;
         std::unique_ptr<sim::Simulation> simulation;
+        std::unique_ptr<net::BotPilot> pilot;
         bool connected = false;
         uint32_t joinStep = 0;
+        uint32_t casts = 0;               ///< casts its prediction showed
     };
 
     double Number(const CommandLine& args, const char* name, double fallback) {
@@ -71,7 +77,8 @@ int main(int argc, char** argv) {
     const std::optional<std::string> sessionPath = args.Get("--session");
     if (!sessionPath) {
         std::fprintf(stderr, "usage: vortex_server --session <file> [--ticks N] [--drill N] [--clients N] [--join-step K] [--loss P] "
-                             "[--delay-ms D] [--jitter-ms J] [--outage-ms A,B] [--threads T] [--realtime] [--hash-out <file>]\n");
+                             "[--delay-ms D] [--jitter-ms J] [--outage-ms A,B] [--threads T] [--stand] [--no-jumps] [--bot-casts N] "
+                             "[--realtime] [--hash-out <file>]\n");
         return 2;
     }
     net::SessionConfig session;
@@ -88,6 +95,11 @@ int main(int argc, char** argv) {
     const uint32_t ticks = static_cast<uint32_t>(Number(args, "--ticks", drillSteps > 0 ? drillSteps * kStepTicks : 120));
     const unsigned threads = static_cast<unsigned>(Number(args, "--threads", 0));
     const bool realtime = args.Has("--realtime");
+    const bool stand = args.Has("--stand");
+    net::PilotSettings pilotSettings;
+    pilotSettings.jumps = !args.Has("--no-jumps");
+    pilotSettings.castEveryTicks = static_cast<uint32_t>(Number(args, "--bot-casts", 0));
+    pilotSettings.casts = pilotSettings.castEveryTicks > 0;
 
     net::Impairment impairment;
     impairment.loss = Number(args, "--loss", 0.0);
@@ -124,6 +136,7 @@ int main(int argc, char** argv) {
         cs.presentation = i == 0;          // the first client also makes particles and rubble, as a game would
         bot.client = std::make_unique<net::Client>(cs, *bot.link);
         bot.joinStep = i == 0 ? 0 : joinStep;
+        bot.pilot = std::make_unique<net::BotPilot>(server.Region(), 0xb07u + i, pilotSettings);
     }
 
     std::unique_ptr<net::BlastDrill> drill;
@@ -132,6 +145,7 @@ int main(int argc, char** argv) {
         Log::Info("Drill: {} steps on {} sites, one every {} ticks", drillSteps, drill->Sites(), kStepTicks);
     }
 
+    bool draining = false;                       // the drain: the players stand (no more casts)
     auto stepClients = [&](uint32_t step) {
         for (BotClient& bot : bots) {
             if (!bot.connected && step >= bot.joinStep) {
@@ -139,7 +153,6 @@ int main(int argc, char** argv) {
                 bot.connected = true;
             }
             if (!bot.connected) continue;
-            bot.client->Poll();
             if (bot.client->State() == net::ClientState::Welcomed && !bot.simulation) {
                 sim::SimulationConfig base;
                 base.jobThreads = std::max(1u, threads / 2);
@@ -151,9 +164,15 @@ int main(int argc, char** argv) {
                     bot.simulation.reset();
                 }
             }
-            if (bot.simulation) {
-                for (const sim::BlastResult& blast : bot.client->TakePresentations()) sim::PresentBlast(*bot.simulation, blast);
-                bot.simulation->Step({});
+            // The client's own clock (kept ahead of the server) says how many ticks it runs now.
+            const uint32_t due = bot.client->TicksDue(dt);
+            for (uint32_t k = 0; k < due; ++k) {
+                const sim::PlayerInput controls =
+                    bot.client->Predicting() && !stand && !draining ? bot.pilot->Next(bot.client->Player()) : sim::PlayerInput{};
+                const sim::PlayerStepResult r = bot.client->RunTick(controls);
+                bot.casts += r.cast ? 1u : 0u;
+                if (bot.simulation)
+                    for (const sim::BlastResult& blast : bot.client->TakePresentations()) sim::PresentBlast(*bot.simulation, blast);
             }
         }
     };
@@ -173,7 +192,8 @@ int main(int argc, char** argv) {
         if (server.Failed()) break;              // the session has ended (logged); report and exit 1
         if (realtime) std::this_thread::sleep_until(wallStart + std::chrono::duration<double>(clock));
     }
-    // Drain: the queue empties and every client catches up (at most 10 s of simulated time).
+    // Drain: the players stop, the queue empties and every client catches up (at most 10 s of simulated time).
+    draining = true;
     uint32_t drain = 0;
     auto settled = [&] {
         if (server.QueuedCasts() > 0) return false;
@@ -192,10 +212,13 @@ int main(int argc, char** argv) {
     // Report.
     const net::ServerStats& st = server.Stats();
     uint32_t kinds[3] = {0, 0, 0}, freed[3] = {0, 0, 0};
+    uint32_t drillCast = 0;
     for (size_t i = 0; i < server.Casts().size(); ++i) {
         const net::CastRecord& c = server.Casts()[i];
-        if (drill && i < drillSteps) {
-            const int k = static_cast<int>(drill->Step(static_cast<uint32_t>(i)).kind);
+        if (c.player != 0) continue;           // a player's cast, not a drill step
+        const uint32_t index = drillCast++;
+        if (drill && index < drillSteps) {
+            const int k = static_cast<int>(drill->Step(index).kind);
             ++kinds[k];
             const bool ok = k == 0 ? (c.inBoxIslands > 0 && c.crumbs > 0) : k == 1 ? c.facePieces > 0 : c.neckPieces > 0;
             freed[k] += ok ? 1u : 0u;
@@ -219,6 +242,24 @@ int main(int argc, char** argv) {
                   "islands, {} neck releases), {} crumbs",
                   freed[0], kinds[0], freed[1], kinds[1], freed[2], kinds[2], st.islands, st.inBoxIslands, st.facePieces, st.neckPieces,
                   st.crumbs);
+    Log::Info("Players: {} input packets ({} malformed), inputs {} queued / {} late / {} duplicate / {} too early; {} ticks repeated ({} "
+              "stood), {} held; {} casts from inputs ({} from late inputs, {} met no terrain); {} snapshots, {:.1f} B each",
+              st.inputPackets, st.malformedInputs, st.inputsQueued, st.inputsLate, st.inputsDuplicate, st.inputsTooEarly, st.ticksRepeated,
+              st.ticksStood, st.heldTicks, st.castsFromInputs, st.castsFromLateInputs, st.castsMissed, st.snapshots,
+              st.snapshots ? static_cast<double>(st.snapshotBytes) / static_cast<double>(st.snapshots) : 0.0);
+    const double tickSeconds = static_cast<double>(server.Simulation().FixedTimeStep());
+    for (size_t i = 0; i < bots.size(); ++i) {
+        const net::PredictionStats& p = bots[i].client->Prediction();
+        Log::Info("Client {} movement: {} ticks predicted ({} held), {} snapshots compared: {} within 2 cm, {} corrected ({:.2f} per minute), "
+                  "{} snapped, max error {:.3f} m; errors <1 mm {}, <2 cm {}, <5 cm {}, <20 cm {}, <1.5 m {}, more {}; replays {} ticks (max "
+                  "{}, {:.3f} ms max); waited for events {}, gave up {}; clock {} jumps / {} resyncs, margin {}..{}, target {}; {} casts "
+                  "shown, pilot cast {} / jumped {}",
+                  i, p.ticks, p.heldTicks, p.compared, p.within, p.corrections, p.CorrectionsPerMinute(tickSeconds), p.snaps, p.maxError,
+                  p.errorBuckets[0], p.errorBuckets[1], p.errorBuckets[2], p.errorBuckets[3], p.errorBuckets[4], p.errorBuckets[5],
+                  p.replayTicks, p.maxReplayTicks, p.maxReplaySeconds * 1000.0, p.waitedForEvents, p.eventTimeouts, p.clockJumps,
+                  p.hardResyncs, p.minMargin, p.maxMargin, bots[i].client->Clock().Target(), bots[i].casts, bots[i].pilot->Casts(),
+                  bots[i].pilot->Jumps());
+    }
     const voxel::WorldStats ws = server.Simulation().World().Stats();
     Log::Info("Server: world {} dense / {} packed chunks, {:.1f} MiB RLE, store {} / {} slots, search errors {}, incomplete ops {}, "
               "RSS {:.0f} MiB (all simulations of this process)",

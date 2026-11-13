@@ -364,4 +364,20 @@ namespace vortex::net {
         t.skipClassifiedRows = in.U8() != 0;
         return !in.Failed();
     }
+
+    void WritePlayerTuning(ByteWriter& out, const sim::PlayerTuning& t) {
+        for (const float f : {t.walkSpeed, t.runSpeed, t.jumpSpeed, t.height, t.radius, t.eyeHeight, t.maxSlopeDegrees, t.stepHeight})
+            out.F32(f);
+        out.U8(t.castCooldownTicks);
+        for (const float f : {t.castRadius, t.castPower, t.castRange}) out.F32(f);
+    }
+
+    bool ReadPlayerTuning(ByteReader& in, sim::PlayerTuning& t) {
+        t = sim::PlayerTuning{};
+        for (float* f : {&t.walkSpeed, &t.runSpeed, &t.jumpSpeed, &t.height, &t.radius, &t.eyeHeight, &t.maxSlopeDegrees, &t.stepHeight})
+            *f = in.F32();
+        t.castCooldownTicks = in.U8();
+        for (float* f : {&t.castRadius, &t.castPower, &t.castRange}) *f = in.F32();
+        return !in.Failed();
+    }
 }

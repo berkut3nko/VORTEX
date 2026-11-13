@@ -211,6 +211,10 @@ TEST(Wire, MessagesRoundTripAndRefuseTrailingOrMissingBytes) {
     welcome.region = SomeRegion();
     welcome.spawn = glm::dvec3(1.25, 12.0, -3.5);
     welcome.logEnd = 77;
+    welcome.player.runSpeed = std::nextafter(7.0f, 8.0f);          // bit for bit
+    welcome.player.castCooldownTicks = 9;
+    welcome.tickSeconds = std::nextafter(1.0f / 30.0f, 1.0f);   // bit for bit
+    welcome.gravity = glm::vec3(0.5f, -12.25f, -0.0f);
     welcome.probes = {{glm::ivec3(1, -2, 3), 0xfeedull}, {glm::ivec3(-9, 8, 7), 0xbeefull}};
     net::EventBatch batch;
     batch.firstOpSeq = 5;
@@ -238,7 +242,11 @@ TEST(Wire, MessagesRoundTripAndRefuseTrailingOrMissingBytes) {
         EXPECT_EQ(w.slot, 3);
         EXPECT_EQ(w.tick, 999u);
         EXPECT_TRUE(w.region == welcome.region);
+        EXPECT_TRUE(w.player == welcome.player);
         EXPECT_EQ(w.spawn, welcome.spawn);
+        EXPECT_EQ(std::bit_cast<uint32_t>(w.tickSeconds), std::bit_cast<uint32_t>(welcome.tickSeconds));
+        EXPECT_EQ(std::bit_cast<uint32_t>(w.gravity.z), std::bit_cast<uint32_t>(welcome.gravity.z));
+        EXPECT_EQ(w.gravity, welcome.gravity);
         EXPECT_EQ(w.logEnd, 77u);
         EXPECT_EQ(w.probes, welcome.probes);
         EXPECT_FALSE(net::Decode(std::span(bytes).first(bytes.size() - 1), w));
@@ -255,10 +263,68 @@ TEST(Wire, MessagesRoundTripAndRefuseTrailingOrMissingBytes) {
         EXPECT_EQ(bytes.size(), net::kEventBatchHeaderBytes + 26 + 17);
     }
     {
-        net::ServerStatus s;
-        ASSERT_TRUE(net::Decode(net::Encode(net::ServerStatus{12, 34}), s));
-        EXPECT_EQ(s.tick, 12u);
-        EXPECT_EQ(s.lastOpSeq, 34u);
+        // Inputs: consecutive ticks from the header, 7 bytes each.
+        net::InputBatch inputs;
+        inputs.firstTick = 4000000000u;
+        for (int i = 0; i < 8; ++i) {
+            sim::PlayerInput in;
+            in.moveX = static_cast<int8_t>(-128 + i);
+            in.moveZ = 127;
+            in.yaw = static_cast<uint16_t>(65535 - i);
+            in.pitch = static_cast<int16_t>(-32768 + i);
+            in.buttons = static_cast<uint8_t>(i);
+            inputs.inputs.push_back(in);
+        }
+        const std::vector<uint8_t> bytes = net::Encode(inputs);
+        EXPECT_EQ(bytes.size(), net::kInputBatchHeaderBytes + 8 * net::kInputBytes);
+        net::InputBatch back;
+        ASSERT_TRUE(net::Decode(bytes, back));
+        ASSERT_EQ(back.inputs.size(), 8u);
+        for (uint32_t i = 0; i < 8; ++i) {
+            sim::PlayerInput expect = inputs.inputs[i];
+            expect.tick = inputs.firstTick + i;
+            EXPECT_EQ(back.inputs[i], expect);
+        }
+        EXPECT_FALSE(net::Decode(std::span(bytes).first(bytes.size() - 1), back));
+        net::InputBatch none;
+        none.firstTick = 1;
+        EXPECT_FALSE(net::Decode(net::Encode(none), back));      // at least one input
+
+        // Snapshots: header 21, owner 27, 16 per other player; positions bit for bit.
+        net::Snapshot snap;
+        snap.tick = 120;
+        snap.lastOpSeq = 4567;
+        snap.ackInputTick = 125;
+        snap.marginTick = 131;
+        snap.inputMargin = -3;
+        snap.hasOwner = true;
+        snap.owner.position = glm::vec3(std::nextafter(12.5f, 13.0f), -0.0f, 1.0e-30f);
+        snap.owner.velocity = glm::vec3(1.0f, -9.81f, 0.25f);
+        snap.owner.flags = sim::PlayerFlag_OnGround;
+        snap.owner.cooldownTicks = 7;
+        snap.owner.lastButtons = sim::PlayerButton_Run;
+        snap.others = {{2, glm::vec3(1.0f, 2.0f, 3.0f), 1234, 1}, {9, glm::vec3(-4.0f, 5.0f, -6.0f), 65535, 2}};
+        const std::vector<uint8_t> sb = net::Encode(snap);
+        EXPECT_EQ(sb.size(), net::kSnapshotHeaderBytes + net::kSnapshotOwnerBytes + 2 * net::kSnapshotPlayerBytes);
+        net::Snapshot sback;
+        ASSERT_TRUE(net::Decode(sb, sback));
+        EXPECT_EQ(sback.tick, 120u);
+        EXPECT_EQ(sback.lastOpSeq, 4567u);
+        EXPECT_EQ(sback.ackInputTick, 125u);
+        EXPECT_EQ(sback.marginTick, 131u);
+        EXPECT_EQ(sback.inputMargin, -3);
+        ASSERT_TRUE(sback.hasOwner);
+        EXPECT_EQ(sback.owner, snap.owner);
+        EXPECT_EQ(sback.others, snap.others);
+        EXPECT_FALSE(net::Decode(std::span(sb).first(sb.size() - 1), sback));
+        snap.owner.velocity.y = std::nanf("");                   // a non-finite state is refused
+        EXPECT_FALSE(net::Decode(net::Encode(snap), sback));
+        net::Snapshot empty;
+        EXPECT_EQ(net::Encode(empty).size(), net::kSnapshotHeaderBytes);
+        ASSERT_TRUE(net::Decode(net::Encode(empty), sback));
+        EXPECT_FALSE(sback.hasOwner);
+        EXPECT_EQ(sback.inputMargin, net::kNoInputMargin);
+
         net::Refuse refuse;
         ASSERT_TRUE(net::Decode(net::Encode(net::Refuse{net::RefuseReason::Token}), refuse));
         EXPECT_EQ(refuse.reason, net::RefuseReason::Token);
@@ -273,14 +339,21 @@ TEST(Wire, ForgedBytesNeverCrashADecoder) {
     batch.firstOpSeq = 1;
     voxel::VoxelMask mask = RandomMask(rng, {20, 20, 20}, 0.2f);
     batch.events = {sim::WorldOp::Detach({0, 0, 0}, mask, glm::vec3(1.0f)), sim::WorldOp::Clear({1, 2, 3}, mask)};
-    const std::vector<std::vector<uint8_t>> valid = {net::Encode(batch), net::Encode(net::Welcome{}), net::Encode(net::Hello{})};
+    net::InputBatch inputs;
+    inputs.firstTick = 77;
+    inputs.inputs.resize(8);
+    net::Snapshot snap;
+    snap.hasOwner = true;
+    snap.others.resize(3);
+    const std::vector<std::vector<uint8_t>> valid = {net::Encode(batch), net::Encode(net::Welcome{}), net::Encode(net::Hello{}),
+                                                     net::Encode(inputs), net::Encode(snap)};
     uint32_t decoded = 0;
     for (int i = 0; i < 4000; ++i) {
         std::vector<uint8_t> bytes;
         if (i % 2 == 0) {
             bytes.resize(rng.NextBounded(200));
             for (uint8_t& b : bytes) b = static_cast<uint8_t>(rng.NextU32());
-            if (!bytes.empty()) bytes[0] = static_cast<uint8_t>(1 + rng.NextBounded(5));
+            if (!bytes.empty()) bytes[0] = static_cast<uint8_t>(1 + rng.NextBounded(7));
         } else {
             bytes = valid[rng.NextBounded(static_cast<uint32_t>(valid.size()))];
             for (int k = 0; k < 3; ++k) bytes[rng.NextBounded(static_cast<uint32_t>(bytes.size()))] = static_cast<uint8_t>(rng.NextU32());
@@ -288,9 +361,11 @@ TEST(Wire, ForgedBytesNeverCrashADecoder) {
         net::Hello h;
         net::Welcome w;
         net::EventBatch b;
-        net::ServerStatus s;
+        net::InputBatch in;
+        net::Snapshot s;
         net::Refuse r;
-        decoded += net::Decode(bytes, h) + net::Decode(bytes, w) + net::Decode(bytes, b) + net::Decode(bytes, s) + net::Decode(bytes, r);
+        decoded += net::Decode(bytes, h) + net::Decode(bytes, w) + net::Decode(bytes, b) + net::Decode(bytes, in) + net::Decode(bytes, s) +
+                   net::Decode(bytes, r);
     }
     SUCCEED() << decoded << " forged messages happened to decode";
 }

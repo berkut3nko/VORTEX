@@ -36,6 +36,8 @@ namespace vortex::sim {
         config.scene.bakeModels = false;
         config.scene.debrisRemnants = false;
         config.scene.markDebris = false;
+        // Players collide with what their clients have of the world (networking.md review of stage 4).
+        config.physics.characterLayers = kSessionCharacterLayers;
         // The metre volume in voxels of this world (kServerReplicatedPieceVoxels at the default size).
         config.scene.replicatedPieceVoxels =
             scene::VoxelsForVolume(kServerReplicatedPieceVolume, static_cast<double>(config.world.voxelSize));

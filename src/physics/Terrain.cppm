@@ -100,9 +100,36 @@ export namespace vortex::physics {
         /// the point version for anything that stands on the ground - the ground is often the
         /// chunk *below* the one that contains the feet. False for an empty or non-finite box.
         bool IsReady(const math::AABB& worldBounds) const;
+        /**
+         * @brief The movement gate of a player (sim::StepPlayer, docs/design/networking.md "Player
+         * movement"): every chunk the box touches, grown by one voxel, is loaded and has had its
+         * collider - or the decision that it needs none - at least once.
+         * @details Unlike IsReady it ignores the `installed >= exposed` term (a neighbour's faces
+         * uncovered by an edit and not re-cooked yet): when a re-cook finishes depends on worker
+         * timing, which differs between a server and its clients, so a gate that waited for it
+         * would hold a player for a different number of ticks on each side after every blast at
+         * a chunk border. The price is a player who may, for a few ticks, not collide with faces
+         * an edit just uncovered (a stale collider, measured as corrections). False for an empty or
+         * non-finite box.
+         */
+        bool HasCollider(const math::AABB& worldBounds) const;
         /// @brief Blocks until every collider requested by the last Update() and by the bodies exists,
         /// then guards the bodies again (tests, loading screens).
         void Flush();
+
+        /**
+         * @brief Brings the collider of every chunk a box touches (grown by one voxel) up to date
+         * now, on the calling thread, and returns how many it cooked.
+         * @details Takes the world's chunk changes first; then each loaded chunk of the box whose
+         * newest content is not installed - queued, or still cooking on a worker (a later result
+         * of that job is dropped) - or that is not tracked yet is cooked here and installed at once.
+         * Chunks that are up to date cost a lookup. What a character collides with in a session
+         * is then a function of the edits applied, not of worker timing (docs/design/
+         * networking.md, review of stage 4: the server calls it before every player step, a client
+         * before every predicted and replayed step). Cost: one chunk cook (mesh + Jolt shape) per
+         * chunk edited under the box since the last call, else nothing.
+         */
+        uint32_t FlushBox(const math::AABB& worldBounds);
 
         TerrainColliderStats Stats() const;
 

@@ -38,8 +38,9 @@ engine/
     physics/  vortex.physics   Jolt behind an engine interface, terrain collider streaming
     scene/    vortex.scene     entities (EnTT): components, object lifetime, destruction
     sim/      vortex.sim       the simulation: world + physics + terrain colliders + scene on a numbered tick;
-                               world operations, blasts, regions and their templates
-    net/      vortex.net       the session protocol: transports, wire format, messages, server, client
+                               world operations, blasts, regions and their templates, the player step
+    net/      vortex.net       the session protocol: transports, wire format, messages, server, client,
+                               the client clock and prediction, bot pilots
     graphics/ vortex.graphics  Vulkan device, window, renderer, UI layer
     engine/   vortex.engine    application loop, render data of the scene, explosions, glue
     editor/   vortex.editor    in-game editor: tool logic (no ImGui), panels, gizmo
@@ -562,11 +563,18 @@ every dynamic body (`PhysicsWorld::GetDynamicBodies`):
   plane (`Scene::DestroyAbove`) removes what flies through it.
 * A Packed chunk (4.3) needs a collider like a Dense one; its voxels come from `World::ReadChunk`.
 
-Kinematic and static bodies are not guarded. Character controllers are not bodies: a game holds
-its character while `Engine::TerrainReady(bounds)` is false - the box version, given the
-capsule's bounds, applies the same chunks-touched-plus-one-voxel test as for bodies. (The point
-version only looks at the chunk containing the point, which for feet standing on a chunk
-boundary is the empty chunk *above* the ground.)
+Kinematic and static bodies are not guarded. Character controllers are not bodies: a player is
+held by `sim::StepPlayer` while `TerrainColliders::HasCollider(capsule bounds)` is false - the
+same chunks-touched-plus-one-voxel test as for bodies, but a chunk that has had its collider once
+counts even while a neighbour's edit waits for its re-cook (`installed >= exposed`), because when
+that re-cook lands differs between a server and its clients (networking.md "Player movement").
+`Engine::TerrainReady(bounds)` / `IsReady` keep the full rule. (The point version only looks at
+the chunk containing the point, which for feet standing on a chunk boundary is the empty chunk
+*above* the ground.) What a character collides with is `PhysicsConfig::characterLayers`
+(Static, Dynamic and Debris by default; in a session `sim::kSessionCharacterLayers`, Static only, on the server and
+every client). A session also calls `TerrainColliders::FlushBox(box)` before every player step: the chunks of the box
+whose newest content is not installed are cooked on the calling thread at once, so a step meets colliders that follow
+the edits applied, not the moment a worker finished.
 
 `Scene::DestroyBelow(windowBottom - EngineConfig::fallOutDepth)` runs once per frame and removes
 what fell out of the world: dynamic bodies far below the window that were *on their way down*
@@ -803,8 +811,8 @@ network client will predict with (`docs/design/networking.md`).
 
 ### 7.5 Sessions
 
-`vortex.net` (library `Vortex::Net`, GPU-free) is the M1 protocol of `docs/design/networking.md`; stage 3 runs it
-in one process over loopback transports ("Stage 3 as built" there has every choice).
+`vortex.net` (library `Vortex::Net`, GPU-free) is the M1 protocol of `docs/design/networking.md`; stages 3-4 run it
+in one process over loopback transports ("Stage 3 as built" and "Stage 4 as built" there have every choice).
 
 * **Region.** `sim::RegionDesc` (`vortex.sim:region`) = template id, seed, play bounds (whole chunks), height
   range, generator and `TerrainSettings` (the session's voxel size included). `sim::RegionWorldConfig` turns it into
@@ -823,7 +831,9 @@ in one process over loopback transports ("Stage 3 as built" there has every choi
   receive (handshake: `Hello` with protocol version, `net::BuildHash` and token -> `Welcome` + the whole event log,
   or `Refuse`) -> streaming -> queued casts within the cast work budget (`sim::CastWorkOf`) and the event byte
   budget -> physics -> lifetimes -> the tick's `EventBatch`es (paced per peer by `ReliableBytesInFlight`) ->
-  `ServerStatus` on even ticks. Every event is encoded once, numbered (`opSeq`) and kept. Casts must fit the window
+  a `Snapshot` per client on even ticks; since stage 4 the inputs go into each player's queue on receive and every
+  player steps (`sim::StepPlayer`, slot order) between streaming and the casts. Every event is encoded once,
+  numbered (`opSeq`) and kept. Casts must fit the window
   (`sim::CastFitsRegion`). A full store, an incomplete operation or an island search that meets an unloaded chunk
   marks it `Failed`, which ends the session (peers disconnected, nothing more sent).
 * **Client.** `net::Client` does not own a simulation: once `Welcomed`, the owner builds one from
@@ -831,6 +841,20 @@ in one process over loopback transports ("Stage 3 as built" there has every choi
   region window, checks that the store held it and that the probe chunks are its generator's, and applies the events
   in `opSeq` order with `sim::ApplyOp` (duplicates ignored; a gap or an operation it cannot apply in full is a
   failure, and a failed client disconnects). Terrain is never predicted; no operation is ever sent.
+* **Players (stage 4).** `sim::StepPlayer(physics, terrain, character, state, input, tuning, dt)` is the one
+  movement rule (server, predicting client, offline game): integer inputs (`PlayerInput`: move axes, yaw, pitch,
+  button levels), edges derived from the levels before, a cooldown, the `HasCollider` gate. A client sends the inputs
+  the server has not acknowledged (at most 8, 30 Hz) on the state channel; the server queues 16 ticks ahead, repeats
+  the last movement for a missing input and captures a cast edge as a blast. Each `Snapshot` carries the tick, the
+  event stream position at it, the newest input held, the margin of the newest input that arrived (and its tick,
+  dropped ones included), the owner's state and the other players. The client's `TickClock` keeps inputs a target
+  margin early (jump when late or well short, 2 % bleed / catch-up, hold the surplus for a hard resync); it predicts
+  with its own character (`sim::kSessionCharacterLayers`, the server's mask; the tick length and gravity come in
+  `Welcome`), with the colliders under the player flushed before every step on both sides, compares the newest
+  snapshot whose events are applied with its history (one that waits 250 ms is given up and counted), and at 2 cm or
+  more restores and replays (blended over 100 ms, snapped at 1.5 m). Other players are interpolated in the past
+  (`RemotePlayers`) at a server time that only moves forward (`ServerTime`). Driven per tick by `TicksDue` +
+  `RunTick`; the engine is not yet (stage 5).
 * **Agreement.** `net::RegionHash` is `voxel::WorldHash` over the region window; probe chunks in `Welcome` compare
   the generators; `buildHash` covers the generator's golden values (`voxel::kGeneratorGoldenHash`) and the material
   table (`voxel::MaterialTableHash`).
@@ -914,7 +938,8 @@ World (statistics, save).
   the int limits, spheres vs. a reference across chunk borders and negative coordinates, exact
   hardness compare, swap, `ClearMask`, the skipped / unsynced report), generator determinism, colliders, connectivity, importers, particles;
   the HUD: font bitmaps and measuring, anchors, canvas quads, menu input, cursor capture.
-* `VortexPhysicsTests` - bodies, shapes, ray casts, characters, terrain colliders; the body guard
+* `VortexPhysicsTests` - bodies, shapes, ray casts, characters (restored states, layer masks), terrain colliders
+  (the player gate `HasCollider`); the body guard
   (a woken body the camera left behind, a body spawned where nothing is cooked, an unloaded
   chunk, the window edge, 60 bodies spread over the map, velocity kept through a freeze, parked
   bodies costing no collider, an edited chunk keeping its collider) and frozen bodies.
@@ -935,7 +960,9 @@ World (statistics, save).
   entity or body for them), an island box that is not loaded, objects damaged and pushed,
   fragments on a server; and the stage-2 acceptance: two simulations with different worker counts
   fed the same operations (islands and crumbs included) have equal world hashes, a slightly
-  different stream does not.
+  different stream does not. `sim::StepPlayer`: quantisers, edges and the cooldown, walk / run /
+  jump / held, and two simulations with other worker counts stepped with the same inputs staying
+  bit-equal (also with a restore every 30 ticks).
 * `VortexNetTests` - links `Vortex::Net` only (checked at configure time). The wire format (every
   event at its byte size, masks, `RegionDesc` bit for bit, messages, forged bytes), the transports
   (reliable order through loss, jitter and an outage; the state channel's loss, duplicates and
@@ -945,7 +972,11 @@ World (statistics, save).
   the delayed casts), the client against a hand-written server (overlapping batches, gaps, forged
   `Welcome`s, refused worlds), a failed server or client ending its part, peer timeouts, pacing of a
   late join, and the stage-3 acceptance: a server and two clients over 5 % loss agree after 200
-  blasts that free terrain.
+  blasts that free terrain. Stage 4: the client clock and remote players from margin / sample
+  sequences, and the movement acceptance with player bots on their own clocks (no correction on
+  flat ground over 5 % loss, a blast at a chunk border beside a walking player, a +50 ms ping
+  step, three lost input packets carrying a cast, a 150 ms server hitch, forced mispredictions,
+  forged packets).
 * `VortexGraphicsTests` - SPIR-V reflection of the real shader binaries, C++ / GLSL struct
   layout parity (`VxHudQuad` included), the material surface-kind and HUD cell-grid constants
   (C++ vs. the text of `common.glsl`) and

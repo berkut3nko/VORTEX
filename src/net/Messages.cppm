@@ -16,8 +16,9 @@ import :wire;
 
 export namespace vortex::net {
 
-    /// Bumped whenever a message or an event changes its bytes. Part of Hello.
-    inline constexpr uint16_t kProtocolVersion = 1;
+    /// Bumped whenever a message or an event changes its bytes. Part of Hello. 2: stage 4 (inputs,
+    /// snapshots, the player tuning in Welcome; ServerStatus retired).
+    inline constexpr uint16_t kProtocolVersion = 3;
 
     /// @brief First byte of every message. Wire format.
     enum class MessageType : uint8_t {
@@ -25,7 +26,9 @@ export namespace vortex::net {
         Welcome = 2,        ///< server -> client, events channel
         Refuse = 3,         ///< server -> client, events channel; the server then disconnects
         EventBatch = 4,     ///< server -> client, events channel: a run of the opSeq stream
-        ServerStatus = 5,   ///< server -> client, state channel (unreliable), even ticks
+        // 5 was ServerStatus (protocol 1); the snapshot header replaced it. Never reuse it.
+        Inputs = 6,         ///< client -> server, state channel (unreliable): the unacknowledged inputs
+        Snapshot = 7,       ///< server -> client, state channel (unreliable), even ticks
     };
 
     using Token = std::array<uint8_t, 16>;
@@ -66,7 +69,15 @@ export namespace vortex::net {
         uint8_t slot = 0;
         uint32_t tick = 0;                ///< The server's tick when it answered.
         sim::RegionDesc region;
-        glm::dvec3 spawn{0.0};            ///< Where a player starts (the template's spawn point).
+        glm::dvec3 spawn{0.0};            ///< Where this client's player starts (the template's spawn point; feet).
+        /// The session's movement and cast tuning: the client steps its prediction with these, never
+        /// with its own (a client checks sim::IsValid).
+        sim::PlayerTuning player;
+        /// The session's tick length and gravity (raw float bits): every predicted step depends on
+        /// them, so a client builds its simulation with these (Client::MakeSimulationConfig) and
+        /// refuses one with others (review of stage 4).
+        float tickSeconds = 1.0f / 60.0f;
+        glm::vec3 gravity{0.0f, -9.81f, 0.0f};
         uint32_t logEnd = 0;              ///< opSeq of the last event already in the log.
         std::vector<ProbeHash> probes;    ///< Hashes of pristine chunks chosen from the seed (ProbeChunks).
     };
@@ -82,16 +93,67 @@ export namespace vortex::net {
     /// Events a decoder accepts in one batch.
     inline constexpr uint32_t kMaxBatchEvents = 65535;
 
-    /// @brief Sent unreliably on even ticks (stage 4 replaces it by the snapshot header).
-    struct ServerStatus {
-        uint32_t tick = 0;
-        uint32_t lastOpSeq = 0;           ///< The last event the server has made.
+    /// Inputs a decoder accepts in one InputBatch (a client sends at most ClientSettings::maxInputsPerPacket, 8).
+    inline constexpr uint32_t kMaxBatchInputs = 32;
+    /// Bytes of one input on the wire (moveX, moveZ, yaw, pitch, buttons) and of the batch header (type, first tick, count).
+    inline constexpr size_t kInputBytes = 7;
+    inline constexpr size_t kInputBatchHeaderBytes = 6;
+
+    /**
+     * @brief The inputs of consecutive ticks `firstTick`, `firstTick + 1`, ... (docs/design/networking.md
+     * "Time and ticks": every packet carries the inputs the server has not acknowledged, at most 8).
+     * Each input's `tick` is set by the decoder.
+     */
+    struct InputBatch {
+        uint32_t firstTick = 0;
+        std::vector<sim::PlayerInput> inputs;
+    };
+
+    /// @brief Another player as a snapshot shows it (interpolated by the client, drawn in the past).
+    struct RemotePlayer {
+        uint8_t slot = 0;
+        glm::vec3 position{0.0f};         ///< feet
+        uint16_t yaw = 0;                 ///< of its last input
+        uint8_t flags = 0;                ///< sim::PlayerFlag
+        friend bool operator==(const RemotePlayer&, const RemotePlayer&) = default;
+    };
+
+    /// `Snapshot::inputMargin` before the server has had an input from this client.
+    inline constexpr int16_t kNoInputMargin = -32768;
+    /// Header (type, tick, lastOpSeq, ackInputTick, marginTick, inputMargin, owner flag, player
+    /// count), owner state and one other player, in bytes.
+    inline constexpr size_t kSnapshotHeaderBytes = 21;
+    inline constexpr size_t kSnapshotOwnerBytes = 27;
+    inline constexpr size_t kSnapshotPlayerBytes = 16;
+
+    /**
+     * @brief The state channel down, on even ticks (docs/design/networking.md "Player movement"): the
+     * server's tick, the event stream position at that tick, what the server has of this client's
+     * inputs, the owner's own state (unquantised) and every other player.
+     */
+    struct Snapshot {
+        uint32_t tick = 0;                ///< The tick just simulated: `owner` is the state after it.
+        /// The last event the server had made by the end of `tick` (opSeqAtTick): a client compares
+        /// `owner` with its prediction only once it has applied the events up to here.
+        uint32_t lastOpSeq = 0;
+        uint32_t ackInputTick = 0;        ///< The newest input tick the server has of this client (0 = none).
+        /// The input `inputMargin` is about: the newest input of the packet with the newest inputs
+        /// that arrived so far, dropped ones included (an input 16 or more ticks early is dropped and
+        /// never acknowledged, but its margin is what the clock must hear; review of stage 4).
+        uint32_t marginTick = 0;
+        /// How many ticks before it was needed the input of `marginTick` arrived (negative: late);
+        /// kNoInputMargin before the first input. Drives the client's clock.
+        int16_t inputMargin = kNoInputMargin;
+        bool hasOwner = false;
+        sim::PlayerState owner;
+        std::vector<RemotePlayer> others;
     };
 
     std::vector<uint8_t> Encode(const Hello& m);
     std::vector<uint8_t> Encode(const Refuse& m);
     std::vector<uint8_t> Encode(const Welcome& m);
-    std::vector<uint8_t> Encode(const ServerStatus& m);
+    std::vector<uint8_t> Encode(const InputBatch& m);
+    std::vector<uint8_t> Encode(const Snapshot& m);
     /// @brief A batch whose events are already encoded (WriteEvent bytes, concatenated): the
     /// server encodes each event once, when it is made.
     std::vector<uint8_t> EncodeBatch(uint32_t firstOpSeq, uint32_t tick, uint32_t count, std::span<const uint8_t> eventBytes);
@@ -105,5 +167,8 @@ export namespace vortex::net {
     bool Decode(std::span<const uint8_t> bytes, Refuse& out);
     bool Decode(std::span<const uint8_t> bytes, Welcome& out);
     bool Decode(std::span<const uint8_t> bytes, EventBatch& out);
-    bool Decode(std::span<const uint8_t> bytes, ServerStatus& out);
+    /// @brief At most kMaxBatchInputs inputs, at least one.
+    bool Decode(std::span<const uint8_t> bytes, InputBatch& out);
+    /// @brief Refuses non-finite positions and velocities.
+    bool Decode(std::span<const uint8_t> bytes, Snapshot& out);
 }

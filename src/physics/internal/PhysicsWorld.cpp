@@ -188,11 +188,18 @@ namespace vortex::physics {
             }
         };
 
-        /// What a character controller collides with: Static, Dynamic and Debris bodies. Bodies in
-        /// the Character layer (e.g. a kinematic proxy that follows the controller) never block it.
+        /// What a character controller collides with: the layers of PhysicsConfig::characterLayers
+        /// (Static, Dynamic and Debris by default). Bodies in the Character layer (e.g. a kinematic
+        /// proxy that follows the controller) never block it.
         class CharacterLayerFilter final : public JPH::ObjectLayerFilter {
         public:
-            bool ShouldCollide(JPH::ObjectLayer layer) const override { return layer != kLayerCharacter; }
+            explicit CharacterLayerFilter(uint8_t mask = kDefaultCharacterLayers) : m_Mask(mask) {}
+            bool ShouldCollide(JPH::ObjectLayer layer) const override {
+                return layer != kLayerCharacter && layer < 8 && ((m_Mask >> layer) & 1u) != 0;
+            }
+
+        private:
+            uint8_t m_Mask;
         };
 
         class IgnoreSensorsFilter final : public JPH::BodyFilter {
@@ -334,7 +341,7 @@ namespace vortex::physics {
     struct PhysicsWorld::Impl {
         struct Simulation {
             Simulation(const PhysicsConfig& config, int threads)
-                : tempAllocator(32u * 1024u * 1024u),
+                : characterFilter(config.characterLayers), tempAllocator(32u * 1024u * 1024u),
                   jobSystem(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers, threads) {
                 system.Init(config.maxBodies, 0, config.maxBodyPairs, config.maxContactConstraints, broadPhaseLayers,
                             objectVsBroadPhase, layerPairs);
@@ -347,6 +354,7 @@ namespace vortex::physics {
             BroadPhaseLayers broadPhaseLayers;
             ObjectVsBroadPhaseFilter objectVsBroadPhase;
             LayerPairFilter layerPairs;
+            CharacterLayerFilter characterFilter;
             JPH::TempAllocatorImplWithMallocFallback tempAllocator;
             JPH::JobSystemThreadPool jobSystem;
             ContactCollector contacts;
@@ -1039,7 +1047,7 @@ namespace vortex::physics {
         slot.character = new JPH::CharacterVirtual(settings.GetPtr(), ToJoltR(desc.position), JPH::Quat::sIdentity(), 0, &sim->system);
         slot.stepHeight = std::max(desc.stepHeight, 0.0f);
         slot.character->RefreshContacts(sim->system.GetDefaultBroadPhaseLayerFilter(kLayerCharacter),
-                                        CharacterLayerFilter(), JPH::BodyFilter(), JPH::ShapeFilter(),
+                                        sim->characterFilter, JPH::BodyFilter(), JPH::ShapeFilter(),
                                         sim->tempAllocator);
         return CharacterId{(slot.generation << kCharacterIndexBits) | index};
     }
@@ -1085,7 +1093,7 @@ namespace vortex::physics {
         update.mStickToFloorStepDown = JPH::Vec3(0.0f, -std::max(slot->stepHeight, 0.1f), 0.0f);
 
         ch.ExtendedUpdate(dt, gravity, update, sim.system.GetDefaultBroadPhaseLayerFilter(kLayerCharacter),
-                          CharacterLayerFilter(), JPH::BodyFilter(), JPH::ShapeFilter(), sim.tempAllocator);
+                          sim.characterFilter, JPH::BodyFilter(), JPH::ShapeFilter(), sim.tempAllocator);
     }
 
     CharacterState PhysicsWorld::GetCharacterState(CharacterId character) const {
@@ -1098,6 +1106,21 @@ namespace vortex::physics {
         return state;
     }
 
+    void PhysicsWorld::SetCharacterState(CharacterId character, const glm::vec3& feetPosition, const glm::vec3& velocity) {
+        CharacterSlot* slot = m_Impl->FindCharacter(character);
+        if (!slot) return;
+        if (!IsFinite(feetPosition) || !IsFinite(velocity)) {
+            Log::Warn("PhysicsWorld::SetCharacterState: ignoring a non-finite state");
+            return;
+        }
+        Impl::Simulation& sim = *m_Impl->sim;
+        slot->character->SetPosition(ToJoltR(feetPosition));
+        slot->character->SetLinearVelocity(ToJolt(velocity));
+        slot->character->RefreshContacts(sim.system.GetDefaultBroadPhaseLayerFilter(kLayerCharacter),
+                                         sim.characterFilter, JPH::BodyFilter(), JPH::ShapeFilter(),
+                                         sim.tempAllocator);
+    }
+
     void PhysicsWorld::SetCharacterPosition(CharacterId character, const glm::vec3& feetPosition) {
         CharacterSlot* slot = m_Impl->FindCharacter(character);
         if (!slot) return;
@@ -1108,7 +1131,7 @@ namespace vortex::physics {
         Impl::Simulation& sim = *m_Impl->sim;
         slot->character->SetPosition(ToJoltR(feetPosition));
         slot->character->RefreshContacts(sim.system.GetDefaultBroadPhaseLayerFilter(kLayerCharacter),
-                                         CharacterLayerFilter(), JPH::BodyFilter(), JPH::ShapeFilter(),
+                                         sim.characterFilter, JPH::BodyFilter(), JPH::ShapeFilter(),
                                          sim.tempAllocator);
     }
 }

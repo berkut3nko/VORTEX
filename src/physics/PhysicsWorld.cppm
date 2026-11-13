@@ -34,6 +34,11 @@ export namespace vortex::physics {
         Character,   ///< Character controllers.
     };
 
+    /// @brief The bit of `layer` in a layer mask (PhysicsConfig::characterLayers).
+    constexpr uint8_t LayerBit(Layer layer) { return static_cast<uint8_t>(1u << static_cast<uint8_t>(layer)); }
+    /// Layers a character collides with unless configured otherwise: everything but other characters.
+    inline constexpr uint8_t kDefaultCharacterLayers = LayerBit(Layer::Static) | LayerBit(Layer::Dynamic) | LayerBit(Layer::Debris);
+
     /// @brief Box in body-local metres with a density; the building block of voxel object shapes.
     struct BoxDesc {
         glm::vec3 center{0.0f};
@@ -136,6 +141,11 @@ export namespace vortex::physics {
         unsigned threads = 0;                    ///< Worker threads for the solver (0 = hardware - 1, at most 8).
         glm::vec3 gravity{0.0f, -9.81f, 0.0f};
         float contactEventMinSpeed = 2.0f;       ///< Slower impacts are not reported.
+        /// Layers (LayerBit) character controllers collide with; Layer::Character never. A session
+        /// sets sim::kSessionCharacterLayers (Static only) on the server and every client
+        /// (docs/design/networking.md "Player movement": a character must not be blocked by bodies
+        /// the other side does not have - until stage 6 every body on a client is its own rubble).
+        uint8_t characterLayers = kDefaultCharacterLayers;
     };
 
     /**
@@ -233,6 +243,14 @@ export namespace vortex::physics {
         void UpdateCharacter(CharacterId character, float dt, const glm::vec3& desiredVelocity, float jumpSpeed = 0.0f);
         CharacterState GetCharacterState(CharacterId character) const;
         void SetCharacterPosition(CharacterId character, const glm::vec3& feetPosition);
+        /**
+         * @brief Puts a character into a state it had elsewhere (a server's, for reconciliation;
+         * docs/design/networking.md "Player movement"): feet position and velocity are set, then its
+         * contacts are refreshed, so the next UpdateCharacter starts from them. What a refresh
+         * cannot restore exactly (the ground state of a character that got there by moving) is
+         * the error the reconciliation threshold absorbs. Non-finite values are ignored (logged).
+         */
+        void SetCharacterState(CharacterId character, const glm::vec3& feetPosition, const glm::vec3& velocity);
 
     private:
         struct Impl;

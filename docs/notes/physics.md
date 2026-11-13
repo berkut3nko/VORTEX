@@ -164,7 +164,8 @@ bodies resume on what was just installed, and their requests are cooked in the s
   reports as A is unverified.
 - **Characters are not bodies**: not stepped by `Step`, not in `GetDynamicBodies`, not guarded, not hit by
   `Raycast`, no contact events. The game must call `UpdateCharacter` once per fixed step and hold the
-  character while `Engine::TerrainReady(capsuleBounds)` is false (main.cpp:91-95). Use the box overload.
+  character while its terrain has no collider: since networking stage 4 both go through `sim::StepPlayer`, whose
+  gate is `TerrainColliders::HasCollider(capsule bounds)` (section "Players in a session").
 - **Character capsule is shrunk by Jolt's `mCharacterPadding`** (PW.cpp:1013) so shape + padding equals the
   requested capsule and the feet sit on the ground. Changing radius maths without this lifts or sinks the player.
 - **`UpdateCharacter` has no horizontal inertia**: velocity is rebuilt each call from ground velocity or the
@@ -278,7 +279,7 @@ must be copied into `Snapshot` on the main thread. Re-cook decisions are `Touch`
   stale where the body is (bounds + one voxel + 0.05 s of travel, in voxels). Keep the per-generation tags: a
   single union box cleared only when the newest result lands never clears on a chunk edited every frame, and
   then freezes every body near a held brush (`BodyBesideAChunkEditedEveryFrameIsNotHeld`).
-- `IsReady` (characters, `Engine::TerrainReady`) is chunk-level only, unchanged: a player standing in the crater
+- `IsReady` (`Engine::TerrainReady`; players use `HasCollider` since networking stage 4) is chunk-level only, unchanged: a player standing in the crater
   they shot is not held.
 - The public `GuardBodies()` calls `ConsumeChanges` first: a blast in `OnFixedUpdate` is followed by the guard
   of the same tick before any streaming, and must already freeze the piece
@@ -301,3 +302,29 @@ must be copied into `Snapshot` on the main thread. Re-cook decisions are `Touch`
   a body must not be simulated against geometry known to be gone.
 - Cost: one `std::vector` per tracked entry (empty unless edits are in flight) and, per guarded body, the
   overlap test on the chunks `BoxReady` already visits. Not measured; it is a few comparisons per chunk.
+
+## Players in a session (networking stage 4)
+
+- `SetCharacterState(id, feet, velocity)` = `SetPosition` + `SetLinearVelocity` + `RefreshContacts` (the ground
+  state comes from the refresh, not from the history). Replaying the same 60 steps from a restored state on a slab
+  gives the same positions (`CharacterStateIsRestoredAndReplaysClose`, under 1 mm asserted, 0 measured); over voxel
+  terrain two simulations with 1 and 3 workers stayed bit-equal for 600 ticks (`Player.*` in `VortexSimTests`).
+- `TerrainColliders::HasCollider(box)` is the gate of `sim::StepPlayer`: `ChunkReady` without
+  `installed >= exposed` (`ChunkBuilt` / `BoxBuilt`). Do not "fix" it to `IsReady`: re-cook timing differs between a
+  server and its clients, so that gate would hold players for different numbers of ticks after a blast at a chunk
+  border (`HasColliderIgnoresUncoveredFacesWaitingForARecook`). The game holds its player through `StepPlayer` now,
+  not `Engine::TerrainReady`.
+- `PhysicsConfig::characterLayers` (`LayerBit` mask, default Static | Dynamic | Debris; Character never) is the filter
+  of `CreateCharacter`, `UpdateCharacter`, `SetCharacterPosition` and `SetCharacterState`, kept in the `Simulation`
+  (one per physics world). A session uses `sim::kSessionCharacterLayers` (Static only) on the server and every client.
+- `TerrainColliders::FlushBox(box)` (review of networking stage 4) takes the world's changes and cooks, on the calling
+  thread, every chunk of the box (grown by one voxel) whose newest content is not installed or that is not tracked
+  yet; a worker's later result for it is dropped (`result.generation <= installed`). Up-to-date chunks cost a lookup.
+  A session calls it on `sim::PlayerReach` before every player step, so that what a character meets is a function of
+  the edits applied, not of when a cook finished (`FlushBoxInstallsTheNewestCollidersOfABoxAtOnce`). It leaves a
+  coordinate in `dirty` with `queued` false, which `ProcessDirty` skips. Do not call it on large boxes: each stale chunk
+  is a full cook on that thread.
+- Open, smaller since the review: on the border-blast test errors of up to 10 mm (below the 2 cm threshold) remain
+  after blasts begin, the same with and without waiting for cooks; before the first blast the prediction is now
+  bit-equal. Most likely the client predicting on the uncarved ground for a round trip; not isolated.
+

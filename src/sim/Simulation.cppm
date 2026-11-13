@@ -91,8 +91,9 @@ export namespace vortex::sim {
      * pieces below `kServerReplicatedPieceVolume` get no entity (`scene.replicatedPieceVoxels`,
      * that volume in voxels of `world.voxelSize`): they are client rubble. `sessionServer` is set:
      * a blast's face flood that meets a chunk that is not loaded is an error there, not a reason
-     * to wait. Everything else is kept (the other debris thresholds are resolved from the world's
-     * size by the Simulation).
+     * to wait. Characters collide with `kSessionCharacterLayers` (terrain only until networking
+     * stage 6), the same set a client's prediction uses. Everything else is kept (the other debris
+     * thresholds are resolved from the world's size by the Simulation).
      */
     SimulationConfig ServerConfig(SimulationConfig config = {});
 

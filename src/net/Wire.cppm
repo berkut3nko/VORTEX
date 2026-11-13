@@ -124,4 +124,9 @@ export namespace vortex::net {
     void WriteRegion(ByteWriter& out, const sim::RegionDesc& region);
     /// @brief Decodes a RegionDesc. Does not validate it (sim::IsValid does).
     bool ReadRegion(ByteReader& in, sim::RegionDesc& region);
+
+    /// @brief sim::PlayerTuning on the wire: raw float bits and the cooldown (45 bytes).
+    void WritePlayerTuning(ByteWriter& out, const sim::PlayerTuning& tuning);
+    /// @brief Decodes a PlayerTuning. Does not validate it (sim::IsValid does).
+    bool ReadPlayerTuning(ByteReader& in, sim::PlayerTuning& tuning);
 }

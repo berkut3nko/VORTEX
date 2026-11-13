@@ -6,3 +6,4 @@ export import :simulation;
 export import :worldop;
 export import :blast;
 export import :region;
+export import :player;

@@ -3,10 +3,12 @@ module;
 #include <glm/glm.hpp>
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 export module vortex.net:drill;
 
+import vortex.core;
 import vortex.voxel;
 import vortex.sim;
 
@@ -54,5 +56,44 @@ export namespace vortex::net {
         void Layout(const sim::RegionDesc& region);
         voxel::WorldMaterials m_Ids;
         std::vector<glm::ivec3> m_Sites;  ///< minimum corner of each site, y = foundation top
+    };
+
+    /// @brief What a BotPilot does besides walking.
+    struct PilotSettings {
+        bool run = true;             ///< some segments run
+        bool strafe = true;          ///< some segments strafe
+        bool jumps = true;           ///< a jump every 1-2 s
+        bool casts = false;          ///< a cast every `castEveryTicks`, at the ground ahead
+        uint32_t castEveryTicks = 90;
+        float castPitch = -0.45f;    ///< radians: where it looks while casting (down, ahead)
+        float edgeMargin = 2.0f;     ///< metres inside the play bounds it turns back towards the middle
+    };
+
+    /**
+     * @brief Scripted controls of a bot player (docs/design/networking.md stage 4: bots walking,
+     * jumping and casting through blasts; `vortex_server` and the movement tests). Segments of
+     * 20-80 ticks in a seeded direction, running or walking, sometimes strafing, a jump now and
+     * then, a cast every `castEveryTicks`; near the edge of the play bounds it heads back to the
+     * middle. Deterministic for a seed and the states it is given.
+     */
+    class BotPilot {
+    public:
+        BotPilot(const sim::RegionDesc& region, uint64_t seed, PilotSettings settings = {});
+        /// @brief The controls for the next tick of a player now in `state` (its predicted state).
+        sim::PlayerInput Next(const sim::PlayerState& state);
+        uint32_t Casts() const { return m_Casts; }
+        uint32_t Jumps() const { return m_Jumps; }
+
+    private:
+        PilotSettings m_Settings;
+        Rng m_Rng;
+        glm::vec2 m_Min{0.0f}, m_Max{0.0f};   ///< play bounds shrunk by edgeMargin, metres (x, z)
+        uint32_t m_Tick = 0;
+        uint32_t m_SegmentLeft = 0;
+        uint32_t m_NextJump = 60;
+        uint16_t m_Yaw = 0;
+        int8_t m_Strafe = 0;
+        bool m_Run = false;
+        uint32_t m_Casts = 0, m_Jumps = 0;
     };
 }

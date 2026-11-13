@@ -767,3 +767,69 @@ TEST(FrozenBodies, OnlyDynamicBodiesFreezeAndBookkeepingFollowsTheBody) {
     f.Step(30);
     EXPECT_LT(f.physics.GetState(box).position.y, 10.0f);
 }
+
+// networking.md "Player movement": a player's gate is HasCollider, which ignores the faces a
+// neighbour's edit uncovered until they are re-cooked (IsReady waits for them). When a re-cook
+// lands depends on worker timing, so a gate that waited for it would hold a player for a
+// different number of ticks on the server and on each client after a blast at a chunk border.
+TEST(TerrainGuard, HasColliderIgnoresUncoveredFacesWaitingForARecook) {
+    Fixture f;
+    ASSERT_TRUE(f.initialized);
+    const glm::dvec3 kHome(0.0, 21.0, 0.0);
+    const math::AABB lower(glm::vec3(10.7f, 14.5f, 10.7f), glm::vec3(11.3f, 15.5f, 11.3f));   // inside the rock chunk below the ground
+    const math::AABB onGround(glm::vec3(10.7f, 20.0f, 10.7f), glm::vec3(11.3f, 21.8f, 11.3f));
+    EXPECT_FALSE(f.colliders->HasCollider(onGround));            // nothing loaded
+    f.world->LoadBlocking(kHome);
+    EXPECT_FALSE(f.colliders->HasCollider(onGround));            // loaded, never cooked
+    f.Frames(3, kHome);
+    f.colliders->Flush();
+    EXPECT_TRUE(f.colliders->HasCollider(onGround));
+    EXPECT_TRUE(f.colliders->HasCollider(lower));
+    EXPECT_FALSE(f.colliders->HasCollider(math::AABB(glm::vec3(5000.0f, 20.0f, 0.0f), glm::vec3(5001.0f, 21.0f, 1.0f))));
+    EXPECT_FALSE(f.colliders->HasCollider(math::AABB()));
+
+    // The shaft of ChunkUncoveredByCarvingItsNeighbourIsNotReadyUntilRecooked: the lower chunk is
+    // not ready (its top faces are missing) but it has had a collider, so a player is not held.
+    ASSERT_GT(f.world->FillBox({20, 32, 20}, {24, 40, 24}, 0), 0u);
+    const std::array<glm::dvec3, 1> points = {kHome};
+    f.colliders->Update(points, kRadius);
+    EXPECT_FALSE(f.colliders->IsReady(lower));
+    EXPECT_TRUE(f.colliders->HasCollider(lower));
+    EXPECT_TRUE(f.colliders->HasCollider(onGround));
+    f.colliders->Flush();
+    EXPECT_TRUE(f.colliders->IsReady(lower));
+    EXPECT_TRUE(f.colliders->HasCollider(lower));
+}
+
+// Review of networking stage 4: what a character collides with must follow the edits applied, not
+// when a worker finishes a cook. FlushBox cooks the chunks of a box that are not up to date on the
+// calling thread and installs them at once; a worker's result for them that comes later is dropped.
+TEST(TerrainGuard, FlushBoxInstallsTheNewestCollidersOfABoxAtOnce) {
+    Fixture f;
+    ASSERT_TRUE(f.initialized);
+    const glm::dvec3 kHome(0.0, 21.0, 0.0);
+    const math::AABB lower(glm::vec3(10.7f, 14.5f, 10.7f), glm::vec3(11.3f, 15.5f, 11.3f));
+    f.world->LoadBlocking(kHome);
+    f.Frames(3, kHome);
+    f.colliders->Flush();
+    ASSERT_TRUE(f.colliders->IsReady(lower));
+    EXPECT_EQ(f.colliders->FlushBox(lower), 0u);                 // up to date: nothing to cook
+
+    // A shaft uncovers the lower chunk's top faces; its re-cook is started on a worker by Update.
+    ASSERT_GT(f.world->FillBox({20, 32, 20}, {24, 40, 24}, 0), 0u);
+    const std::array<glm::dvec3, 1> points = {kHome};
+    f.colliders->Update(points, kRadius);
+    EXPECT_FALSE(f.colliders->IsReady(lower));
+    EXPECT_GT(f.colliders->FlushBox(lower), 0u);
+    EXPECT_TRUE(f.colliders->IsReady(lower));                    // installed, no worker waited for
+    EXPECT_EQ(f.colliders->FlushBox(lower), 0u);
+    // An edit FlushBox sees by itself (no Update in between): the edited chunk is cooked too.
+    ASSERT_GT(f.world->FillBox({20, 28, 20}, {24, 32, 24}, 0), 0u);
+    EXPECT_GT(f.colliders->FlushBox(lower), 0u);
+    EXPECT_TRUE(f.colliders->IsReady(lower));
+    f.colliders->Flush();                                        // the workers' results are dropped
+    EXPECT_TRUE(f.colliders->IsReady(lower));
+    EXPECT_EQ(f.colliders->FlushBox(lower), 0u);
+    // A box with nothing loaded cooks nothing.
+    EXPECT_EQ(f.colliders->FlushBox(math::AABB(glm::vec3(5000.0f, 20.0f, 0.0f), glm::vec3(5001.0f, 21.0f, 1.0f))), 0u);
+}

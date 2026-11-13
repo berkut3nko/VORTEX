@@ -3,11 +3,13 @@ module;
 #include <glm/glm.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <vector>
 
 module vortex.net;
 
+import vortex.core;
 import vortex.voxel;
 import vortex.sim;
 
@@ -103,5 +105,52 @@ namespace vortex::net {
             }
         }
         return step;
+    }
+
+    BotPilot::BotPilot(const sim::RegionDesc& region, uint64_t seed, PilotSettings settings)
+        : m_Settings(settings), m_Rng(seed, 0x9e3779b97f4a7c15ull) {
+        const float chunk = static_cast<float>(voxel::kChunkSize) * region.terrain.voxelSize;
+        m_Min = glm::vec2(region.playMinChunk) * chunk + glm::vec2(settings.edgeMargin);
+        m_Max = glm::vec2(region.playMaxChunk) * chunk - glm::vec2(settings.edgeMargin);
+        m_Max = glm::max(m_Max, m_Min);
+    }
+
+    sim::PlayerInput BotPilot::Next(const sim::PlayerState& state) {
+        sim::PlayerInput in;
+        ++m_Tick;
+        if (m_SegmentLeft == 0) {
+            m_SegmentLeft = 20 + m_Rng.NextBounded(61);
+            m_Yaw = static_cast<uint16_t>(m_Rng.NextU32());
+            m_Run = m_Settings.run && m_Rng.NextBounded(2) == 0;
+            const uint32_t strafe = m_Settings.strafe ? m_Rng.NextBounded(4) : 0;
+            m_Strafe = static_cast<int8_t>(strafe == 1 ? 127 : strafe == 2 ? -127 : 0);
+        }
+        --m_SegmentLeft;
+        // Outside the inner bounds: head for the middle (and keep heading there for a while).
+        const glm::vec2 feet(state.position.x, state.position.z);
+        if (feet.x < m_Min.x || feet.y < m_Min.y || feet.x > m_Max.x || feet.y > m_Max.y) {
+            const glm::vec2 to = 0.5f * (m_Min + m_Max) - feet;
+            m_Yaw = sim::QuantizeYaw(std::atan2(-to.x, -to.y));
+            m_Strafe = 0;
+            m_SegmentLeft = std::max<uint32_t>(m_SegmentLeft, 30);
+        }
+        in.moveZ = 127;
+        in.moveX = m_Strafe;
+        in.yaw = m_Yaw;
+        in.buttons = m_Run ? sim::PlayerButton_Run : 0;
+        if (m_Settings.jumps && m_Tick >= m_NextJump) {
+            in.buttons |= sim::PlayerButton_Jump;               // held for two ticks: one edge
+            if (m_Tick >= m_NextJump + 1) {
+                m_NextJump = m_Tick + 60 + m_Rng.NextBounded(61);
+                ++m_Jumps;
+            }
+        }
+        if (m_Settings.casts && m_Settings.castEveryTicks > 0) {
+            const uint32_t phase = m_Tick % m_Settings.castEveryTicks;
+            if (phase < 4) in.pitch = sim::QuantizePitch(m_Settings.castPitch);   // look down first, then press
+            if (phase == 2 || phase == 3) in.buttons |= sim::PlayerButton_Cast;
+            if (phase == 3) ++m_Casts;
+        }
+        return in;
     }
 }

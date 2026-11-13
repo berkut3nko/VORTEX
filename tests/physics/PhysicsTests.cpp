@@ -5,6 +5,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -801,4 +802,86 @@ TEST(PhysicsWorld, CharacterIgnoresCharacterLayerBodies) {
     EXPECT_TRUE(state.onGround);
     EXPECT_GT(state.position.x, 7.0f);                           // walked straight through: 9 m in 3 s
     EXPECT_NEAR(state.position.y, kGroundTop, 0.03f);
+}
+
+// networking.md "Player movement": a client restores the server's state (position + velocity) and
+// replays its inputs from there. The replay starts from refreshed contacts, not from the ones the
+// character had, so it is close to, not bit-equal with, the uninterrupted run: on flat ground well
+// under the 2 cm the reconciliation ignores.
+TEST(PhysicsWorld, CharacterStateIsRestoredAndReplaysClose) {
+    Fixture f;
+    ASSERT_TRUE(f.initialized);
+    f.AddGround();
+    CharacterDesc desc;
+    desc.position = {0.0f, kGroundTop, 0.0f};
+    const CharacterId character = f.physics.CreateCharacter(desc);
+    ASSERT_TRUE(character.IsValid());
+
+    auto wish = [](int i) { return glm::vec3(i % 40 < 20 ? 3.8f : -2.0f, 0.0f, i % 30 < 15 ? 1.5f : 7.0f); };
+    auto jump = [](int i) { return i == 35 ? 4.6f : 0.0f; };
+    for (int i = 0; i < 30; ++i) f.physics.UpdateCharacter(character, kStep, wish(i), jump(i));
+    const CharacterState saved = f.physics.GetCharacterState(character);
+    std::vector<CharacterState> run;
+    for (int i = 30; i < 90; ++i) {
+        f.physics.UpdateCharacter(character, kStep, wish(i), jump(i));
+        run.push_back(f.physics.GetCharacterState(character));
+    }
+    EXPECT_GT(glm::length(run.back().position - saved.position), 3.0f);
+
+    // Restore and replay the same 60 steps (a jump included).
+    f.physics.SetCharacterState(character, saved.position, saved.velocity);
+    CharacterState state = f.physics.GetCharacterState(character);
+    ExpectVecNear(state.position, saved.position, 0.0f);
+    ExpectVecNear(state.velocity, saved.velocity, 0.0f);
+    EXPECT_EQ(state.onGround, saved.onGround);
+    float worst = 0.0f;
+    for (int i = 30; i < 90; ++i) {
+        f.physics.UpdateCharacter(character, kStep, wish(i), jump(i));
+        state = f.physics.GetCharacterState(character);
+        worst = std::max(worst, glm::length(state.position - run[static_cast<size_t>(i - 30)].position));
+    }
+    EXPECT_LT(worst, 0.001f) << "a replay from a restored state drifts by " << worst << " m";
+
+    // A state in the air keeps its velocity; bad values and ids are ignored.
+    f.physics.SetCharacterState(character, {2.0f, kGroundTop + 3.0f, 0.0f}, {0.0f, 2.0f, 1.0f});
+    state = f.physics.GetCharacterState(character);
+    EXPECT_FALSE(state.onGround);
+    ExpectVecNear(state.velocity, {0.0f, 2.0f, 1.0f}, 0.0f);
+    f.physics.SetCharacterState(character, {std::nanf(""), 0.0f, 0.0f}, glm::vec3(0.0f));
+    ExpectVecNear(f.physics.GetCharacterState(character).position, {2.0f, kGroundTop + 3.0f, 0.0f}, 0.0f);
+    f.physics.SetCharacterState(CharacterId{}, glm::vec3(1.0f), glm::vec3(1.0f));
+    f.physics.SetCharacterState(CharacterId{123456u}, glm::vec3(1.0f), glm::vec3(1.0f));
+}
+
+// PhysicsConfig::characterLayers: a session client's predicted character collides with terrain
+// only (networking.md "Player movement"), so its own rubble - which the server's character never
+// meets - does not block it. The default still collides with Dynamic and Debris bodies.
+TEST(PhysicsWorld, CharacterLayersChooseWhatBlocksACharacter) {
+    for (const bool staticOnly : {false, true}) {
+        PhysicsConfig config = SmallConfig();
+        if (staticOnly) config.characterLayers = LayerBit(Layer::Static);
+        Fixture f(config);
+        ASSERT_TRUE(f.initialized);
+        f.AddGround();
+        BodyDesc rubble;
+        rubble.shape = f.physics.CreateBoxShape({0.5f, 0.5f, 5.0f}, 2000.0f);
+        rubble.position = {4.0f, kGroundTop + 0.5f, 0.0f};
+        rubble.layer = Layer::Debris;
+        rubble.allowSleeping = false;
+        ASSERT_TRUE(f.physics.CreateBody(rubble).IsValid());
+        CharacterDesc desc;
+        desc.position = {0.0f, kGroundTop, 0.0f};
+        const CharacterId character = f.physics.CreateCharacter(desc);
+        for (int i = 0; i < 180; ++i) {
+            f.physics.UpdateCharacter(character, kStep, {3.0f, 0.0f, 0.0f});
+            f.physics.Step(kStep);
+        }
+        const CharacterState state = f.physics.GetCharacterState(character);
+        if (staticOnly) {
+            EXPECT_GT(state.position.x, 7.0f);                   // walked through the rubble
+            EXPECT_NEAR(state.position.y, kGroundTop, 0.03f);
+        } else {
+            EXPECT_LT(state.position.x, 6.0f);                   // stopped, or climbed onto it and pushed it
+        }
+    }
 }

@@ -7,6 +7,7 @@ module;
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <optional>
 #include <vector>
 
 export module vortex.net:server;
@@ -48,10 +49,18 @@ export namespace vortex::net {
         uint32_t closeGraceTicks = 120;
         /// CastRecords kept (the most recent; running totals are in ServerStats).
         uint32_t castRecordLimit = 4096;
+        /// Movement and cast tuning of every player; sent in Welcome (clients predict with it).
+        sim::PlayerTuning player;
+        /// Inputs a player may be ahead of the server (docs/design/networking.md "Time and ticks": the
+        /// queue holds 16 per player; inputs further ahead are dropped - also the speed-hack bound).
+        uint32_t inputQueueTicks = 16;
+        /// A missing input repeats the last movement for this many ticks, then the player stands.
+        uint32_t repeatInputTicks = 6;
     };
 
     /// @brief One cast as the server ran it (for logs, tests and the stage-8 delay histogram).
     struct CastRecord {
+        uint8_t player = 0;               ///< 0 = a server-side cast (QueueCast); else slot + 1 of the player who cast it
         uint32_t queuedTick = 0;
         uint32_t tick = 0;                ///< The tick it ran on.
         voxel::SphereQ sphere;
@@ -98,17 +107,39 @@ export namespace vortex::net {
         double maxCastMsPer10k = 0.0;     ///< The highest ms per 10 000 work units of one cast (of at least 1000 units).
         /// Running totals over every cast (CastRecords keep only the most recent).
         uint64_t islands = 0, crumbs = 0, inBoxIslands = 0, facePieces = 0, neckPieces = 0;
+
+        // Players (stage 4).
+        uint64_t inputPackets = 0;        ///< InputBatch messages received
+        uint64_t malformedInputs = 0;     ///< state-channel messages from a joined client that did not decode (ignored)
+        uint64_t inputsQueued = 0;        ///< inputs for a tick not simulated yet
+        uint64_t inputsLate = 0;          ///< inputs for a tick already simulated: they only refreshed the last input
+        uint64_t inputsDuplicate = 0;     ///< inputs the server already had (every packet repeats the unacknowledged ones)
+        uint64_t inputsTooEarly = 0;      ///< inputs inputQueueTicks or more ahead: dropped
+        uint64_t ticksRepeated = 0;       ///< player ticks without an input: the last movement repeated
+        uint64_t ticksStood = 0;          ///< ... and after repeatInputTicks of them: no movement
+        uint64_t heldTicks = 0;           ///< player ticks the gate held (terrain without a collider)
+        uint32_t castsFromInputs = 0;     ///< cast edges the cooldown accepted, queued as casts
+        uint32_t castsFromLateInputs = 0; ///< ... of them, found in a late input
+        uint32_t castsMissed = 0;         ///< cast edges whose ray met no terrain within castRange
+        /// Jump edges found in a late input: carried to the next tick the server simulates (the
+        /// client jumped at the input's tick, so this is a correction of the jump's timing, not a
+        /// missing jump; review of stage 4).
+        uint32_t jumpsFromLateInputs = 0;
+        uint64_t snapshots = 0, snapshotBytes = 0;
     };
 
     /**
-     * @brief The session server (docs/design/networking.md stage 3): one sim::Simulation with a
+     * @brief The session server (docs/design/networking.md stages 3-4): one sim::Simulation with a
      * fixed window (play bounds + 3 chunks, the region's height range), the template's operations
-     * as opSeq 1..k, an event stream with a byte budget, a cast queue with a work budget, and
-     * joiners who receive the whole event log. GPU-free.
-     * @details Tick order (one call of Tick): receive -> streaming -> queued casts within the
-     * work and event budgets -> body guard, physics, pose sync -> lifetimes -> each joined client's
-     * next batches while its bytes in flight are under maxEventBytesInFlight -> a status on even
-     * ticks. Operations and casts given between ticks (ApplyOp, QueueCast) are applied / queued at
+     * as opSeq 1..k, an event stream with a byte budget, a cast queue with a work budget, joiners
+     * who receive the whole event log, and one player per joined client moved by its inputs.
+     * GPU-free.
+     * @details Tick order (one call of Tick): receive (inputs into each player's queue) ->
+     * streaming (colliders around the players) -> sim::StepPlayer per player in slot order (its
+     * input for this tick, or the last movement repeated; a cast edge is captured from the
+     * player's state and queued) -> queued casts within the work and event budgets -> body guard,
+     * physics, pose sync -> lifetimes -> each joined client's next batches while its bytes in
+     * flight are under maxEventBytesInFlight -> a snapshot per client on even ticks. Operations and casts given between ticks (ApplyOp, QueueCast) are applied / queued at
      * once and go out with the next tick. Once Failed, the session is over: peers are
      * disconnected, Tick only turns new peers away, ApplyOp and QueueCast refuse.
      */
@@ -139,6 +170,13 @@ export namespace vortex::net {
         bool QueueCast(const voxel::SphereQ& sphere, uint16_t power);
         bool QueueCast(const sim::BlastDesc& desc);
         size_t QueuedCasts() const;
+
+        /// @brief Players in the session (one per joined client), and the state of the one in `slot`.
+        size_t PlayerCount() const;
+        std::optional<sim::PlayerState> GetPlayer(uint8_t slot) const;
+        /// @brief Admin: puts the player of `slot` at `feet`, standing still (the owner is corrected by
+        /// the next snapshot). false without such a player or for a non-finite position.
+        bool TeleportPlayer(uint8_t slot, const glm::vec3& feet);
 
         uint32_t TickNumber() const;      ///< The tick that runs next.
         uint32_t LastOpSeq() const;       ///< 0 before the first event.
