@@ -28,6 +28,27 @@ export namespace vortex::sim {
         Voxel,
     };
 
+    /**
+     * @brief Server bodies that clients copy (docs/design/networking.md stage 6, "Entity
+     * replication"). Off offline (every piece is local rubble there); sim::ServerConfig turns it on.
+     * @details With `enabled`, sim::Blast makes a server body with a scene::NetId for every terrain
+     * piece of at least SceneConfig::replicatedPieceVoxels (its Detach carries the id) and gives one
+     * to every object piece Scene::Damage keeps as an entity, within the budgets below; a piece over
+     * a budget is client rubble instead (`netId = 0` / a fragment), never lost (shred.md R7).
+     */
+    struct ReplicationConfig {
+        bool enabled = false;
+        /// Live pieces at most (placed objects such as crates are not pieces). A new piece over it
+        /// evicts the oldest resting piece, else the smallest awake one (EntityDespawn{ToRubble}).
+        uint32_t maxLivePieces = 256;
+        /// Awake pieces at most (derived from the snapshot budget): a new piece while this many are
+        /// awake is client rubble.
+        uint32_t maxAwakePieces = 64;
+        /// New server bodies per tick (pieces of any kind; shred.md Part 4 `serverBodiesPerTick`: what
+        /// a client can build, about 120 per second). Further pieces in the same tick are client rubble.
+        uint32_t bodiesPerTick = 2;
+    };
+
     struct SimulationConfig {
         uint32_t chunkCapacity = 8192;        ///< Slots of the chunk store (terrain + baked models).
         /// Size of the particle pool. 0 = no particles at all: every effect the scene asks for is
@@ -70,6 +91,29 @@ export namespace vortex::sim {
         /// (scene::ResolveThresholds; Config() reports the counts).
         scene::SceneConfig scene;
         physics::PhysicsConfig physics;
+        /// Server bodies with a NetId (a session server: ServerConfig sets `enabled`).
+        ReplicationConfig replication;
+    };
+
+    /// @brief What the replication of a simulation decided so far (ReplicationConfig).
+    struct ReplicationStats {
+        uint32_t netIds = 0;              ///< NetIds handed out (lights, objects, pieces).
+        uint32_t pieces = 0;              ///< Pieces that became server bodies.
+        uint32_t overTickBudget = 0;      ///< Pieces left to client rubble: bodiesPerTick reached.
+        uint32_t overAwakeCap = 0;        ///< ... maxAwakePieces awake.
+        uint32_t evictedResting = 0;      ///< Pieces evicted by maxLivePieces: the oldest resting one.
+        uint32_t evictedAwake = 0;        ///< ... nothing rested: the smallest awake one.
+        uint32_t bodyFailures = 0;        ///< A piece's body could not be made (out of bodies): its id despawns at once.
+        uint32_t maxLive = 0, maxAwake = 0;   ///< Most pieces seen live / awake when one was asked for.
+    };
+
+    /// @brief The replication bookkeeping a Simulation keeps (sim::AllocateNetId, sim::TakePieceSlot).
+    struct ReplicationState {
+        uint32_t nextNetId = 1;           ///< Counts up, never reused.
+        uint32_t budgetTick = 0xFFFFFFFFu;
+        uint32_t bodiesThisTick = 0;
+        uint32_t pendingPieces = 0;       ///< Slots taken whose body is made later in the same blast.
+        ReplicationStats stats;
     };
 
     /// SceneConfig::replicatedPieceVoxels of a server, in metres: object pieces smaller than this
@@ -91,9 +135,11 @@ export namespace vortex::sim {
      * pieces below `kServerReplicatedPieceVolume` get no entity (`scene.replicatedPieceVoxels`,
      * that volume in voxels of `world.voxelSize`): they are client rubble. `sessionServer` is set:
      * a blast's face flood that meets a chunk that is not loaded is an error there, not a reason
-     * to wait. Characters collide with `kSessionCharacterLayers` (terrain only until networking
-     * stage 6), the same set a client's prediction uses. Everything else is kept (the other debris
-     * thresholds are resolved from the world's size by the Simulation).
+     * to wait. Characters collide with `kSessionCharacterLayers` (terrain and replicated bodies),
+     * the same set a client's prediction uses, and neither push nor weigh on bodies
+     * (`physics.characterMovesBodies` false: a client's copies are kinematic). Server bodies with a NetId (`replication.enabled`,
+     * networking stage 6). Everything else is kept (the other debris thresholds are resolved from
+     * the world's size by the Simulation).
      */
     SimulationConfig ServerConfig(SimulationConfig config = {});
 
@@ -195,6 +241,9 @@ export namespace vortex::sim {
             uint32_t neckReleases = 0;    ///< Parts the load check released (pieces and crumbs), all searches.
         };
         IslandSearchChecks& IslandSearchCheck();
+        /// @brief NetIds and the piece budgets (SimulationConfig::replication; sim::AllocateNetId).
+        ReplicationState& Replication();
+        const ReplicationState& Replication() const;
 
         /**
          * @brief Simulates one tick: streaming, physics, lifetimes; then `Tick()` is one higher.

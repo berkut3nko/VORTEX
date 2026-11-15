@@ -412,8 +412,7 @@ TEST(EnetSession, TwoPlayersWalkCastAndAgreeOverUdpWithLoss) {
         // A drill structure every 40 ticks: built, then shot (it frees an island, a bar or a neck tower).
         if (!draining && drillStep < kDrillSteps && server.TickNumber() >= 60 + 40 * drillStep) {
             const net::DrillStep s = drill.Step(drillStep++);
-            for (const sim::WorldOp& op : s.build) server.ApplyOp(op);
-            server.QueueCast(s.cast, s.power);
+            net::RunDrillStep(server, s);
         }
         server.Advance(seconds);
         listen->Flush();

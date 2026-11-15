@@ -579,7 +579,8 @@ TEST(Movement, ForgedPacketsAreHarmless) {
                 in.moveX = static_cast<int8_t>(rng.NextU32());
                 in.moveZ = static_cast<int8_t>(rng.NextU32());
                 in.yaw = static_cast<uint16_t>(rng.NextU32());
-                in.buttons = static_cast<uint8_t>(rng.NextU32() & ~sim::PlayerButton_Cast);
+                // No casts and no crates: they would change the world (as a real player's would).
+                in.buttons = static_cast<uint8_t>(rng.NextU32() & ~(sim::PlayerButton_Cast | sim::PlayerButton_Crate));
             }
             bot.loop.Send(kServerAsSeenByBot, net::Channel::State, net::Encode(forged));
         }

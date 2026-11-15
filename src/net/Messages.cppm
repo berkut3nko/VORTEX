@@ -1,6 +1,7 @@
 module;
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <array>
 #include <cstddef>
@@ -19,8 +20,9 @@ export namespace vortex::net {
     /// Bumped whenever a message or an event changes its bytes. Part of Hello. 2: stage 4 (inputs,
     /// snapshots, the player tuning in Welcome; ServerStatus retired). 3: Snapshot::marginTick, the
     /// tick length and gravity in Welcome. 4: stage 5 (the owner block's lastCastTick / castRejected).
-    /// 5: review of stage 5 (RefuseReason::LogTooLarge).
-    inline constexpr uint16_t kProtocolVersion = 5;
+    /// 5: review of stage 5 (RefuseReason::LogTooLarge). 6: stage 6 (entity events, snapshot bodies,
+    /// PlayerButton_Crate).
+    inline constexpr uint16_t kProtocolVersion = 6;
 
     /// @brief First byte of every message. Wire format.
     enum class MessageType : uint8_t {
@@ -121,6 +123,19 @@ export namespace vortex::net {
         friend bool operator==(const RemotePlayer&, const RemotePlayer&) = default;
     };
 
+    /// @brief An awake replicated body in a snapshot (stage 6; 31 bytes: netId, position as raw
+    /// floats, rotation as 4 x int16 / 32767, velocity as 3 x int16 in 1/256 m/s, flags).
+    struct BodySample {
+        uint32_t netId = 0;
+        glm::vec3 position{0.0f};         ///< the body's shape origin (= model origin), world metres
+        glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        glm::vec3 velocity{0.0f};
+        uint8_t flags = kBodyAwake;
+        static constexpr uint8_t kBodyAwake = 1;
+    };
+    /// @brief The rotation and velocity a client gets for a BodySample (what the quantisation leaves).
+    glm::quat QuantizeRotation(const glm::quat& q);
+
     /// @brief Why the server did not run a player's cast (Snapshot owner block). Wire format.
     enum class CastRejection : uint8_t {
         None = 0,       ///< queued (it runs when the cast queue reaches it) or run
@@ -134,10 +149,14 @@ export namespace vortex::net {
     /// `Snapshot::inputMargin` before the server has had an input from this client.
     inline constexpr int16_t kNoInputMargin = -32768;
     /// Header (type, tick, lastOpSeq, ackInputTick, marginTick, inputMargin, owner flag, player
-    /// count), owner state and one other player, in bytes.
-    inline constexpr size_t kSnapshotHeaderBytes = 21;
+    /// count, body count), owner state, one other player and one body, in bytes.
+    inline constexpr size_t kSnapshotHeaderBytes = 22;
     inline constexpr size_t kSnapshotOwnerBytes = 32;
     inline constexpr size_t kSnapshotPlayerBytes = 16;
+    inline constexpr size_t kSnapshotBodyBytes = 31;
+    /// A snapshot is at most this large (networking.md "Entity replication": 1200 B hold about 36
+    /// bodies after the players); bodies that do not fit wait for a later one (priority).
+    inline constexpr size_t kSnapshotBudgetBytes = 1200;
 
     /**
      * @brief The state channel down, on even ticks (docs/design/networking.md "Player movement"): the
@@ -164,6 +183,8 @@ export namespace vortex::net {
         uint32_t lastCastTick = 0;
         CastRejection castRejected = CastRejection::None;
         std::vector<RemotePlayer> others;
+        /// Awake replicated bodies, by the server's priority for this client (stage 6). At most 255.
+        std::vector<BodySample> bodies;
     };
 
     std::vector<uint8_t> Encode(const Hello& m);

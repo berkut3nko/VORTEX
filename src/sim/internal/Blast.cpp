@@ -441,6 +441,13 @@ namespace vortex::sim {
                     AppliedOp detach;
                     const glm::vec3 corner(world.VoxelToWorld(island.origin));
                     detach.op = WorldOp::Detach(island.origin, voxel::VoxelMask::FromVolume(island.volume), BlastPush(center, radius, corner));
+                    // A session server: a piece of the replicated size becomes a server body (made at
+                    // the end of the blast) if the piece budgets allow; otherwise client rubble.
+                    if (simulation.Config().replication.enabled && island.voxelCount >= simulation.Scene().Config().replicatedPieceVoxels &&
+                        TakePieceSlot(simulation) == PieceSlot::Replicate) {
+                        detach.op.netId = AllocateNetId(simulation);
+                        ++simulation.Replication().pendingPieces;
+                    }
                     detach.result = ApplyOp(world, detach.op, &detach.edits);
                     result.ops.push_back(std::move(detach));
                 }
@@ -594,14 +601,57 @@ namespace vortex::sim {
         if (radius > 0.0f) {
             std::vector<scene::Entity> caught;
             scene.QueryBodies(math::AABB(center - glm::vec3(radius), center + glm::vec3(radius)), caught);
+            const bool replicate = simulation.Config().replication.enabled;
             for (const scene::Entity entity : caught) {
+                // A replicated object that Damage destroys broke apart (its remains are fragments).
+                uint32_t netId = 0;
+                if (scene::NetId* id = replicate ? scene.TryGet<scene::NetId>(entity) : nullptr) {
+                    netId = id->value;
+                    id->despawn = scene::DespawnReason::Broken;
+                }
                 scene::DamageResult damage = scene.Damage(entity, result.center, radius);
+                if (netId != 0 && !damage.destroyed) {
+                    if (scene::NetId* id = scene.TryGet<scene::NetId>(entity)) id->despawn = scene::DespawnReason::Destroyed;
+                    const scene::VoxelBody* voxels = scene.TryGet<scene::VoxelBody>(entity);
+                    if (damage.removed > 0 && voxels) {
+                        ObjectEvent model;
+                        model.kind = ObjectEvent::Kind::Model;
+                        model.netId = netId;
+                        model.entity = entity;
+                        model.model = voxels->model;
+                        model.offset = damage.keptOffset;
+                        model.motion = damage.keptMotion;
+                        result.objectEvents.push_back(std::move(model));
+                    }
+                }
                 if (damage.removed == 0) continue;
                 ++result.objectsHit;
                 result.objectVoxels += damage.removed;
                 for (scene::DamageFragment& fragment : damage.fragments) {
                     fragment.linearVelocity += BlastPush(center, radius, fragment.pose.position);
                     result.fragments.push_back(std::move(fragment));
+                }
+                if (!replicate) continue;
+                // New pieces: server bodies within the piece budgets, otherwise fragments (rubble).
+                for (const scene::Entity piece : damage.pieces) {
+                    if (TakePieceSlot(simulation) == PieceSlot::Replicate) {
+                        ObjectEvent spawn;
+                        spawn.kind = ObjectEvent::Kind::Spawn;
+                        spawn.netId = Replicate(simulation, piece, true);
+                        spawn.entity = piece;
+                        result.objectEvents.push_back(std::move(spawn));
+                        continue;
+                    }
+                    const scene::VoxelBody* voxels = scene.TryGet<scene::VoxelBody>(piece);
+                    const scene::Transform* transform = scene.TryGet<scene::Transform>(piece);
+                    const scene::RigidBody* body = scene.TryGet<scene::RigidBody>(piece);
+                    if (voxels && transform && body) {
+                        const physics::BodyState state = physics.GetState(body->body);
+                        result.fragments.push_back({voxels->model, transform->current,
+                                                    state.linearVelocity + BlastPush(center, radius, transform->current.position),
+                                                    state.angularVelocity});
+                    }
+                    scene.Destroy(piece);
                 }
             }
         }
@@ -614,6 +664,50 @@ namespace vortex::sim {
             physics.AddImpulse(body.body, push * physics.GetMass(body.body));
         }
         physics.ActivateInBox(math::AABB(center - glm::vec3(radius * 2.0f), center + glm::vec3(radius * 2.0f)));
+
+        // 5. Replication: the server bodies of the replicated terrain pieces, made from the voxels
+        //    their Detach removed (after the push and the objects, as a client's rubble is), and the
+        //    poses and velocities of the new object pieces after the push.
+        if (simulation.Config().replication.enabled) {
+            for (const AppliedOp& applied : result.ops) {
+                if (applied.op.kind != WorldOpKind::Detach || applied.op.netId == 0) continue;
+                voxel::VoxelVolume piece = BuildDetachedPiece(applied.op, applied.edits);
+                scene::Entity entity = scene::kNoEntity;
+                if (!piece.IsEmpty()) {
+                    auto model = std::make_shared<voxel::VoxelModel>(std::move(piece), voxel::kWorldPalette, "piece");
+                    entity = scene.CreateVoxelObject({.model = std::move(model),
+                                                      .position = glm::vec3(world.VoxelToWorld(applied.op.min)),
+                                                      .linearVelocity = applied.op.velocity});
+                }
+                if (entity == scene::kNoEntity) {
+                    ++simulation.Replication().stats.bodyFailures;
+                    result.lostNetIds.push_back(applied.op.netId);
+                    Log::Warn("Blast: the server body of piece {} could not be made; it is despawned", applied.op.netId);
+                    continue;
+                }
+                scene::NetId id;
+                id.value = applied.op.netId;
+                id.piece = true;
+                id.bornTick = simulation.Tick();
+                scene.Registry().emplace<scene::NetId>(entity, id);
+            }
+            simulation.Replication().pendingPieces = 0;
+            for (ObjectEvent& e : result.objectEvents) {
+                if (e.kind != ObjectEvent::Kind::Spawn) continue;
+                const scene::VoxelBody* voxels = scene.TryGet<scene::VoxelBody>(e.entity);
+                const scene::Transform* transform = scene.TryGet<scene::Transform>(e.entity);
+                const scene::RigidBody* body = scene.TryGet<scene::RigidBody>(e.entity);
+                if (!voxels || !transform || !body) continue;   // gone again (evicted by a later piece): its despawn follows
+                const physics::BodyState state = physics.GetState(body->body);
+                e.model = voxels->model;
+                e.pose = transform->current;
+                e.pose.position = state.position;
+                e.pose.rotation = state.rotation;
+                e.linearVelocity = physics.IsFrozen(body->body) ? state.keptLinearVelocity : state.linearVelocity;
+                e.angularVelocity = state.angularVelocity;
+                e.motion = body->motion;
+            }
+        }
         result.times.objectsMs = MsSince(start);
         return result;
     }

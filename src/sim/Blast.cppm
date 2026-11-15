@@ -4,11 +4,14 @@ module;
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 export module vortex.sim:blast;
 
+import vortex.math;
 import vortex.voxel;
+import vortex.physics;
 import vortex.scene;
 import :simulation;
 import :worldop;
@@ -139,6 +142,28 @@ export namespace vortex::sim {
     };
 
     /**
+     * @brief A replicated object a blast changed or made (SimulationConfig::replication; networking
+     * stage 6), for the server to send: an ObjectModel for a damaged one that survives, an
+     * EntitySpawn for a piece that became a server body. Despawns are not listed: every destruction
+     * reaches the server through its `on_destroy<scene::NetId>` observer.
+     */
+    struct ObjectEvent {
+        enum class Kind : uint8_t {
+            Spawn,     ///< a new server body: `model`, `pose`, the velocities (after the push), `motion`
+            Model,     ///< the survivor of Scene::Damage: `model`, `offset` (old model voxels), `motion`
+        };
+        Kind kind = Kind::Spawn;
+        uint32_t netId = 0;
+        scene::Entity entity = scene::kNoEntity;
+        std::shared_ptr<voxel::VoxelModel> model;
+        math::Transform pose;
+        glm::vec3 linearVelocity{0.0f};
+        glm::vec3 angularVelocity{0.0f};
+        physics::MotionType motion = physics::MotionType::Dynamic;
+        glm::ivec3 offset{0};
+    };
+
+    /**
      * @brief Everything sim::Blast did: the replicated operations in their order plus what the
      * presentation (PresentBlast) needs.
      */
@@ -184,8 +209,14 @@ export namespace vortex::sim {
         uint32_t objectsHit = 0;       ///< Objects that lost voxels (Scene::Damage removed > 0).
         uint32_t objectVoxels = 0;     ///< Voxels removed from objects.
         /// Object pieces below SceneConfig::replicatedPieceVoxels (none while it is 0), their
-        /// velocity already including the blast's push. Local rubble for whoever draws.
+        /// velocity already including the blast's push. Local rubble for whoever draws. With
+        /// replication, also the object pieces over a piece budget (TakePieceSlot).
         std::vector<scene::DamageFragment> fragments;
+        /// Replication only: object changes in the order they happened (ObjectEvent).
+        std::vector<ObjectEvent> objectEvents;
+        /// Replication only: NetIds of Detach operations whose server body could not be made (out of
+        /// bodies, above the ceiling): the server despawns them at once.
+        std::vector<uint32_t> lostNetIds;
         glm::dvec3 center{0.0};        ///< The blast as applied (after quantisation), world metres.
         float radius = 0.0f;           ///< Metres, after quantisation.
 
@@ -319,6 +350,12 @@ export namespace vortex::sim {
      *     come back as fragments.
      *  4. Every rigid body within three radii gets mass x BlastPush; bodies within two radii are
      *     woken (PhysicsWorld::ActivateInBox), so what rested on removed ground falls.
+     *  With SimulationConfig::replication (a session server, networking stage 6): a Detach of at
+     *  least SceneConfig::replicatedPieceVoxels whose TakePieceSlot says so carries a new NetId, and
+     *  after step 4 its server body is made from the voxels it removed (velocity = its push, as a
+     *  client's rubble); an object piece of step 3 gets a NetId (an ObjectEvent::Spawn) or, over a
+     *  budget, becomes a fragment; a damaged replicated object that survives is an
+     *  ObjectEvent::Model, one that breaks apart is despawned Broken.
      * Steps 1-2 are integer-exact (equal worlds give equal operations); steps 3-4 are server
      * results (float poses, Jolt) and are never hashed.
      * Call it between the streaming and the physics phase of a tick (Application::OnFixedUpdate)

@@ -11,6 +11,7 @@ export module vortex.net:drill;
 import vortex.core;
 import vortex.voxel;
 import vortex.sim;
+import :server;
 
 export namespace vortex::net {
 
@@ -28,6 +29,13 @@ export namespace vortex::net {
         std::vector<sim::WorldOp> build;  ///< Clear the site, lay its foundation, build the structure.
         voxel::SphereQ cast;              ///< Then this blast frees part of it.
         uint16_t power = 0;
+        /// Stage 6: the site's box (voxels, [min, max)): the replicated objects the last structure
+        /// left there are cleared with it (Server::ClearBodies) before `build`.
+        glm::ivec3 clearMin{0}, clearMax{0};
+        /// Stage 6: crates dropped after `build` (model origin, voxels): every step one beside the
+        /// structure that its blast catches, and on a site's first step one in the margin beside the
+        /// site, which falls a little, rests and stays for the whole drill.
+        std::vector<glm::ivec3> crates;
     };
 
     /**
@@ -56,7 +64,16 @@ export namespace vortex::net {
         void Layout(const sim::RegionDesc& region);
         voxel::WorldMaterials m_Ids;
         std::vector<glm::ivec3> m_Sites;  ///< minimum corner of each site, y = foundation top
+        int32_t m_EdgeX = 0;              ///< the play bounds' -x edge (voxels): the sites' crates stand beside it
+        int32_t m_Columns = 1;            ///< sites along x
     };
+
+    /**
+     * @brief Runs a drill step on a server: clears the replicated objects in the step's site box
+     * (Server::ClearBodies), applies its build operations, drops its crates (Server::SpawnCrate) and
+     * queues its cast. Returns QueueCast's answer.
+     */
+    bool RunDrillStep(Server& server, const DrillStep& step);
 
     /// @brief What a BotPilot does besides walking.
     struct PilotSettings {
@@ -65,6 +82,7 @@ export namespace vortex::net {
         bool jumps = true;           ///< a jump every 1-2 s
         bool casts = false;          ///< a cast every `castEveryTicks`, at the ground ahead
         uint32_t castEveryTicks = 90;
+        uint32_t crateEveryTicks = 0;  ///< a crate (PlayerButton_Crate) every this many ticks; 0 = none (stage 6)
         float castPitch = -0.45f;    ///< radians: where it looks while casting (down, ahead)
         float edgeMargin = 2.0f;     ///< metres inside the play bounds it turns back towards the middle
     };
@@ -82,6 +100,7 @@ export namespace vortex::net {
         /// @brief The controls for the next tick of a player now in `state` (its predicted state).
         sim::PlayerInput Next(const sim::PlayerState& state);
         uint32_t Casts() const { return m_Casts; }
+        uint32_t Crates() const { return m_Crates; }
         uint32_t Jumps() const { return m_Jumps; }
 
     private:
@@ -94,6 +113,6 @@ export namespace vortex::net {
         uint16_t m_Yaw = 0;
         int8_t m_Strafe = 0;
         bool m_Run = false;
-        uint32_t m_Casts = 0, m_Jumps = 0;
+        uint32_t m_Casts = 0, m_Jumps = 0, m_Crates = 0;
     };
 }

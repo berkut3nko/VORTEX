@@ -111,6 +111,11 @@ export namespace vortex::scene {
          * sim::kServerReplicatedPieceVolume in voxels of the world (262 voxels of 0.125 m).
          */
         uint32_t replicatedPieceVoxels = 0;
+        /// A session client's scene (net::Client::MakeSimulationConfig sets it): rubble of
+        /// `debrisBodyVoxels` or more goes into physics::Layer::Rubble instead of Dynamic, so that
+        /// no lump of this client's own blocks its predicted player (whose character collides with
+        /// Static and Dynamic: replicated bodies at rest). false (offline): Dynamic, as always.
+        bool rubbleLayer = false;
         uint32_t debrisParticleStride = 3;    ///< One debris particle burst per this many carved voxels (>= 1).
 
         // --- rubble clean-up (entities with the Debris component), applied by Update() ---
@@ -216,6 +221,12 @@ export namespace vortex::scene {
         /// The damaged entity itself was below the threshold: it was destroyed (`destroyed`) and
         /// its remaining voxels are the first entry of `fragments`.
         bool toRubble = false;
+        /// The damaged entity survives (not `destroyed`): the voxel offset of its new model's origin
+        /// in the old model (its Transform moved by that much, rotated and scaled) and its motion type
+        /// now (a Static / Kinematic object that was cut apart is Dynamic). What a server sends as
+        /// ObjectModel (networking stage 6).
+        glm::ivec3 keptOffset{0};
+        physics::MotionType keptMotion = physics::MotionType::Dynamic;
     };
 
     /**

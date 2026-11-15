@@ -19,8 +19,11 @@ export namespace vortex::sim {
         PlayerButton_Jump = 1,   ///< edge: jump if on the ground
         PlayerButton_Run = 2,    ///< level: run speed
         PlayerButton_Cast = 4,   ///< edge: a cast, if the cooldown allows (the server captures it)
+        /// edge: a crate (the game's E key) dropped in front of the eye; a session server makes it
+        /// (networking stage 6), nothing is predicted.
+        PlayerButton_Crate = 8,
     };
-    inline constexpr uint8_t kPlayerButtonMask = 7;
+    inline constexpr uint8_t kPlayerButtonMask = 15;
 
     /**
      * @brief What a player does in one tick (docs/design/networking.md "Player movement"): integers
@@ -81,12 +84,13 @@ export namespace vortex::sim {
     /**
      * @brief What a player's character collides with in a session, on the server and on every
      * client alike (physics::PhysicsConfig::characterLayers; ServerConfig and
-     * net::Client::MakeSimulationConfig set it): terrain only until networking stage 6. A client
-     * has no copy of the server's bodies yet (crates and pieces are server-only, its rubble is its
-     * own), so a server character blocked or carried by one would be a correction every time.
-     * Stage 6 adds Dynamic for replicated bodies at rest, on both sides together.
+     * net::Client::MakeSimulationConfig set it): terrain and Dynamic bodies (networking stage 6).
+     * On the server those are its bodies (crates, replicated pieces); on a client its copies of them
+     * are Dynamic only while they rest (Layer::Rubble while they move) and its own rubble is Debris
+     * or Rubble, so nothing the server does not have blocks a predicted player, and a push or a
+     * blocked step from a moving piece is a server result that arrives as a correction.
      */
-    inline constexpr uint8_t kSessionCharacterLayers = physics::LayerBit(physics::Layer::Static);
+    inline constexpr uint8_t kSessionCharacterLayers = physics::LayerBit(physics::Layer::Static) | physics::LayerBit(physics::Layer::Dynamic);
 
     /// @brief Finite and in range (network input: a client checks the server's before using it).
     bool IsValid(const PlayerTuning& tuning, std::string* why = nullptr);

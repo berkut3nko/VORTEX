@@ -885,3 +885,121 @@ TEST(PhysicsWorld, CharacterLayersChooseWhatBlocksACharacter) {
         }
     }
 }
+
+// Networking stage 6: Layer::Rubble (a session client's own lumps and its moving copies of server
+// bodies) rests on the world and on ordinary bodies, meets itself, and is never met by Debris or by a
+// character - so nothing a client has that the server does not can block its predicted player.
+TEST(PhysicsWorld, RubbleLayerMeetsTheWorldBodiesAndItselfButNoCharacter) {
+    Fixture f;
+    ASSERT_TRUE(f.initialized);
+    f.AddGround();
+    const BodyId rubble = f.AddBox({0.0f, 2.0f, 0.0f}, 0.5f, Layer::Rubble);
+    const BodyId onRubble = f.AddBox({0.0f, 4.0f, 0.0f}, 0.5f, Layer::Rubble);
+    const BodyId debris = f.AddBox({3.0f, 2.0f, 0.0f}, 0.5f, Layer::Rubble);
+    const BodyId debrisOnTop = f.AddBox({3.0f, 4.0f, 0.0f}, 0.3f, Layer::Debris);
+    f.Step(240);
+    EXPECT_NEAR(f.physics.GetState(rubble).position.y, kGroundTop + 0.5f, 0.05f);        // on the ground
+    EXPECT_NEAR(f.physics.GetState(onRubble).position.y, kGroundTop + 1.5f, 0.05f);      // on the other rubble
+    EXPECT_NEAR(f.physics.GetState(debris).position.y, kGroundTop + 0.5f, 0.05f);
+    EXPECT_NEAR(f.physics.GetState(debrisOnTop).position.y, kGroundTop + 0.3f, 0.05f);   // fell through the rubble
+    EXPECT_EQ(f.physics.GetLayer(rubble), Layer::Rubble);
+
+    // A character with every layer but Character in its mask still walks through rubble.
+    PhysicsConfig config = SmallConfig();
+    config.characterLayers = 0xFF;
+    Fixture g(config);
+    ASSERT_TRUE(g.initialized);
+    g.AddGround();
+    BodyDesc wall;
+    wall.shape = g.physics.CreateBoxShape({0.5f, 1.0f, 5.0f});
+    wall.position = {3.0f, kGroundTop + 1.0f, 0.0f};
+    wall.layer = Layer::Rubble;
+    wall.motion = MotionType::Kinematic;
+    const BodyId copy = g.physics.CreateBody(wall);
+    ASSERT_TRUE(copy.IsValid());
+    CharacterDesc desc;
+    desc.position = {0.0f, kGroundTop, 0.0f};
+    const CharacterId character = g.physics.CreateCharacter(desc);
+    for (int i = 0; i < 150; ++i) {
+        g.physics.UpdateCharacter(character, kStep, {3.0f, 0.0f, 0.0f});
+        g.physics.Step(kStep);
+    }
+    EXPECT_GT(g.physics.GetCharacterState(character).position.x, 6.0f);
+    // The same copy in the Dynamic layer (at rest) blocks it.
+    g.physics.SetLayer(copy, Layer::Dynamic);
+    EXPECT_EQ(g.physics.GetLayer(copy), Layer::Dynamic);
+    g.physics.SetCharacterState(character, {0.0f, kGroundTop, 0.0f}, glm::vec3(0.0f));
+    for (int i = 0; i < 150; ++i) {
+        g.physics.UpdateCharacter(character, kStep, {3.0f, 0.0f, 0.0f});
+        g.physics.Step(kStep);
+    }
+    EXPECT_LT(g.physics.GetCharacterState(character).position.x, 2.6f);
+    // Only static bodies belong to the Static layer.
+    g.physics.SetLayer(copy, Layer::Static);
+    EXPECT_EQ(g.physics.GetLayer(copy), Layer::Dynamic);
+}
+
+// A kinematic body follows MoveKinematic: it is at the target after the step, with the velocity that
+// took it there (so what it meets is pushed); other motion types are refused.
+TEST(PhysicsWorld, KinematicBodiesFollowMoveKinematic) {
+    Fixture f;
+    ASSERT_TRUE(f.initialized);
+    BodyDesc desc;
+    desc.shape = f.physics.CreateBoxShape(glm::vec3(0.5f));
+    desc.motion = MotionType::Kinematic;
+    desc.position = {0.0f, 5.0f, 0.0f};
+    const BodyId body = f.physics.CreateBody(desc);
+    ASSERT_TRUE(body.IsValid());
+    const glm::quat turned = glm::angleAxis(0.3f, glm::vec3(0.0f, 1.0f, 0.0f));
+    f.physics.MoveKinematic(body, {0.6f, 5.0f, 0.0f}, turned, kStep);
+    f.physics.Step(kStep);
+    BodyState state = f.physics.GetState(body);
+    EXPECT_NEAR(state.position.x, 0.6f, 1e-4f);
+    EXPECT_NEAR(state.linearVelocity.x, 0.6f / kStep, 0.01f);
+    EXPECT_NEAR(glm::dot(state.rotation, turned), 1.0f, 1e-4f);
+    f.physics.MoveKinematic(body, glm::vec3(std::nanf("")), turned, kStep);    // ignored
+    f.physics.MoveKinematic(body, {0.6f, 5.0f, 0.0f}, turned, kStep);
+    f.Step(1);
+    state = f.physics.GetState(body);
+    EXPECT_NEAR(state.position.x, 0.6f, 1e-4f);
+    EXPECT_NEAR(glm::length(state.linearVelocity), 0.0f, 1e-3f);
+    const BodyId dynamic = f.AddBox({5.0f, 5.0f, 0.0f});
+    f.physics.MoveKinematic(dynamic, {9.0f, 5.0f, 0.0f}, glm::quat(1.0f, 0.0f, 0.0f, 0.0f), kStep);  // refused
+    f.Step(1);
+    EXPECT_LT(f.physics.GetState(dynamic).position.x, 5.1f);
+    f.physics.MoveKinematic(BodyId{}, {0.0f, 0.0f, 0.0f}, glm::quat(1.0f, 0.0f, 0.0f, 0.0f), kStep);  // stale ids are harmless
+}
+
+// PhysicsConfig::characterMovesBodies off (a session, networking stage 6): a character walking into a
+// light dynamic box neither pushes it nor wakes it, and standing on one does not weigh on it - bodies
+// are obstacles and floors, as a client's kinematic copies of them are.
+TEST(PhysicsWorld, CharactersThatMoveNoBodiesNeitherPushNorWeigh) {
+    for (const bool moves : {true, false}) {
+        PhysicsConfig config = SmallConfig();
+        config.characterMovesBodies = moves;
+        Fixture f(config);
+        ASSERT_TRUE(f.initialized);
+        f.AddGround();
+        BodyDesc crate;
+        crate.shape = f.physics.CreateBoxShape({0.4f, 0.4f, 0.4f}, 100.0f);      // 51 kg
+        crate.position = {2.0f, kGroundTop + 0.4f, 0.0f};
+        const BodyId box = f.physics.CreateBody(crate);
+        f.Step(120);
+        ASSERT_FALSE(f.physics.GetState(box).active);
+        CharacterDesc desc;
+        desc.position = {0.0f, kGroundTop, 0.0f};
+        const CharacterId character = f.physics.CreateCharacter(desc);
+        for (int i = 0; i < 120; ++i) {
+            f.physics.UpdateCharacter(character, kStep, {3.0f, 0.0f, 0.0f});
+            f.physics.Step(kStep);
+        }
+        const float moved = f.physics.GetState(box).position.x - 2.0f;
+        if (moves) {
+            EXPECT_GT(moved, 0.05f);
+        } else {
+            EXPECT_EQ(moved, 0.0f);                       // bit for bit where it rested
+            EXPECT_FALSE(f.physics.GetState(box).active);
+            EXPECT_LT(f.physics.GetCharacterState(character).position.x, 1.75f);  // blocked by it
+        }
+    }
+}

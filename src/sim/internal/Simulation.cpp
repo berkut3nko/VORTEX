@@ -38,9 +38,12 @@ namespace vortex::sim {
         config.scene.markDebris = false;
         // Players collide with what their clients have of the world (networking.md review of stage 4).
         config.physics.characterLayers = kSessionCharacterLayers;
+        // ... and neither push nor weigh on them: a client's copies are kinematic (networking stage 6).
+        config.physics.characterMovesBodies = false;
         // The metre volume in voxels of this world (kServerReplicatedPieceVoxels at the default size).
         config.scene.replicatedPieceVoxels =
             scene::VoxelsForVolume(kServerReplicatedPieceVolume, static_cast<double>(config.world.voxelSize));
+        config.replication.enabled = true;
         return config;
     }
 
@@ -91,6 +94,7 @@ namespace vortex::sim {
         std::vector<DeferredIslandSearch> deferredIslands;
         voxel::TerrainGraphCache graphs;
         IslandSearchChecks checks;
+        ReplicationState replication;
     };
 
     Simulation::Simulation(const SimulationConfig& config) : m_Impl(std::make_unique<Impl>(config)) {}
@@ -152,6 +156,8 @@ namespace vortex::sim {
     std::vector<DeferredIslandSearch>& Simulation::DeferredIslandSearches() { return m_Impl->deferredIslands; }
     voxel::TerrainGraphCache& Simulation::TerrainGraphs() { return m_Impl->graphs; }
     Simulation::IslandSearchChecks& Simulation::IslandSearchCheck() { return m_Impl->checks; }
+    ReplicationState& Simulation::Replication() { return m_Impl->replication; }
+    const ReplicationState& Simulation::Replication() const { return m_Impl->replication; }
 
     void Simulation::Step(std::span<const glm::dvec3> focusPoints) {
         Impl& s = *m_Impl;

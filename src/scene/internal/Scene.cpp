@@ -46,7 +46,7 @@ namespace vortex::scene {
         /// Creates the body of a voxel object: a compound of its collider boxes at `transform`.
         /// Returns an invalid id if the model has no solid voxels or physics refused the body.
         physics::BodyId CreateBody(Entity entity, const voxel::VoxelModel& model, const math::Transform& transform,
-                                   physics::MotionType motion, const glm::vec3& linear, const glm::vec3& angular) {
+                                   physics::MotionType motion, const glm::vec3& linear, const glm::vec3& angular, bool rubble = false) {
             const float vs = transform.scale;
             std::vector<physics::BoxDesc> boxes;
             for (const voxel::ColliderBox& b : voxel::BuildColliderBoxes(model.Volume(), false)) {
@@ -64,7 +64,9 @@ namespace vortex::scene {
             body.motion = motion;
             // Small fragments do not collide with each other: piles of rubble stay cheap.
             body.layer = motion == physics::MotionType::Static ? physics::Layer::Static
-                       : (model.SolidCount() < config.debrisBodyVoxels ? physics::Layer::Debris : physics::Layer::Dynamic);
+                       : (model.SolidCount() < config.debrisBodyVoxels ? physics::Layer::Debris
+                          : rubble && config.rubbleLayer               ? physics::Layer::Rubble
+                                                                      : physics::Layer::Dynamic);
             // Small or thin bodies pass through the terrain mesh within one step once they are
             // fast: a one-voxel slab falling flat is beyond the triangles after a 3 m drop, whatever
             // its voxel count. Continuous detection costs nothing while a body is slow.
@@ -351,7 +353,7 @@ namespace vortex::scene {
         const Entity entity = s.registry.create();
         if (desc.withBody && desc.model->SolidCount() > 0) {
             const physics::BodyId body =
-                s.CreateBody(entity, *desc.model, transform.current, desc.motion, desc.linearVelocity, desc.angularVelocity);
+                s.CreateBody(entity, *desc.model, transform.current, desc.motion, desc.linearVelocity, desc.angularVelocity, rubble);
             if (!body.IsValid()) {
                 Log::Error("Scene: could not create the body of voxel object '{}'", desc.model->Name());
                 s.registry.destroy(entity);
@@ -586,7 +588,8 @@ namespace vortex::scene {
             if (s.config.bakeModels) pieceModel->Bake(s.store);
 
             const Entity target = kept ? entity : s.registry.create();
-            const physics::BodyId body = s.CreateBody(target, *pieceModel, placed.current, pieceMotion, linear[i], angular);
+            const physics::BodyId body =
+                s.CreateBody(target, *pieceModel, placed.current, pieceMotion, linear[i], angular, rubbleParent || (small && s.config.markDebris));
             if (!body.IsValid()) {
                 // Out of bodies: a piece that cannot be simulated would hang in the air, drop it.
                 Log::Error("Scene: could not create the body of a piece of '{}', the piece is dropped", modelName);
@@ -596,6 +599,8 @@ namespace vortex::scene {
             }
             s.registry.emplace<RigidBody>(target, body, pieceMotion);
             if (kept) {
+                result.keptOffset = piece.offset;
+                result.keptMotion = pieceMotion;
                 s.registry.get<Transform>(target) = placed;
                 s.registry.get<VoxelBody>(target).model = std::move(pieceModel);
                 // What is left of the object is itself no more than a lump: rubble like the rest.

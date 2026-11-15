@@ -32,6 +32,11 @@ export namespace vortex::physics {
         Dynamic,     ///< Ordinary movable objects.
         Debris,      ///< Small fragments: collide with Static, Dynamic and Character, not with each other.
         Character,   ///< Character controllers.
+        /// A session client's own rubble of debrisBodyVoxels or more and its moving copies of server
+        /// bodies (docs/design/networking.md stage 6): collides with Static, Dynamic and itself, never
+        /// with Debris or Character - and no session character collides with it, so nothing the
+        /// server does not have blocks a predicted player.
+        Rubble,
     };
 
     /// @brief The bit of `layer` in a layer mask (PhysicsConfig::characterLayers).
@@ -142,10 +147,17 @@ export namespace vortex::physics {
         glm::vec3 gravity{0.0f, -9.81f, 0.0f};
         float contactEventMinSpeed = 2.0f;       ///< Slower impacts are not reported.
         /// Layers (LayerBit) character controllers collide with; Layer::Character never. A session
-        /// sets sim::kSessionCharacterLayers (Static only) on the server and every client
+        /// sets sim::kSessionCharacterLayers (Static and Dynamic) on the server and every client
         /// (docs/design/networking.md "Player movement": a character must not be blocked by bodies
-        /// the other side does not have - until stage 6 every body on a client is its own rubble).
+        /// the other side does not have - a client's own rubble is Debris or Rubble, its copies of
+        /// server bodies are Dynamic only at rest).
         uint8_t characterLayers = kDefaultCharacterLayers;
+        /// Characters push the dynamic bodies they walk into (up to 100 N) and weigh on the one they
+        /// stand on (Jolt's CharacterVirtual). false: neither - bodies are solid obstacles and floors
+        /// to a character and never wake from it. A session sets false on both sides (networking
+        /// stage 6: a client's copy of a server body is kinematic and cannot be pushed, so a server
+        /// player that pushed one would be corrected every time it touched a crate).
+        bool characterMovesBodies = true;
     };
 
     /**
@@ -191,6 +203,16 @@ export namespace vortex::physics {
         /// @brief Impulse in kg*m/s; applied at the centre of mass if `worldPoint` is not given.
         void AddImpulse(BodyId body, const glm::vec3& impulse, std::optional<glm::vec3> worldPoint = std::nullopt);
         void SetMotionType(BodyId body, MotionType motion);
+        /// @brief Moves a body to another collision layer (a session client's copy of a server body:
+        /// Layer::Rubble while it moves, Layer::Dynamic at rest; networking stage 6). Only static
+        /// bodies may be in Layer::Static (refused, logged, otherwise).
+        void SetLayer(BodyId body, Layer layer);
+        /// @brief The layer of a body (Layer::Static for invalid ids).
+        Layer GetLayer(BodyId body) const;
+        /// @brief Kinematic bodies: sets the velocities that bring the body to `position` /
+        /// `rotation` at the end of the next Step of `dt` seconds (so it pushes what it meets and
+        /// reports a velocity). Refused (logged) for other motion types; non-finite input ignored.
+        void MoveKinematic(BodyId body, const glm::vec3& position, const glm::quat& rotation, float dt);
         /// @brief Swaps the collision shape, keeping pose and velocities (mass is recomputed).
         void SetShape(BodyId body, const ShapeRef& shape);
         void Activate(BodyId body);

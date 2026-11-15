@@ -352,7 +352,7 @@ TEST(Session, ClientTakesTheServersTickGravityAndCharacterLayers) {
     for (int i = 0; i < 5 && bot.client->State() != net::ClientState::Welcomed; ++i) s.Tick();
     ASSERT_EQ(bot.client->State(), net::ClientState::Welcomed);
     const sim::SimulationConfig& server = s.server.Simulation().Config();
-    EXPECT_EQ(server.physics.characterLayers, physics::LayerBit(physics::Layer::Static));
+    EXPECT_EQ(server.physics.characterLayers, physics::LayerBit(physics::Layer::Static) | physics::LayerBit(physics::Layer::Dynamic));
     const sim::SimulationConfig made = bot.client->MakeSimulationConfig(bot.base);   // its own: 1/60 s, -9.81
     EXPECT_EQ(std::bit_cast<uint32_t>(made.fixedTimeStep), std::bit_cast<uint32_t>(server.fixedTimeStep));
     EXPECT_EQ(made.physics.gravity, server.physics.gravity);
@@ -548,17 +548,22 @@ TEST(Session, TemplateRunsOnTheServerAndReachesClientsAsEvents) {
     ASSERT_GT(t.ops.size(), 40u);
     EXPECT_EQ(t.lights.size(), 6u);
     EXPECT_EQ(t.objects.size(), 6u);
-    // Operations 1..k are the template's, then one EntitySpawn per light.
-    EXPECT_EQ(s.server.LastOpSeq(), t.ops.size() + t.lights.size());
+    // Operations 1..k are the template's, then one EntitySpawn per light and one per crate (stage 6).
+    EXPECT_EQ(s.server.LastOpSeq(), t.ops.size() + t.lights.size() + t.objects.size());
     EXPECT_EQ(s.server.Stats().templateOps, t.ops.size());
-    EXPECT_EQ(s.server.Simulation().Scene().VoxelObjectCount(), 6u);    // crates: server bodies (replicated from stage 6)
+    EXPECT_EQ(s.server.Simulation().Scene().VoxelObjectCount(), 6u);    // crates: replicated server bodies
+    EXPECT_EQ(s.server.Stats().objectSpawns, 6u);
 
     Session::Bot& bot = s.AddClient();
     ASSERT_TRUE(s.Drain());
     EXPECT_EQ(bot.client->Hash().hash, s.server.Hash().hash);
     EXPECT_EQ(bot.client->Stats().lightsSpawned, 6u);
     EXPECT_EQ(bot.client->Spawn(), t.spawn);
-    EXPECT_EQ(bot.simulation->Scene().VoxelObjectCount(), 0u);
+    // The crates are kinematic copies of the server's (stage 6): the same NetIds and models.
+    EXPECT_EQ(bot.simulation->Scene().VoxelObjectCount(), 6u);
+    const net::EntityComparison entities = net::CompareEntities(s.server.Entities(), bot.client->Entities());
+    EXPECT_TRUE(entities.Agree()) << entities.Describe();
+    EXPECT_EQ(entities.server, 6u);
     // The same template applied offline (the game's path) gives the same voxels.
     sim::SimulationConfig offline = bot.client->MakeSimulationConfig(bot.base);
     sim::Simulation game(offline);
@@ -589,8 +594,11 @@ TEST(Session, AdvanceCatchesUpTwoTicksAPassAndDropsNone) {
 // --- the cast budget -------------------------------------------------------------------------------
 
 namespace {
+    /// A cast as the schedule placed it: its tick, its terrain operations and its work. Not its
+    /// opSeq: entity events (stage 6: where pieces rest, which crate a blast catches) follow from
+    /// Jolt and collider timing and are numbered in the same stream.
     struct CastLine {
-        uint32_t tick, firstOpSeq, opCount;
+        uint32_t tick, opCount;
         uint64_t work;
         bool operator==(const CastLine&) const = default;
     };
@@ -607,9 +615,7 @@ namespace {
         for (uint32_t t = 0; t < 24 * 6; ++t) {
             if (t % 24 == 0)
                 for (int k = 0; k < 4; ++k, ++step) {
-                    const net::DrillStep d = drill.Step(step);
-                    for (const sim::WorldOp& op : d.build) s.server.ApplyOp(op);
-                    s.server.QueueCast(d.cast, d.power);
+                    net::RunDrillStep(s.server, drill.Step(step));
                 }
             if (coldGraphs) s.server.Simulation().TerrainGraphs().Clear();
             s.Tick();
@@ -621,7 +627,7 @@ namespace {
         hash = s.server.Hash().hash;
         stats = s.server.Stats();
         std::vector<CastLine> out;
-        for (const net::CastRecord& c : s.server.Casts()) out.push_back({c.tick, c.firstOpSeq, c.opCount, c.work.Total()});
+        for (const net::CastRecord& c : s.server.Casts()) out.push_back({c.tick, c.opCount, c.work.Total()});
         return out;
     }
 }
@@ -696,6 +702,10 @@ namespace {
         im.bytesPerSecond = 48.0 * 1024.0;
         net::ServerSettings settings = Settings(DrillRegion());
         settings.maxEventBytesInFlight = maxEventBytesInFlight;
+        // Stage 6: snapshots carry the drill's falling pieces; at the design's 1200 B to each of two
+        // clients they alone would fill this 48 kB/s uplink. The test is about the event stream: the
+        // snapshots keep about their stage-5 size (the players and two bodies).
+        settings.snapshotBytes = 128;
         Session s(settings, im);
         EXPECT_TRUE(s.started);
         Session::Bot& a = s.AddClient();
@@ -712,9 +722,7 @@ namespace {
                 joinTick = s.server.TickNumber();
                 run.logBytes = s.server.LogBytes();
             }
-            const net::DrillStep d = drill.Step(step);
-            for (const sim::WorldOp& op : d.build) s.server.ApplyOp(op);
-            EXPECT_TRUE(s.server.QueueCast(d.cast, d.power));
+            EXPECT_TRUE(net::RunDrillStep(s.server, drill.Step(step)));
             for (uint32_t t = 0; t < 12; ++t) {
                 s.Tick();
                 const uint32_t tick = s.server.TickNumber();
@@ -773,9 +781,7 @@ TEST(SessionAcceptance, TwoClientsAgreeAfter200BlastsAt5PercentLoss) {
     constexpr uint32_t kBlasts = 200;
     for (uint32_t step = 0; step < kBlasts; ++step) {
         if (step == 100) s.Connect(b);
-        const net::DrillStep d = drill.Step(step);
-        for (const sim::WorldOp& op : d.build) s.server.ApplyOp(op);
-        ASSERT_TRUE(s.server.QueueCast(d.cast, d.power));
+        ASSERT_TRUE(net::RunDrillStep(s.server, drill.Step(step)));
         for (uint32_t t = 0; t < kStepTicks; ++t) s.Tick();
         ASSERT_FALSE(s.server.Failed());
     }
@@ -857,9 +863,7 @@ TEST(SessionAcceptance, AStreamWithOneEventChangedGivesAnotherHash) {
     Session::Bot& bot = s.AddClient();
     const net::BlastDrill drill(s.server.Region(), DefaultIds(), kGround);
     for (uint32_t step = 0; step < 6; ++step) {
-        const net::DrillStep d = drill.Step(step);
-        for (const sim::WorldOp& op : d.build) s.server.ApplyOp(op);
-        s.server.QueueCast(d.cast, d.power);
+        net::RunDrillStep(s.server, drill.Step(step));
         for (uint32_t t = 0; t < kStepTicks; ++t) s.Tick();
     }
     ASSERT_TRUE(s.Drain());

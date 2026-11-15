@@ -11,6 +11,7 @@ export import :wire;
 export import :messages;
 export import :prediction;
 export import :session;
+export import :entities;
 export import :server;
 export import :client;
 export import :drill;

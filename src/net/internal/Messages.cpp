@@ -1,6 +1,7 @@
 module;
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -63,6 +64,13 @@ namespace vortex::net {
             in.buttons = r.U8();
             return in;
         }
+    }
+
+    glm::quat QuantizeRotation(const glm::quat& q) {
+        glm::quat n = glm::normalize(q);
+        if (!std::isfinite(n.x) || !std::isfinite(n.y) || !std::isfinite(n.z) || !std::isfinite(n.w)) n = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+        auto c = [](float v) { return static_cast<float>(static_cast<int16_t>(std::lround(std::clamp(v, -1.0f, 1.0f) * 32767.0f))) / 32767.0f; };
+        return glm::normalize(glm::quat(c(n.w), c(n.x), c(n.y), c(n.z)));
     }
 
     std::vector<uint8_t> Encode(const Hello& m) {
@@ -143,6 +151,21 @@ namespace vortex::net {
             w.U16(p.yaw);
             w.U8(p.flags);
         }
+        const size_t bodies = std::min<size_t>(m.bodies.size(), 255);
+        w.U8(static_cast<uint8_t>(bodies));
+        for (size_t i = 0; i < bodies; ++i) {
+            const BodySample& b = m.bodies[i];
+            w.U32(b.netId);
+            w.F32(b.position.x);
+            w.F32(b.position.y);
+            w.F32(b.position.z);
+            glm::quat q = glm::normalize(b.rotation);
+            if (!std::isfinite(q.x) || !std::isfinite(q.y) || !std::isfinite(q.z) || !std::isfinite(q.w)) q = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+            for (const float c : {q.x, q.y, q.z, q.w}) w.I16(static_cast<int16_t>(std::lround(std::clamp(c, -1.0f, 1.0f) * 32767.0f)));
+            const glm::vec3 v = QuantizeVelocity(b.velocity) * kVelocityQuanta;
+            for (int a = 0; a < 3; ++a) w.I16(static_cast<int16_t>(std::lround(v[a])));
+            w.U8(b.flags);
+        }
         return w.Take();
     }
 
@@ -222,7 +245,7 @@ namespace vortex::net {
         const uint32_t count = in.U16();
         if (in.Failed()) return false;
         out.events.clear();
-        out.events.reserve(std::min<size_t>(count, in.Remaining() / 16));   // an event is at least 16 bytes
+        out.events.reserve(std::min<size_t>(count, in.Remaining() / 6));   // an event is at least 6 bytes (a despawn)
         // The masks of one batch decode to at most kMaxMaskVoxels in all (checked before each is
         // allocated): a few bytes of runs cannot be repeated into gigabytes.
         uint64_t maskBudget = kMaxMaskVoxels;
@@ -276,7 +299,7 @@ namespace vortex::net {
             if (!Finite(o.position) || !Finite(o.velocity)) return false;
         }
         const uint32_t count = in.U8();
-        if (in.Failed() || in.Remaining() != count * kSnapshotPlayerBytes) return false;
+        if (in.Failed() || in.Remaining() < count * kSnapshotPlayerBytes + 1) return false;
         out.others.clear();
         for (uint32_t i = 0; i < count; ++i) {
             RemotePlayer p;
@@ -288,6 +311,26 @@ namespace vortex::net {
             p.flags = in.U8();
             if (!Finite(p.position)) return false;
             out.others.push_back(p);
+        }
+        const uint32_t bodies = in.U8();
+        if (in.Failed() || in.Remaining() != bodies * kSnapshotBodyBytes) return false;
+        out.bodies.clear();
+        for (uint32_t i = 0; i < bodies; ++i) {
+            BodySample b;
+            b.netId = in.U32();
+            b.position.x = in.F32();
+            b.position.y = in.F32();
+            b.position.z = in.F32();
+            float q[4];
+            for (float& c : q) c = static_cast<float>(in.I16()) / 32767.0f;
+            b.rotation = glm::quat(q[3], q[0], q[1], q[2]);
+            const float len = glm::length(b.rotation);
+            if (!(len > 0.5f)) return false;
+            b.rotation = b.rotation / len;
+            for (int a = 0; a < 3; ++a) b.velocity[a] = static_cast<float>(in.I16()) / kVelocityQuanta;
+            b.flags = in.U8();
+            if (!Finite(b.position)) return false;
+            out.bodies.push_back(b);
         }
         return End(in);
     }

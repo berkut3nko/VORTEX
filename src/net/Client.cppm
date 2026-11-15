@@ -16,6 +16,7 @@ import :transport;
 import :messages;
 import :prediction;
 import :session;
+import :entities;
 
 export namespace vortex::net {
 
@@ -73,6 +74,18 @@ export namespace vortex::net {
         uint32_t skippedChunks = 0;
         uint32_t unsyncedChunks = 0;
         uint32_t probeMismatches = 0;     ///< Probe chunks this client generates differently (stage 7: server terrain mode)
+
+        // Replicated objects (stage 6).
+        uint32_t copiesMade = 0;          ///< copies of server bodies made (spawns and Detach pieces with a NetId)
+        uint32_t copiesFailed = 0;        ///< ... that could not be made (store or bodies full): the entity check sees it
+        uint32_t despawns = 0;
+        uint32_t rests = 0;
+        uint32_t models = 0;              ///< ObjectModel events applied
+        uint32_t fragments = 0;           ///< netId 0 spawns (client rubble when presenting)
+        uint32_t toRubble = 0;            ///< copies kept as local rubble (EntityDespawn{ToRubble}, presenting)
+        uint32_t ignoredEntityEvents = 0; ///< events for unknown or tombstoned NetIds (ignored)
+        uint64_t bodySamples = 0;         ///< snapshot samples taken
+        uint64_t bodySamplesIgnored = 0;  ///< ... ignored: no copy (yet), or not newer than its rest or newest sample
     };
 
     /// @brief How the own player's prediction went (networking.md stage 4: "correction rate logged").
@@ -111,7 +124,12 @@ export namespace vortex::net {
      * @brief A session client (docs/design/networking.md stages 3-4): handshake, then the region
      * from `Welcome`, then the opSeq stream applied in order with the same sim::ApplyOp the server
      * ran, and the own player predicted with sim::StepPlayer and reconciled with the server's
-     * snapshots. Terrain is never predicted and no operation is ever sent.
+     * snapshots. Terrain is never predicted and no operation is ever sent. Replicated objects
+     * (stage 6) are kinematic copies: made from EntitySpawn or from the voxels a Detach with a NetId
+     * removed, moved every tick (StepPlayer) to their snapshot samples drawn in the past
+     * (RemoteBodies) in Layer::Rubble, put at their EntityRest pose in Layer::Dynamic (players
+     * collide with them there), re-modelled by ObjectModel, removed by EntityDespawn (kept as local
+     * rubble for ToRubble when presenting); netId 0 spawns are local rubble when presenting.
      * @details The owner creates the client's Simulation once the state is Welcomed, from
      * MakeSimulationConfig and MakeGenerator (never from its own settings: the voxel size, window
      * and height range are the session's), and gives it to Attach. Events that arrive before are
@@ -181,8 +199,9 @@ export namespace vortex::net {
         /// @brief `base` with the session's world: memory only, the region's voxel size, window and
         /// height range (sim::RegionWorldConfig), a store of at least sim::RegionChunkCapacity slots
         /// (the client holds the whole window until stage 7), the server's tick length and gravity
-        /// (Welcome), and the session's character mask (sim::kSessionCharacterLayers: terrain only
-        /// until stage 6, as on the server). Valid from Welcomed on.
+        /// (Welcome), the session's character mask (sim::kSessionCharacterLayers: terrain and Dynamic,
+        /// as on the server) and own rubble in physics::Layer::Rubble (SceneConfig::rubbleLayer: it
+        /// never blocks the predicted player). Valid from Welcomed on.
         /// @param storeLimit 0, or the most slots this client's store may have (the game's GPU chunk
         /// buffer mirrors the store): the store is then min(region cells, limit), and the region fits
         /// only if its loaded window leaves ClientSettings::minFreeStoreSlots free (Attach checks).
@@ -207,6 +226,10 @@ export namespace vortex::net {
         uint32_t ServerOpSeq() const;     ///< The last event the server said it made (status or batch).
         uint32_t LogEnd() const;          ///< opSeq the join log ends at (Welcome).
         const ClientStats& Stats() const;
+        /// @brief This client's copies of the server's replicated objects (the entity check).
+        std::vector<EntityInfo> Entities() const;
+        /// @brief The snapshot samples of the copies (largest sample gap per body: RemoteBodies::MaxGap).
+        const RemoteBodies& Bodies() const;
         /// @brief The applied live operations (after LogEnd) since the last call, one BlastResult per
         /// cast (a carve and the Detach / ClearMask after it; `deferred` when there is no carve).
         /// Empty without `presentation`; the join log is never presented.

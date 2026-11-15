@@ -1,6 +1,7 @@
 module;
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <bit>
@@ -15,6 +16,7 @@ module;
 module vortex.net;
 
 import vortex.voxel;
+import vortex.scene;
 import vortex.sim;
 
 namespace vortex::net {
@@ -139,6 +141,80 @@ namespace vortex::net {
         return true;
     }
 
+    // --- object models -------------------------------------------------------------------------------
+
+    void WriteVolumeRuns(ByteWriter& out, const voxel::VoxelVolume& volume) {
+        const glm::ivec3 size = volume.Size();
+        out.U16(static_cast<uint16_t>(size.x));
+        out.U16(static_cast<uint16_t>(size.y));
+        out.U16(static_cast<uint16_t>(size.z));
+        const std::vector<uint8_t>& data = volume.Data();
+        size_t i = 0;
+        while (i < data.size()) {
+            size_t j = i + 1;
+            while (j < data.size() && data[j] == data[i]) ++j;
+            out.VarU(j - i);
+            out.U8(data[i]);
+            i = j;
+        }
+    }
+
+    bool ReadVolumeRuns(ByteReader& in, voxel::VoxelVolume& volume, uint64_t* voxelBudget) {
+        glm::ivec3 size;
+        size.x = in.U16();
+        size.y = in.U16();
+        size.z = in.U16();
+        if (in.Failed() || size.x > kMaxModelAxis || size.y > kMaxModelAxis || size.z > kMaxModelAxis) return false;
+        const uint64_t total = static_cast<uint64_t>(size.x) * static_cast<uint64_t>(size.y) * static_cast<uint64_t>(size.z);
+        if (total > kMaxMaskVoxels) return false;
+        if (voxelBudget) {
+            if (total > *voxelBudget) return false;
+            *voxelBudget -= total;
+        }
+        voxel::VoxelVolume out(size);
+        std::vector<uint8_t>& data = out.Data();
+        uint64_t at = 0;
+        while (at < total) {
+            const uint64_t run = in.VarU();
+            const uint8_t id = in.U8();
+            if (in.Failed() || run == 0 || run > total - at) return false;
+            std::fill(data.begin() + static_cast<std::ptrdiff_t>(at), data.begin() + static_cast<std::ptrdiff_t>(at + run), id);
+            at += run;
+        }
+        volume = std::move(out);
+        return true;
+    }
+
+    uint64_t VolumeHash(const voxel::VoxelVolume& volume) {
+        uint64_t h = voxel::HashMix64(0x6d6f64656cull, static_cast<uint64_t>(static_cast<uint32_t>(volume.Size().x)));
+        h = voxel::HashMix64(h, static_cast<uint64_t>(static_cast<uint32_t>(volume.Size().y)));
+        h = voxel::HashMix64(h, static_cast<uint64_t>(static_cast<uint32_t>(volume.Size().z)));
+        const std::vector<uint8_t>& data = volume.Data();
+        for (size_t i = 0; i < data.size(); i += 8) {
+            uint64_t word = 0;
+            for (size_t k = 0; k < 8 && i + k < data.size(); ++k) word |= static_cast<uint64_t>(data[i + k]) << (8 * k);
+            h = voxel::HashMix64(h, word);
+        }
+        return h;
+    }
+
+    namespace {
+        bool SameVolume(const voxel::VoxelVolume& a, const voxel::VoxelVolume& b) { return a.Size() == b.Size() && a.Data() == b.Data(); }
+    }
+
+    bool operator==(const EntitySpawn& a, const EntitySpawn& b) {
+        if (a.netId != b.netId || a.kind != b.kind) return false;
+        if (a.kind == EntityKind::Light) return a.light == b.light;
+        const ObjectSpawn& x = a.object;
+        const ObjectSpawn& y = b.object;
+        return x.position == y.position && x.rotation == y.rotation && x.linearVelocity == y.linearVelocity &&
+               x.angularVelocity == y.angularVelocity && x.motion == y.motion && x.flags == y.flags && SameVolume(x.volume, y.volume);
+    }
+
+    bool operator==(const ObjectModel& a, const ObjectModel& b) {
+        return a.netId == b.netId && a.offset == b.offset && a.motion == b.motion && SameVolume(a.volume, b.volume);
+    }
+
     // --- events -----------------------------------------------------------------------------------
 
     glm::vec3 QuantizeVelocity(const glm::vec3& v) {
@@ -247,24 +323,81 @@ namespace vortex::net {
         }
     }
 
-    void WriteEvent(ByteWriter& out, const Event& event) {
-        if (const sim::WorldOp* op = std::get_if<sim::WorldOp>(&event)) {
-            WriteOp(out, *op);
-            return;
+    namespace {
+        void WriteVec3(ByteWriter& out, const glm::vec3& v) {
+            out.F32(v.x);
+            out.F32(v.y);
+            out.F32(v.z);
         }
-        const EntitySpawn& spawn = std::get<EntitySpawn>(event);
-        out.U8(static_cast<uint8_t>(EventKind::EntitySpawn));
-        out.U32(spawn.netId);
-        out.U8(static_cast<uint8_t>(spawn.kind));
-        out.F64(spawn.light.position.x);
-        out.F64(spawn.light.position.y);
-        out.F64(spawn.light.position.z);
-        out.F32(spawn.light.color.r);
-        out.F32(spawn.light.color.g);
-        out.F32(spawn.light.color.b);
-        out.F32(spawn.light.intensity);
-        out.F32(spawn.light.radius);
+        glm::vec3 ReadVec3(ByteReader& in) {
+            const float x = in.F32(), y = in.F32(), z = in.F32();
+            return {x, y, z};
+        }
+        void WriteQuat(ByteWriter& out, const glm::quat& q) {
+            out.F32(q.x);
+            out.F32(q.y);
+            out.F32(q.z);
+            out.F32(q.w);
+        }
+        glm::quat ReadQuat(ByteReader& in) {
+            const float x = in.F32(), y = in.F32(), z = in.F32(), w = in.F32();
+            return glm::quat(w, x, y, z);
+        }
+        bool Finite(const glm::vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
+        bool Finite(const glm::quat& q) { return std::isfinite(q.x) && std::isfinite(q.y) && std::isfinite(q.z) && std::isfinite(q.w); }
+
+        struct EventWriter {
+            ByteWriter& out;
+            void operator()(const sim::WorldOp& op) const { WriteOp(out, op); }
+            void operator()(const EntitySpawn& spawn) const {
+                out.U8(static_cast<uint8_t>(EventKind::EntitySpawn));
+                out.U32(spawn.netId);
+                out.U8(static_cast<uint8_t>(spawn.kind));
+                if (spawn.kind == EntityKind::Light) {
+                    out.F64(spawn.light.position.x);
+                    out.F64(spawn.light.position.y);
+                    out.F64(spawn.light.position.z);
+                    out.F32(spawn.light.color.r);
+                    out.F32(spawn.light.color.g);
+                    out.F32(spawn.light.color.b);
+                    out.F32(spawn.light.intensity);
+                    out.F32(spawn.light.radius);
+                    return;
+                }
+                const ObjectSpawn& o = spawn.object;
+                WriteVec3(out, o.position);
+                WriteQuat(out, o.rotation);
+                WriteVec3(out, o.linearVelocity);
+                WriteVec3(out, o.angularVelocity);
+                out.U8(o.motion);
+                out.U8(o.flags);
+                WriteVolumeRuns(out, o.volume);
+            }
+            void operator()(const EntityDespawn& d) const {
+                out.U8(static_cast<uint8_t>(EventKind::EntityDespawn));
+                out.U32(d.netId);
+                out.U8(static_cast<uint8_t>(d.reason));
+            }
+            void operator()(const EntityRest& r) const {
+                out.U8(static_cast<uint8_t>(EventKind::EntityRest));
+                out.U32(r.netId);
+                out.U32(r.tick);
+                WriteVec3(out, r.position);
+                WriteQuat(out, r.rotation);
+            }
+            void operator()(const ObjectModel& m) const {
+                out.U8(static_cast<uint8_t>(EventKind::ObjectModel));
+                out.U32(m.netId);
+                out.I16(static_cast<int16_t>(m.offset.x));
+                out.I16(static_cast<int16_t>(m.offset.y));
+                out.I16(static_cast<int16_t>(m.offset.z));
+                out.U8(m.motion);
+                WriteVolumeRuns(out, m.volume);
+            }
+        };
     }
+
+    void WriteEvent(ByteWriter& out, const Event& event) { std::visit(EventWriter{out}, event); }
 
     bool ReadEvent(ByteReader& in, Event& event, uint64_t* maskVoxelBudget) {
         const uint8_t kind = in.U8();
@@ -275,23 +408,74 @@ namespace vortex::net {
             event = std::move(op);
             return true;
         }
-        if (kind != static_cast<uint8_t>(EventKind::EntitySpawn)) return false;
-        EntitySpawn spawn;
-        spawn.netId = in.U32();
-        const uint8_t entity = in.U8();
-        if (entity != static_cast<uint8_t>(EntityKind::Light)) return false;
-        spawn.kind = EntityKind::Light;
-        spawn.light.position.x = in.F64();
-        spawn.light.position.y = in.F64();
-        spawn.light.position.z = in.F64();
-        spawn.light.color.r = in.F32();
-        spawn.light.color.g = in.F32();
-        spawn.light.color.b = in.F32();
-        spawn.light.intensity = in.F32();
-        spawn.light.radius = in.F32();
-        if (in.Failed()) return false;
-        event = spawn;
-        return true;
+        switch (static_cast<EventKind>(kind)) {
+            case EventKind::EntitySpawn: {
+                EntitySpawn spawn;
+                spawn.netId = in.U32();
+                const uint8_t entity = in.U8();
+                if (entity == static_cast<uint8_t>(EntityKind::Light)) {
+                    spawn.kind = EntityKind::Light;
+                    spawn.light.position.x = in.F64();
+                    spawn.light.position.y = in.F64();
+                    spawn.light.position.z = in.F64();
+                    spawn.light.color.r = in.F32();
+                    spawn.light.color.g = in.F32();
+                    spawn.light.color.b = in.F32();
+                    spawn.light.intensity = in.F32();
+                    spawn.light.radius = in.F32();
+                    if (in.Failed()) return false;
+                } else if (entity == static_cast<uint8_t>(EntityKind::Object)) {
+                    spawn.kind = EntityKind::Object;
+                    ObjectSpawn& o = spawn.object;
+                    o.position = ReadVec3(in);
+                    o.rotation = ReadQuat(in);
+                    o.linearVelocity = ReadVec3(in);
+                    o.angularVelocity = ReadVec3(in);
+                    o.motion = in.U8();
+                    o.flags = in.U8();
+                    if (in.Failed() || o.motion > 2 || !Finite(o.position) || !Finite(o.rotation) || !Finite(o.linearVelocity) ||
+                        !Finite(o.angularVelocity))
+                        return false;
+                    if (!ReadVolumeRuns(in, o.volume, maskVoxelBudget)) return false;
+                } else {
+                    return false;
+                }
+                event = std::move(spawn);
+                return true;
+            }
+            case EventKind::EntityDespawn: {
+                EntityDespawn d;
+                d.netId = in.U32();
+                const uint8_t reason = in.U8();
+                if (in.Failed() || reason < 1 || reason > 3) return false;
+                d.reason = static_cast<scene::DespawnReason>(reason);
+                event = d;
+                return true;
+            }
+            case EventKind::EntityRest: {
+                EntityRest r;
+                r.netId = in.U32();
+                r.tick = in.U32();
+                r.position = ReadVec3(in);
+                r.rotation = ReadQuat(in);
+                if (in.Failed() || !Finite(r.position) || !Finite(r.rotation)) return false;
+                event = r;
+                return true;
+            }
+            case EventKind::ObjectModel: {
+                ObjectModel m;
+                m.netId = in.U32();
+                m.offset.x = in.I16();
+                m.offset.y = in.I16();
+                m.offset.z = in.I16();
+                m.motion = in.U8();
+                if (in.Failed() || m.motion > 2) return false;
+                if (!ReadVolumeRuns(in, m.volume, maskVoxelBudget)) return false;
+                event = std::move(m);
+                return true;
+            }
+        }
+        return false;
     }
 
     size_t EventBytes(const Event& event) {

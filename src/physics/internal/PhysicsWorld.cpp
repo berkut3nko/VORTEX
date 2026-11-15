@@ -147,7 +147,8 @@ namespace vortex::physics {
         constexpr JPH::ObjectLayer kLayerDynamic = static_cast<JPH::ObjectLayer>(Layer::Dynamic);
         constexpr JPH::ObjectLayer kLayerDebris = static_cast<JPH::ObjectLayer>(Layer::Debris);
         constexpr JPH::ObjectLayer kLayerCharacter = static_cast<JPH::ObjectLayer>(Layer::Character);
-        constexpr JPH::ObjectLayer kLayerCount = 4;
+        constexpr JPH::ObjectLayer kLayerRubble = static_cast<JPH::ObjectLayer>(Layer::Rubble);
+        constexpr JPH::ObjectLayer kLayerCount = 5;
 
         constexpr JPH::BroadPhaseLayer kBroadPhaseNonMoving(0);
         constexpr JPH::BroadPhaseLayer kBroadPhaseMoving(1);
@@ -184,6 +185,11 @@ namespace vortex::physics {
             bool ShouldCollide(JPH::ObjectLayer a, JPH::ObjectLayer b) const override {
                 if (a == kLayerStatic && b == kLayerStatic) return false;
                 if (a == kLayerDebris && b == kLayerDebris) return false;
+                // Rubble (a session client's own lumps and its moving copies of server bodies,
+                // networking stage 6) meets the world, ordinary bodies and itself only.
+                if ((a == kLayerRubble && (b == kLayerDebris || b == kLayerCharacter)) ||
+                    (b == kLayerRubble && (a == kLayerDebris || a == kLayerCharacter)))
+                    return false;
                 return true;
             }
         };
@@ -200,6 +206,17 @@ namespace vortex::physics {
 
         private:
             uint8_t m_Mask;
+        };
+
+        /// PhysicsConfig::characterMovesBodies off: a character applies no impulse to what it touches.
+        class NoPushListener final : public JPH::CharacterContactListener {
+        public:
+            void OnContactAdded(const JPH::CharacterVirtual*, const JPH::CharacterContact&, JPH::CharacterContactSettings& io) override {
+                io.mCanReceiveImpulses = false;
+            }
+            void OnContactPersisted(const JPH::CharacterVirtual*, const JPH::CharacterContact&, JPH::CharacterContactSettings& io) override {
+                io.mCanReceiveImpulses = false;
+            }
         };
 
         class IgnoreSensorsFilter final : public JPH::BodyFilter {
@@ -355,6 +372,7 @@ namespace vortex::physics {
             ObjectVsBroadPhaseFilter objectVsBroadPhase;
             LayerPairFilter layerPairs;
             CharacterLayerFilter characterFilter;
+            NoPushListener noPush;
             JPH::TempAllocatorImplWithMallocFallback tempAllocator;
             JPH::JobSystemThreadPool jobSystem;
             ContactCollector contacts;
@@ -889,6 +907,48 @@ namespace vortex::physics {
         return b.GetShape()->MustBeStatic() ? 0.0f : b.GetShape()->GetMassProperties().mMass;
     }
 
+    void PhysicsWorld::SetLayer(BodyId body, Layer layer) {
+        const auto id = m_Impl->Find(body);
+        if (!id) return;
+        const JPH::ObjectLayer target = ToJolt(layer);
+        JPH::PhysicsSystem& system = m_Impl->sim->system;
+        {
+            const JPH::BodyLockRead lock(system.GetBodyLockInterface(), *id);
+            if (!lock.Succeeded()) return;
+            const JPH::Body& b = lock.GetBody();
+            if (b.GetObjectLayer() == target) return;
+            // Static-layer objects never meet each other: a body that can move must not go there,
+            // and a static one must not leave it (it would collide with the terrain it sits in).
+            const bool isStatic = b.IsStatic() && m_Impl->FindFrozen(body) == nullptr;
+            if ((target == kLayerStatic) != isStatic) {
+                Log::Error("PhysicsWorld::SetLayer: only static bodies belong to the Static layer");
+                return;
+            }
+        }
+        system.GetBodyInterface().SetObjectLayer(*id, target);
+    }
+
+    Layer PhysicsWorld::GetLayer(BodyId body) const {
+        const auto id = m_Impl->Find(body);
+        if (!id) return Layer::Static;
+        return static_cast<Layer>(m_Impl->sim->system.GetBodyInterface().GetObjectLayer(*id));
+    }
+
+    void PhysicsWorld::MoveKinematic(BodyId body, const glm::vec3& position, const glm::quat& rotation, float dt) {
+        const auto id = m_Impl->Find(body);
+        if (!id) return;
+        if (!IsFinite(position) || !IsFinite(rotation) || !(dt > 0.0f) || !std::isfinite(dt)) {
+            Log::Warn("PhysicsWorld::MoveKinematic: ignoring a non-finite target or time step");
+            return;
+        }
+        JPH::BodyInterface& bodies = m_Impl->sim->system.GetBodyInterface();
+        if (bodies.GetMotionType(*id) != JPH::EMotionType::Kinematic) {
+            Log::Error("PhysicsWorld::MoveKinematic: the body is not kinematic");
+            return;
+        }
+        bodies.MoveKinematic(*id, ToJoltR(position), ToJolt(rotation), dt);
+    }
+
     uint64_t PhysicsWorld::GetUserData(BodyId body) const {
         const auto id = m_Impl->Find(body);
         return id ? m_Impl->sim->system.GetBodyInterface().GetUserData(*id) : 0;
@@ -1023,7 +1083,9 @@ namespace vortex::physics {
         JPH::Ref<JPH::Shape> standing = new JPH::RotatedTranslatedShape(JPH::Vec3(0.0f, 0.5f * height, 0.0f), JPH::Quat::sIdentity(), capsule.GetPtr());
 
         settings->mShape = standing.GetPtr();
-        settings->mMass = std::max(desc.mass, 1.0f);
+        // Without moving bodies a character has no weight on its ground either (Jolt pushes the
+        // ground body down with mass x gravity only when the mass is above zero).
+        settings->mMass = m_Impl->config.characterMovesBodies ? std::max(desc.mass, 1.0f) : 0.0f;
         settings->mMaxSlopeAngle = JPH::DegreesToRadians(std::clamp(desc.maxSlopeDegrees, 0.0f, 89.0f));
         // Only contacts on the lower hemisphere of the capsule can carry the character.
         settings->mSupportingVolume = JPH::Plane(JPH::Vec3::sAxisY(), -radius);
@@ -1046,6 +1108,7 @@ namespace vortex::physics {
         CharacterSlot& slot = sim->characters[index];
         slot.character = new JPH::CharacterVirtual(settings.GetPtr(), ToJoltR(desc.position), JPH::Quat::sIdentity(), 0, &sim->system);
         slot.stepHeight = std::max(desc.stepHeight, 0.0f);
+        if (!m_Impl->config.characterMovesBodies) slot.character->SetListener(&sim->noPush);
         slot.character->RefreshContacts(sim->system.GetDefaultBroadPhaseLayerFilter(kLayerCharacter),
                                         sim->characterFilter, JPH::BodyFilter(), JPH::ShapeFilter(),
                                         sim->tempAllocator);

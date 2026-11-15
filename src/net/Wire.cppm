@@ -1,6 +1,7 @@
 module;
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -12,6 +13,7 @@ module;
 export module vortex.net:wire;
 
 import vortex.voxel;
+import vortex.scene;
 import vortex.sim;
 
 export namespace vortex::net {
@@ -84,24 +86,83 @@ export namespace vortex::net {
 
     /// @brief Kinds of events in the opSeq stream. 1-6 are sim::WorldOpKind; wire format.
     enum class EventKind : uint8_t {
-        EntitySpawn = 32,   ///< A server entity appears (stage 3: lights only; stage 6 adds objects).
+        EntitySpawn = 32,   ///< A server entity appears: a light (stage 3) or an object (stage 6).
+        EntityDespawn = 33, ///< A replicated object is gone (stage 6).
+        EntityRest = 34,    ///< A replicated object came to rest: its pose (stage 6).
+        ObjectModel = 35,   ///< A replicated object's model changed (Scene::Damage; stage 6).
     };
     /// @brief What an EntitySpawn creates. Wire format.
     enum class EntityKind : uint8_t {
         Light = 1,
+        Object = 2,         ///< A voxel object with a body: a crate, a piece (netId 0: client rubble).
     };
 
-    /// @brief `EntitySpawn` of kind Light (docs/design/networking.md "Region start-up": the
-    /// template's lights). Not hashed; a client keeps NetId -> entity.
+    /// @brief Most voxels of one object model a decoder accepts per axis (as masks).
+    inline constexpr int32_t kMaxModelAxis = 1024;
+
+    /// @brief A replicated voxel object as it appears (EntitySpawn of kind Object). The model's
+    /// palette is the world palette (voxel::kWorldPalette): the only one both sides share.
+    struct ObjectSpawn {
+        glm::vec3 position{0.0f};            ///< World metres of the model origin (the body's shape origin).
+        glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        glm::vec3 linearVelocity{0.0f};
+        glm::vec3 angularVelocity{0.0f};
+        uint8_t motion = 2;                  ///< physics::MotionType of the server body
+        uint8_t flags = 0;                   ///< kObjectResting: it rests already (no EntityRest follows until it moved)
+        voxel::VoxelVolume volume;
+    };
+    inline constexpr uint8_t kObjectResting = 1;
+
+    /// @brief `EntitySpawn`: a template light (stage 3), or an object (stage 6; `netId` 0 = a
+    /// fragment every client makes into its own rubble). Not hashed; a client keeps NetId -> entity.
     struct EntitySpawn {
         uint32_t netId = 0;
         EntityKind kind = EntityKind::Light;
         sim::TemplateLight light;
-        friend bool operator==(const EntitySpawn&, const EntitySpawn&) = default;
+        ObjectSpawn object;
+        friend bool operator==(const EntitySpawn& a, const EntitySpawn& b);
+    };
+
+    /// @brief `EntityDespawn{netId, reason}` (stage 6): made by the server's on_destroy observer.
+    struct EntityDespawn {
+        uint32_t netId = 0;
+        scene::DespawnReason reason = scene::DespawnReason::Destroyed;
+        friend bool operator==(const EntityDespawn&, const EntityDespawn&) = default;
+    };
+
+    /// @brief `EntityRest{netId, tick, pose}` (stage 6): the object fell asleep on the server at
+    /// `tick`; a client puts its copy there (Layer::Dynamic: players collide with it) and drops
+    /// snapshot samples of `tick` or older. The rest ends with a newer sample.
+    struct EntityRest {
+        uint32_t netId = 0;
+        uint32_t tick = 0;
+        glm::vec3 position{0.0f};
+        glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        friend bool operator==(const EntityRest&, const EntityRest&) = default;
+    };
+
+    /// @brief `ObjectModel{netId, offset, motion, model}` (stage 6): the survivor of a damage. Its
+    /// origin moved by `offset` voxels of the old model (rotated with it); a client re-bases its
+    /// copy and its samples.
+    struct ObjectModel {
+        uint32_t netId = 0;
+        glm::ivec3 offset{0};
+        uint8_t motion = 2;
+        voxel::VoxelVolume volume;
+        friend bool operator==(const ObjectModel& a, const ObjectModel& b);
     };
 
     /// @brief One event of the opSeq stream: a world operation or an entity event.
-    using Event = std::variant<sim::WorldOp, EntitySpawn>;
+    using Event = std::variant<sim::WorldOp, EntitySpawn, EntityDespawn, EntityRest, ObjectModel>;
+
+    /// @brief A volume's ids as (run length, id) pairs in VoxelVolume::Index order after its size
+    /// (3 x u16); self-delimiting.
+    void WriteVolumeRuns(ByteWriter& out, const voxel::VoxelVolume& volume);
+    /// @brief The inverse; false for a size over kMaxModelAxis, over `voxelBudget` (reduced by the
+    /// volume, checked before allocating), empty runs, or runs that do not add up.
+    bool ReadVolumeRuns(ByteReader& in, voxel::VoxelVolume& volume, uint64_t* voxelBudget = nullptr);
+    /// @brief Hash of a volume's size and ids (the model hash of the entity check).
+    uint64_t VolumeHash(const voxel::VoxelVolume& volume);
 
     /// Detach velocity on the wire: int16 per axis in 1/256 m/s (+-128 m/s; presentation only,
     /// ApplyOp never reads it).
@@ -111,11 +172,13 @@ export namespace vortex::net {
 
     /**
      * @brief Encodes one event (docs/design/networking.md "World operations": carve / swap 17 B,
-     * fill 16 B, box 26 B, Detach 29 B + mask runs, ClearMask 19 B + mask runs, light 50 B).
+     * fill 16 B, box 26 B, Detach 29 B + mask runs, ClearMask 19 B + mask runs, light 50 B; stage
+     * 6: object spawn 64 B + model runs, despawn 6 B, rest 37 B, model 19 B + model runs).
      */
     void WriteEvent(ByteWriter& out, const Event& event);
-    /// @brief Decodes one event; false for an unknown kind, a malformed or oversized mask (or one
-    /// over `maskVoxelBudget`, see ReadMaskRuns), or a read past the end.
+    /// @brief Decodes one event; false for an unknown kind, a malformed or oversized mask or model
+    /// (or one over `maskVoxelBudget`, see ReadMaskRuns: masks and models share it), a non-finite
+    /// pose, or a read past the end.
     bool ReadEvent(ByteReader& in, Event& event, uint64_t* maskVoxelBudget = nullptr);
     /// @brief Bytes WriteEvent writes for `event`.
     size_t EventBytes(const Event& event);

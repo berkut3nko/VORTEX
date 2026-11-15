@@ -1,6 +1,7 @@
 module;
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -182,5 +183,85 @@ namespace vortex::net {
             out.push_back(v);
         }
         return out;
+    }
+
+    bool RemoteBodies::Add(uint32_t netId, uint32_t tick, const BodyPose& pose) {
+        Track& t = m_Tracks[netId];
+        if (t.rested && tick <= t.restTick) return false;
+        if (!t.samples.empty()) {
+            const uint32_t newest = t.samples.back().tick;
+            if (tick <= newest) return false;
+            const uint32_t gap = tick - newest;
+            t.maxGap = std::max(t.maxGap, gap);
+            m_MaxGap = std::max(m_MaxGap, gap);
+            t.interval += (std::min(static_cast<double>(gap), 60.0) - t.interval) / 8.0;
+        }
+        t.rested = false;
+        t.samples.push_back({tick, pose});
+        while (t.samples.size() > kSamples) t.samples.pop_front();
+        return true;
+    }
+
+    void RemoteBodies::Rest(uint32_t netId, uint32_t tick) {
+        Track& t = m_Tracks[netId];
+        t.samples.clear();
+        t.rested = true;
+        t.restTick = std::max(t.restTick, tick);
+    }
+
+    void RemoteBodies::Remove(uint32_t netId) { m_Tracks.erase(netId); }
+
+    void RemoteBodies::Shift(uint32_t netId, const glm::vec3& localOffset) {
+        const auto it = m_Tracks.find(netId);
+        if (it == m_Tracks.end()) return;
+        for (Sample_& s : it->second.samples) s.pose.position += s.pose.rotation * localOffset;
+    }
+
+    bool RemoteBodies::HasSamples(uint32_t netId) const {
+        const auto it = m_Tracks.find(netId);
+        return it != m_Tracks.end() && !it->second.samples.empty();
+    }
+
+    uint32_t RemoteBodies::MaxGap(uint32_t netId) const {
+        const auto it = m_Tracks.find(netId);
+        return it != m_Tracks.end() ? it->second.maxGap : 0u;
+    }
+
+    bool RemoteBodies::Sample(uint32_t netId, double serverTick, double tickSeconds, BodyPose& out) const {
+        const auto it = m_Tracks.find(netId);
+        if (it == m_Tracks.end() || it->second.samples.empty()) return false;
+        const Track& t = it->second;
+        const double delay = std::clamp(2.0 * t.interval, kMinDelayTicks, kMaxDelayTicks);
+        const double at = serverTick - delay;
+        const Sample_& first = t.samples.front();
+        const Sample_& last = t.samples.back();
+        if (at <= static_cast<double>(first.tick)) {
+            out = first.pose;
+            return true;
+        }
+        if (at >= static_cast<double>(last.tick)) {
+            // Along the last velocity for up to one update interval, then hold.
+            const double ahead = std::min(at - static_cast<double>(last.tick), t.interval);
+            out = last.pose;
+            out.position += last.pose.velocity * static_cast<float>(ahead * tickSeconds);
+            return true;
+        }
+        for (size_t i = 1; i < t.samples.size(); ++i) {
+            const Sample_& b = t.samples[i];
+            if (static_cast<double>(b.tick) < at) continue;
+            const Sample_& a = t.samples[i - 1];
+            const double span = static_cast<double>(b.tick - a.tick);
+            const float f = static_cast<float>((at - static_cast<double>(a.tick)) / span);
+            // Cubic Hermite on position with the sampled velocities as tangents (in metres per span).
+            const float h = static_cast<float>(span * tickSeconds);
+            const float f2 = f * f, f3 = f2 * f;
+            const float h00 = 2.0f * f3 - 3.0f * f2 + 1.0f, h10 = f3 - 2.0f * f2 + f, h01 = -2.0f * f3 + 3.0f * f2, h11 = f3 - f2;
+            out.position = h00 * a.pose.position + h10 * h * a.pose.velocity + h01 * b.pose.position + h11 * h * b.pose.velocity;
+            out.rotation = glm::slerp(a.pose.rotation, b.pose.rotation, f);
+            out.velocity = glm::mix(a.pose.velocity, b.pose.velocity, f);
+            return true;
+        }
+        out = last.pose;
+        return true;
     }
 }

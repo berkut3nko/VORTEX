@@ -28,6 +28,8 @@ namespace vortex::net {
         const glm::ivec2 lo = region.playMinChunk * voxel::kChunkSize;
         const glm::ivec2 span = (region.playMaxChunk - region.playMinChunk) * voxel::kChunkSize;
         const int nx = std::max(1, span.x / kSiteVoxels), nz = std::max(1, span.y / kSiteVoxels);
+        m_EdgeX = lo.x;
+        m_Columns = nx;
         // Centred in the play bounds.
         const glm::ivec2 offset = (span - glm::ivec2(nx, nz) * kSiteVoxels) / 2;
         for (int z = 0; z < nz; ++z)
@@ -66,6 +68,9 @@ namespace vortex::net {
         constexpr uint16_t kStrong = 1600;     // 100 hardness: everything but bedrock
 
         box({0, 0, 0}, {kSiteVoxels, kSiteHeight, kSiteVoxels}, 0);   // clear what the last structure left
+        step.clearMin = o + glm::ivec3(0, -4, 0);                      // ... and the bodies it left (stage 6)
+        step.clearMax = o + glm::ivec3(kSiteVoxels, kSiteHeight, kSiteVoxels);
+        step.crates.push_back(o + glm::ivec3(41, 2, 41));              // beside the structure, in the blast
         box({0, -4, 0}, {kSiteVoxels, 0, kSiteVoxels}, m.stone);      // foundation
         switch (step.kind) {
             case DrillKind::Mushroom:
@@ -104,7 +109,20 @@ namespace vortex::net {
                 break;
             }
         }
+        if (index < Sites()) {
+            // The site's own crate, in the margin at the play bounds' -x edge (outside every site's
+            // box), half a metre above the site's ground: it falls, rests and stays for the whole drill.
+            step.crates.push_back(glm::ivec3(m_EdgeX + 2, o.y + 4, o.z + 10 + 12 * (static_cast<int>(step.site) % m_Columns)));
+        }
         return step;
+    }
+
+    bool RunDrillStep(Server& server, const DrillStep& step) {
+        const voxel::World& world = server.Simulation().World();
+        server.ClearBodies(world.VoxelToWorld(step.clearMin), world.VoxelToWorld(step.clearMax));
+        for (const sim::WorldOp& op : step.build) server.ApplyOp(op);
+        for (const glm::ivec3& crate : step.crates) server.SpawnCrate(world.VoxelToWorld(crate));
+        return server.QueueCast(step.cast, step.power);
     }
 
     BotPilot::BotPilot(const sim::RegionDesc& region, uint64_t seed, PilotSettings settings)
@@ -150,6 +168,11 @@ namespace vortex::net {
             if (phase < 4) in.pitch = sim::QuantizePitch(m_Settings.castPitch);   // look down first, then press
             if (phase == 2 || phase == 3) in.buttons |= sim::PlayerButton_Cast;
             if (phase == 3) ++m_Casts;
+        }
+        if (m_Settings.crateEveryTicks > 0) {
+            const uint32_t phase = (m_Tick + m_Settings.crateEveryTicks / 2) % m_Settings.crateEveryTicks;
+            if (phase < 2) in.buttons |= sim::PlayerButton_Crate;    // held for two ticks: one edge
+            if (phase == 1) ++m_Crates;
         }
         return in;
     }

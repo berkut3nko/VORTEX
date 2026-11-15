@@ -17,6 +17,7 @@ import vortex.sim;
 import :transport;
 import :messages;
 import :session;
+import :entities;
 
 export namespace vortex::net {
 
@@ -27,7 +28,8 @@ export namespace vortex::net {
         /// only) comes from the session and sim::ServerConfig is applied on top.
         sim::SimulationConfig simulation;
         /// The event budget (docs/design/networking.md "Transport": est. 24 kB/s, burst 16 kB):
-        /// credit per tick and its cap. A queued cast waits while the credit is spent.
+        /// credit per tick and its cap. A queued cast waits while the credit is spent. Terrain
+        /// operations charge it; entity events (stage 6) do not (ServerStats::entityEventBytes).
         uint32_t eventBytesPerTick = 400;
         uint32_t eventBurstBytes = 16384;
         /// The cast work budget per tick (sim::CastWork units, shred.md R5).
@@ -62,6 +64,18 @@ export namespace vortex::net {
         uint32_t inputQueueTicks = 16;
         /// A missing input repeats the last movement for this many ticks, then the player stands.
         uint32_t repeatInputTicks = 6;
+        /// Players' crates (sim::PlayerButton_Crate, the game's E key; networking stage 6): a crate
+        /// edge drops the playground's crate `crateDistance` metres along the look from the eye, at
+        /// most one per player every `crateCooldownTicks`; a player's crate beyond
+        /// `maxCratesPerPlayer` removes its oldest (EntityDespawn{Destroyed}).
+        uint32_t crateCooldownTicks = 30;
+        uint32_t maxCratesPerPlayer = 8;
+        float crateDistance = 3.0f;
+        /// Snapshots (stage 6): at most this many bytes; the awake bodies that fit after the players
+        /// go by a priority that grows with every snapshot a body was left out of and shrinks with its
+        /// distance from the client's player (1 + distance / bodyPriorityMetres).
+        size_t snapshotBytes = kSnapshotBudgetBytes;
+        float bodyPriorityMetres = 16.0f;
     };
 
     /// @brief One cast as the server ran it (for logs, tests and the stage-8 delay histogram).
@@ -99,6 +113,9 @@ export namespace vortex::net {
         uint32_t ticksWaitedForBytes = 0; ///< ... for the event byte budget.
         uint64_t castWork = 0, maxCastWork = 0;
         uint64_t events = 0, eventBytes = 0;
+        /// Bytes of entity events (stage 6), part of eventBytes; not charged to the cast queue's event
+        /// credit (they follow from physics: a replayed server must schedule casts by counts only).
+        uint64_t entityEventBytes = 0;
         uint32_t oversizeEvents = 0;      ///< Events larger than the burst (sent anyway, logged).
         uint32_t searchErrors = 0;        ///< Sum of CastRecord::searchErrors.
         uint32_t incompleteOps = 0;       ///< Operations the server's own world could not apply in full: an error.
@@ -134,6 +151,21 @@ export namespace vortex::net {
         /// missing jump; review of stage 4).
         uint32_t jumpsFromLateInputs = 0;
         uint64_t snapshots = 0, snapshotBytes = 0;
+
+        // Replicated objects (stage 6).
+        uint32_t objectSpawns = 0;        ///< EntitySpawn of objects with a NetId (template objects, crates, object pieces)
+        uint32_t detachBodies = 0;        ///< Detach operations with a NetId (terrain pieces that are server bodies)
+        uint32_t fragmentSpawns = 0;      ///< EntitySpawn with netId 0 (object fragments: client rubble)
+        uint32_t objectModels = 0;        ///< ObjectModel events (a damaged object survived)
+        uint32_t rests = 0;               ///< EntityRest events
+        std::array<uint32_t, 4> despawns{};   ///< EntityDespawn by scene::DespawnReason (index 1..3)
+        uint32_t crates = 0;              ///< crates from players and SpawnCrate
+        uint32_t cratesRefused = 0;       ///< crate edges in the cooldown, or a crate that would leave the play bounds
+        uint64_t bodySamples = 0;         ///< bodies sent in snapshots
+        uint64_t bodiesLeftOut = 0;       ///< awake bodies a snapshot had no room for (summed over snapshots)
+        uint32_t maxSnapshotBodies = 0;
+        uint32_t maxAwakeBodies = 0;      ///< most replicated objects awake at the end of a tick
+        size_t maxSnapshotBytes = 0;
     };
 
     /**
@@ -180,6 +212,18 @@ export namespace vortex::net {
         bool QueueCast(const voxel::SphereQ& sphere, uint16_t power);
         bool QueueCast(const sim::BlastDesc& desc);
         size_t QueuedCasts() const;
+
+        /// @brief Admin / drill (stage 6): drops the playground's crate with its model origin at
+        /// `origin` (world metres) as a replicated body. Its NetId, or 0 when it would leave the play
+        /// bounds or the window's rows, or the session has failed.
+        uint32_t SpawnCrate(const glm::dvec3& origin);
+        /// @brief Admin / drill: destroys every replicated object whose body overlaps the box (world
+        /// metres; EntityDespawn{Destroyed}); how many.
+        uint32_t ClearBodies(const glm::dvec3& min, const glm::dvec3& max);
+        /// @brief The replicated objects now (the entity check: CompareEntities with a client's).
+        std::vector<EntityInfo> Entities() const;
+        /// @brief Replicated objects awake now (not rested since they last moved).
+        size_t AwakeBodies() const;
 
         /// @brief Players in the session (one per joined client), and the state of the one in `slot`.
         size_t PlayerCount() const;

@@ -1,12 +1,14 @@
 module;
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
 #include <map>
+#include <unordered_map>
 #include <vector>
 
 export module vortex.net:prediction;
@@ -181,5 +183,61 @@ export namespace vortex::net {
             double interval = 2.0;   ///< recent mean ticks between samples
         };
         std::map<uint8_t, Track> m_Tracks;
+    };
+
+    /// @brief A replicated body's pose at a server time (RemoteBodies::Sample).
+    struct BodyPose {
+        glm::vec3 position{0.0f};
+        glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        glm::vec3 velocity{0.0f};
+    };
+
+    /**
+     * @brief The awake replicated bodies of the snapshots, drawn in the past (networking.md "Entity
+     * replication", stage 6): 8 `(tick, pose, velocity)` samples per body, Hermite between them
+     * (position; rotation slerped); delay per body max(67 ms, 2 x its recent update interval), at most
+     * 200 ms; extrapolation along the last velocity for up to one update interval, then hold.
+     * @details `Rest(netId, tick)` (an EntityRest) drops the samples and refuses every sample of
+     * `tick` or older (a snapshot that arrives after the rest event); a newer sample starts the body
+     * again. `MaxGap` is the largest gap in ticks between consecutive samples of one body while it
+     * moved (what the snapshot priority and the loss left; a rest in between starts over).
+     */
+    class RemoteBodies {
+    public:
+        static constexpr size_t kSamples = 8;
+        static constexpr double kMinDelayTicks = 4.0;    ///< 67 ms
+        static constexpr double kMaxDelayTicks = 12.0;   ///< 200 ms
+
+        /// @brief A snapshot's sample of `netId` at `tick`. False (ignored) when it is not newer than
+        /// the newest sample or the body's rest.
+        bool Add(uint32_t netId, uint32_t tick, const BodyPose& pose);
+        /// @brief The body came to rest at `tick`: samples dropped, older ones refused from now on.
+        void Rest(uint32_t netId, uint32_t tick);
+        /// @brief Forgets a body (despawned).
+        void Remove(uint32_t netId);
+        /// @brief Re-bases every sample of a body whose model origin moved by `localOffset` metres in
+        /// its own frame (an ObjectModel).
+        void Shift(uint32_t netId, const glm::vec3& localOffset);
+        /// @brief The pose of `netId` at server time `serverTick` minus its delay; false without samples.
+        bool Sample(uint32_t netId, double serverTick, double tickSeconds, BodyPose& out) const;
+        bool HasSamples(uint32_t netId) const;
+        uint32_t MaxGap() const { return m_MaxGap; }
+        uint32_t MaxGap(uint32_t netId) const;
+        size_t Count() const { return m_Tracks.size(); }
+
+    private:
+        struct Sample_ {
+            uint32_t tick = 0;
+            BodyPose pose;
+        };
+        struct Track {
+            std::deque<Sample_> samples;
+            double interval = 2.0;
+            bool rested = false;
+            uint32_t restTick = 0;
+            uint32_t maxGap = 0;
+        };
+        std::unordered_map<uint32_t, Track> m_Tracks;
+        uint32_t m_MaxGap = 0;
     };
 }

@@ -1,10 +1,10 @@
-// vortex_server: the session server of docs/design/networking.md (stages 3-5).
+// vortex_server: the session server of docs/design/networking.md (stages 3-6).
 //
 //   vortex_server --session <file> [--listen [PORT]] [--bind ADDR] [--token HEX | --new-token]
 //                 [--seconds S] [--exit-when-empty]
 //                 [--ticks N] [--drill N] [--clients N] [--enet] [--join-step K]
 //                 [--loss P] [--delay-ms D] [--jitter-ms J] [--outage-ms A,B] [--threads T]
-//                 [--stand] [--no-jumps] [--bot-casts N] [--realtime] [--hash-out <file>]
+//                 [--stand] [--no-jumps] [--bot-casts N] [--bot-crates N] [--realtime] [--hash-out <file>]
 //
 // Starts the server from a session file (token, region, template; see sessions/*.session), loads its
 // whole window and applies the template.
@@ -35,9 +35,14 @@
 // the ground ahead every N ticks (the server captures the cast at its input tick and casts the ray
 // when the cast runs, stage 5); each client runs on its own clock (TicksDue), predicts its player
 // and is corrected by the snapshots. The report gives every client's correction statistics.
+// Stage 6: the drill's pieces (terrain that breaks off, of the replicated size) are server bodies with
+// a NetId, its crates (one beside each structure, in its blast; one per site in the margin) too, and
+// with --bot-crates N every bot drops a crate (the game's E key) every N ticks. After the drain (which
+// also waits, at most 10 s, until no replicated body moves) the entity check compares every bot's
+// copies with the server's objects: the same NetIds and models, and those at rest within 5 cm.
 // A server that fails (networking.md: a broken server world ends the session) stops at once and
-// reports. Exit code 0 when every bot's hash equals the server's and nothing failed; 1 otherwise;
-// 2 on a bad command line, session file or port.
+// reports. Exit code 0 when every bot's hash equals the server's, every entity check agrees and
+// nothing failed; 1 otherwise; 2 on a bad command line, session file or port.
 
 #include <glm/glm.hpp>
 
@@ -125,7 +130,8 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "usage: vortex_server --session <file> [--listen [PORT]] [--bind ADDR] [--seconds S] [--exit-when-empty] "
                              "[--token HEX | --new-token] [--ticks N] [--drill N] [--clients N] [--enet] [--join-step K] [--loss P] "
                              "[--delay-ms D] [--jitter-ms J] "
-                             "[--outage-ms A,B] [--threads T] [--stand] [--no-jumps] [--bot-casts N] [--realtime] [--hash-out <file>]\n");
+                             "[--outage-ms A,B] [--threads T] [--stand] [--no-jumps] [--bot-casts N] [--bot-crates N] [--realtime] "
+                             "[--hash-out <file>]\n");
         return 2;
     }
     net::SessionConfig session;
@@ -177,6 +183,7 @@ int main(int argc, char** argv) {
     pilotSettings.jumps = !args.Has("--no-jumps");
     pilotSettings.castEveryTicks = static_cast<uint32_t>(Number(args, "--bot-casts", 0));
     pilotSettings.casts = pilotSettings.castEveryTicks > 0;
+    pilotSettings.crateEveryTicks = static_cast<uint32_t>(Number(args, "--bot-crates", 0));
 
     net::Impairment impairment;
     impairment.loss = Number(args, "--loss", 0.0);
@@ -336,8 +343,7 @@ int main(int argc, char** argv) {
         if (drill && t % kStepTicks == 0 && step < drillSteps && t != drilledTick) {
             drilledTick = t;
             const net::DrillStep s = drill->Step(step);
-            for (const sim::WorldOp& op : s.build) server.ApplyOp(op);
-            if (!server.QueueCast(s.cast, s.power)) Log::Warn("Drill: step {} cast outside the play bounds", step);
+            if (!net::RunDrillStep(server, s)) Log::Warn("Drill: step {} cast outside the play bounds", step);
             ++step;
         }
     };
@@ -415,6 +421,8 @@ int main(int argc, char** argv) {
     uint32_t drain = 0;
     auto settled = [&] {
         if (server.QueuedCasts() > 0) return false;
+        // Stage 6: the replicated bodies come to rest too (the entity check compares rest poses).
+        if (server.AwakeBodies() > 0) return false;
         for (const BotClient& bot : bots)
             if (!bot.simulation || bot.client->AppliedOpSeq() != server.LastOpSeq()) return false;
         return true;
@@ -480,6 +488,22 @@ int main(int argc, char** argv) {
                   p.replayTicks, p.maxReplayTicks, p.maxReplaySeconds * 1000.0, p.waitedForEvents, p.eventTimeouts, p.clockJumps,
                   p.hardResyncs, p.minMargin, p.maxMargin, bots[i].client->Clock().Target(), bots[i].casts, p.castsRejected, bots[i].pilot->Casts(),
                   bots[i].pilot->Jumps());
+        const net::ClientStats& cs = bots[i].client->Stats();
+        Log::Info("Client {} objects: {} copies made ({} failed), {} despawned ({} kept as rubble), {} rests, {} models, {} fragments; {} "
+                  "body samples taken, {} ignored, largest sample gap {} ticks; pilot crates {}",
+                  i, cs.copiesMade, cs.copiesFailed, cs.despawns, cs.toRubble, cs.rests, cs.models, cs.fragments, cs.bodySamples,
+                  cs.bodySamplesIgnored, bots[i].client->Bodies().MaxGap(), bots[i].pilot->Crates());
+    }
+    {
+        const sim::ReplicationStats& rs = server.Simulation().Replication().stats;
+        Log::Info("Objects: {} server bodies from terrain pieces, {} object spawns, {} fragments as client rubble, {} models, {} rests, "
+                  "despawns {} destroyed / {} to rubble / {} broken; pieces: {} replicated, {} over the tick budget, {} over the awake cap, {} "
+                  "evicted ({} resting, {} awake), {} body failures, at most {} live / {} awake; crates {} ({} refused); entity events "
+                  "{:.1f} KiB; snapshots up to {} B with {} bodies, {} bodies sent, {} left out",
+                  st.detachBodies, st.objectSpawns, st.fragmentSpawns, st.objectModels, st.rests, st.despawns[1], st.despawns[2],
+                  st.despawns[3], rs.pieces, rs.overTickBudget, rs.overAwakeCap, rs.evictedResting + rs.evictedAwake, rs.evictedResting,
+                  rs.evictedAwake, rs.bodyFailures, rs.maxLive, rs.maxAwake, st.crates, st.cratesRefused,
+                  static_cast<double>(st.entityEventBytes) / 1024.0, st.maxSnapshotBytes, st.maxSnapshotBodies, st.bodySamples, st.bodiesLeftOut);
     }
     const voxel::WorldStats ws = server.Simulation().World().Stats();
     Log::Info("Server: world {} dense / {} packed chunks, {:.1f} MiB RLE, store {} / {} slots, search errors {}, incomplete ops {}, "
@@ -490,6 +514,17 @@ int main(int argc, char** argv) {
 
     const voxel::WorldHashResult sh = server.Hash();
     bool ok = !server.Failed() && sh.Complete() && !interrupted;
+    // The entity check (stage 6): the same NetIds and models on every side, rest poses within 5 cm.
+    const std::vector<net::EntityInfo> serverEntities = server.Entities();
+    Log::Info("Entities: server {} object(s), {} awake, id hash {:016x}", serverEntities.size(), server.AwakeBodies(),
+              net::EntityListHash(serverEntities));
+    for (size_t i = 0; i < bots.size(); ++i) {
+        if (!bots[i].simulation) continue;
+        const net::EntityComparison c = net::CompareEntities(serverEntities, bots[i].client->Entities());
+        const bool agree = c.Agree(0.05f);
+        ok = ok && agree;
+        Log::Info("Entities: client {}: {} - {}", i, c.Describe(), agree ? "agree" : "DIFFERENT");
+    }
     // What every client that drained must have reached (tools/session-check.sh compares against it).
     Log::Info("Session: server ends at opSeq {}, tick {}, world hash {:016x} ({} chunks)", server.LastOpSeq(), server.TickNumber(), sh.hash,
               sh.solidChunks);

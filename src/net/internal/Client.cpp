@@ -1,6 +1,7 @@
 module;
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <array>
@@ -16,6 +17,7 @@ module;
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -84,7 +86,18 @@ namespace vortex::net {
         uint32_t applied = 0;
         uint32_t serverLast = 0;
         ClientStats stats;
-        std::unordered_map<uint32_t, scene::Entity> entities;   // NetId -> entity
+        std::unordered_map<uint32_t, scene::Entity> entities;   // NetId -> light entity
+        /// A kinematic copy of a replicated server object (stage 6).
+        struct Copy {
+            scene::Entity entity = scene::kNoEntity;
+            bool resting = false;
+            uint64_t modelHash = 0;
+        };
+        std::unordered_map<uint32_t, Copy> copies;               // NetId -> copy
+        std::unordered_set<uint32_t> tombstones;                 // despawned NetIds (a later spawn of one is discarded)
+        RemoteBodies bodies;
+        double bodyTime = 0.0;                                   // server tick the copies are moved to (per tick)
+        bool bodyTimeStarted = false;
         std::vector<sim::BlastResult> presentations;
         bool groupOpen = false;
         std::vector<ProbeHash> ownProbes;   // the Welcome's probe chunks as this client's generator makes them
@@ -244,6 +257,8 @@ namespace vortex::net {
             serverTime.Observe(snap.tick);
             serverLast = std::max(serverLast, snap.lastOpSeq);
             remotes.Add(snap.tick, snap.others);
+            if (simulation && state == ClientState::Playing) TakeBodySamples(snap.tick, snap.bodies);
+            else stats.bodySamplesIgnored += snap.bodies.size();
             if (!snap.hasOwner) return;
             if (snap.lastCastTick != lastCast.tick || snap.castRejected != lastCast.rejected) {
                 if (snap.castRejected != CastRejection::None) {
@@ -384,12 +399,179 @@ namespace vortex::net {
             }
         }
 
+        // --- replicated objects (stage 6) ---------------------------------------------------------
+
+        physics::BodyId BodyOf(scene::Entity entity) const {
+            const scene::RigidBody* body = simulation->Scene().TryGet<scene::RigidBody>(entity);
+            return body ? body->body : physics::BodyId{};
+        }
+
+        /// A kinematic copy of a server object: Layer::Dynamic at rest (players collide with it),
+        /// Layer::Rubble while it moves (no predicted player does).
+        void MakeCopy(uint32_t netId, std::shared_ptr<voxel::VoxelModel> model, const glm::vec3& position, const glm::quat& rotation,
+                      bool resting) {
+            if (copies.contains(netId) || tombstones.contains(netId)) {
+                ++stats.ignoredEntityEvents;
+                return;
+            }
+            const uint64_t hash = VolumeHash(model->Volume());
+            scene::Scene& scene = simulation->Scene();
+            const scene::Entity entity = scene.CreateVoxelObject(
+                {.model = std::move(model), .position = position, .rotation = rotation, .motion = physics::MotionType::Kinematic});
+            if (entity == scene::kNoEntity) {
+                ++stats.copiesFailed;
+                Log::Error("Client: no copy of server object {} could be made (store or bodies full)", netId);
+                return;
+            }
+            simulation->Physics().SetLayer(BodyOf(entity), resting ? physics::Layer::Dynamic : physics::Layer::Rubble);
+            copies[netId] = {entity, resting, hash};
+            ++stats.copiesMade;
+        }
+
+        /// Local rubble (presentation): an object fragment, or a copy the server let go of.
+        void MakeRubble(std::shared_ptr<voxel::VoxelModel> model, const glm::vec3& position, const glm::quat& rotation,
+                        const glm::vec3& linear, const glm::vec3& angular) {
+            simulation->Scene().CreateVoxelObject({.model = std::move(model),
+                                                   .position = position,
+                                                   .rotation = rotation,
+                                                   .linearVelocity = linear,
+                                                   .angularVelocity = angular,
+                                                   .debris = true});
+        }
+
+        void ApplyEntity(uint32_t seq, const Event& event) {
+            const bool live = settings.presentation && seq > welcome.logEnd;
+            scene::Scene& scene = simulation->Scene();
+            physics::PhysicsWorld& physics = simulation->Physics();
+            if (const EntitySpawn* spawn = std::get_if<EntitySpawn>(&event)) {
+                if (spawn->kind == EntityKind::Light) {
+                    if (!entities.contains(spawn->netId)) {
+                        const sim::TemplateLight& l = spawn->light;
+                        entities[spawn->netId] =
+                            scene.CreateLight({.position = l.position, .color = l.color, .intensity = l.intensity, .radius = l.radius});
+                        ++stats.lightsSpawned;
+                    }
+                    return;
+                }
+                const ObjectSpawn& o = spawn->object;
+                auto model = std::make_shared<voxel::VoxelModel>(o.volume, voxel::kWorldPalette, spawn->netId != 0 ? "object" : "debris");
+                if (spawn->netId == 0) {
+                    ++stats.fragments;
+                    if (live) MakeRubble(std::move(model), o.position, o.rotation, o.linearVelocity, o.angularVelocity);
+                    return;
+                }
+                MakeCopy(spawn->netId, std::move(model), o.position, o.rotation, (o.flags & kObjectResting) != 0);
+                return;
+            }
+            if (const EntityDespawn* d = std::get_if<EntityDespawn>(&event)) {
+                tombstones.insert(d->netId);
+                bodies.Remove(d->netId);
+                const auto it = copies.find(d->netId);
+                if (it == copies.end()) {
+                    ++stats.ignoredEntityEvents;
+                    return;
+                }
+                const scene::Entity entity = it->second.entity;
+                copies.erase(it);
+                ++stats.despawns;
+                if (d->reason == scene::DespawnReason::ToRubble && live) {
+                    // The server let go of it (piece caps): it stays here as this client's rubble.
+                    const scene::VoxelBody* voxels = scene.TryGet<scene::VoxelBody>(entity);
+                    const scene::Transform* transform = scene.TryGet<scene::Transform>(entity);
+                    if (voxels && voxels->model && transform) {
+                        const physics::BodyState state = physics.GetState(BodyOf(entity));
+                        MakeRubble(voxels->model, transform->current.position, transform->current.rotation, state.linearVelocity,
+                                   state.angularVelocity);
+                        ++stats.toRubble;
+                    }
+                }
+                scene.Destroy(entity);
+                return;
+            }
+            if (const EntityRest* r = std::get_if<EntityRest>(&event)) {
+                bodies.Rest(r->netId, r->tick);
+                const auto it = copies.find(r->netId);
+                if (it == copies.end()) {
+                    ++stats.ignoredEntityEvents;
+                    return;
+                }
+                Copy& c = it->second;
+                c.resting = true;
+                const physics::BodyId body = BodyOf(c.entity);
+                scene.SetTransform(c.entity, r->position, r->rotation, false);
+                physics.SetVelocity(body, glm::vec3(0.0f), glm::vec3(0.0f));
+                physics.SetLayer(body, physics::Layer::Dynamic);
+                ++stats.rests;
+                return;
+            }
+            const ObjectModel& m = std::get<ObjectModel>(event);
+            const auto it = copies.find(m.netId);
+            if (it == copies.end()) {
+                ++stats.ignoredEntityEvents;
+                return;
+            }
+            // The survivor of a damage: a new model whose origin moved by `offset` voxels of the old
+            // one (in its frame). A new copy there; its samples move with it.
+            const Copy old = it->second;
+            copies.erase(it);
+            const scene::Transform* transform = scene.TryGet<scene::Transform>(old.entity);
+            const glm::vec3 shift = glm::vec3(m.offset) * simulation->World().VoxelSize();
+            glm::vec3 position = transform ? transform->current.position : glm::vec3(0.0f);
+            const glm::quat rotation = transform ? transform->current.rotation : glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+            position += rotation * shift;
+            scene.Destroy(old.entity);
+            bodies.Shift(m.netId, shift);
+            MakeCopy(m.netId, std::make_shared<voxel::VoxelModel>(m.volume, voxel::kWorldPalette, "object"), position, rotation, old.resting);
+            ++stats.models;
+        }
+
+        /// Snapshot samples of the copies; a sample newer than a copy's rest starts it moving again.
+        void TakeBodySamples(uint32_t tick, const std::vector<BodySample>& samples) {
+            for (const BodySample& b : samples) {
+                const auto it = copies.find(b.netId);
+                if (it == copies.end() || !bodies.Add(b.netId, tick, BodyPose{b.position, b.rotation, b.velocity})) {
+                    ++stats.bodySamplesIgnored;
+                    continue;
+                }
+                ++stats.bodySamples;
+                if (it->second.resting) {
+                    it->second.resting = false;
+                    simulation->Physics().SetLayer(BodyOf(it->second.entity), physics::Layer::Rubble);
+                }
+            }
+        }
+
+        /// One tick of the copies: each moving one is driven (MoveKinematic) to where its samples put
+        /// it at the end of the tick, drawn in the past by the interpolation delay.
+        void MoveCopies() {
+            const double now = serverTime.Now();
+            if (!bodyTimeStarted) {
+                bodyTime = now;
+                bodyTimeStarted = serverTime.Started();
+            } else {
+                // One tick per call, pulled gently towards the server time (it advances per frame).
+                const double error = now - bodyTime;
+                bodyTime += std::abs(error) > 30.0 ? error : 1.0 + std::clamp(error * 0.1, -0.5, 0.5);
+            }
+            physics::PhysicsWorld& physics = simulation->Physics();
+            const float dt = Dt();
+            for (const auto& [netId, c] : copies) {
+                if (c.resting) continue;
+                const physics::BodyId body = BodyOf(c.entity);
+                BodyPose pose;
+                if (bodies.Sample(netId, bodyTime + 1.0, static_cast<double>(dt), pose)) physics.MoveKinematic(body, pose.position, pose.rotation, dt);
+                else physics.SetVelocity(body, glm::vec3(0.0f), glm::vec3(0.0f));
+            }
+        }
+
         void Apply(uint32_t seq, const Event& event) {
             if (const sim::WorldOp* op = std::get_if<sim::WorldOp>(&event)) {
                 // Only live events are shown: the join log (template operations included) is history.
                 const bool present = settings.presentation && seq > welcome.logEnd;
+                // A piece with a NetId is a copy of a server body, made from the voxels it removed.
+                const bool replicated = op->kind == sim::WorldOpKind::Detach && op->netId != 0;
                 std::vector<voxel::VoxelEdit> edits;
-                const sim::OpResult r = sim::ApplyOp(simulation->World(), *op, present ? &edits : nullptr);
+                const sim::OpResult r = sim::ApplyOp(simulation->World(), *op, present || replicated ? &edits : nullptr);
                 stats.skippedChunks += static_cast<uint32_t>(r.report.skipped.size());
                 stats.unsyncedChunks += static_cast<uint32_t>(r.report.unsynced.size());
                 ++stats.opsApplied;
@@ -397,18 +579,18 @@ namespace vortex::net {
                     return Fail("operation " + std::to_string(seq) + " could not be applied in full (" + std::to_string(r.report.skipped.size()) +
                                 " chunk(s) not loaded, " + std::to_string(r.report.unsynced.size()) +
                                 " without a store slot): this world no longer follows the server's (resync is networking stage 7)");
+                if (replicated) {
+                    voxel::VoxelVolume piece = sim::BuildDetachedPiece(*op, edits);
+                    if (!piece.IsEmpty())
+                        MakeCopy(op->netId, std::make_shared<voxel::VoxelModel>(std::move(piece), voxel::kWorldPalette, "piece"),
+                                 glm::vec3(simulation->World().VoxelToWorld(op->min)), glm::quat(1.0f, 0.0f, 0.0f, 0.0f), false);
+                }
                 if (present) Present(*op, r, std::move(edits));
                 else CloseGroup();
                 return;
             }
-            const EntitySpawn& spawn = std::get<EntitySpawn>(event);
             CloseGroup();
-            if (spawn.kind == EntityKind::Light && !entities.contains(spawn.netId)) {
-                const sim::TemplateLight& l = spawn.light;
-                entities[spawn.netId] =
-                    simulation->Scene().CreateLight({.position = l.position, .color = l.color, .intensity = l.intensity, .radius = l.radius});
-                ++stats.lightsSpawned;
-            }
+            ApplyEntity(seq, event);
         }
 
         void ApplyPending() {
@@ -519,6 +701,7 @@ namespace vortex::net {
             s.offset -= s.offset / static_cast<float>(s.blendLeft);
             if (--s.blendLeft == 0) s.offset = glm::vec3(0.0f);
         }
+        if (s.state == ClientState::Playing && s.simulation) s.MoveCopies();
         if (!s.predicting || s.state != ClientState::Playing || !s.simulation) return {};
         const sim::PlayerStepResult r = s.PredictTick(controls);
         ++s.prediction.ticks;
@@ -576,6 +759,9 @@ namespace vortex::net {
         // The server's character mask (terrain only until stage 6): every body on a client is its
         // own rubble, which the server's characters never meet.
         base.physics.characterLayers = sim::kSessionCharacterLayers;
+        base.physics.characterMovesBodies = false;     // as the server's (its bodies are copies here)
+        // This client's own rubble never blocks its predicted player (the server has none of it).
+        base.scene.rubbleLayer = true;
         // The client holds the whole region window until stage 7: its store must hold it too.
         base.chunkCapacity = std::max(base.chunkCapacity, sim::RegionChunkCapacity(m_Impl->welcome.region));
         // ... unless the owner cannot have that many (the game's GPU store): then Attach decides
@@ -623,10 +809,11 @@ namespace vortex::net {
                                std::bit_cast<uint32_t>(physicsConfig.gravity.x) == std::bit_cast<uint32_t>(s.welcome.gravity.x) &&
                                std::bit_cast<uint32_t>(physicsConfig.gravity.y) == std::bit_cast<uint32_t>(s.welcome.gravity.y) &&
                                std::bit_cast<uint32_t>(physicsConfig.gravity.z) == std::bit_cast<uint32_t>(s.welcome.gravity.z) &&
-                               physicsConfig.characterLayers == sim::kSessionCharacterLayers;
+                               physicsConfig.characterLayers == sim::kSessionCharacterLayers && !physicsConfig.characterMovesBodies &&
+                               simulation.Config().scene.rubbleLayer;
         if (!sameSteps) {
-            Log::Error("Client: refused a simulation whose tick length, gravity or character layers are not the session's (build it "
-                       "with MakeSimulationConfig)");
+            Log::Error("Client: refused a simulation whose tick length, gravity, character layers or rubble layer are not the session's "
+                       "(build it with MakeSimulationConfig)");
             return false;
         }
         if (BuildHash(simulation.Materials()) != s.buildHash) {
@@ -707,6 +894,27 @@ namespace vortex::net {
     uint32_t Client::ServerOpSeq() const { return m_Impl->serverLast; }
     uint32_t Client::LogEnd() const { return m_Impl->welcome.logEnd; }
     const ClientStats& Client::Stats() const { return m_Impl->stats; }
+
+    std::vector<EntityInfo> Client::Entities() const {
+        const Impl& s = *m_Impl;
+        std::vector<EntityInfo> out;
+        if (!s.simulation) return out;
+        for (const auto& [netId, c] : s.copies) {
+            const scene::Transform* transform = s.simulation->Scene().TryGet<scene::Transform>(c.entity);
+            if (!transform) continue;
+            EntityInfo e;
+            e.netId = netId;
+            e.modelHash = c.modelHash;
+            e.position = transform->current.position;
+            e.rotation = transform->current.rotation;
+            e.resting = c.resting;
+            out.push_back(e);
+        }
+        std::sort(out.begin(), out.end(), [](const EntityInfo& a, const EntityInfo& b) { return a.netId < b.netId; });
+        return out;
+    }
+
+    const RemoteBodies& Client::Bodies() const { return m_Impl->bodies; }
 
     std::vector<sim::BlastResult> Client::TakePresentations() {
         std::vector<sim::BlastResult> out = std::move(m_Impl->presentations);

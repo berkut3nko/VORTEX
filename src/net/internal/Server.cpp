@@ -1,6 +1,8 @@
 module;
 
+#include <entt/entt.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <array>
@@ -14,6 +16,7 @@ module;
 #include <memory>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -70,6 +73,10 @@ namespace vortex::net {
             /// The owner block of its snapshots: the newest cast edge's input tick and its fate.
             uint32_t lastCastTick = 0;
             CastRejection castRejected = CastRejection::None;
+            /// Its crates (stage 6): the newest crate's tick and the NetIds of those alive, oldest first.
+            bool anyCrate = false;
+            uint32_t lastCrateTick = 0;
+            std::deque<uint32_t> crates;
 
             /// The state after `tick`, if it is still kept.
             const sim::PlayerState* StateAt(uint32_t tick) const {
@@ -91,6 +98,14 @@ namespace vortex::net {
             uint32_t connectTick = 0;     ///< Hello timeout
             uint32_t closingTick = 0;     ///< refusal grace period
             std::unique_ptr<Player> player;   ///< from the Welcome on
+            /// Snapshot priority of each awake body for this client (stage 6): grows by one every
+            /// snapshot that left it out, back to 0 when it was sent.
+            std::unordered_map<uint32_t, float> priority;
+        };
+
+        /// A replicated object's rest state as the clients were told it (EntityRest).
+        struct BodyTrack {
+            bool resting = false;
         };
 
         /// A cast waiting for the cast phase. A player's cast is a ray (captured at its input tick:
@@ -112,6 +127,12 @@ namespace vortex::net {
         constexpr int64_t kMaxReportedMargin = 1024;
 
         uint64_t MaskVoxels(const Event& event) {
+            auto volumeVoxels = [](const voxel::VoxelVolume& v) {
+                return static_cast<uint64_t>(v.Size().x) * static_cast<uint64_t>(v.Size().y) * static_cast<uint64_t>(v.Size().z);
+            };
+            if (const EntitySpawn* spawn = std::get_if<EntitySpawn>(&event))
+                return spawn->kind == EntityKind::Object ? volumeVoxels(spawn->object.volume) : 0;
+            if (const ObjectModel* model = std::get_if<ObjectModel>(&event)) return volumeVoxels(model->volume);
             const sim::WorldOp* op = std::get_if<sim::WorldOp>(&event);
             if (!op || (op->kind != sim::WorldOpKind::Detach && op->kind != sim::WorldOpKind::ClearMask)) return 0;
             return op->mask.VoxelCount();
@@ -120,6 +141,10 @@ namespace vortex::net {
 
     struct Server::Impl {
         Impl(ServerSettings s, ITransport& t) : settings(std::move(s)), transport(t), region(settings.session.region) {}
+        ~Impl() {
+            // The scene is cleared when the simulation goes: no despawn may reach members already gone.
+            if (simulation) simulation->Scene().Registry().on_destroy<scene::NetId>().disconnect<&Impl::OnNetIdDestroyed>(*this);
+        }
 
         ServerSettings settings;
         ITransport& transport;
@@ -136,19 +161,234 @@ namespace vortex::net {
         std::deque<QueuedCast> queue;
         int64_t castCredit = 0;
         int64_t eventCredit = 0;
-        uint32_t nextNetId = 1;
         double accumulator = 0.0;
         ServerStats stats;
         std::deque<CastRecord> casts;
         size_t logBytes = 0;
+        // Replicated objects (stage 6).
+        std::vector<EntityDespawn> despawned;              // the on_destroy<NetId> observer's queue
+        std::unordered_map<uint32_t, BodyTrack> tracks;   // NetId -> rest state the clients know
+        std::shared_ptr<voxel::VoxelModel> crateModel;
+
+        /// networking.md "Entity replication": every destruction of a replicated entity, by any path,
+        /// becomes an EntityDespawn (emitted in order by DrainDespawns).
+        void OnNetIdDestroyed(entt::registry& registry, entt::entity entity) {
+            const scene::NetId& id = registry.get<scene::NetId>(entity);
+            despawned.push_back({id.value, id.despawn});
+        }
+
+        void DrainDespawns() {
+            std::vector<EntityDespawn> queue = std::move(despawned);
+            despawned.clear();
+            for (const EntityDespawn& d : queue) {
+                tracks.erase(d.netId);
+                for (auto& [pid, p] : peers)
+                    if (p.player) std::erase(p.player->crates, d.netId);
+                if (failed) continue;
+                Emit(d);
+                ++stats.despawns[std::min<size_t>(static_cast<size_t>(d.reason), 3)];
+            }
+        }
+
+        /// The ObjectSpawn of a replicated entity as it is now (its body's pose and velocities).
+        bool DescribeObject(scene::Entity entity, ObjectSpawn& out) {
+            scene::Scene& scene = simulation->Scene();
+            const scene::VoxelBody* voxels = scene.TryGet<scene::VoxelBody>(entity);
+            const scene::RigidBody* body = scene.TryGet<scene::RigidBody>(entity);
+            if (!voxels || !voxels->model || !body) return false;
+            const physics::PhysicsWorld& physics = simulation->Physics();
+            const physics::BodyState state = physics.GetState(body->body);
+            out.position = state.position;
+            out.rotation = state.rotation;
+            out.linearVelocity = state.frozen ? state.keptLinearVelocity : state.linearVelocity;
+            out.angularVelocity = state.angularVelocity;
+            out.motion = static_cast<uint8_t>(body->motion);
+            out.flags = sim::IsAwake(physics, body->body) ? 0 : kObjectResting;
+            out.volume = voxels->model->Volume();
+            return true;
+        }
+
+        /// EntitySpawn of a replicated entity (a template object, a crate, an object piece).
+        void EmitObjectSpawn(uint32_t netId, scene::Entity entity) {
+            EntitySpawn spawn;
+            spawn.netId = netId;
+            spawn.kind = EntityKind::Object;
+            if (!DescribeObject(entity, spawn.object)) return;
+            tracks[netId].resting = (spawn.object.flags & kObjectResting) != 0;
+            Emit(spawn);
+            ++stats.objectSpawns;
+        }
+
+        /// The object events of a cast after its operations: models, spawns, fragments, lost pieces,
+        /// then every despawn the cast caused (evictions, objects broken apart).
+        void EmitObjectEvents(const sim::BlastResult& r) {
+            for (const sim::AppliedOp& applied : r.ops)
+                if (applied.op.kind == sim::WorldOpKind::Detach && applied.op.netId != 0) ++stats.detachBodies;
+            for (const sim::ObjectEvent& e : r.objectEvents) {
+                if (failed || !e.model) continue;
+                if (e.kind == sim::ObjectEvent::Kind::Model) {
+                    ObjectModel m;
+                    m.netId = e.netId;
+                    m.offset = e.offset;
+                    m.motion = static_cast<uint8_t>(e.motion);
+                    m.volume = e.model->Volume();
+                    Emit(m);
+                    ++stats.objectModels;
+                    continue;
+                }
+                EntitySpawn spawn;
+                spawn.netId = e.netId;
+                spawn.kind = EntityKind::Object;
+                spawn.object.position = e.pose.position;
+                spawn.object.rotation = e.pose.rotation;
+                spawn.object.linearVelocity = e.linearVelocity;
+                spawn.object.angularVelocity = e.angularVelocity;
+                spawn.object.motion = static_cast<uint8_t>(e.motion);
+                spawn.object.volume = e.model->Volume();
+                tracks[e.netId].resting = false;
+                Emit(spawn);
+                ++stats.objectSpawns;
+            }
+            for (const scene::DamageFragment& f : r.fragments) {
+                if (failed || !f.model) continue;
+                EntitySpawn spawn;
+                spawn.kind = EntityKind::Object;
+                spawn.object.position = f.pose.position;
+                spawn.object.rotation = f.pose.rotation;
+                spawn.object.linearVelocity = f.linearVelocity;
+                spawn.object.angularVelocity = f.angularVelocity;
+                spawn.object.volume = f.model->Volume();
+                Emit(spawn);
+                ++stats.fragmentSpawns;
+            }
+            for (const uint32_t lost : r.lostNetIds)
+                if (!failed) {
+                    Emit(EntityDespawn{lost, scene::DespawnReason::Destroyed});
+                    ++stats.despawns[1];
+                }
+            DrainDespawns();
+        }
+
+        /// Rest transitions after the tick's physics: a replicated object that fell asleep is
+        /// announced with its pose (EntityRest); one that wakes shows up in snapshots again.
+        ///
+        /// The layer follows the same rule as a client's copy (networking.md "Stage 6 as built"):
+        /// Layer::Rubble while it moves, Layer::Dynamic at rest, so that players on both sides collide
+        /// with exactly the bodies at rest (a moving piece passes through a player everywhere; a
+        /// client learns of a rest one event later, and only that window can cost a correction).
+        void TrackBodies(uint32_t tick) {
+            physics::PhysicsWorld& physics = simulation->Physics();
+            uint32_t awake = 0;
+            for (const auto [entity, id, body] : simulation->Scene().Registry().view<const scene::NetId, const scene::RigidBody>().each()) {
+                const bool moving = sim::IsAwake(physics, body.body);
+                BodyTrack& t = tracks[id.value];
+                awake += moving ? 1u : 0u;
+                if (moving) {
+                    t.resting = false;
+                    if (body.motion != physics::MotionType::Static) physics.SetLayer(body.body, physics::Layer::Rubble);
+                } else if (!t.resting) {
+                    t.resting = true;
+                    if (body.motion != physics::MotionType::Static) physics.SetLayer(body.body, physics::Layer::Dynamic);
+                    const physics::BodyState state = physics.GetState(body.body);
+                    Emit(EntityRest{id.value, tick, state.position, state.rotation});
+                    ++stats.rests;
+                }
+            }
+            stats.maxAwakeBodies = std::max(stats.maxAwakeBodies, awake);
+        }
+
+        scene::Entity EntityOf(uint32_t netId) {
+            for (const auto [entity, id] : simulation->Scene().Registry().view<const scene::NetId>().each())
+                if (id.value == netId) return entity;
+            return scene::kNoEntity;
+        }
+
+        /// A crate with its model origin at `corner` (stage 6): the playground's crate, a replicated
+        /// placed object. 0 when it would leave the play bounds or the window's rows.
+        uint32_t SpawnCrateAt(const glm::dvec3& corner, Peer* owner) {
+            voxel::World& world = simulation->World();
+            if (!crateModel) crateModel = sim::CrateModel(simulation->WorldMaterialIds(), sim::PlaygroundScale(world.VoxelSize()));
+            const double vs = static_cast<double>(world.VoxelSize());
+            const glm::dvec3 size = glm::dvec3(crateModel->Volume().Size()) * vs;
+            const double chunk = static_cast<double>(voxel::kChunkSize) * vs;
+            const glm::dvec2 lo = glm::dvec2(region.playMinChunk) * chunk, hi = glm::dvec2(region.playMaxChunk) * chunk;
+            const glm::ivec2 rows = sim::RegionRows(region);
+            const bool inside = std::isfinite(corner.x) && std::isfinite(corner.y) && std::isfinite(corner.z) && corner.x >= lo.x &&
+                                corner.z >= lo.y && corner.x + size.x <= hi.x && corner.z + size.z <= hi.y &&
+                                corner.y >= static_cast<double>(rows.x) * chunk && corner.y + size.y <= static_cast<double>(rows.y) * chunk;
+            const scene::Entity entity =
+                inside ? simulation->Scene().CreateVoxelObject({.model = crateModel, .position = glm::vec3(corner)}) : scene::kNoEntity;
+            if (entity == scene::kNoEntity) {
+                ++stats.cratesRefused;
+                return 0;
+            }
+            const uint32_t netId = sim::Replicate(*simulation, entity, false);
+            // Moving: no player collides with it until it rests (TrackBodies), here as on every client.
+            if (const scene::RigidBody* body = simulation->Scene().TryGet<scene::RigidBody>(entity))
+                simulation->Physics().SetLayer(body->body, physics::Layer::Rubble);
+            EmitObjectSpawn(netId, entity);
+            ++stats.crates;
+            if (owner && owner->player) {
+                owner->player->crates.push_back(netId);
+                while (owner->player->crates.size() > settings.maxCratesPerPlayer) {
+                    const uint32_t oldest = owner->player->crates.front();
+                    owner->player->crates.pop_front();
+                    sim::Despawn(*simulation, EntityOf(oldest), scene::DespawnReason::Destroyed);
+                }
+            }
+            DrainDespawns();
+            return netId;
+        }
+
+        /// A crate edge of a player (its state after the input's tick, the input's look).
+        void PlayerCrate(Peer& p, const sim::PlayerInput& input, const sim::PlayerState& at) {
+            Player& pl = *p.player;
+            const uint32_t now = Tick();
+            if (pl.anyCrate && now - pl.lastCrateTick < settings.crateCooldownTicks) {
+                ++stats.cratesRefused;
+                return;
+            }
+            if (!crateModel) crateModel = sim::CrateModel(simulation->WorldMaterialIds(), sim::PlaygroundScale(simulation->World().VoxelSize()));
+            const glm::dvec3 eye = glm::dvec3(at.position) + glm::dvec3(0.0, static_cast<double>(settings.player.eyeHeight), 0.0);
+            const glm::dvec3 centre = eye + glm::dvec3(sim::LookDirection(input.yaw, input.pitch)) * static_cast<double>(settings.crateDistance);
+            const glm::dvec3 half = glm::dvec3(crateModel->Volume().Size()) * (0.5 * static_cast<double>(simulation->World().VoxelSize()));
+            if (SpawnCrateAt(centre - half, &p) != 0) {
+                pl.anyCrate = true;
+                pl.lastCrateTick = now;
+            }
+        }
+
+        /// The awake replicated bodies (snapshot candidates), in NetId order.
+        std::vector<BodySample> AwakeSamples() {
+            std::vector<BodySample> out;
+            const physics::PhysicsWorld& physics = simulation->Physics();
+            for (const auto [entity, id, body] : simulation->Scene().Registry().view<const scene::NetId, const scene::RigidBody>().each()) {
+                const auto it = tracks.find(id.value);
+                if (it == tracks.end() || it->second.resting) continue;
+                const physics::BodyState state = physics.GetState(body.body);
+                BodySample b;
+                b.netId = id.value;
+                b.position = state.position;
+                b.rotation = state.rotation;
+                b.velocity = state.frozen ? glm::vec3(0.0f) : state.linearVelocity;
+                out.push_back(b);
+            }
+            std::sort(out.begin(), out.end(), [](const BodySample& a, const BodySample& b) { return a.netId < b.netId; });
+            return out;
+        }
 
         uint32_t Tick() const { return simulation ? simulation->Tick() : 0; }
         uint32_t LastOpSeq() const { return static_cast<uint32_t>(log.size()); }
 
+        /// Logs and numbers one event. Only terrain operations charge the event credit (the cast
+        /// queue's byte budget): entity events follow from Jolt's float poses and sleep (where a
+        /// piece rests, which crate a blast catches), and a replayed server must put every cast on
+        /// the same tick (shred.md R5; networking.md "Stage 6 as built"). They are counted apart.
         uint32_t Emit(const Event& event) {
             ByteWriter w;
             WriteEvent(w, event);
             const size_t bytes = w.Size();
+            const bool entity = !std::holds_alternative<sim::WorldOp>(event);
             if (bytes > settings.eventBurstBytes) {
                 ++stats.oversizeEvents;
                 Log::Warn("Server: event {} is {} bytes, more than the {}-byte event burst (sent anyway)", log.size() + 1, bytes,
@@ -162,7 +402,8 @@ namespace vortex::net {
             logBytes += bytes;
             ++stats.events;
             stats.eventBytes += bytes;
-            eventCredit -= static_cast<int64_t>(bytes);
+            if (entity) stats.entityEventBytes += bytes;
+            else eventCredit -= static_cast<int64_t>(bytes);
             return LastOpSeq();
         }
 
@@ -188,6 +429,7 @@ namespace vortex::net {
             }
             peers.clear();
             queue.clear();
+            despawned.clear();
         }
 
         void DropPlayer(Peer& p) {
@@ -337,6 +579,7 @@ namespace vortex::net {
                     ++stats.inputsLate;
                     const uint8_t pressed = sim::PressButtons(pl.state, in.buttons);
                     if ((pressed & sim::PlayerButton_Cast) != 0) LateCast(p, in, now);
+                    if ((pressed & sim::PlayerButton_Crate) != 0) PlayerCrate(p, in, pl.state);
                     // A jump edge is not spent here without a jump: the next step makes it.
                     if ((pressed & sim::PlayerButton_Jump) != 0 && !pl.lateJump) {
                         pl.lateJump = true;
@@ -414,11 +657,13 @@ namespace vortex::net {
                 pl.Store(now);
                 if (r.cast) CaptureCast(*peer, input, pl.state, false);
                 else if ((r.pressed & sim::PlayerButton_Cast) != 0) RejectCast(*peer, now);
+                if ((r.pressed & sim::PlayerButton_Crate) != 0) PlayerCrate(*peer, input, pl.state);
             }
         }
 
         void SendSnapshots(uint32_t tick) {
             const std::vector<std::pair<PeerId, Peer*>> players = PlayersBySlot();
+            const std::vector<BodySample> awake = AwakeSamples();
             for (const auto& [id, peer] : players) {
                 Snapshot snap;
                 snap.tick = tick;
@@ -434,7 +679,34 @@ namespace vortex::net {
                     if (otherId == id) continue;
                     snap.others.push_back({other->slot, other->player->state.position, other->player->last.yaw, other->player->state.flags});
                 }
+                // Bodies by priority: what was left out longest, nearest first, as many as fit.
+                const size_t fixed = kSnapshotHeaderBytes + kSnapshotOwnerBytes + snap.others.size() * kSnapshotPlayerBytes;
+                const size_t room = settings.snapshotBytes > fixed ? std::min<size_t>((settings.snapshotBytes - fixed) / kSnapshotBodyBytes, 255) : 0;
+                std::unordered_map<uint32_t, float> priority;
+                std::vector<std::pair<float, size_t>> order;
+                order.reserve(awake.size());
+                const float scale = std::max(settings.bodyPriorityMetres, 0.001f);
+                for (size_t i = 0; i < awake.size(); ++i) {
+                    const auto it = peer->priority.find(awake[i].netId);
+                    const float waited = (it != peer->priority.end() ? it->second : 0.0f) + 1.0f;
+                    priority[awake[i].netId] = waited;
+                    const float distance = glm::distance(awake[i].position, peer->player->state.position);
+                    order.emplace_back(waited / (1.0f + distance / scale), i);
+                }
+                std::sort(order.begin(), order.end(), [&awake](const auto& a, const auto& b) {
+                    return a.first != b.first ? a.first > b.first : awake[a.second].netId < awake[b.second].netId;
+                });
+                for (size_t k = 0; k < order.size() && k < room; ++k) {
+                    const BodySample& b = awake[order[k].second];
+                    snap.bodies.push_back(b);
+                    priority[b.netId] = 0.0f;
+                }
+                peer->priority = std::move(priority);
+                stats.bodySamples += snap.bodies.size();
+                stats.bodiesLeftOut += awake.size() - snap.bodies.size();
+                stats.maxSnapshotBodies = std::max(stats.maxSnapshotBodies, static_cast<uint32_t>(snap.bodies.size()));
                 const std::vector<uint8_t> bytes = Encode(snap);
+                stats.maxSnapshotBytes = std::max(stats.maxSnapshotBytes, bytes.size());
                 ++stats.snapshots;
                 stats.snapshotBytes += bytes.size();
                 Send(id, Channel::State, bytes);
@@ -635,6 +907,8 @@ namespace vortex::net {
                 Emit(applied.op);
                 ++rec.opCount;
             }
+            // The objects it changed or made, and every despawn it caused (stage 6).
+            EmitObjectEvents(r);
             rec.eventBytes = static_cast<uint32_t>(creditBefore - eventCredit);
             rec.work = sim::CastWorkOf(r);
             rec.islands = r.IslandCount();
@@ -735,6 +1009,8 @@ namespace vortex::net {
             return false;
         }
         s.buildHash = BuildHash(s.simulation->Materials());
+        // Every destruction of a replicated entity becomes an EntityDespawn (stage 6).
+        s.simulation->Scene().Registry().on_destroy<scene::NetId>().connect<&Impl::OnNetIdDestroyed>(s);
 
         const auto start = std::chrono::steady_clock::now();
         voxel::World& w = s.simulation->World();
@@ -760,11 +1036,13 @@ namespace vortex::net {
         if (s.failed) return false;
         for (const sim::TemplateLight& light : s.tmpl.lights) {
             EntitySpawn spawn;
-            spawn.netId = s.nextNetId++;
+            spawn.netId = sim::AllocateNetId(*s.simulation);
             spawn.light = light;
             s.Emit(spawn);
         }
-        sim::CreateTemplateObjects(*s.simulation, s.tmpl);
+        // The template's objects (the crates) are replicated server bodies (stage 6).
+        for (const scene::Entity entity : sim::CreateTemplateObjects(*s.simulation, s.tmpl))
+            if (entity != scene::kNoEntity) s.EmitObjectSpawn(sim::Replicate(*s.simulation, entity, false), entity);
         s.probes = ProbeChunks(s.region, *generator);
         s.CheckStore();
         const voxel::WorldStats ws = w.Stats();
@@ -788,6 +1066,9 @@ namespace vortex::net {
         const uint32_t tick = s.Tick();
         s.simulation->StepPhysics();
         s.simulation->UpdateLifetimes(s.simulation->FixedTimeStep());
+        // What fell out of the world is despawned; what came to rest is announced (stage 6).
+        s.DrainDespawns();
+        if (!s.failed) s.TrackBodies(tick);
         s.Flush();
         if (tick % 2 == 0 && !s.failed) s.SendSnapshots(tick);
         // World::Stats walks every cell (about 0.3 ms for a 250 m region): twice a second is enough,
@@ -830,6 +1111,55 @@ namespace vortex::net {
     }
 
     size_t Server::QueuedCasts() const { return m_Impl->queue.size(); }
+
+    uint32_t Server::SpawnCrate(const glm::dvec3& origin) {
+        Impl& s = *m_Impl;
+        if (!s.started || s.failed) return 0;
+        return s.SpawnCrateAt(origin, nullptr);
+    }
+
+    uint32_t Server::ClearBodies(const glm::dvec3& min, const glm::dvec3& max) {
+        Impl& s = *m_Impl;
+        if (!s.started || s.failed) return 0;
+        std::vector<scene::Entity> found;
+        s.simulation->Scene().QueryBodies(math::AABB(glm::vec3(min), glm::vec3(max)), found);
+        uint32_t n = 0;
+        for (const scene::Entity e : found) {
+            if (!s.simulation->Scene().TryGet<scene::NetId>(e)) continue;
+            sim::Despawn(*s.simulation, e, scene::DespawnReason::Destroyed);
+            ++n;
+        }
+        s.DrainDespawns();
+        return n;
+    }
+
+    std::vector<EntityInfo> Server::Entities() const {
+        const Impl& s = *m_Impl;
+        std::vector<EntityInfo> out;
+        if (!s.simulation) return out;
+        const physics::PhysicsWorld& physics = const_cast<sim::Simulation&>(*s.simulation).Physics();
+        const entt::registry& registry = s.simulation->Scene().Registry();
+        for (const auto [entity, id, voxels, body] : registry.view<const scene::NetId, const scene::VoxelBody, const scene::RigidBody>().each()) {
+            if (!voxels.model) continue;
+            const physics::BodyState state = physics.GetState(body.body);
+            EntityInfo e;
+            e.netId = id.value;
+            e.modelHash = VolumeHash(voxels.model->Volume());
+            e.position = state.position;
+            e.rotation = state.rotation;
+            const auto it = s.tracks.find(id.value);
+            e.resting = it != s.tracks.end() && it->second.resting;
+            out.push_back(e);
+        }
+        std::sort(out.begin(), out.end(), [](const EntityInfo& a, const EntityInfo& b) { return a.netId < b.netId; });
+        return out;
+    }
+
+    size_t Server::AwakeBodies() const {
+        size_t n = 0;
+        for (const auto& [id, t] : m_Impl->tracks) n += t.resting ? 0u : 1u;
+        return n;
+    }
 
     size_t Server::PlayerCount() const {
         size_t n = 0;

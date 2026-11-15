@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <bit>
 #include <cmath>
@@ -16,6 +17,7 @@
 
 import vortex.core;
 import vortex.voxel;
+import vortex.scene;
 import vortex.sim;
 import vortex.net;
 
@@ -136,6 +138,99 @@ TEST(Wire, LightSpawnRoundTrips) {
     ASSERT_TRUE(std::holds_alternative<net::EntitySpawn>(back));
     EXPECT_EQ(std::get<net::EntitySpawn>(back), spawn);
     EXPECT_EQ(bytes, 1u + 4 + 1 + 24 + 12 + 4 + 4);
+}
+
+// Stage 6: objects, despawns, rests and models, bit for bit at their sizes; models as (run, id) pairs.
+TEST(Wire, EntityEventsRoundTripAtTheirSizes) {
+    voxel::VoxelVolume crate(glm::ivec3(6));
+    crate.FillBox(glm::ivec3(0), glm::ivec3(6), 11);
+    crate.FillBox(glm::ivec3(1), glm::ivec3(5), 0);
+    crate.Set(0, 0, 0, 13);
+
+    net::EntitySpawn object;
+    object.netId = 42;
+    object.kind = net::EntityKind::Object;
+    object.object.position = glm::vec3(std::nextafter(1.0f, 2.0f), -3.25f, 1e-30f);
+    object.object.rotation = glm::normalize(glm::quat(0.8f, 0.2f, 0.1f, -0.4f));
+    object.object.linearVelocity = glm::vec3(0.5f, -9.0f, 0.0f);
+    object.object.angularVelocity = glm::vec3(0.0f, 1.0f, 2.0f);
+    object.object.flags = net::kObjectResting;
+    object.object.volume = crate;
+    size_t bytes = 0;
+    net::Event back = RoundTrip(object, &bytes);
+    ASSERT_TRUE(std::holds_alternative<net::EntitySpawn>(back));
+    EXPECT_EQ(std::get<net::EntitySpawn>(back), object);
+    net::ByteWriter runs;
+    net::WriteVolumeRuns(runs, crate);
+    EXPECT_EQ(bytes, 1u + 4 + 1 + 12 + 16 + 12 + 12 + 1 + 1 + runs.Size());
+    EXPECT_LT(runs.Size(), 120u);                                   // a hollow crate is small on the wire
+
+    const net::Event despawn = net::EntityDespawn{42, scene::DespawnReason::ToRubble};
+    back = RoundTrip(despawn, &bytes);
+    EXPECT_EQ(bytes, 6u);
+    EXPECT_EQ(std::get<net::EntityDespawn>(back), std::get<net::EntityDespawn>(despawn));
+
+    const net::Event rest = net::EntityRest{42, 1234, glm::vec3(1.5f, 2.5f, -3.5f), glm::quat(0.0f, 1.0f, 0.0f, 0.0f)};
+    back = RoundTrip(rest, &bytes);
+    EXPECT_EQ(bytes, 37u);
+    EXPECT_EQ(std::get<net::EntityRest>(back), std::get<net::EntityRest>(rest));
+
+    net::ObjectModel model;
+    model.netId = 42;
+    model.offset = glm::ivec3(-1, 0, 3);
+    model.motion = 2;
+    model.volume = crate;
+    back = RoundTrip(model, &bytes);
+    EXPECT_EQ(bytes, 1u + 4 + 6 + 1 + runs.Size());
+    EXPECT_EQ(std::get<net::ObjectModel>(back), model);
+    EXPECT_EQ(net::VolumeHash(std::get<net::ObjectModel>(back).volume), net::VolumeHash(crate));
+    crate.Set(2, 0, 0, 12);
+    EXPECT_NE(net::VolumeHash(crate), net::VolumeHash(model.volume));
+
+    // Refused: an unknown reason, a non-finite pose, runs that do not add up, an oversized model.
+    auto refused = [](std::vector<uint8_t> bytes) {
+        net::ByteReader in(bytes);
+        net::Event e;
+        return !net::ReadEvent(in, e);
+    };
+    {
+        net::ByteWriter w;
+        net::WriteEvent(w, despawn);
+        std::vector<uint8_t> b = w.Take();
+        b.back() = 4;
+        EXPECT_TRUE(refused(b));
+    }
+    {
+        net::EntityRest bad = std::get<net::EntityRest>(rest);
+        bad.position.y = std::nanf("");
+        net::ByteWriter w;
+        net::WriteEvent(w, bad);
+        EXPECT_TRUE(refused(w.Take()));
+    }
+    {
+        net::ByteWriter w;
+        w.U8(35);
+        w.U32(1);
+        for (int i = 0; i < 3; ++i) w.I16(0);
+        w.U8(2);
+        w.U16(2);
+        w.U16(2);
+        w.U16(2);
+        w.VarU(7);                                                  // 7 of 8 voxels
+        w.U8(1);
+        EXPECT_TRUE(refused(w.Take()));
+        net::ByteWriter big;
+        big.U8(35);
+        big.U32(1);
+        for (int i = 0; i < 3; ++i) big.I16(0);
+        big.U8(2);
+        big.U16(2000);                                              // over kMaxModelAxis
+        big.U16(1);
+        big.U16(1);
+        big.VarU(2000);
+        big.U8(1);
+        EXPECT_TRUE(refused(big.Take()));
+    }
 }
 
 TEST(Wire, MaskRunsRoundTripAndRefuseWhatDoesNotAddUp) {
@@ -307,8 +402,15 @@ TEST(Wire, MessagesRoundTripAndRefuseTrailingOrMissingBytes) {
         snap.lastCastTick = 117;
         snap.castRejected = net::CastRejection::Missed;
         snap.others = {{2, glm::vec3(1.0f, 2.0f, 3.0f), 1234, 1}, {9, glm::vec3(-4.0f, 5.0f, -6.0f), 65535, 2}};
+        // Stage 6: awake bodies, 31 bytes each (position raw, rotation 4 x int16, velocity 1/256 m/s).
+        net::BodySample body;
+        body.netId = 77;
+        body.position = glm::vec3(std::nextafter(3.0f, 4.0f), 20.5f, -1.0e-20f);
+        body.rotation = glm::normalize(glm::quat(0.9f, 0.1f, -0.3f, 0.2f));
+        body.velocity = glm::vec3(1.0f / 256.0f, -12.5f, 200.0f);       // 200 m/s is clamped to 127.99
+        snap.bodies = {body};
         const std::vector<uint8_t> sb = net::Encode(snap);
-        EXPECT_EQ(sb.size(), net::kSnapshotHeaderBytes + net::kSnapshotOwnerBytes + 2 * net::kSnapshotPlayerBytes);
+        EXPECT_EQ(sb.size(), net::kSnapshotHeaderBytes + net::kSnapshotOwnerBytes + 2 * net::kSnapshotPlayerBytes + net::kSnapshotBodyBytes);
         net::Snapshot sback;
         ASSERT_TRUE(net::Decode(sb, sback));
         EXPECT_EQ(sback.tick, 120u);
@@ -321,10 +423,22 @@ TEST(Wire, MessagesRoundTripAndRefuseTrailingOrMissingBytes) {
         EXPECT_EQ(sback.lastCastTick, 117u);
         EXPECT_EQ(sback.castRejected, net::CastRejection::Missed);
         EXPECT_EQ(sback.others, snap.others);
+        ASSERT_EQ(sback.bodies.size(), 1u);
+        EXPECT_EQ(sback.bodies[0].netId, 77u);
+        EXPECT_EQ(sback.bodies[0].position, body.position);                                   // bit for bit
+        EXPECT_LT(glm::length(glm::vec4(sback.bodies[0].rotation.x - body.rotation.x, sback.bodies[0].rotation.y - body.rotation.y,
+                                        sback.bodies[0].rotation.z - body.rotation.z, sback.bodies[0].rotation.w - body.rotation.w)),
+                  1e-4f);
+        EXPECT_EQ(sback.bodies[0].velocity, net::QuantizeVelocity(body.velocity));
         EXPECT_FALSE(net::Decode(std::span(sb).first(sb.size() - 1), sback));
         {
             std::vector<uint8_t> bad = sb;                       // an unknown rejection is refused
-            bad[net::kSnapshotHeaderBytes - 1 + net::kSnapshotOwnerBytes - 1] = 4;
+            bad[net::kSnapshotHeaderBytes - 2 + net::kSnapshotOwnerBytes - 1] = 4;
+            EXPECT_FALSE(net::Decode(bad, sback));
+        }
+        {
+            std::vector<uint8_t> bad = sb;                       // a zero rotation is refused
+            for (size_t i = 0; i < 8; ++i) bad[sb.size() - net::kSnapshotBodyBytes + 16 + i] = 0;
             EXPECT_FALSE(net::Decode(bad, sback));
         }
         snap.owner.velocity.y = std::nanf("");                   // a non-finite state is refused
@@ -355,8 +469,21 @@ TEST(Wire, ForgedBytesNeverCrashADecoder) {
     net::Snapshot snap;
     snap.hasOwner = true;
     snap.others.resize(3);
+    snap.bodies.resize(4);
+    net::EventBatch entities;
+    entities.firstOpSeq = 9;
+    net::EntitySpawn object;
+    object.netId = 5;
+    object.kind = net::EntityKind::Object;
+    object.object.volume = voxel::VoxelVolume(glm::ivec3(6));
+    object.object.volume.FillBox(glm::ivec3(1), glm::ivec3(4), 3);
+    net::ObjectModel model;
+    model.netId = 5;
+    model.volume = object.object.volume;
+    entities.events = {object, net::EntityDespawn{5, scene::DespawnReason::Broken}, net::EntityRest{5, 7, glm::vec3(1.0f), glm::quat(1, 0, 0, 0)},
+                       model};
     const std::vector<std::vector<uint8_t>> valid = {net::Encode(batch), net::Encode(net::Welcome{}), net::Encode(net::Hello{}),
-                                                     net::Encode(inputs), net::Encode(snap)};
+                                                     net::Encode(inputs), net::Encode(snap), net::Encode(entities)};
     uint32_t decoded = 0;
     for (int i = 0; i < 4000; ++i) {
         std::vector<uint8_t> bytes;

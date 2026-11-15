@@ -126,6 +126,31 @@ export namespace vortex::scene {
         float lightDecay = 0.0f;      ///< Per second; 0 = the light keeps its intensity.
     };
 
+    /// @brief Why a replicated entity went away: what its EntityDespawn tells the clients
+    /// (docs/design/networking.md "Entity replication"). Values are wire format.
+    enum class DespawnReason : uint8_t {
+        Destroyed = 1,   ///< gone (fell out of the world, cleared by the server): a client removes its copy
+        ToRubble = 2,    ///< evicted by the piece caps: a client keeps its copy as local rubble, where it is drawn
+        Broken = 3,      ///< damaged apart: its remains follow as client-rubble fragments, a client removes its copy
+    };
+
+    /**
+     * @brief A server entity that clients have a copy of (docs/design/networking.md stage 6):
+     * server-allocated, counting up, never reused. Only a session server (and the copies a client
+     * makes) carries it; an offline scene has none.
+     * @details Destroying the entity by any path (Scene::Destroy, Damage, DestroyBelow, a registry
+     * clear) is seen by an `on_destroy<NetId>` observer, which is how a server turns every
+     * destruction into an EntityDespawn. `despawn` is what that event says: set it before destroying.
+     */
+    struct NetId {
+        uint32_t value = 0;
+        /// A piece (terrain that broke off, or a piece Damage split off): counted against the piece
+        /// caps and evicted by them. false: a placed object (a template or player crate).
+        bool piece = false;
+        uint32_t bornTick = 0;        ///< Simulation tick it was made on: the eviction order (oldest first).
+        DespawnReason despawn = DespawnReason::Destroyed;
+    };
+
     /**
      * @brief Marks a voxel object as rubble: a piece left over by destruction that nobody will
      * miss. Scene::Update removes rubble (see SceneConfig: the lifetimes by size,
