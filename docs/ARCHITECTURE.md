@@ -38,9 +38,11 @@ engine/
     physics/  vortex.physics   Jolt behind an engine interface, terrain collider streaming
     scene/    vortex.scene     entities (EnTT): components, object lifetime, destruction
     sim/      vortex.sim       the simulation: world + physics + terrain colliders + scene on a numbered tick;
-                               world operations, blasts, regions and their templates, the player step
+                               world operations, blasts, regions and their templates, the player step,
+                               NetIds and the piece budgets of a session server (replication)
     net/      vortex.net       the session protocol: transports (loopback, impaired, ENet / UDP), wire
-                               format, messages, server, client, the client clock and prediction, bot pilots
+                               format, messages, server, client, the client clock and prediction, replicated
+                               bodies (copies, snapshots, the entity check), bot pilots
     graphics/ vortex.graphics  Vulkan device, window, renderer, UI layer
     engine/   vortex.engine    application loop, render data of the scene, explosions, glue
     editor/   vortex.editor    in-game editor: tool logic (no ImGui), panels, gizmo
@@ -575,8 +577,13 @@ that re-cook lands differs between a server and its clients (networking.md "Play
 `Engine::TerrainReady(bounds)` / `IsReady` keep the full rule. (The point version only looks at
 the chunk containing the point, which for feet standing on a chunk boundary is the empty chunk
 *above* the ground.) What a character collides with is `PhysicsConfig::characterLayers`
-(Static, Dynamic and Debris by default; in a session `sim::kSessionCharacterLayers`, Static only, on the server and
-every client). A session also calls `TerrainColliders::FlushBox(box)` before every player step: the chunks of the box
+(Static, Dynamic and Debris by default, never Character or Rubble; in a session `sim::kSessionCharacterLayers`, Static
+and Dynamic, on the server and every client, with `PhysicsConfig::characterMovesBodies` off: a character neither pushes
+nor weighs on a body, which is an obstacle and a floor to it). `Layer::Rubble` (networking stage 6) collides with
+Static, Dynamic and itself, never with Debris or a character: a session client's own large rubble, its copies of server
+bodies while they move, and a server's bodies while they move are in it, so nothing that moves differently on the two
+sides blocks a player; at rest a replicated body is in `Layer::Dynamic` on both sides (`PhysicsWorld::SetLayer`). A
+client's copy is kinematic and follows its snapshot samples with `PhysicsWorld::MoveKinematic`. A session also calls `TerrainColliders::FlushBox(box)` before every player step: the chunks of the box
 whose newest content is not installed are cooked on the calling thread at once, so a step meets colliders that follow
 the edits applied, not the moment a worker finished.
 
@@ -701,7 +708,10 @@ A blast is split into simulation and presentation:
   islands ("crumbs") together become one `WorldOp::Clear` (kind `ClearMask`: the union of their
   voxels over the smallest box holding them), applied last; `Scene::Damage` for every body in range (a snapshot first);
   push every body within three radii (`sim::BlastPush` x mass) and wake what is within two. No
-  particles, no light, no entity for an island. Returns the applied operations in order, the
+  particles, no light, and offline no entity for an island; on a session server
+  (`SimulationConfig::replication`) an island of the replicated size that gets a slot (`sim::TakePieceSlot`, largest
+  first) carries a NetId in its `Detach` and becomes a server body made from the voxels it removed (7.5,
+  networking.md stage 6). Returns the applied operations in order, the
   voxels each one changed, the object fragments (below the replicated threshold, 7.3) and the
   quantised centre / radius.
 * `sim::PresentBlast(simulation, result)` (GPU-free, so unit tested; `Engine::PresentBlast` calls
@@ -725,7 +735,7 @@ Destruction must not fill the world with tiny rigid bodies: each costs a body, a
 | `< minPieceVoxels` | never an entity: particles on the spot (`Damage` fragments, floating terrain crumbs). The default is the piece volume in voxels of the scene's size (`scene::MinPieceVoxels`; `kMinPieceVoxels` at the default size), which is also `sim::Blast`'s rule (at the world's size) for terrain islands (smaller ones are one `ClearMask` per blast, not a `Detach` each) | 8 (0.016 m^3, `kMinPieceVolume`) |
 | `< debrisBodyVoxels` | a *small* body: `Layer::Debris` (no collisions among each other), continuous collision detection; rubble of this size gets the `Debris` component | 25 (0.048 m^3) |
 | larger | an ordinary object that stays | |
-| `< replicatedPieceVoxels` | a piece `Damage` makes no entity for: returned in `DamageResult::fragments` (model, pose, velocities) for whoever draws to create as local rubble; also the damaged entity itself when it is that small and Dynamic (`toRubble`). Off (0) offline; 0.512 m^3 on a server (`sim::ServerConfig`: 262 voxels of 0.125 m) | 0 |
+| `< replicatedPieceVoxels` | a piece `Damage` makes no entity for: returned in `DamageResult::fragments` (model, pose, velocities) for whoever draws to create as local rubble; also the damaged entity itself when it is that small and Dynamic (`toRubble`). Off (0) offline; 0.512 m^3 on a server (`sim::ServerConfig`: 262 voxels of 0.125 m). On a server the same size decides which terrain islands are server bodies with a NetId (7.5 "Replicated bodies") | 0 |
 
 The defaults are metre sizes (`scene::kMinPieceVolume`, `kDebrisBodyVolume`, `kThinBodyLength`,
 `sim::kServerReplicatedPieceVolume`: what 16 / 48 / 6 / 512 voxels of 0.1 m were) in voxels of the default 0.125 m
@@ -761,6 +771,8 @@ air on a piece that expired.
 With `SceneConfig::markDebris = false` the scene adds the `Debris` component to nothing, so none
 of the three rules ever fires (a component the game adds by hand is still honoured). That is the
 scene of a session server (7.4): what exists there must not depend on a viewer, an age or a cap.
+A session client's scene has `SceneConfig::rubbleLayer` on: its rubble of `debrisBodyVoxels` or more is in
+`Layer::Rubble` instead of Dynamic (6), so no lump only this client has blocks its predicted player.
 
 ### 7.4 Simulation
 
@@ -817,7 +829,7 @@ network client will predict with (`docs/design/networking.md`).
 
 `vortex.net` (library `Vortex::Net`, GPU-free) is the M1 protocol of `docs/design/networking.md`; it runs over ENet
 (UDP) between `vortex_server` and the game (`Shredborne --connect`) and in one process over loopback transports for
-the tests ("Stage 3 as built", "Stage 4 as built" and "Stage 5 as built" there have every choice).
+the tests ("Stage 3 as built" to "Stage 6 as built" there have every choice).
 
 * **Region.** `sim::RegionDesc` (`vortex.sim:region`) = template id, seed, play bounds (whole chunks), height
   range, generator and `TerrainSettings` (the session's voxel size included). `sim::RegionWorldConfig` turns it into
@@ -871,8 +883,29 @@ the tests ("Stage 3 as built", "Stage 4 as built" and "Stage 5 as built" there h
   handshake, then an `Engine` built from `EngineConfig::simulation` = `Client::MakeSimulationConfig(base, 12288)`
   (the store capped at the GPU buffer's size; `Attach` refuses a region that does not leave
   `ClientSettings::minFreeStoreSlots` free) and `windowFollowsCamera = false`; `Attach` loads the region while it
-  polls; per tick `Poll`, presentations, `StepPlayer`. Other players are voxel figures; the editor, flight, crates
-  and the offline scripts are not available in a session.
+  polls; per tick `Poll`, presentations, `StepPlayer`. Other players are voxel figures; E asks the server for a crate
+  (`PlayerButton_Crate`, stage 6); the editor, flight and the offline scripts are not available in a session.
+* **Replicated bodies (stage 6).** A session server's bodies carry a `scene::NetId` (counting up, never reused;
+  `sim::Replicate`, `sim::AllocateNetId`): the template's crates, players' crates (`PlayerButton_Crate`), terrain
+  islands of at least `SceneConfig::replicatedPieceVoxels` (their `Detach` carries the NetId and the server makes the
+  body from the voxels the `Detach` removed, as every client does) and object pieces `Scene::Damage` keeps as entities.
+  `sim::Blast` asks `sim::TakePieceSlot` for every new piece (a cast's largest first): at most 2 new server bodies per
+  tick, 64 awake replicated bodies (pieces and placed objects) and 256 live pieces (`sim::ReplicationConfig`), and none
+  while the server's entity byte budget is spent; over a budget the piece is client rubble (`netId` 0 / a fragment),
+  and the live cap evicts the oldest resting piece (else the smallest awake one) as `EntityDespawn{ToRubble}`. Every
+  destruction of a NetId entity reaches the server's `on_destroy<scene::NetId>` observer and becomes an
+  `EntityDespawn`; a body that falls asleep is announced with its pose (`EntityRest`), one that wakes with
+  `EntityWake`; a damaged survivor is an `ObjectModel` (or, over the entity byte budget, let go `ToRubble`), one broken
+  below the size is despawned `Broken` with its remains as `netId`-0 `EntitySpawn`s. A replicated body is in
+  `Layer::Rubble` while it moves and `Layer::Dynamic` at rest or while it carries a player, on the server and every
+  client. Awake bodies travel in the snapshots (31 B each, at most 1200 B per snapshot, by a priority of snapshots
+  missed over distance); a client takes a snapshot's samples only after the events it was built after. A client
+  holds kinematic copies (`net::Client::Entities`), moved to their samples drawn in the past (`net::RemoteBodies`:
+  Hermite, 67-200 ms delay) and put at the `EntityRest` pose at rest; samples of the rest's tick or older are refused.
+  A player's cast hits the replicated body in front of the terrain.
+  Clients make their own rubble (shred.md stage 1e lifetimes and caps) from `netId`-0 pieces and fragments and from
+  copies evicted `ToRubble`. `net::CompareEntities` / `EntityListHash` are the entity check (`vortex_server`,
+  `tools/session-check.sh`); the wire `EntityCheck` is stage 7.
 * **Agreement.** `net::RegionHash` is `voxel::WorldHash` over the region window; probe chunks in `Welcome` compare
   the generators; `buildHash` covers the generator's golden values (`voxel::kGeneratorGoldenHash`) and the material
   table (`voxel::MaterialTableHash`).
@@ -956,7 +989,8 @@ World (statistics, save).
   the int limits, spheres vs. a reference across chunk borders and negative coordinates, exact
   hardness compare, swap, `ClearMask`, the skipped / unsynced report), generator determinism, colliders, connectivity, importers, particles;
   the HUD: font bitmaps and measuring, anchors, canvas quads, menu input, cursor capture.
-* `VortexPhysicsTests` - bodies, shapes, ray casts, characters (restored states, layer masks), terrain colliders
+* `VortexPhysicsTests` - bodies, shapes, ray casts, characters (restored states, layer masks, `Layer::Rubble`, no
+  pushing with `characterMovesBodies` off), `MoveKinematic`, terrain colliders
   (the player gate `HasCollider`); the body guard
   (a woken body the camera left behind, a body spawned where nothing is cooked, an unloaded
   chunk, the window edge, 60 bodies spread over the map, velocity kept through a freeze, parked
@@ -980,7 +1014,10 @@ World (statistics, save).
   fed the same operations (islands and crumbs included) have equal world hashes, a slightly
   different stream does not. `sim::StepPlayer`: quantisers, edges and the cooldown, walk / run /
   jump / held, and two simulations with other worker counts stepped with the same inputs staying
-  bit-equal (also with a restore every 30 ticks).
+  bit-equal (also with a restore every 30 ticks). Replication (stage 6): a piece of the replicated
+  size is a server body with its `Detach`'s NetId and the removed voxels as its model, a smaller one
+  client rubble; at most 2 new server bodies per tick; the awake cap and the live cap's eviction
+  order; damaged replicated objects as models, spawns and broken fragments; nothing offline.
 * `VortexNetTests` - links `Vortex::Net` only (checked at configure time). The wire format (every
   event at its byte size, masks, `RegionDesc` bit for bit, messages, forged bytes), the transports
   (reliable order through loss, jitter and an outage; the state channel's loss, duplicates and
@@ -998,7 +1035,10 @@ World (statistics, save).
   rejection in the owner block, and real UDP on 127.0.0.1 (wall clock, ENet resending through
   5 % receive loss): reliable order, exactly-once delivery and `ReliableBytesInFlight`, disconnects
   and failed connects, and a server with two walking, casting clients over three sockets ending
-  with equal world hashes.
+  with equal world hashes. Stage 6 (`EntityTests.cpp`): the scripted fight with islands and crates,
+  a collapse with 64 awake pieces at 5 % loss (the awake and live caps), a split below the
+  threshold, a player under falling pieces at 150 ms, resting crates blocking players on both
+  sides; the rest rule against a hand-written server; `RemoteBodies` from sample sequences.
 * `VortexGraphicsTests` - SPIR-V reflection of the real shader binaries, C++ / GLSL struct
   layout parity (`VxHudQuad` included), the material surface-kind and HUD cell-grid constants
   (C++ vs. the text of `common.glsl`) and
@@ -1036,9 +1076,9 @@ World (statistics, save).
 * **Networking / dedicated server**: `Vortex::Core`, `Vortex::Physics`, `Vortex::Sim` and
   `Vortex::Net` have no GPU or window dependency, `sim::Simulation` runs the whole simulation on a
   numbered fixed tick (7.4), generation is a pure function of the seed (pinned bit for bit by
-  golden tests) and every terrain change is an integer operation (7.5). Stages 6-9 of
-  `docs/design/networking.md` add entities, chunk sync, a soak and the on-demand world (the transport and players are
-  built: stages 4-5).
+  golden tests) and every terrain change is an integer operation (7.5). Stages 7-9 of
+  `docs/design/networking.md` add chunk sync, a soak and the on-demand world (the transport, players and replicated
+  bodies are built: stages 4-6).
 * **Memory**: chunks are dense; palette-compressed or brick-sparse chunk payloads can replace
   `ids[]` behind `VX_VOXEL_ID` without touching traversal.
 

@@ -41,8 +41,9 @@ export namespace vortex::sim {
         /// Live pieces at most (placed objects such as crates are not pieces). A new piece over it
         /// evicts the oldest resting piece, else the smallest awake one (EntityDespawn{ToRubble}).
         uint32_t maxLivePieces = 256;
-        /// Awake pieces at most (derived from the snapshot budget): a new piece while this many are
-        /// awake is client rubble.
+        /// Awake replicated bodies at most (derived from the snapshot budget, which every awake body
+        /// shares: pieces, crates and other placed objects alike; review of stage 6): a new piece while
+        /// this many are awake is client rubble, and a server that places objects refuses one then.
         uint32_t maxAwakePieces = 64;
         /// New server bodies per tick (pieces of any kind; shred.md Part 4 `serverBodiesPerTick`: what
         /// a client can build, about 120 per second). Further pieces in the same tick are client rubble.
@@ -100,7 +101,8 @@ export namespace vortex::sim {
         uint32_t netIds = 0;              ///< NetIds handed out (lights, objects, pieces).
         uint32_t pieces = 0;              ///< Pieces that became server bodies.
         uint32_t overTickBudget = 0;      ///< Pieces left to client rubble: bodiesPerTick reached.
-        uint32_t overAwakeCap = 0;        ///< ... maxAwakePieces awake.
+        uint32_t overAwakeCap = 0;        ///< ... maxAwakePieces replicated bodies awake.
+        uint32_t overByteBudget = 0;      ///< ... the server's entity byte budget spent (ReplicationState::refuseNewPieces).
         uint32_t evictedResting = 0;      ///< Pieces evicted by maxLivePieces: the oldest resting one.
         uint32_t evictedAwake = 0;        ///< ... nothing rested: the smallest awake one.
         uint32_t bodyFailures = 0;        ///< A piece's body could not be made (out of bodies): its id despawns at once.
@@ -113,6 +115,9 @@ export namespace vortex::sim {
         uint32_t budgetTick = 0xFFFFFFFFu;
         uint32_t bodiesThisTick = 0;
         uint32_t pendingPieces = 0;       ///< Slots taken whose body is made later in the same blast.
+        /// Set by the session server while its entity byte budget is spent (review of stage 6):
+        /// TakePieceSlot answers OverByteBudget, so a new piece is client rubble with no model sent.
+        bool refuseNewPieces = false;
         ReplicationStats stats;
     };
 

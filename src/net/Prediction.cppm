@@ -197,10 +197,12 @@ export namespace vortex::net {
      * replication", stage 6): 8 `(tick, pose, velocity)` samples per body, Hermite between them
      * (position; rotation slerped); delay per body max(67 ms, 2 x its recent update interval), at most
      * 200 ms; extrapolation along the last velocity for up to one update interval, then hold.
-     * @details `Rest(netId, tick)` (an EntityRest) drops the samples and refuses every sample of
-     * `tick` or older (a snapshot that arrives after the rest event); a newer sample starts the body
-     * again. `MaxGap` is the largest gap in ticks between consecutive samples of one body while it
-     * moved (what the snapshot priority and the loss left; a rest in between starts over).
+     * @details `Rest(netId, tick)` (an EntityRest) drops the samples of `tick` or older and refuses
+     * every such sample from then on; it reports whether the body rests (no newer sample is kept).
+     * `MaxGap` is the largest gap in ticks between consecutive samples of one body while it moved,
+     * and from its last sample to its rest (what the snapshot priority and the loss left; a rest in
+     * between starts over). The rest state of a copy follows the events (EntityRest, EntityWake),
+     * never the samples (net::Client takes a snapshot's samples only after its events).
      */
     class RemoteBodies {
     public:
@@ -211,8 +213,9 @@ export namespace vortex::net {
         /// @brief A snapshot's sample of `netId` at `tick`. False (ignored) when it is not newer than
         /// the newest sample or the body's rest.
         bool Add(uint32_t netId, uint32_t tick, const BodyPose& pose);
-        /// @brief The body came to rest at `tick`: samples dropped, older ones refused from now on.
-        void Rest(uint32_t netId, uint32_t tick);
+        /// @brief The body came to rest at `tick`: samples of `tick` or older dropped and refused from
+        /// now on. True when the body rests (no newer sample is kept).
+        bool Rest(uint32_t netId, uint32_t tick);
         /// @brief Forgets a body (despawned).
         void Remove(uint32_t netId);
         /// @brief Re-bases every sample of a body whose model origin moved by `localOffset` metres in
@@ -223,6 +226,8 @@ export namespace vortex::net {
         bool HasSamples(uint32_t netId) const;
         uint32_t MaxGap() const { return m_MaxGap; }
         uint32_t MaxGap(uint32_t netId) const;
+        /// @brief Samples of `netId` accepted since it was first seen (0 for an unknown body).
+        uint32_t Received(uint32_t netId) const;
         size_t Count() const { return m_Tracks.size(); }
 
     private:
@@ -233,9 +238,10 @@ export namespace vortex::net {
         struct Track {
             std::deque<Sample_> samples;
             double interval = 2.0;
-            bool rested = false;
+            bool rested = false;          ///< an EntityRest came (restTick is valid)
             uint32_t restTick = 0;
             uint32_t maxGap = 0;
+            uint32_t received = 0;
         };
         std::unordered_map<uint32_t, Track> m_Tracks;
         uint32_t m_MaxGap = 0;

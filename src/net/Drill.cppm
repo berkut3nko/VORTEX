@@ -1,5 +1,7 @@
 module;
 
+#include <algorithm>
+
 #include <glm/glm.hpp>
 
 #include <cstdint>
@@ -58,6 +60,9 @@ export namespace vortex::net {
         BlastDrill(const sim::RegionDesc& region, const voxel::WorldMaterials& ids, const voxel::World& world);
 
         uint32_t Sites() const { return static_cast<uint32_t>(m_Sites.size()); }
+        /// @brief Uses only the first `count` sites (at least one): the play bounds' -x / -z corner,
+        /// away from a template's middle (vortex_server --drill-sites, a drill beside a session).
+        void KeepSites(uint32_t count) { m_Sites.resize(std::clamp<size_t>(count, 1, m_Sites.size())); }
         DrillStep Step(uint32_t index) const;
 
     private:

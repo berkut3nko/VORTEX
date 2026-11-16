@@ -215,6 +215,16 @@ namespace vortex::physics {
         std::vector<glm::ivec3> dirty;            // coordinates of queued entries (may hold stale / duplicate coordinates)
         uint64_t nextGeneration = 0;
         uint32_t maxJobs = 2;
+        /// The job budget is per round (an Update, or one pass of Flush): what was in flight when the
+        /// round began plus what the round started, never re-read from the live counter (jobs that
+        /// finish meanwhile would let a number depending on worker timing start; review of
+        /// networking stage 6). GuardBodies' ProcessDirty shares its Update's round.
+        uint32_t roundBase = 0;
+        uint32_t roundStarted = 0;
+        void StartRound() {
+            roundBase = shared->inFlight.load();
+            roundStarted = 0;
+        }
         uint32_t colliderCount = 0;
         uint32_t builtTotal = 0;
 
@@ -608,6 +618,15 @@ namespace vortex::physics {
                 std::scoped_lock lock(shared->mutex);
                 ready.swap(shared->results);
             }
+            // In coordinate order, not in the order the workers finished: the bodies get their Jolt
+            // ids (which Jolt's contact order follows) the same way in every run that installs the
+            // same results together (review of networking stage 6: the session tests).
+            std::sort(ready.begin(), ready.end(), [](const CookResult& a, const CookResult& b) {
+                if (a.coord.x != b.coord.x) return a.coord.x < b.coord.x;
+                if (a.coord.y != b.coord.y) return a.coord.y < b.coord.y;
+                if (a.coord.z != b.coord.z) return a.coord.z < b.coord.z;
+                return a.generation < b.generation;
+            });
             for (const CookResult& result : ready) {
                 const auto it = chunks.find(result.coord);
                 // The chunk may have been dropped or re-adopted while the job ran, or a newer result
@@ -702,7 +721,7 @@ namespace vortex::physics {
                     Apply(candidate.coord, entry, nullptr, entry.generation);
                     continue;
                 }
-                if (shared->inFlight.load() >= maxJobs) {
+                if (roundBase + roundStarted >= maxJobs) {
                     dirty.push_back(candidate.coord);                       // stays queued for a later update
                     continue;
                 }
@@ -713,6 +732,7 @@ namespace vortex::physics {
                 entry.border = taken->border;
                 entry.hasBorder = true;
                 shared->inFlight.fetch_add(1);
+                ++roundStarted;
                 jobs.Submit([state = shared, snapshot = std::move(taken), cookFilter = filter, coord = candidate.coord,
                              generation = entry.generation, voxelSize = world.VoxelSize()] {
                     CookJob(state, snapshot, cookFilter, coord, generation, voxelSize);
@@ -739,6 +759,7 @@ namespace vortex::physics {
 
     void TerrainColliders::Update(std::span<const glm::dvec3> focusPoints, float radius) {
         Impl& impl = *m_Impl;
+        impl.StartRound();
         impl.RefreshFilter();
 
         impl.focus.clear();
@@ -804,6 +825,10 @@ namespace vortex::physics {
     void TerrainColliders::Flush() {
         Impl& impl = *m_Impl;
         for (;;) {
+            // The whole round first, then installed together (in coordinate order): what Flush leaves
+            // never depends on which worker finished first.
+            while (impl.shared->inFlight.load() != 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            impl.StartRound();
             impl.InstallResults();
             impl.ProcessDirty();
 

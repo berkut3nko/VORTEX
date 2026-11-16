@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -231,4 +232,47 @@ TEST(Clock, TicksAboveTheCapAreCarriedToTheNextCalls) {
     EXPECT_EQ(clock.TicksDue(0.0, kTick, 8), 8u);
     EXPECT_EQ(clock.TicksDue(0.0, kTick, 8), 4u);
     EXPECT_EQ(clock.TicksDue(0.0, kTick, 8), 0u);
+}
+
+// Stage 6: replicated bodies drawn in the past. Hermite between samples (exact at a sample, the
+// sampled velocity as the tangent), extrapolation along the last velocity for one update interval,
+// then hold; a rest drops the samples of its tick or older and refuses every such sample - a
+// snapshot that arrives after the EntityRest - and a newer one is a moving body's again. A stale rest
+// (older than a kept sample: review of stage 6) keeps the newer samples and says the body moves; the
+// gap from the last sample to the rest counts.
+TEST(RemoteBodies, HermiteInThePastRestRefusesLateSamples) {
+    net::RemoteBodies bodies;
+    constexpr double dt = 1.0 / 60.0;
+    auto pose = [](float x, float v) { return net::BodyPose{glm::vec3(x, 0.0f, 0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f), glm::vec3(v, 0.0f, 0.0f)}; };
+    // Constant velocity 6 m/s: a sample every 2 ticks moves 0.2 m.
+    for (uint32_t t = 10; t <= 24; t += 2) EXPECT_TRUE(bodies.Add(7, t, pose(0.1f * static_cast<float>(t), 6.0f)));
+    EXPECT_FALSE(bodies.Add(7, 24, pose(9.0f, 0.0f)));          // not newer
+    EXPECT_FALSE(bodies.Add(7, 23, pose(9.0f, 0.0f)));
+    EXPECT_EQ(bodies.MaxGap(7), 2u);
+    net::BodyPose out;
+    ASSERT_TRUE(bodies.Sample(7, 24.0, dt, out));                // delay max(4, 2 x 2) = 4 ticks: tick 20, a sample
+    EXPECT_NEAR(out.position.x, 2.0f, 1e-5f);
+    ASSERT_TRUE(bodies.Sample(7, 25.0, dt, out));                // tick 21: between, on the line (Hermite of a line)
+    EXPECT_NEAR(out.position.x, 2.1f, 1e-5f);
+    ASSERT_TRUE(bodies.Sample(7, 29.0, dt, out));                // tick 25: one tick past the newest, extrapolated
+    EXPECT_NEAR(out.position.x, 2.5f, 1e-4f);
+    ASSERT_TRUE(bodies.Sample(7, 40.0, dt, out));                // far past it: one interval (2 ticks), then hold
+    EXPECT_NEAR(out.position.x, 2.6f, 1e-4f);
+
+    EXPECT_TRUE(bodies.Rest(7, 30));                              // EntityRest at tick 30
+    EXPECT_EQ(bodies.MaxGap(7), 6u);                              // the tail: last sample 24, rest 30
+    EXPECT_FALSE(bodies.HasSamples(7));
+    EXPECT_FALSE(bodies.Sample(7, 40.0, dt, out));
+    EXPECT_FALSE(bodies.Add(7, 28, pose(5.0f, 1.0f)));           // a late snapshot: refused
+    EXPECT_FALSE(bodies.Add(7, 30, pose(5.0f, 1.0f)));
+    EXPECT_TRUE(bodies.Add(7, 32, pose(3.0f, 1.0f)));            // moving again
+    EXPECT_TRUE(bodies.HasSamples(7));
+    EXPECT_EQ(bodies.MaxGap(7), 6u);                              // a rest starts the gap over
+    EXPECT_EQ(bodies.Received(7), 9u);
+    EXPECT_TRUE(bodies.Add(7, 34, pose(3.2f, 1.0f)));
+    EXPECT_FALSE(bodies.Rest(7, 33));                             // stale: the sample of 34 is newer
+    EXPECT_TRUE(bodies.HasSamples(7));
+    EXPECT_FALSE(bodies.Add(7, 33, pose(5.0f, 1.0f)));
+    bodies.Remove(7);
+    EXPECT_EQ(bodies.Count(), 0u);
 }

@@ -11,6 +11,7 @@ module;
 export module vortex.net:client;
 
 import vortex.voxel;
+import vortex.scene;
 import vortex.sim;
 import :transport;
 import :messages;
@@ -41,6 +42,11 @@ export namespace vortex::net {
         /// A snapshot whose events have not arrived this many ticks (250 ms) after it did is given
         /// up: counted, no replay (the newest snapshot whose events are applied is compared meanwhile).
         uint32_t eventWaitTicks = 15;
+        /// A joiner starts predicting from a snapshot at most this many ticks older than the newest
+        /// it received (review of stage 6: one that became ready after a long catch-up of the join log
+        /// is that far in the past); it waits for a fresher one, but not longer than startWaitTicks.
+        uint32_t startFreshTicks = 8;
+        uint32_t startWaitTicks = 120;
         /// Attach refuses a world that leaves fewer free chunk-store slots than this after loading
         /// the region (0 = no check). A client whose store is capped below the region's cell count
         /// (MakeSimulationConfig's `storeLimit`: the game's GPU store) needs room for what a session
@@ -78,14 +84,18 @@ export namespace vortex::net {
         // Replicated objects (stage 6).
         uint32_t copiesMade = 0;          ///< copies of server bodies made (spawns and Detach pieces with a NetId)
         uint32_t copiesFailed = 0;        ///< ... that could not be made (store or bodies full): the entity check sees it
+        uint32_t copiesLost = 0;          ///< ... removed by this scene itself (fell out of the window first): the entity check sees it
         uint32_t despawns = 0;
         uint32_t rests = 0;
+        uint32_t staleRests = 0;          ///< EntityRest older than a sample already taken: the copy keeps moving
+        uint32_t wakes = 0;               ///< EntityWake events applied
         uint32_t models = 0;              ///< ObjectModel events applied
         uint32_t fragments = 0;           ///< netId 0 spawns (client rubble when presenting)
         uint32_t toRubble = 0;            ///< copies kept as local rubble (EntityDespawn{ToRubble}, presenting)
         uint32_t ignoredEntityEvents = 0; ///< events for unknown or tombstoned NetIds (ignored)
         uint64_t bodySamples = 0;         ///< snapshot samples taken
-        uint64_t bodySamplesIgnored = 0;  ///< ... ignored: no copy (yet), or not newer than its rest or newest sample
+        uint64_t bodySamplesIgnored = 0;  ///< ... ignored: no copy, or not newer than its rest or newest sample, or dropped waiting
+        uint32_t heldUnderPlayer = 0;     ///< ticks a moving copy stayed solid because the own player stands on it
     };
 
     /// @brief How the own player's prediction went (networking.md stage 4: "correction rate logged").
@@ -105,6 +115,7 @@ export namespace vortex::net {
         double replaySeconds = 0.0, maxReplaySeconds = 0.0;   ///< wall clock (logged only)
         uint64_t waitedForEvents = 0;     ///< Snapshots compared only after their events arrived
         uint64_t eventTimeouts = 0;       ///< Snapshots given up eventWaitTicks after they arrived (not compared)
+        uint64_t staleStarts = 0;         ///< Ready snapshots a joiner did not start predicting from: too far behind the newest
         uint64_t tooOld = 0;              ///< Snapshots older than the kept history (not compared)
         uint64_t behind = 0;              ///< Snapshots at or past the tick being predicted: the state was taken as it is
         uint32_t clockJumps = 0, clockJumpTicks = 0;
@@ -228,6 +239,9 @@ export namespace vortex::net {
         const ClientStats& Stats() const;
         /// @brief This client's copies of the server's replicated objects (the entity check).
         std::vector<EntityInfo> Entities() const;
+        /// @brief True when `entity` is this client's copy of a server object (what a cast can hit;
+        /// its own rubble is not).
+        bool IsCopy(scene::Entity entity) const;
         /// @brief The snapshot samples of the copies (largest sample gap per body: RemoteBodies::MaxGap).
         const RemoteBodies& Bodies() const;
         /// @brief The applied live operations (after LogEnd) since the last call, one BlastResult per

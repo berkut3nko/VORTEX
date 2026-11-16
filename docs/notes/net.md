@@ -1,8 +1,10 @@
 # Notes: sessions (`src/net`, `src/sim/Region.cppm`, `tests/net`, `tools/server`)
 
 Read `CLAUDE.md`, `docs/ARCHITECTURE.md` 7.5 and `docs/design/networking.md` ("Stage 3 as built", "Stage 4 as
-built", "Stage 5 as built") first; nothing from them is repeated here. Paths are relative to `engine/`. Written at
-networking stage 3, extended at stages 4 and 5 and the review of stage 5 (2026-11-13). The game's session mode is `../src/Session.cpp`.
+built", "Stage 5 as built", "Stage 6 as built", "Review of stage 6") first; nothing from them is repeated here. Paths
+are relative to `engine/`. Written at networking stage 3, extended at stages 4, 5 and 6 and the reviews of stages 5
+and 6. The game's session
+mode is `../src/Session.cpp`.
 
 ## 1. Map
 
@@ -14,12 +16,18 @@ networking stage 3, extended at stages 4 and 5 and the review of stage 5 (2026-1
   includes `<enet/enet.h>`), `EnetSettings` (timeouts, test receive loss), `EnetStats`, `ParseEndpoint`,
   `kDefaultPort`.
 - `src/net/Wire.cppm`, `internal/Wire.cpp` - `ByteWriter` / `ByteReader`, mask runs, `Event` = `variant<WorldOp,
-  EntitySpawn>`, `WriteEvent` / `ReadEvent`, `WriteRegion` / `ReadRegion`, `QuantizeVelocity`.
+  EntitySpawn, EntityDespawn, EntityRest, ObjectModel, EntityWake>` (stage 6: `ObjectSpawn`, model runs `WriteVolumeRuns` /
+  `ReadVolumeRuns`, `VolumeHash`), `WriteEvent` / `ReadEvent`, `WriteRegion` / `ReadRegion`, `QuantizeVelocity`.
+- `src/net/Entities.cppm`, `internal/Entities.cpp` - `EntityInfo`, `CompareEntities`, `EntityListHash`: the entity
+  check of the drill, the tests and `tools/session-check.sh` (stage 6; not the wire `EntityCheck` of stage 7).
+- `src/sim/Replication.cppm`, `internal/Replication.cpp` - `AllocateNetId`, `Replicate`, `IsAwake`, `CountPieces`,
+  `TakePieceSlot` (the piece budgets), `Despawn`; `ReplicationConfig` / `ReplicationState` are in `Simulation.cppm`,
+  `scene::NetId` / `DespawnReason` in `scene/Components.cppm`; `sim::Blast` makes the server bodies (step 5).
 - `src/net/Messages.cppm`, `internal/Messages.cpp` - message structs, `Encode` / `Decode`, `EncodeBatch` (events
   already encoded), `kProtocolVersion`; stage 4: `InputBatch`, `Snapshot`, `RemotePlayer`, `Welcome::player`.
 - `src/net/Prediction.cppm`, `internal/Prediction.cpp` - `TickClock` (the client clock: jumps, bleed, catch-up,
-  holds), `ServerTime` (the server tick other players are drawn at; only moves forward) and `RemotePlayers` (other
-  players drawn in the past).
+  holds), `ServerTime` (the server tick other players are drawn at; only moves forward), `RemotePlayers` (other
+  players drawn in the past) and `RemoteBodies` (stage 6: replicated bodies drawn in the past, the rest rule).
 - `src/net/Session.cppm`, `internal/Session.cpp` - `SessionConfig`, `ParseSession` / `LoadSessionFile` /
   `FormatSession`, tokens, `BuildHash`, `ProbeChunks` / `CheckProbes`, `RegionHash`.
 - `src/net/Server.cppm`, `internal/Server.cpp` - `ServerSettings`, `CastRecord`, `ServerStats`, `net::Server`
@@ -27,7 +35,9 @@ networking stage 3, extended at stages 4 and 5 and the review of stage 5 (2026-1
 - `src/net/Client.cppm`, `internal/Client.cpp` - `ClientSettings`, `ClientState`, `ClientStats`, `PredictionStats`,
   `net::Client` (events; the own player's prediction, input sends and reconciliation).
 - `src/net/Drill.cppm`, `internal/Drill.cpp` - `BlastDrill`: mushroom / bar / neck tower per step, sites of 100 x 100
-  voxels in the play bounds; `BotPilot` / `PilotSettings`: seeded controls of a bot player.
+  voxels in the play bounds, a crate in each blast and one per site in the margin (stage 6), `KeepSites`;
+  `RunDrillStep` (clear the site's bodies, build, crates, cast); `BotPilot` / `PilotSettings`: seeded controls of a
+  bot player (`crateEveryTicks`: the E key).
 - `src/sim/Player.cppm`, `internal/Player.cpp` - `PlayerInput` / `PlayerState` / `PlayerTuning`, `StepPlayer`, the
   quantisers (the movement rule of server, client and offline game).
 - `src/sim/Region.cppm`, `internal/Region.cpp` - `RegionDesc` and its helpers, templates (`PlaygroundTemplate` is the
@@ -39,8 +49,11 @@ networking stage 3, extended at stages 4 and 5 and the review of stage 5 (2026-1
   hand-written server endpoint - overlaps, gaps, forged `Welcome`s, late-join presentation, refused worlds),
   `SessionTests.cpp` (the `Session` fixture: a server and bots on impaired loopbacks driven by one manual clock; the
   acceptance; pacing; the disabled calibration), `ClockTests.cpp` (`TickClock` and `RemotePlayers` from margin and
-  sample sequences), `MovementTests.cpp` (the `Match` fixture: a server driven by `Advance` and player bots each on
-  its own `TicksDue`; the stage-4 acceptance; the disabled correction rate over seeds).
+  sample sequences; `RemoteBodies`), `MovementTests.cpp` (the `Match` fixture: a server driven by `Advance` and player
+  bots each on its own `TicksDue`; the stage-4 acceptance; the disabled correction rate over seeds),
+  `EntityTests.cpp` (stage 6: the `Arena` fixture, `Match` with presenting bots and a settle that waits for every
+  body to rest; the fight, collapse, split, falling-piece and crate tests).
+- `tests/sim/ReplicationTests.cpp` - the server half of stage 6 on one `Simulation` (piece slots, caps, damage).
 - `tests/sim/PlayerTests.cpp` - `StepPlayer` alone and two simulations stepped with the same inputs.
 
 ## 2. Invariants
@@ -51,9 +64,41 @@ networking stage 3, extended at stages 4 and 5 and the review of stage 5 (2026-1
 - **One order.** The server numbers events as it makes them (`opSeq` = index in its log + 1); batches carry
   consecutive runs; a client applies `opSeq == applied + 1` only. A cast's operations are consecutive (casts run one
   after another inside a tick).
-- **Event kinds** 1-6 = `sim::WorldOpKind`, 32 = `EntitySpawn`; `EntityKind::Light` = 1; `RegionGenerator`,
-  `RegionTemplateId`, `MessageType`, `RefuseReason` values are wire format. Change any byte -> bump
-  `kProtocolVersion`.
+- **Event kinds** 1-6 = `sim::WorldOpKind`, 32 = `EntitySpawn`, 33 `EntityDespawn`, 34 `EntityRest`, 35
+  `ObjectModel`, 36 `EntityWake`; `EntityKind::Light` = 1, `Object` = 2; `scene::DespawnReason` (1 Destroyed, 2
+  ToRubble, 3 Broken), `PlayerButton_Crate` = 8, `RegionGenerator`, `RegionTemplateId`, `MessageType`, `RefuseReason`
+  values are wire format. Change any byte -> bump `kProtocolVersion` (7 since the review of stage 6).
+- **Every NetId destruction is an event.** The server connects `on_destroy<scene::NetId>` at `Start`; whatever
+  destroys a replicated entity (Damage, `DestroyBelow`, eviction, `ClearBodies`, a player's crate limit) queues an
+  `EntityDespawn` with `NetId::despawn` as its reason (set it before destroying: `sim::Despawn`), emitted by
+  `DrainDespawns` after the cast or the tick. Never remove a NetId entity without letting the observer see it.
+- **Only terrain operations charge the cast queue's event credit.** Entity events follow from Jolt (where a piece
+  rests, which crate a blast catches, sleep): charging them would put a replayed cast on another tick (R5). They are
+  counted (`ServerStats::entityEventBytes`). A `Detach` with a NetId is a terrain operation and is charged as before.
+- **Entity events have a budget of their own** (review of stage 6; `entityEventBytesPerTick` / `entityEventBurstBytes`),
+  which decides only which bodies are replicated, never when a cast runs: while it is spent `TakePieceSlot` answers
+  `OverByteBudget` (`ReplicationState::refuseNewPieces`, set around each `RunCast`) and a damaged object is let go
+  `ToRubble` instead of an `ObjectModel`. Rests, wakes, despawns and placed objects are always sent.
+- **The NetId of a piece is a server decision, the voxels are not.** `TakePieceSlot` reads Jolt's sleep state (the
+  awake cap) and the tick's budget: a replayed server may give another piece the id, never other voxels.
+- **Layers follow rest on both sides, and rest and wake are events.** A replicated body is in `Layer::Rubble` while it
+  moves and `Layer::Dynamic` at rest, on the server (`TrackBodies` after physics, which emits `EntityRest` and
+  `EntityWake`; `SpawnObjectAt` at creation) and on every client (a copy is Dynamic from its `EntityRest` to its
+  `EntityWake`). A moving body that carries a player stays Dynamic: on the server any player's ground body, on a client
+  the copy under its own player (`MoveCopies`). The session character mask is Static | Dynamic and characters never
+  move bodies (`characterMovesBodies` false), so what blocks a player is a function of the opSeq on both sides (a
+  player standing on another player's ride is the exception).
+- **The rest rule.** A copy at rest is at the `EntityRest` pose bit for bit; samples of the rest's tick or older are
+  refused (`RemoteBodies::Add`); a stale rest (older than a kept sample) leaves the copy moving. Samples never change a
+  copy's rest state. Rest poses and rotations compare exactly in every test, and so do rest states (`Agree`).
+- **A joiner starts predicting from a fresh snapshot**: at most `startFreshTicks` behind the newest one received
+  (else it waits, at most `startWaitTicks`). One that became ready only after a long catch-up of the join log is far in
+  the past, and a prediction started there sends late inputs: a clock jump, then a hard resync (review of stage 6).
+- **A snapshot's samples wait for its events**, as its owner block does: they are taken after `ApplyPending`, before
+  reconciliation, once `Snapshot::lastOpSeq` is applied. So a spawn, model, rest or wake before a sample is always
+  applied first, and an `ObjectModel` shifts only old-frame samples (review of stage 6).
+- **The awake cap counts every awake replicated body** (pieces, crates, players' crates): they share the snapshots.
+  A cast's terrain pieces ask for slots largest first; NetIds follow that order, the `Detach` order does not.
 - **The cast schedule is a function of counts.** `CastWorkOf` may read only counters that follow from the flood
   box's voxels and the operations' integers. `graphsBuilt`, `chunksDecoded`, any time and the object half of a blast
   are never inputs (`CastBudget.ScheduleFollowsCountsNotTimeOrCache`).
@@ -160,10 +205,31 @@ networking stage 3, extended at stages 4 and 5 and the review of stage 5 (2026-1
   `castRecordLimit`.
 - Players do not join in `PeerId` order: a bot's slot depends on whose `Hello` arrived first. Tests take the slot
   from `Client::Slot()`.
-- `PhysicsConfig::characterLayers` is `sim::kSessionCharacterLayers` (Static only) on a server (`sim::ServerConfig`)
-  and a client (`MakeSimulationConfig`); `Attach` refuses another mask, tick length or gravity. A client simulation
+- `PhysicsConfig::characterLayers` is `sim::kSessionCharacterLayers` (Static | Dynamic since stage 6) on a server
+  (`sim::ServerConfig`) and a client (`MakeSimulationConfig`), with `characterMovesBodies` false and, on a client,
+  `SceneConfig::rubbleLayer`; `Attach` refuses another mask, tick length, gravity or those flags. A client simulation
   built by hand without `MakeSimulationConfig` is refused (with the default mask the client's own rubble blocked its
   prediction: 100 corrections in 20 s in the drill).
+- Copies move only in `Client::StepPlayer` / `RunTick` (`MoveCopies`, one tick each): a harness that polls and steps
+  the simulation without them sees copies stand at their spawn until their `EntityRest` (the `Session` fixture of
+  `SessionTests.cpp` does that; `Arena` and `Match` do not).
+- A client's copy removed by its own scene (`DestroyBelow`: drawn in the past it can fall out first) is dropped and
+  counted (`ClientStats::copiesLost`); the entity check shows it missing until the server's despawn comes.
+- Tombstones of despawned NetIds grow for the session (4 bytes each); stage 7's join changes how they start.
+- A player's crates go when it leaves (`DropPlayer`); a crate is refused at the awake cap. So a departure makes events:
+  what a departing client drained to is the opSeq before them, which `Server::SetOnClientLeft` reports (vortex_server
+  logs its "client left" line there; `tools/session-check.sh` compares at it).
+- The `Arena` / `Match` harnesses are reproducible only because colliders install in chunk order with a per-round job
+  budget (physics notes) and the harness waits for idle between ticks: a harness that does not wait sees worker
+  timing again (`Entities.OneScriptGivesTheSameBodiesTwice`).
+- A player's cast at dequeue takes the nearer of the terrain and a replicated body (`PhysicsWorld::Raycast` with
+  Dynamic | Rubble; every server body there is replicated); the game's puff takes the nearer of the terrain and a copy.
+- A falling replicated piece passes through players (it is in Rubble) and may come to rest overlapping one; the
+  character is then inside a Dynamic body on both sides and walks out (Jolt's penetration recovery), corrected once
+  at most (`PlayerUnderFallingPiecesAt150ms`: 4 corrections over 6 pieces). Crush damage is M2 (shred.md question 8).
+- `vortex_server --drill-every 6` (the default) on terrain rebuilds a 12.5 m site ten times a second; game clients
+  beside it (`tools/session-check.sh`) apply those edits and show 0-2 clock jumps / resyncs from their own frame time,
+  no corrections (the server's longest pass is logged: `Server: longest pass`).
 - Other players are drawn at `ServerTime`, which advances only in `TicksDue` (real time): a harness that ticks a
   client without calling `TicksDue` sees them stand at the first snapshot's tick.
 - `TickClock::Report` takes ticks the client made; feeding it non-increasing input ticks makes every report a
@@ -185,7 +251,12 @@ networking stage 3, extended at stages 4 and 5 and the review of stage 5 (2026-1
   a `Player.*` test, then `Movement.NoCorrectionAbove2cmOnFlatGround` must still see 0 corrections.
 
 - New event kind: value in `EventKind` (or a new `WorldOpKind` 7+), `WriteEvent` / `ReadEvent`, a size line in
-  `Wire.EveryWorldOpRoundTripsAtItsSize`, `kProtocolVersion` + 1, the client's `Apply`.
+  `Wire.EveryWorldOpRoundTripsAtItsSize` (`Wire.EntityEventsRoundTripAtTheirSizes` for entity events),
+  `kProtocolVersion` + 1, the client's `Apply` / `ApplyEntity`, and `MaskVoxels` in `Server.cpp` if it carries a
+  volume (the batch decoder's voxel budget).
+- New kind of server body (a thrown object, a spell's matter): create it, `sim::Replicate(simulation, entity, piece)`,
+  then the server's `EmitObjectSpawn`; it is then in snapshots, rests, despawns and the entity check like a crate.
+  A piece counts against the piece caps (`piece = true`), a placed object does not.
 - New region template: a value in `RegionTemplateId`, a case in `BuildRegionTemplate` and `sim::IsValid`, a keyword
   in `ParseSession` / `FormatSession`; it may read the loaded world but must not change it.
 - Re-calibrating the cast work: `VortexNetTests --gtest_also_run_disabled_tests
@@ -213,3 +284,7 @@ networking stage 3, extended at stages 4 and 5 and the review of stage 5 (2026-1
 - `--session=.../arena250.session --ticks=60` logs the server's preload time and memory (the 10 s / 150 MiB gates).
 - The game's standard headless run must still log `Beam cut: 13 voxels removed, 1 new object(s)` (the plaza comes
   from the template now).
+- Stage 6: `-R "Entities|Replication|RemoteBodies|Client"` (11 `Entities.*` since the review); the drill's
+  `Entities: client N: ... - agree` lines and
+  its `Objects:` line (bodies, spawns, rests, despawns by reason, caps, snapshot bytes); `tools/session-check.sh`
+  compares the game clients' `entities at opSeq` lines with the server's.

@@ -196,17 +196,30 @@ namespace vortex::net {
             m_MaxGap = std::max(m_MaxGap, gap);
             t.interval += (std::min(static_cast<double>(gap), 60.0) - t.interval) / 8.0;
         }
-        t.rested = false;
         t.samples.push_back({tick, pose});
+        ++t.received;
         while (t.samples.size() > kSamples) t.samples.pop_front();
         return true;
     }
 
-    void RemoteBodies::Rest(uint32_t netId, uint32_t tick) {
+    bool RemoteBodies::Rest(uint32_t netId, uint32_t tick) {
         Track& t = m_Tracks[netId];
-        t.samples.clear();
+        // The tail: from the last sample to the rest (a body that stopped being sent long before it
+        // came to rest shows here).
+        if (!t.samples.empty() && tick > t.samples.back().tick) {
+            const uint32_t gap = tick - t.samples.back().tick;
+            t.maxGap = std::max(t.maxGap, gap);
+            m_MaxGap = std::max(m_MaxGap, gap);
+        }
+        while (!t.samples.empty() && t.samples.front().tick <= tick) t.samples.pop_front();
         t.rested = true;
         t.restTick = std::max(t.restTick, tick);
+        return t.samples.empty();
+    }
+
+    uint32_t RemoteBodies::Received(uint32_t netId) const {
+        const auto it = m_Tracks.find(netId);
+        return it != m_Tracks.end() ? it->second.received : 0u;
     }
 
     void RemoteBodies::Remove(uint32_t netId) { m_Tracks.erase(netId); }

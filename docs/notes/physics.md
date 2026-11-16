@@ -118,8 +118,11 @@ bodies resume on what was just installed, and their requests are cooked in the s
 - `border`/`hasBorder` mirror the neighbour bits the newest job was given; updated in `ProcessDirty` (:521)
   and `NeighbourChanged` (:261).
 - `dirty` may contain duplicates and coordinates of dropped entries; `queued` is the truth (:505).
-- At most `maxJobs = max(2, 2 * jobs.ThreadCount())` cook jobs are in flight (T.cpp:153, :514); the rest stay
-  queued for a later `ProcessDirty`. Order: chunks a body asked for lately first, then nearest to a focus
+- At most `maxJobs = max(2, 2 * jobs.ThreadCount())` cook jobs per **round** (review of networking stage 6): a round is
+  an `Update` together with the tick's `GuardBodies` (both call `ProcessDirty`), or one pass of `Flush`; its budget is
+  what was in flight when it began (`StartRound`) plus what it started - never the live counter re-read while it
+  submits, which let a timing-dependent number start (the tick's second batch from `GuardBodies` saw jobs of the first
+  finish or not). The rest stay queued for a later `ProcessDirty`. Order: chunks a body asked for lately first, then nearest to a focus
   point (:485-496). A chunk that needs no collider is settled in `ProcessDirty` itself, without a job (:508).
 - An untracked chunk is ready only if `NeedsNoCollider` (:306). So a loaded chunk with a surface but outside
   every focus radius is "not ready", which is exactly what parks the bodies resting there.
@@ -171,8 +174,14 @@ bodies resume on what was just installed, and their requests are cooked in the s
 - **`UpdateCharacter` has no horizontal inertia**: velocity is rebuilt each call from ground velocity or the
   current vertical speed, plus gravity, plus the wanted x/z (PW.cpp:1069-1079); `desiredVelocity.y` is ignored.
   A jump starts only when `OnGround` and moving towards the ground (:1067-1073).
-- **Characters ignore `Layer::Character` bodies** (`CharacterLayerFilter`, :193), so a kinematic proxy body
-  following the controller does not block it. Whether the virtual character pushes dynamic bodies is unverified.
+- **Characters ignore `Layer::Character` and `Layer::Rubble` bodies** (`CharacterLayerFilter`), whatever
+  `characterLayers` says, so a kinematic proxy body following the controller, a session client's own large rubble
+  and anything replicated that moves never block it (networking stage 6; the first stage-6 commit left Rubble to the
+  mask and `RubbleLayerMeetsTheWorldBodiesAndItselfButNoCharacter` failed). The virtual character pushes light dynamic
+  bodies (Jolt's `mMaxStrength`, 100 N: a 5 kg box moves, a 51 kg crate on the ground does not) and weighs on the one
+  it stands on; `PhysicsConfig::characterMovesBodies = false` (a session) does neither: a listener sets
+  `mCanReceiveImpulses = false` on every contact and the character's mass is 0
+  (`CharactersThatMoveNoBodiesNeitherPushNorWeigh`).
 - **`Raycast` normal**: falls back to `-dir` and is always flipped to face the ray origin (PW.cpp:923-935).
   It hits every layer, frozen bodies included; only sensors are skipped.
 - **`TerrainColliders` must be the only consumer of `World::TakeChunkChanges()`** (`ConsumeChanges`; the
@@ -191,6 +200,10 @@ bodies resume on what was just installed, and their requests are cooked in the s
 - **`NeedsNoCollider`** (:417): empty dense chunk, non-collidable uniform, or collidable uniform enclosed by
   six collidable uniform neighbours. It also returns true for a chunk that is not loaded, which is why
   `ChunkReady` tests `IsChunkLoaded` first (:304). Keep that order.
+- `InstallResults` installs a round's results in chunk order (x, y, z, generation), not in the order the workers
+  finished, and `Flush` waits for every job of a pass before it installs: collider bodies get their Jolt ids (which
+  Jolt's contact order follows) the same way in every run that installs the same results together. With both, a
+  harness that waits for idle between ticks is reproducible bit for bit (`Entities.OneScriptGivesTheSameBodiesTwice`).
 - **`Flush` spins with 1 ms sleeps** until no job, result or dirty entry remains, re-guarding in between
   (:619-640). It does not call `Update`, so it does not consume changed chunks or scan: call `Update` first.
   It blocks for as long as the `JobSystem` workers are busy (a `JobSystem` always has at least one thread).
@@ -314,9 +327,30 @@ must be copied into `Snapshot` on the main thread. Re-cook decisions are `Touch`
   server and its clients, so that gate would hold players for different numbers of ticks after a blast at a chunk
   border (`HasColliderIgnoresUncoveredFacesWaitingForARecook`). The game holds its player through `StepPlayer` now,
   not `Engine::TerrainReady`.
-- `PhysicsConfig::characterLayers` (`LayerBit` mask, default Static | Dynamic | Debris; Character never) is the filter
-  of `CreateCharacter`, `UpdateCharacter`, `SetCharacterPosition` and `SetCharacterState`, kept in the `Simulation`
-  (one per physics world). A session uses `sim::kSessionCharacterLayers` (Static only) on the server and every client.
+- `PhysicsConfig::characterLayers` (`LayerBit` mask, default Static | Dynamic | Debris; Character and Rubble never)
+  is the filter of `CreateCharacter`, `UpdateCharacter`, `SetCharacterPosition` and `SetCharacterState`, kept in the
+  `Simulation` (one per physics world). A session uses `sim::kSessionCharacterLayers` (Static | Dynamic since
+  networking stage 6; Static only before) and `characterMovesBodies = false` on the server and every client.
+
+## Replicated bodies (networking stage 6)
+
+- `Layer::Rubble` (enumerator 4, `kLayerCount` 5): collides with Static, Dynamic and itself; never with Debris or a
+  character. In it: a session client's rubble of `debrisBodyVoxels` or more (`SceneConfig::rubbleLayer`), its copies
+  of server bodies while they move, and a server's replicated bodies while they move (`net::Server` moves them between
+  Rubble and Dynamic when they wake or rest). At rest a replicated body is in `Layer::Dynamic` on both sides, the only
+  layer besides Static a session character meets.
+- Since the review of stage 6 a moving replicated body that carries a player stays in `Layer::Dynamic` (server: any
+  player's `CharacterState::groundBody`; client: its own player's), and waking is an event (`EntityWake`).
+  `CharacterState::groundBody` is Jolt's `GetGroundBodyID` whenever the character is not in the air.
+  `Raycast(origin, dir, max, layers)` sees only the bodies of a `LayerBit` mask (a session cast: Dynamic | Rubble).
+- `SetLayer(body, layer)` / `GetLayer(body)`: Jolt's `SetObjectLayer`. Refused (logged) when it would put a movable
+  body into `Layer::Static` or take a static one out of it (Static-layer objects never meet each other); a frozen
+  body is movable here (its motion type is Static only while it waits).
+- `MoveKinematic(body, position, rotation, dt)`: Jolt's `MoveKinematic` - the velocities that reach the target at the
+  end of the next step of `dt`, so the body pushes what it meets and reports a velocity; refused for other motion types
+  and non-finite input (`KinematicBodiesFollowMoveKinematic`). A client's copy is kinematic: `GuardBodies` never
+  freezes it (only `movables`, dynamic bodies, are guarded), and it keeps the velocity of the last `MoveKinematic`
+  until set again (the client zeroes it at rest and when it has no sample).
 - `TerrainColliders::FlushBox(box)` (review of networking stage 4) takes the world's changes and cooks, on the calling
   thread, every chunk of the box (grown by one voxel) whose newest content is not installed or that is not tracked
   yet; a worker's later result for it is dropped (`result.generation <= installed`). Up-to-date chunks cost a lookup.

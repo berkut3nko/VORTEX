@@ -385,6 +385,11 @@ namespace vortex::net {
                 WriteVec3(out, r.position);
                 WriteQuat(out, r.rotation);
             }
+            void operator()(const EntityWake& k) const {
+                out.U8(static_cast<uint8_t>(EventKind::EntityWake));
+                out.U32(k.netId);
+                out.U32(k.tick);
+            }
             void operator()(const ObjectModel& m) const {
                 out.U8(static_cast<uint8_t>(EventKind::ObjectModel));
                 out.U32(m.netId);
@@ -460,6 +465,14 @@ namespace vortex::net {
                 r.rotation = ReadQuat(in);
                 if (in.Failed() || !Finite(r.position) || !Finite(r.rotation)) return false;
                 event = r;
+                return true;
+            }
+            case EventKind::EntityWake: {
+                EntityWake k;
+                k.netId = in.U32();
+                k.tick = in.U32();
+                if (in.Failed()) return false;
+                event = k;
                 return true;
             }
             case EventKind::ObjectModel: {

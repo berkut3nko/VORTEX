@@ -548,3 +548,22 @@ look, jump feel, editor focus) cannot be checked headless: say so.
 - The game's session application is `../src/Session.cpp` (`SessionGame`): per tick `Client::Poll`, presentations
   (`Engine::PresentBlast`), `Client::StepPlayer`; a frame without a tick polls in `OnUpdate`. It owns no editor and
   makes no world change of its own.
+
+## Networking stage 6 (replicated bodies)
+
+- `scene::NetId{value, piece, bornTick, despawn}` marks a session server's replicated entity (and nothing offline);
+  `DespawnReason` values are wire format. The server observes `on_destroy<NetId>`: set `despawn` before destroying
+  (`sim::Despawn`), never remove the component by hand (the observer would report a despawn of a live body).
+- `DamageResult::keptOffset` / `keptMotion`: where the survivor's new model origin lies in the old model (voxels) and
+  its motion type after the cut - what `ObjectModel` sends. A replicated object `Damage` destroys (below the
+  replicated size) is despawned `Broken`, not `ToRubble` as networking.md first said: its remains are already the
+  fragments (new shape), so a client keeping the old copy as rubble would show voxels that are gone.
+- `SceneConfig::rubbleLayer` (a session client's scene): rubble (`VoxelObjectDesc::debris`, and pieces `Damage` splits
+  off rubble) of `debrisBodyVoxels` or more is created in `physics::Layer::Rubble` instead of Dynamic. Offline it is
+  off and every body keeps its layer. The client's copies of server bodies are kinematic `CreateVoxelObject`s (no
+  `Debris`, so no lifetime or cap), moved by `net::Client` between Rubble and Dynamic.
+- A client never calls `Damage`: object damage arrives as `ObjectModel` (the copy is re-created at the shifted origin;
+  the voxels the new model lost are shown as particles, at most 64 bursts) and as `netId`-0 `EntitySpawn` fragments
+  (local rubble).
+- The game's session draws the copies like any voxel object (they are baked into the chunk store: piece models take
+  slots within the client's 2048-slot headroom); the E key sends `PlayerButton_Crate` and the server makes the crate.

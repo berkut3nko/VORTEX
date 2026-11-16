@@ -137,6 +137,10 @@ export namespace vortex::physics {
         glm::vec3 position{0.0f};        ///< Feet position.
         glm::vec3 velocity{0.0f};
         bool onGround = false;
+        /// The body the character stands on (Jolt's ground body; also on a steep slope), invalid in
+        /// the air. A session keeps a replicated body under a player solid while it moves
+        /// (docs/design/networking.md "Review of stage 6").
+        BodyId groundBody;
     };
 
     struct PhysicsConfig {
@@ -244,6 +248,9 @@ export namespace vortex::physics {
         // --- queries -----------------------------------------------------------------------------
         /// @brief Closest hit along a ray (`direction` normalised). Sensors are ignored.
         RayHit Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const;
+        /// @brief Closest hit of a body in one of `layers` (LayerBit mask), e.g. the bodies in front of
+        /// the terrain (a session cast: Dynamic | Rubble). Sensors are ignored.
+        RayHit Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, uint8_t layers) const;
         /// @brief Ids of all awake dynamic bodies.
         void GetActiveBodies(std::vector<BodyId>& out) const;
         /// @brief Every dynamic body, awake, asleep or frozen, in ascending id order. Replaces the content of `out`.

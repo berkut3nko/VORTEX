@@ -4,6 +4,7 @@ module;
 #include <glm/glm.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -423,11 +424,48 @@ namespace vortex::sim {
             const uint32_t minPiece = scene::MinPieceVoxels(static_cast<double>(world.VoxelSize()));
             glm::ivec3 crumbMin(std::numeric_limits<int32_t>::max()), crumbMax(std::numeric_limits<int32_t>::min());
             uint32_t crumbs = 0;
+            // A session server: which pieces of the replicated size become server bodies. The tick's
+            // slots go to the largest pieces first, then the lowest, then in emission order (shred.md
+            // Part 4 "largest and lowest first"; review of stage 6: a tower the load check released
+            // last lost its slot to two smaller in-box pieces). NetIds are handed out in that order;
+            // the Detach order below stays the emission order (wire order).
+            const std::array<const std::vector<voxel::FloatingIsland>*, 3> lists = {&islands, &proven, &necks};
+            std::array<std::vector<uint32_t>, 3> netIds;
+            if (simulation.Config().replication.enabled) {
+                const uint32_t replicated = std::max(minPiece, simulation.Scene().Config().replicatedPieceVoxels);
+                struct Candidate {
+                    uint32_t voxels;
+                    int32_t bottom;
+                    uint32_t order;
+                    size_t list, index;
+                };
+                std::vector<Candidate> candidates;
+                uint32_t order = 0;
+                for (size_t l = 0; l < lists.size(); ++l) {
+                    netIds[l].assign(lists[l]->size(), 0u);
+                    for (size_t i = 0; i < lists[l]->size(); ++i, ++order) {
+                        const voxel::FloatingIsland& island = (*lists[l])[i];
+                        if (island.voxelCount >= replicated) candidates.push_back({island.voxelCount, island.origin.y, order, l, i});
+                    }
+                }
+                std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+                    if (a.voxels != b.voxels) return a.voxels > b.voxels;
+                    if (a.bottom != b.bottom) return a.bottom < b.bottom;
+                    return a.order < b.order;
+                });
+                for (const Candidate& c : candidates) {
+                    if (TakePieceSlot(simulation) != PieceSlot::Replicate) continue;
+                    netIds[c.list][c.index] = AllocateNetId(simulation);
+                    ++simulation.Replication().pendingPieces;
+                }
+            }
             // In-box islands in scan order, then proven ones in candidate order, then the parts the
             // load check released in piece order.
-            for (const std::vector<voxel::FloatingIsland>* list : {&islands, &proven, &necks}) {
+            for (size_t l = 0; l < lists.size(); ++l) {
+                const std::vector<voxel::FloatingIsland>* list = lists[l];
                 const bool face = list == &proven, neck = list == &necks;
-                for (const voxel::FloatingIsland& island : *list) {
+                for (size_t i = 0; i < list->size(); ++i) {
+                    const voxel::FloatingIsland& island = (*list)[i];
                     if (island.voxelCount < minPiece) {
                         ++crumbs;
                         if (face) ++stats.faceCrumbs;
@@ -441,13 +479,9 @@ namespace vortex::sim {
                     AppliedOp detach;
                     const glm::vec3 corner(world.VoxelToWorld(island.origin));
                     detach.op = WorldOp::Detach(island.origin, voxel::VoxelMask::FromVolume(island.volume), BlastPush(center, radius, corner));
-                    // A session server: a piece of the replicated size becomes a server body (made at
-                    // the end of the blast) if the piece budgets allow; otherwise client rubble.
-                    if (simulation.Config().replication.enabled && island.voxelCount >= simulation.Scene().Config().replicatedPieceVoxels &&
-                        TakePieceSlot(simulation) == PieceSlot::Replicate) {
-                        detach.op.netId = AllocateNetId(simulation);
-                        ++simulation.Replication().pendingPieces;
-                    }
+                    // A session server: a piece given a slot above becomes a server body (made at the
+                    // end of the blast); otherwise client rubble.
+                    if (!netIds[l].empty()) detach.op.netId = netIds[l][i];
                     detach.result = ApplyOp(world, detach.op, &detach.edits);
                     result.ops.push_back(std::move(detach));
                 }
@@ -633,6 +667,7 @@ namespace vortex::sim {
                 }
                 if (!replicate) continue;
                 // New pieces: server bodies within the piece budgets, otherwise fragments (rubble).
+                // Damage lists them largest first, so the slots go to the largest (as for terrain).
                 for (const scene::Entity piece : damage.pieces) {
                     if (TakePieceSlot(simulation) == PieceSlot::Replicate) {
                         ObjectEvent spawn;

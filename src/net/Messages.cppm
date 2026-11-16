@@ -21,8 +21,8 @@ export namespace vortex::net {
     /// snapshots, the player tuning in Welcome; ServerStatus retired). 3: Snapshot::marginTick, the
     /// tick length and gravity in Welcome. 4: stage 5 (the owner block's lastCastTick / castRejected).
     /// 5: review of stage 5 (RefuseReason::LogTooLarge). 6: stage 6 (entity events, snapshot bodies,
-    /// PlayerButton_Crate).
-    inline constexpr uint16_t kProtocolVersion = 6;
+    /// PlayerButton_Crate). 7: review of stage 6 (EntityWake).
+    inline constexpr uint16_t kProtocolVersion = 7;
 
     /// @brief First byte of every message. Wire format.
     enum class MessageType : uint8_t {

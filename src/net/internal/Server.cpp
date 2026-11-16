@@ -11,6 +11,7 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
@@ -161,6 +162,7 @@ namespace vortex::net {
         std::deque<QueuedCast> queue;
         int64_t castCredit = 0;
         int64_t eventCredit = 0;
+        int64_t entityCredit = 0;         // the entity event budget (set to its burst at Start)
         double accumulator = 0.0;
         ServerStats stats;
         std::deque<CastRecord> casts;
@@ -169,6 +171,7 @@ namespace vortex::net {
         std::vector<EntityDespawn> despawned;              // the on_destroy<NetId> observer's queue
         std::unordered_map<uint32_t, BodyTrack> tracks;   // NetId -> rest state the clients know
         std::shared_ptr<voxel::VoxelModel> crateModel;
+        std::function<void(uint8_t)> onClientLeft;
 
         /// networking.md "Entity replication": every destruction of a replicated entity, by any path,
         /// becomes an EntityDespawn (emitted in order by DrainDespawns).
@@ -227,6 +230,13 @@ namespace vortex::net {
             for (const sim::ObjectEvent& e : r.objectEvents) {
                 if (failed || !e.model) continue;
                 if (e.kind == sim::ObjectEvent::Kind::Model) {
+                    // Over the entity byte budget the survivor is let go as client rubble (6 bytes)
+                    // instead of resending its whole model (review of stage 6).
+                    if (entityCredit <= 0 && simulation->Scene().IsValid(e.entity)) {
+                        sim::Despawn(*simulation, e.entity, scene::DespawnReason::ToRubble);
+                        ++stats.modelsToRubble;
+                        continue;
+                    }
                     ObjectModel m;
                     m.netId = e.netId;
                     m.offset = e.offset;
@@ -270,22 +280,35 @@ namespace vortex::net {
         }
 
         /// Rest transitions after the tick's physics: a replicated object that fell asleep is
-        /// announced with its pose (EntityRest); one that wakes shows up in snapshots again.
+        /// announced with its pose (EntityRest), one that wakes with EntityWake (review of stage 6),
+        /// both in the opSeq stream, and it shows up in snapshots while it moves.
         ///
-        /// The layer follows the same rule as a client's copy (networking.md "Stage 6 as built"):
-        /// Layer::Rubble while it moves, Layer::Dynamic at rest, so that players on both sides collide
-        /// with exactly the bodies at rest (a moving piece passes through a player everywhere; a
-        /// client learns of a rest one event later, and only that window can cost a correction).
+        /// The layer follows the same rule as a client's copy (networking.md "Stage 6 as built",
+        /// "Review of stage 6"): Layer::Rubble while it moves, Layer::Dynamic at rest - and while it
+        /// moves under a player who stands on it (a client keeps its copy solid under its own player
+        /// the same way), so that players on both sides collide with the same bodies at the same
+        /// opSeq (a moving piece passes through a player everywhere; a player standing on a crate a
+        /// blast wakes stays on it).
         void TrackBodies(uint32_t tick) {
             physics::PhysicsWorld& physics = simulation->Physics();
+            std::vector<physics::BodyId> grounds;
+            for (const auto& [pid, p] : peers)
+                if (p.player)
+                    if (const physics::BodyId g = physics.GetCharacterState(p.player->character).groundBody; g.IsValid()) grounds.push_back(g);
             uint32_t awake = 0;
             for (const auto [entity, id, body] : simulation->Scene().Registry().view<const scene::NetId, const scene::RigidBody>().each()) {
                 const bool moving = sim::IsAwake(physics, body.body);
                 BodyTrack& t = tracks[id.value];
                 awake += moving ? 1u : 0u;
                 if (moving) {
-                    t.resting = false;
-                    if (body.motion != physics::MotionType::Static) physics.SetLayer(body.body, physics::Layer::Rubble);
+                    if (t.resting) {
+                        t.resting = false;
+                        Emit(EntityWake{id.value, tick});
+                        ++stats.wakes;
+                    }
+                    const bool carries = std::find(grounds.begin(), grounds.end(), body.body) != grounds.end();
+                    if (body.motion != physics::MotionType::Static)
+                        physics.SetLayer(body.body, carries ? physics::Layer::Dynamic : physics::Layer::Rubble);
                 } else if (!t.resting) {
                     t.resting = true;
                     if (body.motion != physics::MotionType::Static) physics.SetLayer(body.body, physics::Layer::Dynamic);
@@ -306,18 +329,28 @@ namespace vortex::net {
         /// A crate with its model origin at `corner` (stage 6): the playground's crate, a replicated
         /// placed object. 0 when it would leave the play bounds or the window's rows.
         uint32_t SpawnCrateAt(const glm::dvec3& corner, Peer* owner) {
+            if (!crateModel) crateModel = sim::CrateModel(simulation->WorldMaterialIds(), sim::PlaygroundScale(simulation->World().VoxelSize()));
+            const uint32_t netId = SpawnObjectAt(crateModel, corner, owner);
+            if (netId != 0) ++stats.crates;
+            return netId;
+        }
+
+        /// A replicated placed object with its model origin at `corner` (a crate, an admin object).
+        /// 0 when it would leave the play bounds or the window's rows.
+        uint32_t SpawnObjectAt(const std::shared_ptr<voxel::VoxelModel>& model, const glm::dvec3& corner, Peer* owner) {
             voxel::World& world = simulation->World();
-            if (!crateModel) crateModel = sim::CrateModel(simulation->WorldMaterialIds(), sim::PlaygroundScale(world.VoxelSize()));
             const double vs = static_cast<double>(world.VoxelSize());
-            const glm::dvec3 size = glm::dvec3(crateModel->Volume().Size()) * vs;
+            const glm::dvec3 size = glm::dvec3(model->Volume().Size()) * vs;
             const double chunk = static_cast<double>(voxel::kChunkSize) * vs;
             const glm::dvec2 lo = glm::dvec2(region.playMinChunk) * chunk, hi = glm::dvec2(region.playMaxChunk) * chunk;
             const glm::ivec2 rows = sim::RegionRows(region);
             const bool inside = std::isfinite(corner.x) && std::isfinite(corner.y) && std::isfinite(corner.z) && corner.x >= lo.x &&
                                 corner.z >= lo.y && corner.x + size.x <= hi.x && corner.z + size.z <= hi.y &&
                                 corner.y >= static_cast<double>(rows.x) * chunk && corner.y + size.y <= static_cast<double>(rows.y) * chunk;
+            // A player's crate shares the snapshots with every awake body: none at the awake cap.
+            const bool room = !owner || sim::CountPieces(*simulation).awakeBodies < simulation->Config().replication.maxAwakePieces;
             const scene::Entity entity =
-                inside ? simulation->Scene().CreateVoxelObject({.model = crateModel, .position = glm::vec3(corner)}) : scene::kNoEntity;
+                inside && room ? simulation->Scene().CreateVoxelObject({.model = model, .position = glm::vec3(corner)}) : scene::kNoEntity;
             if (entity == scene::kNoEntity) {
                 ++stats.cratesRefused;
                 return 0;
@@ -327,7 +360,6 @@ namespace vortex::net {
             if (const scene::RigidBody* body = simulation->Scene().TryGet<scene::RigidBody>(entity))
                 simulation->Physics().SetLayer(body->body, physics::Layer::Rubble);
             EmitObjectSpawn(netId, entity);
-            ++stats.crates;
             if (owner && owner->player) {
                 owner->player->crates.push_back(netId);
                 while (owner->player->crates.size() > settings.maxCratesPerPlayer) {
@@ -402,8 +434,12 @@ namespace vortex::net {
             logBytes += bytes;
             ++stats.events;
             stats.eventBytes += bytes;
-            if (entity) stats.entityEventBytes += bytes;
-            else eventCredit -= static_cast<int64_t>(bytes);
+            if (entity) {
+                stats.entityEventBytes += bytes;
+                entityCredit -= static_cast<int64_t>(bytes);
+            } else {
+                eventCredit -= static_cast<int64_t>(bytes);
+            }
             return LastOpSeq();
         }
 
@@ -434,6 +470,10 @@ namespace vortex::net {
 
         void DropPlayer(Peer& p) {
             if (!p.player) return;
+            // Its crates go with it (review of stage 6: a reconnect loop left 8 bodies per connection).
+            const std::deque<uint32_t> crates = p.player->crates;
+            for (const uint32_t netId : crates)
+                if (const scene::Entity e = EntityOf(netId); e != scene::kNoEntity) sim::Despawn(*simulation, e, scene::DespawnReason::Destroyed);
             simulation->Physics().DestroyCharacter(p.player->character);
             p.player.reset();
         }
@@ -511,7 +551,18 @@ namespace vortex::net {
         /// does not fit the region (sim::CastFitsRegion).
         bool ResolveRay(QueuedCast& q) {
             const sim::PlayerTuning& t = settings.player;
-            const voxel::WorldRayHit hit = simulation->World().Raycast(q.origin, q.direction, t.castRange);
+            voxel::WorldRayHit hit = simulation->World().Raycast(q.origin, q.direction, t.castRange);
+            // A replicated body in front of the terrain takes the cast (a crate, a falling piece), as
+            // offline (review of stage 6). Every body of the server's in these layers is replicated.
+            const physics::RayHit body = simulation->Physics().Raycast(
+                glm::vec3(q.origin), q.direction, hit.hit ? static_cast<float>(hit.distance) : t.castRange,
+                physics::LayerBit(physics::Layer::Dynamic) | physics::LayerBit(physics::Layer::Rubble));
+            if (body.hit && simulation->Scene().TryGet<scene::NetId>(simulation->Scene().EntityFromUserData(body.userData))) {
+                hit.hit = true;
+                hit.position = glm::dvec3(body.position);
+                hit.distance = body.distance;
+                ++stats.castsAtBodies;
+            }
             CastRejection why = CastRejection::None;
             if (!hit.hit) {
                 ++stats.castsMissed;
@@ -835,6 +886,7 @@ namespace vortex::net {
                             if (it->second.joined) {
                                 ++stats.clientsDisconnected;
                                 Log::Info("Server: client {} left (slot {})", e.peer, it->second.slot);
+                                if (onClientLeft) onClientLeft(it->second.slot);
                             }
                             DropPlayer(it->second);
                             peers.erase(it);
@@ -950,6 +1002,9 @@ namespace vortex::net {
             castCredit = std::clamp(castCredit + perTick, -perTick * maxWait, perTick);
             eventCredit = std::clamp(eventCredit + static_cast<int64_t>(settings.eventBytesPerTick),
                                      -static_cast<int64_t>(settings.eventBurstBytes), static_cast<int64_t>(settings.eventBurstBytes));
+            // The entity budget: debt (an event larger than the credit) carries over, bounded.
+            const int64_t entityBurst = static_cast<int64_t>(settings.entityEventBurstBytes);
+            entityCredit = std::clamp(entityCredit + static_cast<int64_t>(settings.entityEventBytesPerTick), -8 * entityBurst, entityBurst);
             bool waitedForWork = false, waitedForBytes = false;
             while (!queue.empty() && !failed) {
                 QueuedCast q = queue.front();
@@ -966,7 +1021,10 @@ namespace vortex::net {
                 // A player's ray is cast now, when the cast runs, on the world as the casts before it
                 // left it; one that casts nothing costs nothing and the next cast is looked at.
                 if (q.ray && !ResolveRay(q)) continue;
+                // No new server body while the entity budget is spent: its pieces are client rubble.
+                simulation->Replication().refuseNewPieces = entityCredit <= 0;
                 RunCast(q, overdue && (castCredit <= 0 || eventCredit <= 0));
+                simulation->Replication().refuseNewPieces = false;
             }
             stats.ticksWaitedForWork += waitedForWork ? 1u : 0u;
             stats.ticksWaitedForBytes += waitedForBytes ? 1u : 0u;
@@ -997,10 +1055,14 @@ namespace vortex::net {
             Log::Error("Server: invalid region: {}", why);
             return false;
         }
-        sim::SimulationConfig config = sim::ServerConfig(s.settings.simulation);
+        // The region's world first, then ServerConfig: its metre thresholds (the replicated piece
+        // size) are taken in voxels of the session's size (review of stage 6: they were the default
+        // size's, 262 voxels in a 0.1 m session instead of 512).
+        sim::SimulationConfig config = s.settings.simulation;
         voxel::WorldConfig world = config.world;
         world.packHidden = s.settings.session.packHidden;
         config.world = sim::RegionWorldConfig(s.region, world);
+        config = sim::ServerConfig(config);
         config.chunkCapacity = s.settings.session.chunkCapacity != 0 ? s.settings.session.chunkCapacity : sim::RegionChunkCapacity(s.region);
         s.simulation = std::make_unique<sim::Simulation>(config);
         const std::shared_ptr<voxel::IWorldGenerator> generator = sim::MakeRegionGenerator(s.region, ids);
@@ -1009,6 +1071,7 @@ namespace vortex::net {
             return false;
         }
         s.buildHash = BuildHash(s.simulation->Materials());
+        s.entityCredit = static_cast<int64_t>(s.settings.entityEventBurstBytes);
         // Every destruction of a replicated entity becomes an EntityDespawn (stage 6).
         s.simulation->Scene().Registry().on_destroy<scene::NetId>().connect<&Impl::OnNetIdDestroyed>(s);
 
@@ -1118,6 +1181,12 @@ namespace vortex::net {
         return s.SpawnCrateAt(origin, nullptr);
     }
 
+    uint32_t Server::SpawnObject(std::shared_ptr<voxel::VoxelModel> model, const glm::dvec3& origin) {
+        Impl& s = *m_Impl;
+        if (!s.started || s.failed || !model || model->SolidCount() == 0) return 0;
+        return s.SpawnObjectAt(model, origin, nullptr);
+    }
+
     uint32_t Server::ClearBodies(const glm::dvec3& min, const glm::dvec3& max) {
         Impl& s = *m_Impl;
         if (!s.started || s.failed) return 0;
@@ -1189,6 +1258,7 @@ namespace vortex::net {
     uint32_t Server::TickNumber() const { return m_Impl->Tick(); }
     uint32_t Server::LastOpSeq() const { return m_Impl->LastOpSeq(); }
     size_t Server::ClientCount() const { return m_Impl->JoinedCount(); }
+    void Server::SetOnClientLeft(std::function<void(uint8_t)> callback) { m_Impl->onClientLeft = std::move(callback); }
     bool Server::Failed() const { return m_Impl->failed; }
     sim::Simulation& Server::Simulation() { return *m_Impl->simulation; }
     const sim::RegionDesc& Server::Region() const { return m_Impl->region; }

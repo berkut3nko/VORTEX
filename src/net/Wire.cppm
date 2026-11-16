@@ -90,6 +90,7 @@ export namespace vortex::net {
         EntityDespawn = 33, ///< A replicated object is gone (stage 6).
         EntityRest = 34,    ///< A replicated object came to rest: its pose (stage 6).
         ObjectModel = 35,   ///< A replicated object's model changed (Scene::Damage; stage 6).
+        EntityWake = 36,    ///< A replicated object at rest started to move (review of stage 6).
     };
     /// @brief What an EntitySpawn creates. Wire format.
     enum class EntityKind : uint8_t {
@@ -141,6 +142,16 @@ export namespace vortex::net {
         friend bool operator==(const EntityRest&, const EntityRest&) = default;
     };
 
+    /// @brief `EntityWake{netId, tick}` (review of stage 6): an object that rested woke on the server
+    /// after the physics of `tick`. A client's copy leaves Layer::Dynamic at the same point of the
+    /// stream as the server's body (what blocks a player is a function of the opSeq, as for a rest)
+    /// and holds still until its samples come; samples of the rest's tick or older stay refused.
+    struct EntityWake {
+        uint32_t netId = 0;
+        uint32_t tick = 0;
+        friend bool operator==(const EntityWake&, const EntityWake&) = default;
+    };
+
     /// @brief `ObjectModel{netId, offset, motion, model}` (stage 6): the survivor of a damage. Its
     /// origin moved by `offset` voxels of the old model (rotated with it); a client re-bases its
     /// copy and its samples.
@@ -153,7 +164,7 @@ export namespace vortex::net {
     };
 
     /// @brief One event of the opSeq stream: a world operation or an entity event.
-    using Event = std::variant<sim::WorldOp, EntitySpawn, EntityDespawn, EntityRest, ObjectModel>;
+    using Event = std::variant<sim::WorldOp, EntitySpawn, EntityDespawn, EntityRest, ObjectModel, EntityWake>;
 
     /// @brief A volume's ids as (run length, id) pairs in VoxelVolume::Index order after its size
     /// (3 x u16); self-delimiting.
@@ -173,7 +184,8 @@ export namespace vortex::net {
     /**
      * @brief Encodes one event (docs/design/networking.md "World operations": carve / swap 17 B,
      * fill 16 B, box 26 B, Detach 29 B + mask runs, ClearMask 19 B + mask runs, light 50 B; stage
-     * 6: object spawn 64 B + model runs, despawn 6 B, rest 37 B, model 19 B + model runs).
+     * 6: object spawn 60 B, despawn 6 B, rest 37 B, model 12 B, each object or model + its runs:
+     * 6 B of size and (LEB128 run, id) pairs; wake 9 B).
      */
     void WriteEvent(ByteWriter& out, const Event& event);
     /// @brief Decodes one event; false for an unknown kind, a malformed or oversized mask or model

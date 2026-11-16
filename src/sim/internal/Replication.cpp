@@ -45,10 +45,12 @@ namespace vortex::sim {
         const entt::registry& registry = simulation.Scene().Registry();
         const physics::PhysicsWorld& physics = const_cast<Simulation&>(simulation).Physics();
         for (const auto [entity, id] : registry.view<const scene::NetId>().each()) {
+            const scene::RigidBody* body = registry.try_get<scene::RigidBody>(entity);
+            const bool awake = body && IsAwake(physics, body->body);
+            c.awakeBodies += awake ? 1u : 0u;
             if (!id.piece) continue;
             ++c.live;
-            const scene::RigidBody* body = registry.try_get<scene::RigidBody>(entity);
-            c.awake += body && IsAwake(physics, body->body) ? 1u : 0u;
+            c.awake += awake ? 1u : 0u;
         }
         return c;
     }
@@ -92,6 +94,10 @@ namespace vortex::sim {
             r.budgetTick = simulation.Tick();
             r.bodiesThisTick = 0;
         }
+        if (r.refuseNewPieces) {
+            ++r.stats.overByteBudget;
+            return PieceSlot::OverByteBudget;
+        }
         if (r.bodiesThisTick >= config.bodiesPerTick) {
             ++r.stats.overTickBudget;
             return PieceSlot::OverTickBudget;
@@ -99,9 +105,11 @@ namespace vortex::sim {
         PieceCounts counts = CountPieces(simulation);
         counts.live += r.pendingPieces;
         counts.awake += r.pendingPieces;
+        counts.awakeBodies += r.pendingPieces;
         r.stats.maxLive = std::max(r.stats.maxLive, counts.live);
-        r.stats.maxAwake = std::max(r.stats.maxAwake, counts.awake);
-        if (counts.awake >= config.maxAwakePieces) {
+        r.stats.maxAwake = std::max(r.stats.maxAwake, counts.awakeBodies);
+        // Every awake replicated body shares the snapshots, so every one counts (review of stage 6).
+        if (counts.awakeBodies >= config.maxAwakePieces) {
             ++r.stats.overAwakeCap;
             return PieceSlot::OverAwakeCap;
         }

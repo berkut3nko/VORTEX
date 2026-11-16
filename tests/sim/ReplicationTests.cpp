@@ -10,6 +10,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <span>
 #include <utility>
@@ -274,4 +275,59 @@ TEST(Replication, OfflineBlastsReplicateNothing) {
     EXPECT_TRUE(r.objectEvents.empty());
     EXPECT_TRUE(a.simulation.Scene().Registry().view<scene::NetId>().empty());
     EXPECT_EQ(a.simulation.Replication().stats.pieces, 0u);
+}
+
+// Review of stage 6: every awake replicated body shares the snapshots, so the awake cap counts placed
+// objects (crates, a player's crates) as well as pieces. Two crates falling and a cap of 2: the cut's
+// piece is client rubble.
+TEST(Replication, TheAwakeCapCountsPlacedObjects) {
+    sim::SimulationConfig config = ServerArenaConfig();
+    config.replication.maxAwakePieces = 2;
+    ServerArena a(config);
+    ASSERT_TRUE(a.initialized);
+    a.Mushroom(0, 12);
+    std::shared_ptr<voxel::VoxelModel> crate = sim::CrateModel(a.Ids(), 1.0);
+    for (const float x : {-4.0f, 4.0f}) {
+        const scene::Entity e = a.simulation.Scene().CreateVoxelObject({.model = crate, .position = glm::vec3(x, 12.0f, 0.0f)});
+        ASSERT_NE(sim::Replicate(a.simulation, e, false), 0u);
+    }
+    const sim::PieceCounts counts = sim::CountPieces(a.simulation);
+    EXPECT_EQ(counts.live, 0u);                    // crates are no pieces ...
+    EXPECT_EQ(counts.awakeBodies, 2u);             // ... but awake bodies
+    const sim::AppliedOp* piece = FindDetach(a.Cut(0));
+    ASSERT_NE(piece, nullptr);
+    EXPECT_EQ(piece->op.netId, 0u);
+    EXPECT_EQ(a.simulation.Replication().stats.overAwakeCap, 1u);
+}
+
+// Review of stage 6 (shred.md Part 4: "largest and lowest first"): one blast frees two pieces of the
+// replicated size with one body left in the tick; the larger gets it, whichever is emitted first.
+// The Detach order (wire order) is the search's.
+TEST(Replication, TheTicksBodiesGoToTheLargestPiecesFirst) {
+    for (const bool largeFirst : {true, false}) {
+        sim::SimulationConfig config = ServerArenaConfig();
+        config.replication.bodiesPerTick = 1;
+        ServerArena a(config);
+        ASSERT_TRUE(a.initialized);
+        // Stems at x = -16 and 0 under 12 x 12 caps, 4 or 6 voxels tall (576 or 864 voxels, both
+        // over the replicated 512), cut by one sphere between them below the caps. The search emits
+        // in-box islands in scan order: here the one at -x first, the larger or the smaller.
+        for (const int x : {-16, 0}) {
+            const bool large = (x < 0) == largeFirst;
+            a.Apply(sim::WorldOp::Box({x, kGround, 0}, {x + 3, kGround + 30, 3}, a.Ids().stone));
+            a.Apply(sim::WorldOp::Box({x - 5, kGround + 30, -5}, {x + 7, kGround + (large ? 36 : 34), 7}, a.Ids().planks));
+        }
+        const voxel::SphereQ sphere{glm::ivec3(-7 * 16 + 8, (kGround + 15) * 16 + 8, 16 + 8), 10 * 16};
+        const sim::BlastResult r = sim::Blast(a.simulation, sphere, kStrong);
+        std::vector<const sim::AppliedOp*> pieces;
+        for (const sim::AppliedOp& op : r.ops)
+            if (op.op.kind == sim::WorldOpKind::Detach) pieces.push_back(&op);
+        ASSERT_EQ(pieces.size(), 2u);
+        const size_t large = pieces[0]->result.changed > pieces[1]->result.changed ? 0 : 1;
+        EXPECT_NE(pieces[large]->op.netId, 0u) << (largeFirst ? "large first" : "large second");
+        EXPECT_EQ(pieces[1 - large]->op.netId, 0u);
+        EXPECT_EQ(a.simulation.Replication().stats.overTickBudget, 1u);
+        std::printf("%s: Detach %u voxels netId %u, then %u voxels netId %u\n", largeFirst ? "large one first" : "large one second",
+                    pieces[0]->result.changed, pieces[0]->op.netId, pieces[1]->result.changed, pieces[1]->op.netId);
+    }
 }

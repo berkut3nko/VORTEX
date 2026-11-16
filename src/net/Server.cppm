@@ -5,6 +5,7 @@ module;
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <deque>
 #include <memory>
 #include <optional>
@@ -32,6 +33,16 @@ export namespace vortex::net {
         /// operations charge it; entity events (stage 6) do not (ServerStats::entityEventBytes).
         uint32_t eventBytesPerTick = 400;
         uint32_t eventBurstBytes = 16384;
+        /// The entity event budget (review of stage 6), apart from the cast queue's (casts never wait
+        /// for it: entity events follow from Jolt, shred.md R5): credit per tick and its cap. Every
+        /// entity event charges it; while it is spent a cast makes no new server body (its pieces are
+        /// client rubble, sim::PieceSlot::OverByteBudget: a terrain piece with no model on the wire, an
+        /// object piece a fragment) and a damaged replicated object is let go as client rubble
+        /// (EntityDespawn{ToRubble}, 6 bytes; a client keeps its copy as it was) instead of an
+        /// ObjectModel with its whole model. Rests, wakes, despawns and placed objects are always sent (they are small or bounded
+        /// by their own limits). 200 B a tick = 12 kB/s, half the terrain budget.
+        uint32_t entityEventBytesPerTick = 200;
+        uint32_t entityEventBurstBytes = 16384;
         /// The cast work budget per tick (sim::CastWork units, shred.md R5).
         uint64_t castWorkPerTick = sim::kCastWorkPerTick;
         /// A cast that has waited this many ticks runs whatever the budgets say (logged, counted).
@@ -67,7 +78,9 @@ export namespace vortex::net {
         /// Players' crates (sim::PlayerButton_Crate, the game's E key; networking stage 6): a crate
         /// edge drops the playground's crate `crateDistance` metres along the look from the eye, at
         /// most one per player every `crateCooldownTicks`; a player's crate beyond
-        /// `maxCratesPerPlayer` removes its oldest (EntityDespawn{Destroyed}).
+        /// `maxCratesPerPlayer` removes its oldest (EntityDespawn{Destroyed}). A crate is refused while
+        /// sim::ReplicationConfig::maxAwakePieces replicated bodies are awake (the snapshot budget), and
+        /// a player's crates go when the player leaves (EntityDespawn{Destroyed}).
         uint32_t crateCooldownTicks = 30;
         uint32_t maxCratesPerPlayer = 8;
         float crateDistance = 3.0f;
@@ -146,6 +159,7 @@ export namespace vortex::net {
         uint32_t castsFromLateInputs = 0; ///< ... of them, found in a late input (judged and captured at the input's tick)
         uint32_t castsOnCooldown = 0;     ///< cast edges the cooldown at their input's tick refused (CastRejection::Cooldown)
         uint32_t castsMissed = 0;         ///< captured casts whose ray, cast at dequeue, met no terrain within castRange
+        uint32_t castsAtBodies = 0;       ///< ... whose ray met a replicated body before the terrain (the cast is centred there)
         /// Jump edges found in a late input: carried to the next tick the server simulates (the
         /// client jumped at the input's tick, so this is a correction of the jump's timing, not a
         /// missing jump; review of stage 4).
@@ -158,9 +172,13 @@ export namespace vortex::net {
         uint32_t fragmentSpawns = 0;      ///< EntitySpawn with netId 0 (object fragments: client rubble)
         uint32_t objectModels = 0;        ///< ObjectModel events (a damaged object survived)
         uint32_t rests = 0;               ///< EntityRest events
+        uint32_t wakes = 0;               ///< EntityWake events
         std::array<uint32_t, 4> despawns{};   ///< EntityDespawn by scene::DespawnReason (index 1..3)
+        /// Damaged replicated objects let go as client rubble (ToRubble) because the entity byte budget
+        /// was spent (no ObjectModel sent).
+        uint32_t modelsToRubble = 0;
         uint32_t crates = 0;              ///< crates from players and SpawnCrate
-        uint32_t cratesRefused = 0;       ///< crate edges in the cooldown, or a crate that would leave the play bounds
+        uint32_t cratesRefused = 0;       ///< crate edges in the cooldown or at the awake cap, or a crate that would leave the play bounds
         uint64_t bodySamples = 0;         ///< bodies sent in snapshots
         uint64_t bodiesLeftOut = 0;       ///< awake bodies a snapshot had no room for (summed over snapshots)
         uint32_t maxSnapshotBodies = 0;
@@ -217,6 +235,9 @@ export namespace vortex::net {
         /// `origin` (world metres) as a replicated body. Its NetId, or 0 when it would leave the play
         /// bounds or the window's rows, or the session has failed.
         uint32_t SpawnCrate(const glm::dvec3& origin);
+        /// @brief Admin / tests (stage 6): any voxel object (world palette) with its model origin at
+        /// `origin`, a replicated placed object (Dynamic). Its NetId, or 0 as SpawnCrate.
+        uint32_t SpawnObject(std::shared_ptr<voxel::VoxelModel> model, const glm::dvec3& origin);
         /// @brief Admin / drill: destroys every replicated object whose body overlaps the box (world
         /// metres; EntityDespawn{Destroyed}); how many.
         uint32_t ClearBodies(const glm::dvec3& min, const glm::dvec3& max);
@@ -235,6 +256,10 @@ export namespace vortex::net {
         uint32_t TickNumber() const;      ///< The tick that runs next.
         uint32_t LastOpSeq() const;       ///< 0 before the first event.
         size_t ClientCount() const;       ///< Joined clients.
+        /// @brief Called when a joined client leaves (its slot), before anything of its player is
+        /// removed: the server's opSeq is still the last one that client could have applied (its
+        /// crates' despawns follow; tools/session-check.sh compares hashes at that opSeq).
+        void SetOnClientLeft(std::function<void(uint8_t slot)> callback);
         bool Failed() const;              ///< A store slot failed, an operation was incomplete or the island search met an unloaded chunk: the session has ended.
 
         sim::Simulation& Simulation();

@@ -26,6 +26,7 @@ module vortex.net;
 
 import vortex.core;
 import vortex.math;
+import vortex.fx;
 import vortex.voxel;
 import vortex.physics;
 import vortex.scene;
@@ -57,6 +58,14 @@ namespace vortex::net {
         };
         /// Snapshots kept while their events lag (about eventWaitTicks / 2 are ever waiting).
         constexpr size_t kMaxWaitingSnapshots = 32;
+
+        /// A snapshot's body samples waiting for the events the snapshot was built after (review of
+        /// stage 6): a sample is taken only once every spawn, model, rest and wake before it is applied.
+        struct WaitingSamples {
+            uint32_t tick = 0;
+            uint32_t lastOpSeq = 0;
+            std::vector<BodySample> bodies;
+        };
 
         struct HistoryEntry {
             bool valid = false;
@@ -96,10 +105,15 @@ namespace vortex::net {
         std::unordered_map<uint32_t, Copy> copies;               // NetId -> copy
         std::unordered_set<uint32_t> tombstones;                 // despawned NetIds (a later spawn of one is discarded)
         RemoteBodies bodies;
+        std::deque<WaitingSamples> waitingSamples;               // snapshot samples whose events are not applied yet
         double bodyTime = 0.0;                                   // server tick the copies are moved to (per tick)
         bool bodyTimeStarted = false;
         std::vector<sim::BlastResult> presentations;
         bool groupOpen = false;
+        // The sphere of the newest live cast shown: an object it broke (EntityDespawn{Broken}) bursts there.
+        bool castShown = false;
+        glm::dvec3 castCenter{0.0};
+        float castRadius = 0.0f;
         std::vector<ProbeHash> ownProbes;   // the Welcome's probe chunks as this client's generator makes them
 
         // The own player (stage 4).
@@ -257,8 +271,19 @@ namespace vortex::net {
             serverTime.Observe(snap.tick);
             serverLast = std::max(serverLast, snap.lastOpSeq);
             remotes.Add(snap.tick, snap.others);
-            if (simulation && state == ClientState::Playing) TakeBodySamples(snap.tick, snap.bodies);
-            else stats.bodySamplesIgnored += snap.bodies.size();
+            // Body samples are taken after the snapshot's events, as the owner block is compared
+            // (review of stage 6): a stale rest, a model or a spawn never lands on a newer sample.
+            if (!snap.bodies.empty()) {
+                if (simulation && state == ClientState::Playing) {
+                    waitingSamples.push_back({snap.tick, snap.lastOpSeq, std::move(snap.bodies)});
+                    while (waitingSamples.size() > kMaxWaitingSnapshots) {
+                        stats.bodySamplesIgnored += waitingSamples.front().bodies.size();
+                        waitingSamples.pop_front();
+                    }
+                } else {
+                    stats.bodySamplesIgnored += snap.bodies.size();
+                }
+            }
             if (!snap.hasOwner) return;
             if (snap.lastCastTick != lastCast.tick || snap.castRejected != lastCast.rejected) {
                 if (snap.castRejected != CastRejection::None) {
@@ -308,6 +333,16 @@ namespace vortex::net {
                     ready = i;
                     break;
                 }
+            // A joiner starts predicting from a snapshot close to the newest one (review of stage 6): one
+            // that became ready only after a long, paced catch-up of the join log is that much in the
+            // past, and a prediction started there sends inputs that arrive tens of ticks late (a clock
+            // jump, then a hard resync). It waits for a fresher one, at most startWaitTicks.
+            if (ready < waiting.size() && !predicting && newestSnapshot - waiting[ready].snap.tick > settings.startFreshTicks &&
+                waiting.front().age < settings.startWaitTicks) {
+                ++prediction.staleStarts;
+                waiting.erase(waiting.begin(), waiting.begin() + static_cast<std::ptrdiff_t>(ready) + 1);
+                ready = waiting.size();
+            }
             if (ready < waiting.size()) {
                 const WaitingSnapshot w = std::move(waiting[ready]);
                 waiting.erase(waiting.begin(), waiting.begin() + static_cast<std::ptrdiff_t>(ready) + 1);
@@ -381,6 +416,9 @@ namespace vortex::net {
                 const double vs = static_cast<double>(world.VoxelSize());
                 blast.center = glm::dvec3(op.sphere.center) * (kInvQ * vs);
                 blast.radius = static_cast<float>(static_cast<double>(op.sphere.radius) * kInvQ * vs);
+                castShown = true;
+                castCenter = blast.center;
+                castRadius = blast.radius;
                 blast.islandsSearched = true;
                 blast.ops.push_back(std::move(applied));
                 presentations.push_back(std::move(blast));
@@ -404,6 +442,14 @@ namespace vortex::net {
         physics::BodyId BodyOf(scene::Entity entity) const {
             const scene::RigidBody* body = simulation->Scene().TryGet<scene::RigidBody>(entity);
             return body ? body->body : physics::BodyId{};
+        }
+
+        /// The layer of a moving copy: Rubble (no predicted player meets it), unless the own player
+        /// stands on it - then it stays Dynamic and carries the player, as the server keeps a moving
+        /// body under a player solid (review of stage 6; Server TrackBodies).
+        physics::Layer MovingLayer(physics::BodyId body) const {
+            if (!predicting || !body.IsValid()) return physics::Layer::Rubble;
+            return simulation->Physics().GetCharacterState(character).groundBody == body ? physics::Layer::Dynamic : physics::Layer::Rubble;
         }
 
         /// A kinematic copy of a server object: Layer::Dynamic at rest (players collide with it),
@@ -474,6 +520,14 @@ namespace vortex::net {
                 const scene::Entity entity = it->second.entity;
                 copies.erase(it);
                 ++stats.despawns;
+                if (d->reason == scene::DespawnReason::Broken && live && castShown) {
+                    // Broken by a blast: what the blast took of it bursts (its fragments, the rest,
+                    // came as netId-0 spawns), as Scene::Damage shows offline.
+                    const scene::VoxelBody* voxels = scene.TryGet<scene::VoxelBody>(entity);
+                    const scene::Transform* transform = scene.TryGet<scene::Transform>(entity);
+                    if (voxels && voxels->model && transform)
+                        ShowVoxelsInSphere(voxels->model->Volume(), transform->current.position, transform->current.rotation);
+                }
                 if (d->reason == scene::DespawnReason::ToRubble && live) {
                     // The server let go of it (piece caps): it stays here as this client's rubble.
                     const scene::VoxelBody* voxels = scene.TryGet<scene::VoxelBody>(entity);
@@ -489,10 +543,16 @@ namespace vortex::net {
                 return;
             }
             if (const EntityRest* r = std::get_if<EntityRest>(&event)) {
-                bodies.Rest(r->netId, r->tick);
+                const bool rests = bodies.Rest(r->netId, r->tick);
                 const auto it = copies.find(r->netId);
                 if (it == copies.end()) {
                     ++stats.ignoredEntityEvents;
+                    return;
+                }
+                if (!rests) {
+                    // A sample newer than the rest was taken already (it cannot be, as samples wait for
+                    // their snapshot's events; kept as a guard): the copy keeps moving.
+                    ++stats.staleRests;
                     return;
                 }
                 Copy& c = it->second;
@@ -502,6 +562,23 @@ namespace vortex::net {
                 physics.SetVelocity(body, glm::vec3(0.0f), glm::vec3(0.0f));
                 physics.SetLayer(body, physics::Layer::Dynamic);
                 ++stats.rests;
+                return;
+            }
+            if (const EntityWake* k = std::get_if<EntityWake>(&event)) {
+                const auto it = copies.find(k->netId);
+                if (it == copies.end()) {
+                    ++stats.ignoredEntityEvents;
+                    return;
+                }
+                // Moving from here on: not solid for a predicted player (unless it carries this
+                // one), still where it rested until its samples come (RemoteBodies keeps the rest's
+                // tick, so older samples stay refused).
+                Copy& c = it->second;
+                c.resting = false;
+                const physics::BodyId body = BodyOf(c.entity);
+                physics.SetVelocity(body, glm::vec3(0.0f), glm::vec3(0.0f));
+                physics.SetLayer(body, MovingLayer(body));
+                ++stats.wakes;
                 return;
             }
             const ObjectModel& m = std::get<ObjectModel>(event);
@@ -518,26 +595,92 @@ namespace vortex::net {
             const glm::vec3 shift = glm::vec3(m.offset) * simulation->World().VoxelSize();
             glm::vec3 position = transform ? transform->current.position : glm::vec3(0.0f);
             const glm::quat rotation = transform ? transform->current.rotation : glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+            if (live) {
+                // What the damage removed, as particles (Scene::Damage spawns them offline; a client
+                // never runs it): the old model's voxels the new one does not have.
+                const scene::VoxelBody* voxels = scene.TryGet<scene::VoxelBody>(old.entity);
+                if (voxels && voxels->model && transform) ShowRemovedVoxels(voxels->model->Volume(), m, position, rotation);
+            }
             position += rotation * shift;
             scene.Destroy(old.entity);
+            // Only samples taken before this event are kept (later ones wait for it): all in the old
+            // frame, so all are shifted.
             bodies.Shift(m.netId, shift);
-            MakeCopy(m.netId, std::make_shared<voxel::VoxelModel>(m.volume, voxel::kWorldPalette, "object"), position, rotation, old.resting);
+            // The server's survivor is a new body, awake (Scene::Damage), unless it is static: a
+            // resting copy is re-made moving, and the server's EntityWake / EntityRest follow.
+            const bool staticModel = m.motion == static_cast<uint8_t>(physics::MotionType::Static);
+            MakeCopy(m.netId, std::make_shared<voxel::VoxelModel>(m.volume, voxel::kWorldPalette, "object"), position, rotation,
+                     staticModel && old.resting);
             ++stats.models;
         }
 
-        /// Snapshot samples of the copies; a sample newer than a copy's rest starts it moving again.
+        /// Particles for the voxels of `before` (a copy's model at `position` / `rotation`) that the
+        /// ObjectModel `after` no longer has; at most kMaxDamageBursts, every stride-th one.
+        void ShowRemovedVoxels(const voxel::VoxelVolume& before, const ObjectModel& after, const glm::vec3& position, const glm::quat& rotation) {
+            constexpr size_t kMaxDamageBursts = 64;
+            const float vs = simulation->World().VoxelSize();
+            std::vector<glm::ivec3> removed;
+            const glm::ivec3 size = before.Size();
+            for (int z = 0; z < size.z; ++z)
+                for (int y = 0; y < size.y; ++y)
+                    for (int x = 0; x < size.x; ++x) {
+                        const glm::ivec3 v(x, y, z);
+                        if (before.Get(x, y, z) == 0) continue;
+                        const glm::ivec3 n = v - after.offset;
+                        const glm::ivec3 ns = after.volume.Size();
+                        const bool kept = n.x >= 0 && n.y >= 0 && n.z >= 0 && n.x < ns.x && n.y < ns.y && n.z < ns.z && after.volume.Get(n.x, n.y, n.z) != 0;
+                        if (!kept) removed.push_back(v);
+                    }
+            const size_t stride = std::max<size_t>(1, (removed.size() + kMaxDamageBursts - 1) / kMaxDamageBursts);
+            for (size_t i = 0; i < removed.size(); i += stride) {
+                const glm::ivec3& v = removed[i];
+                const glm::vec3 local = (glm::vec3(v) + glm::vec3(0.5f)) * vs;
+                const glm::dvec3 at = glm::dvec3(position + rotation * local);
+                fx::SpawnVoxelBreak(simulation->Particles(), at, simulation->Materials().Get(voxel::kWorldPalette, before.Get(v.x, v.y, v.z)).color, vs);
+            }
+        }
+
+        /// Particles for the voxels of `volume` (a copy at `position` / `rotation`) inside the newest
+        /// cast's sphere; at most kMaxDamageBursts, every stride-th one.
+        void ShowVoxelsInSphere(const voxel::VoxelVolume& volume, const glm::vec3& position, const glm::quat& rotation) {
+            constexpr size_t kMaxDamageBursts = 64;
+            const float vs = simulation->World().VoxelSize();
+            const double reach = static_cast<double>(castRadius) + 0.5 * static_cast<double>(vs);
+            std::vector<std::pair<glm::dvec3, uint8_t>> inside;
+            const glm::ivec3 size = volume.Size();
+            for (int z = 0; z < size.z; ++z)
+                for (int y = 0; y < size.y; ++y)
+                    for (int x = 0; x < size.x; ++x) {
+                        const uint8_t id = volume.Get(x, y, z);
+                        if (id == 0) continue;
+                        const glm::dvec3 at = glm::dvec3(position + rotation * ((glm::vec3(x, y, z) + glm::vec3(0.5f)) * vs));
+                        if (glm::length(at - castCenter) <= reach) inside.emplace_back(at, id);
+                    }
+            const size_t stride = std::max<size_t>(1, (inside.size() + kMaxDamageBursts - 1) / kMaxDamageBursts);
+            for (size_t i = 0; i < inside.size(); i += stride)
+                fx::SpawnVoxelBreak(simulation->Particles(), inside[i].first, simulation->Materials().Get(voxel::kWorldPalette, inside[i].second).color, vs);
+        }
+
+        /// Snapshot samples of the copies. Rest and wake are events: a resting copy takes no sample
+        /// (a sample of a woken body waits for its EntityWake).
         void TakeBodySamples(uint32_t tick, const std::vector<BodySample>& samples) {
             for (const BodySample& b : samples) {
                 const auto it = copies.find(b.netId);
-                if (it == copies.end() || !bodies.Add(b.netId, tick, BodyPose{b.position, b.rotation, b.velocity})) {
+                if (it == copies.end() || it->second.resting || !bodies.Add(b.netId, tick, BodyPose{b.position, b.rotation, b.velocity})) {
                     ++stats.bodySamplesIgnored;
                     continue;
                 }
                 ++stats.bodySamples;
-                if (it->second.resting) {
-                    it->second.resting = false;
-                    simulation->Physics().SetLayer(BodyOf(it->second.entity), physics::Layer::Rubble);
-                }
+            }
+        }
+
+        /// The waiting samples whose snapshot's events are applied, oldest first (snapshots are taken
+        /// in tick order and their lastOpSeq never falls).
+        void TakeReadySamples() {
+            if (state != ClientState::Playing || !simulation) return;
+            while (!waitingSamples.empty() && waitingSamples.front().lastOpSeq <= applied) {
+                TakeBodySamples(waitingSamples.front().tick, waitingSamples.front().bodies);
+                waitingSamples.pop_front();
             }
         }
 
@@ -555,9 +698,26 @@ namespace vortex::net {
             }
             physics::PhysicsWorld& physics = simulation->Physics();
             const float dt = Dt();
+            const physics::BodyId ground = predicting ? physics.GetCharacterState(character).groundBody : physics::BodyId{};
+            // A copy only the server may remove; if this scene removed one by another path (it fell
+            // below the window first, drawn in the past), it is lost here: counted, and the entity
+            // check sees it missing until the server's despawn comes.
+            for (auto it = copies.begin(); it != copies.end();) {
+                if (simulation->Scene().IsValid(it->second.entity)) {
+                    ++it;
+                    continue;
+                }
+                ++stats.copiesLost;
+                bodies.Remove(it->first);
+                it = copies.erase(it);
+            }
             for (const auto& [netId, c] : copies) {
                 if (c.resting) continue;
                 const physics::BodyId body = BodyOf(c.entity);
+                // Solid only while it carries the own player (MovingLayer; the server's rule).
+                const physics::Layer layer = ground.IsValid() && ground == body ? physics::Layer::Dynamic : physics::Layer::Rubble;
+                if (physics.GetLayer(body) != layer) physics.SetLayer(body, layer);
+                stats.heldUnderPlayer += layer == physics::Layer::Dynamic ? 1u : 0u;
                 BodyPose pose;
                 if (bodies.Sample(netId, bodyTime + 1.0, static_cast<double>(dt), pose)) physics.MoveKinematic(body, pose.position, pose.rotation, dt);
                 else physics.SetVelocity(body, glm::vec3(0.0f), glm::vec3(0.0f));
@@ -684,6 +844,7 @@ namespace vortex::net {
         Impl& s = *m_Impl;
         s.Receive();
         s.ApplyPending();
+        s.TakeReadySamples();
         s.TryReconcile();
     }
 
@@ -756,8 +917,8 @@ namespace vortex::net {
         // The session's tick and gravity: every predicted step depends on them.
         base.fixedTimeStep = m_Impl->welcome.tickSeconds;
         base.physics.gravity = m_Impl->welcome.gravity;
-        // The server's character mask (terrain only until stage 6): every body on a client is its
-        // own rubble, which the server's characters never meet.
+        // The server's character mask (terrain and Dynamic bodies, stage 6): here the Dynamic layer
+        // holds only copies of server bodies at rest; this client's own rubble is Debris or Rubble.
         base.physics.characterLayers = sim::kSessionCharacterLayers;
         base.physics.characterMovesBodies = false;     // as the server's (its bodies are copies here)
         // This client's own rubble never blocks its predicted player (the server has none of it).
@@ -886,6 +1047,7 @@ namespace vortex::net {
         simulation.Terrain().Update(focus, simulation.Config().colliderRadius);
         simulation.Terrain().Flush();
         s.ApplyPending();
+        s.TakeReadySamples();
         s.TryReconcile();
         return s.state == ClientState::Playing;
     }
@@ -912,6 +1074,13 @@ namespace vortex::net {
         }
         std::sort(out.begin(), out.end(), [](const EntityInfo& a, const EntityInfo& b) { return a.netId < b.netId; });
         return out;
+    }
+
+    bool Client::IsCopy(scene::Entity entity) const {
+        if (entity == scene::kNoEntity) return false;
+        for (const auto& [netId, c] : m_Impl->copies)
+            if (c.entity == entity) return true;
+        return false;
     }
 
     const RemoteBodies& Client::Bodies() const { return m_Impl->bodies; }

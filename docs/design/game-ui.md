@@ -269,10 +269,10 @@ Wayland session (the log line then says `X11 (pointer grab)`):
    swallowed (WASD, Space, E, V, F all work right after closing the editor).
 7. HiDPI / fractional scaling: menu hover matches the pointer.
 
-### Network session (networking.md stage 5; windowed, two machines)
+### Network session (networking.md stages 5-6; windowed, two machines)
 
 The game as a client of `vortex_server` (`src/Session.cpp`) has its own small interface on the same HUD: a bottom-left
-panel `ONLINE host:port  slot N  WALK/AIR` with `ping`, `players` and the tool, the key hints `Esc menu   V view`,
+panel `ONLINE host:port  slot N  WALK/AIR` with `ping`, `players` and the tools (Blast [LMB], Crate [E]), the key hints `Esc menu   V view`,
 `Cast not run: ...` for 2 s when the server reports a cast it did not run, `Disconnected from the server` when the
 connection ends, and a pause menu with Resume / "Leave the session" (the session goes on while it is open). The steps
 (commands, firewall, token) are in the game's `CLAUDE.md`, "Owner's two-machine test": the server is started with
@@ -289,3 +289,12 @@ machines:
 13. Stop the server (Ctrl-C) while a client plays: the HUD says "Disconnected from the server" at once (a server that
     is killed or unplugged: after up to 30 s, ENet's timeout). A wrong token is refused before the window opens
     (`refused this client: wrong token`); a server that is not there gives `no answer from ... within 15 s`.
+14. (Stage 6.) The plaza's crates are there on both screens, in the same places. E drops a crate 3 m ahead a moment
+    after the key, on both screens; walking into a resting crate stops the player without a jerk. A blast that hits a
+    crate breaks it into pieces (lumps on each screen, not necessarily the same) and both players see the crate gone.
+    Cutting the watch tower's base (several casts, as `--tower-blast` does offline) drops it as one body that falls,
+    tips and comes to rest in the same place on both screens; standing where it lands, it passes through the player
+    and may enclose them (walk out). The log's `Session: objects:` line at exit counts copies, rests and fragments.
+    (Review of stage 6.) Aiming at a crate in the open (10 m away, the ground well behind it) breaks the crate, not the
+    ground behind; the puff appears on the crate. Standing on a resting crate (jump onto it) while the other player
+    blasts the ground a metre or two beside it: the player stays on the crate (rides it if it slides), no drop into it.

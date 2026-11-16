@@ -175,6 +175,11 @@ TEST(Wire, EntityEventsRoundTripAtTheirSizes) {
     EXPECT_EQ(bytes, 37u);
     EXPECT_EQ(std::get<net::EntityRest>(back), std::get<net::EntityRest>(rest));
 
+    const net::Event wake = net::EntityWake{42, 1250};
+    back = RoundTrip(wake, &bytes);
+    EXPECT_EQ(bytes, 9u);
+    EXPECT_EQ(std::get<net::EntityWake>(back), std::get<net::EntityWake>(wake));
+
     net::ObjectModel model;
     model.netId = 42;
     model.offset = glm::ivec3(-1, 0, 3);
@@ -481,7 +486,7 @@ TEST(Wire, ForgedBytesNeverCrashADecoder) {
     model.netId = 5;
     model.volume = object.object.volume;
     entities.events = {object, net::EntityDespawn{5, scene::DespawnReason::Broken}, net::EntityRest{5, 7, glm::vec3(1.0f), glm::quat(1, 0, 0, 0)},
-                       model};
+                       model, net::EntityWake{5, 9}};
     const std::vector<std::vector<uint8_t>> valid = {net::Encode(batch), net::Encode(net::Welcome{}), net::Encode(net::Hello{}),
                                                      net::Encode(inputs), net::Encode(snap), net::Encode(entities)};
     uint32_t decoded = 0;

@@ -4,6 +4,7 @@ module;
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -20,9 +21,10 @@ import vortex.voxel;
 namespace vortex::net {
 
     std::string EntityComparison::Describe() const {
-        return std::format("{} / {} object(s), {} missing, {} extra, {} model mismatch(es); {} resting on both within {:.4f} m, {} moving "
-                           "within {:.2f} m",
-                           server, client, missing, extra, modelMismatches, restingCompared, maxRestError, movingCompared, maxMovingError);
+        return std::format("{} / {} object(s), {} missing, {} extra, {} model mismatch(es), {} rest-state mismatch(es); {} resting on "
+                           "both within {:.4f} m / {:.5f} rad, {} moving within {:.2f} m",
+                           server, client, missing, extra, modelMismatches, restStateMismatches, restingCompared, maxRestError, maxRestAngle,
+                           movingCompared, maxMovingError);
     }
 
     EntityComparison CompareEntities(std::span<const EntityInfo> server, std::span<const EntityInfo> client) {
@@ -41,9 +43,13 @@ namespace vortex::net {
             theirs.erase(it);
             if (k.modelHash != s.modelHash) ++c.modelMismatches;
             const float d = glm::distance(k.position, s.position);
+            if (s.resting != k.resting) ++c.restStateMismatches;
             if (s.resting && k.resting) {
                 ++c.restingCompared;
                 c.maxRestError = std::max(c.maxRestError, d);
+                // The angle between the two rotations (q and -q are the same rotation).
+                const float dot = std::min(1.0f, std::abs(glm::dot(glm::normalize(s.rotation), glm::normalize(k.rotation))));
+                c.maxRestAngle = std::max(c.maxRestAngle, 2.0f * std::acos(dot));
             } else {
                 ++c.movingCompared;
                 c.maxMovingError = std::max(c.maxMovingError, d);

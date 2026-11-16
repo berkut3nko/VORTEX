@@ -33,17 +33,25 @@ export namespace vortex::net {
         uint32_t modelMismatches = 0;     ///< same NetId, another model hash
         uint32_t restingCompared = 0;     ///< resting on both sides
         float maxRestError = 0.0f;        ///< metres between the two poses' origins, resting ones
+        float maxRestAngle = 0.0f;        ///< radians between the two rotations, resting ones
         uint32_t movingCompared = 0;      ///< awake on either side
         float maxMovingError = 0.0f;
-        /// Same NetIds and models, and every object resting on both sides within `restTolerance`.
-        bool Agree(float restTolerance = 0.05f) const {
-            return missing == 0 && extra == 0 && modelMismatches == 0 && maxRestError <= restTolerance;
+        /// Resting on one side and not on the other (a rest or a wake the client missed or has not
+        /// applied yet: only a comparison taken mid-flight may expect any).
+        uint32_t restStateMismatches = 0;
+        /// Same NetIds and models, the same rest state on both sides, and every object resting on
+        /// both sides within `restTolerance` metres and `angleTolerance` radians. A comparison taken
+        /// while bodies still move passes `midFlight` (rest-state mismatches are then not judged).
+        bool Agree(float restTolerance = 0.05f, float angleTolerance = 1.0e-3f, bool midFlight = false) const {
+            return missing == 0 && extra == 0 && modelMismatches == 0 && maxRestError <= restTolerance &&
+                   maxRestAngle <= angleTolerance && (midFlight || restStateMismatches == 0);
         }
         std::string Describe() const;
     };
 
-    /// @brief Compares two lists (any order): ids, model hashes, rest poses, and how far the copies
-    /// of moving objects are from the server's (they are drawn in the past: logged, not judged).
+    /// @brief Compares two lists (any order): ids, model hashes, rest states, rest poses (origin and
+    /// rotation), and how far the copies of moving objects are from the server's (they are drawn in
+    /// the past: measured, judged only by a caller that bounds it).
     EntityComparison CompareEntities(std::span<const EntityInfo> server, std::span<const EntityInfo> client);
     /// @brief A hash of the NetIds and model hashes of a list (any order): what two processes log to
     /// compare (tools/session-check.sh).

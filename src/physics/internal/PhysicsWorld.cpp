@@ -201,8 +201,20 @@ namespace vortex::physics {
         public:
             explicit CharacterLayerFilter(uint8_t mask = kDefaultCharacterLayers) : m_Mask(mask) {}
             bool ShouldCollide(JPH::ObjectLayer layer) const override {
-                return layer != kLayerCharacter && layer < 8 && ((m_Mask >> layer) & 1u) != 0;
+                // Rubble (networking stage 6: a session client's own lumps, its moving copies of server
+                // bodies, a server's moving bodies) never meets a character, whatever the mask says.
+                return layer != kLayerCharacter && layer != kLayerRubble && layer < 8 && ((m_Mask >> layer) & 1u) != 0;
             }
+
+        private:
+            uint8_t m_Mask;
+        };
+
+        /// A query that sees only the layers of a LayerBit mask (Raycast with layers).
+        class LayerMaskFilter final : public JPH::ObjectLayerFilter {
+        public:
+            explicit LayerMaskFilter(uint8_t mask) : m_Mask(mask) {}
+            bool ShouldCollide(JPH::ObjectLayer layer) const override { return layer < 8 && ((m_Mask >> layer) & 1u) != 0; }
 
         private:
             uint8_t m_Mask;
@@ -972,6 +984,10 @@ namespace vortex::physics {
     // --- queries ------------------------------------------------------------------------------
 
     RayHit PhysicsWorld::Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance) const {
+        return Raycast(origin, direction, maxDistance, 0xFF);
+    }
+
+    RayHit PhysicsWorld::Raycast(const glm::vec3& origin, const glm::vec3& direction, float maxDistance, uint8_t layers) const {
         RayHit out;
         if (!m_Impl->sim || !IsFinite(origin) || !IsFinite(direction) || !IsFinite(maxDistance) || !(maxDistance > 0.0f)) return out;
         const float length = glm::length(direction);
@@ -982,7 +998,8 @@ namespace vortex::physics {
         const JPH::RRayCast ray(ToJoltR(origin), ToJolt(dir * maxDistance));
         JPH::RayCastResult result;
         const IgnoreSensorsFilter noSensors;
-        if (!system.GetNarrowPhaseQuery().CastRay(ray, result, JPH::BroadPhaseLayerFilter(), JPH::ObjectLayerFilter(), noSensors)) return out;
+        const LayerMaskFilter layerFilter(layers);
+        if (!system.GetNarrowPhaseQuery().CastRay(ray, result, JPH::BroadPhaseLayerFilter(), layerFilter, noSensors)) return out;
 
         const JPH::RVec3 point = ray.GetPointOnRay(result.mFraction);
         out.hit = true;
@@ -1166,6 +1183,8 @@ namespace vortex::physics {
         state.position = ToGlm(slot->character->GetPosition());
         state.velocity = ToGlm(slot->character->GetLinearVelocity());
         state.onGround = slot->character->GetGroundState() == JPH::CharacterBase::EGroundState::OnGround;
+        if (slot->character->GetGroundState() != JPH::CharacterBase::EGroundState::InAir && !slot->character->GetGroundBodyID().IsInvalid())
+            state.groundBody = BodyId{slot->character->GetGroundBodyID().GetIndexAndSequenceNumber()};
         return state;
     }
 

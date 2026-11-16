@@ -22,8 +22,8 @@ What exists today, and what was designed for but is not built yet. See
 | Renderer | Ray-marched G-buffer, ray-traced sun shadows, ambient occlusion, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping, ImGui. Headless mode with screenshots. Validation-clean on Intel UHD 620. |
 | Editor | `vortex.editor`: in-game editor toggled with F1 - fly camera, entity selection with a translate / rotate gizmo, inspector, terrain brush, primitive spawning, `.vox` / glTF import, environment / render / profiler / world panels. Tool logic is separate from the widgets and unit tested. |
 | Simulation | `vortex.sim`: `sim::Simulation` owns world, physics, terrain colliders and scene and steps them on a numbered fixed tick; `sim::WorldOp` / `ApplyOp` replay terrain changes exactly; `sim::Blast`. Library `Vortex::Sim` links no renderer or window. `Engine` owns one and draws it. |
-| Sessions | `vortex.net` (`Vortex::Net`, GPU-free): the M1 protocol over ENet (UDP, `EnetTransport`) and in-process loopback transports (`ImpairedTransport`: seeded loss, delay, jitter, duplicates, reordering, rate limit, outages), `net::Server` (fixed region window, template as operations 1..k, event stream with a byte budget, cast queue with a work budget, join = full event log, one player per client moved by its inputs, snapshots at 30 Hz) and `net::Client` (handshake with token and build hash, region from `Welcome`, operations applied in `opSeq` order, the own player predicted with `sim::StepPlayer` and reconciled with the snapshots on a clock kept ahead of the server, other players interpolated); `vortex_server` runs a session file headless, listens on UDP (`--listen`, ENet) and runs in-process bot players over loopback or UDP. The game joins a session with `Shredborne --connect HOST[:PORT] --token HEX` (stage 5): its engine is built from the server's region and ticks on the client clock, its player is predicted, other players are voxel figures, every hole is the server's (one round trip after the click). Tested on one machine (server + two headless game clients on localhost: equal world hashes); the two-machine run is the owner's. |
-| Tests | 600 unit tests (six disabled measurements), none needing a GPU (the ENet ones use UDP sockets on 127.0.0.1). |
+| Sessions | `vortex.net` (`Vortex::Net`, GPU-free): the M1 protocol over ENet (UDP, `EnetTransport`) and in-process loopback transports (`ImpairedTransport`: seeded loss, delay, jitter, duplicates, reordering, rate limit, outages), `net::Server` (fixed region window, template as operations 1..k, event stream with a byte budget, cast queue with a work budget, join = full event log, one player per client moved by its inputs, snapshots at 30 Hz) and `net::Client` (handshake with token and build hash, region from `Welcome`, operations applied in `opSeq` order, the own player predicted with `sim::StepPlayer` and reconciled with the snapshots on a clock kept ahead of the server, other players interpolated); `vortex_server` runs a session file headless, listens on UDP (`--listen`, ENet) and runs in-process bot players over loopback or UDP. The game joins a session with `Shredborne --connect HOST[:PORT] --token HEX` (stage 5): its engine is built from the server's region and ticks on the client clock, its player is predicted, other players are voxel figures, every hole is the server's (one round trip after the click). Since stage 6 crates (the plaza's and E), terrain pieces of 0.512 m^3 or more and object pieces are server bodies with a NetId (at most 2 new per tick, 64 awake, 256 live), sent as entity events and in the snapshots; clients hold kinematic copies drawn in the past and put exactly at their rest poses, players collide with them at rest on both sides, smaller pieces are each client's own rubble. Tested on one machine (server + two headless game clients on localhost: equal world hashes and entity lists); the two-machine run is the owner's. |
+| Tests | 634 unit tests (six disabled measurements), none needing a GPU (the ENet ones use UDP sockets on 127.0.0.1). |
 
 ## Performance (Intel UHD 620, 1280x720 output, 768x432 internal)
 
@@ -238,7 +238,39 @@ State (stages are those of [design/networking.md](design/networking.md)):
   ignored; `vortex_server --new-token` / `--token` and a warning for a public token; a headless session client drains
   and fails on an unshown hash, `tools/session-check.sh` compares the hashes (PASS); Ctrl-C no longer waits out the
   drain; a too-large join log refuses joiners (`LogTooLarge`) and is reported. See "Review of stage 5".
-- Stages 6-9: not started. Before stage 3: shred.md stage 1 changed the search result (face flood), the server
+- **Stage 6, replicated bodies - built and reviewed.** An unreviewed partial implementation was committed by the
+  owner (engine `c1e19c8`); it was judged against the design, two failing physics tests fixed (a character filter
+  that let `Layer::Rubble` block characters; a push test with the wrong mass), and the stage finished on top of it.
+  `scene::NetId` with an `on_destroy` observer on the server (every destruction is an `EntityDespawn`), `Detach` with a
+  NetId (the server body made from the removed voxels, as every client makes its copy), `EntitySpawn` objects,
+  `ObjectModel`, `EntityRest`, `Layer::Rubble`, `MoveKinematic`, `SetLayer`; the piece budgets (`sim::TakePieceSlot`:
+  2 new server bodies per tick, 64 awake, 256 live with eviction `ToRubble`; over a budget client rubble), awake bodies
+  in the snapshots by priority (31 B each, 1200 B per snapshot), `net::RemoteBodies` (Hermite in the past, the rest
+  rule), kinematic copies on clients, client rubble with stage 1e's lifetimes and caps, the session character mask
+  Static | Dynamic with bodies in Rubble while they move on both sides and characters that move no bodies; crates
+  from E (`PlayerButton_Crate`), protocol 6. `vortex_server`: the drill's pieces and crates are server bodies, bots drop
+  crates (`--bot-crates`), the drain waits for bodies to rest and an entity check compares every bot's copies (exit 1
+  on a difference); `--drill-after/-delay/-sites/-every` run a drill beside a session; `tools/session-check.sh` does and
+  compares the game clients' entity lists. Verified: 16 new tests, **623 in all** (six disabled): the scripted fight
+  with islands and crates (5 % loss, 80 + 0-30 ms, an outage; equal hashes, ids, models and exact rest poses, players
+  within 5 cm), a collapse with 64 awake pieces at 5 % loss (both caps), a split below the threshold, a player under
+  falling pieces at 150 ms (4 corrections over 6 pieces, no snap), resting crates blocking players on both sides
+  (0 corrections), the rest rule against a hand-written server; the drill (loopback and UDP) with equal hashes and
+  agreeing entities; session-check PASS; offline runs unchanged.
+  **Review of stage 6** (17 findings, 2 duplicates, none rejected outright; parts of two rejected with reasons; one more
+  problem found while verifying; 11 new tests, **634 in all**): a snapshot's body samples wait for its events; waking
+  is an event (`EntityWake`, protocol 7) and a damaged survivor's copy is re-made moving; a body that carries a player
+  stays solid on both sides; the replicated size follows the session's voxel size; the awake cap counts every awake
+  body; entity events have a byte budget of their own (over it: client rubble, damaged objects let go); casts hit
+  replicated bodies; a cast's largest pieces get the tick's bodies; `Broken` objects burst; the entity check judges
+  rest states and rotations; the collapse test follows the copies mid-flight; collider installs and the cook budget no
+  longer follow worker timing (the session tests are reproducible bit for bit); players' crates go with the player;
+  the game's drain waits for rest; a late joiner starts predicting from a fresh snapshot (the drill's joiner had a
+  hard resync). **Not done / open:** windowed play and the two-machine run with bodies (owner); the wire
+  `EntityCheck` and entity baseline (7); the replicated threshold (owner question in networking.md "Review of stage
+  6": a crate is 152 voxels, under the 262 of 0.512 m^3, so it breaks at its first hit); crush damage (M2). Choices:
+  `design/networking.md`, "Stage 6 as built", "Review of stage 6".
+- Stages 7-9: not started. Before stage 3: shred.md stage 1 changed the search result (face flood), the server
   window margin (3 chunks, flood box) and the cast budget (a work budget); shred.md stage 4 (built, the owner's answer
   to its question 4) moved the island search onto the cell graph - same results except where a work budget runs out,
   node visits and chunk graphs used (at a cold price; never graphs built, which depend on the cache) to count in stage
@@ -455,7 +487,7 @@ State (stages are those of [design/networking.md](design/networking.md)):
 - **Game UI**: the HUD layer exists (ARCHITECTURE.md section 11). Still missing: input action mapping and
   key rebinding, a settings menu (mouse sensitivity is a constant), gamepad navigation, Unicode / TTF text,
   textured widgets, in-game chat (M1).
-- **Networking**: server-authoritative simulation (M1, stages 2-9). `Vortex::Core`, `Vortex::Physics` and
+- **Networking**: server-authoritative simulation (M1, stages 2-9; 7-9 left). `Vortex::Core`, `Vortex::Physics` and
   `Vortex::Sim` build without GPU or window, the simulation runs on a numbered fixed tick and the world is stored
   as chunk deltas.
 - **Double-precision physics** for worlds far from the origin (rendering is already origin-relative).

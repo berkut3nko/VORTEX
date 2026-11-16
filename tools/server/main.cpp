@@ -5,6 +5,7 @@
 //                 [--ticks N] [--drill N] [--clients N] [--enet] [--join-step K]
 //                 [--loss P] [--delay-ms D] [--jitter-ms J] [--outage-ms A,B] [--threads T]
 //                 [--stand] [--no-jumps] [--bot-casts N] [--bot-crates N] [--realtime] [--hash-out <file>]
+//                 [--drill-after N] [--drill-delay S] [--drill-sites K] [--drill-every T]
 //
 // Starts the server from a session file (token, region, template; see sessions/*.session), loads its
 // whole window and applies the template.
@@ -40,6 +41,12 @@
 // with --bot-crates N every bot drops a crate (the game's E key) every N ticks. After the drain (which
 // also waits, at most 10 s, until no replicated body moves) the entity check compares every bot's
 // copies with the server's objects: the same NetIds and models, and those at rest within 5 cm.
+// --drill-every T runs a drill step every T ticks instead of 6. --drill-after N starts the drill only once N clients have joined (and --drill-delay S seconds more):
+// a listening server then runs it beside a session with game clients and keeps running (until
+// --seconds, --exit-when-empty or Ctrl-C); --drill-sites K uses only the first K sites (the play
+// bounds' -x / -z corner, away from a template's middle). A listening server logs the NetIds and
+// models of its objects (an entity list hash) next to its world hash whenever a client leaves and at
+// the end (tools/session-check.sh compares them with the game clients').
 // A server that fails (networking.md: a broken server world ends the session) stops at once and
 // reports. Exit code 0 when every bot's hash equals the server's, every entity check agrees and
 // nothing failed; 1 otherwise; 2 on a bad command line, session file or port.
@@ -131,7 +138,7 @@ int main(int argc, char** argv) {
                              "[--token HEX | --new-token] [--ticks N] [--drill N] [--clients N] [--enet] [--join-step K] [--loss P] "
                              "[--delay-ms D] [--jitter-ms J] "
                              "[--outage-ms A,B] [--threads T] [--stand] [--no-jumps] [--bot-casts N] [--bot-crates N] [--realtime] "
-                             "[--hash-out <file>]\n");
+                             "[--hash-out <file>] [--drill-after N] [--drill-delay S] [--drill-sites K] [--drill-every T]\n");
         return 2;
     }
     net::SessionConfig session;
@@ -170,12 +177,16 @@ int main(int argc, char** argv) {
     const bool exitWhenEmpty = args.Has("--exit-when-empty");
 
     const uint32_t drillSteps = static_cast<uint32_t>(Number(args, "--drill", 0));
+    // A drill that waits for N clients (a listening server beside a session) instead of starting at once.
+    const uint32_t drillAfter = static_cast<uint32_t>(Number(args, "--drill-after", 0));
+    const double drillDelay = Number(args, "--drill-delay", 0.0);
+    const uint32_t drillSites = static_cast<uint32_t>(Number(args, "--drill-sites", 0));
     const uint32_t clientCount = static_cast<uint32_t>(Number(args, "--clients", drillSteps > 0 && !listen ? 2 : 0));
     const uint32_t joinStep = static_cast<uint32_t>(Number(args, "--join-step", drillSteps / 2));
-    constexpr uint32_t kStepTicks = 6;
+    const uint32_t stepTicks = std::max<uint32_t>(1, static_cast<uint32_t>(Number(args, "--drill-every", 6)));
     // A listening server without a drill or bots runs until --seconds, --exit-when-empty or Ctrl-C.
-    const bool openEnded = listen && drillSteps == 0 && clientCount == 0 && !args.Has("--ticks");
-    const uint32_t ticks = static_cast<uint32_t>(Number(args, "--ticks", drillSteps > 0 ? drillSteps * kStepTicks : 120));
+    const bool openEnded = listen && (drillSteps == 0 || drillAfter > 0) && clientCount == 0 && !args.Has("--ticks");
+    const uint32_t ticks = static_cast<uint32_t>(Number(args, "--ticks", drillSteps > 0 ? drillSteps * stepTicks : 120));
     const unsigned threads = static_cast<unsigned>(Number(args, "--threads", 0));
     const bool realtime = enet || args.Has("--realtime");
     const bool stand = args.Has("--stand");
@@ -255,7 +266,9 @@ int main(int argc, char** argv) {
     std::unique_ptr<net::BlastDrill> drill;
     if (drillSteps > 0) {
         drill = std::make_unique<net::BlastDrill>(server.Region(), server.Simulation().WorldMaterialIds(), server.Simulation().World());
-        Log::Info("Drill: {} steps on {} sites, one every {} ticks", drillSteps, drill->Sites(), kStepTicks);
+        if (drillSites > 0) drill->KeepSites(drillSites);
+        Log::Info("Drill: {} steps on {} sites, one every {} ticks{}", drillSteps, drill->Sites(), stepTicks,
+                  drillAfter > 0 ? std::format(", once {} client(s) joined (+{:.1f} s)", drillAfter, drillDelay) : std::string());
     }
 
     bool draining = false;                       // the drain: the players stand (no more casts)
@@ -339,15 +352,36 @@ int main(int argc, char** argv) {
 
     uint32_t step = 0;
     uint32_t drilledTick = 0xFFFFFFFFu;          // a pass that runs no tick must not queue the step again
+    // --drill-after: the tick the drill starts on, once enough clients joined (0xFFFFFFFF: not yet).
+    uint32_t drillStart = drillAfter > 0 ? 0xFFFFFFFFu : 0u;
     auto drillStep = [&](uint32_t t) {
-        if (drill && t % kStepTicks == 0 && step < drillSteps && t != drilledTick) {
+        if (drill && drillStart == 0xFFFFFFFFu && server.ClientCount() >= drillAfter) {
+            drillStart = t + static_cast<uint32_t>(std::lround(drillDelay / dt));
+            Log::Info("Drill: {} client(s) joined at tick {}: the drill starts at tick {}", server.ClientCount(), t, drillStart);
+        }
+        if (drill && t >= drillStart && (t - drillStart) % stepTicks == 0 && step < drillSteps && t != drilledTick) {
             drilledTick = t;
             const net::DrillStep s = drill->Step(step);
             if (!net::RunDrillStep(server, s)) Log::Warn("Drill: step {} cast outside the play bounds", step);
             ++step;
         }
     };
-    // Clients that left a listening server: logged with the server's opSeq and hash at that moment.
+    // The replicated objects at this opSeq, as a game client logs its copies (tools/session-check.sh).
+    auto logEntities = [&server] {
+        const std::vector<net::EntityInfo> entities = server.Entities();
+        size_t resting = 0;
+        for (const net::EntityInfo& e : entities) resting += e.resting ? 1u : 0u;
+        Log::Info("Session: entities at opSeq {}: {} object(s), {} resting, id hash {:016x}", server.LastOpSeq(), entities.size(), resting,
+                  net::EntityListHash(entities));
+    };
+    // Clients that left a listening server: logged with the server's opSeq and hash at that moment,
+    // before its player's crates are despawned (the opSeq the client drained to).
+    server.SetOnClientLeft([&server, &logEntities](uint8_t slot) {
+        const voxel::WorldHashResult h = server.Hash();
+        Log::Info("Session: the client of slot {} left; server at opSeq {}, tick {}, world hash {:016x} ({} chunks)", slot, server.LastOpSeq(),
+                  server.TickNumber(), h.hash, h.solidChunks);
+        logEntities();
+    });
     size_t lastClients = 0, mostClients = 0;
     uint32_t lastReported = 0;
     auto watchClients = [&] {
@@ -356,6 +390,7 @@ int main(int argc, char** argv) {
             const voxel::WorldHashResult h = server.Hash();
             Log::Info("Session: {} client(s) left; server at opSeq {}, tick {}, world hash {:016x} ({} chunks)", lastClients - n,
                       server.LastOpSeq(), server.TickNumber(), h.hash, h.solidChunks);
+            logEntities();
         }
         mostClients = std::max(mostClients, n);
         lastClients = n;
@@ -364,6 +399,8 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, OnSignal);
 
     double lastWall = 0.0;
+    double maxPassSeconds = 0.0;                 // wall clock of the server's work in one pass (UDP)
+    uint32_t slowPasses = 0;                     // ... passes longer than a tick
     // One pass: the server's due ticks (one simulated tick, or what the wall clock gives), then the bots.
     auto pass = [&] {
         if (enet) {
@@ -376,6 +413,15 @@ int main(int argc, char** argv) {
             drillStep(before);
             server.Advance(passSeconds);
             if (server.TickNumber() > before + 1) drillStep(before + 1);
+            // How long the server's own work took (its ticks and the drill's edits): a pass over a
+            // tick's length is a server hitch, which clients see as a growing input margin.
+            const double busy = wallNow() - t;
+            maxPassSeconds = std::max(maxPassSeconds, busy);
+            slowPasses += busy > dt ? 1u : 0u;
+            if (busy > 3.0 * dt)
+                Log::Info("Server: a pass took {:.1f} ms at tick {} ({}){}", busy * 1000.0, server.TickNumber(),
+                          server.TickNumber() > before ? std::format("{} tick(s)", server.TickNumber() - before) : std::string("no tick"),
+                          drilledTick == before || drilledTick == before + 1 ? ", with a drill step" : "");
         } else {
             drillStep(server.TickNumber());
             server.Tick();
@@ -489,21 +535,25 @@ int main(int argc, char** argv) {
                   p.hardResyncs, p.minMargin, p.maxMargin, bots[i].client->Clock().Target(), bots[i].casts, p.castsRejected, bots[i].pilot->Casts(),
                   bots[i].pilot->Jumps());
         const net::ClientStats& cs = bots[i].client->Stats();
-        Log::Info("Client {} objects: {} copies made ({} failed), {} despawned ({} kept as rubble), {} rests, {} models, {} fragments; {} "
-                  "body samples taken, {} ignored, largest sample gap {} ticks; pilot crates {}",
-                  i, cs.copiesMade, cs.copiesFailed, cs.despawns, cs.toRubble, cs.rests, cs.models, cs.fragments, cs.bodySamples,
-                  cs.bodySamplesIgnored, bots[i].client->Bodies().MaxGap(), bots[i].pilot->Crates());
+        Log::Info("Client {} objects: {} copies made ({} failed, {} lost), {} despawned ({} kept as rubble), {} rests ({} stale), {} "
+                  "wakes, {} models, {} fragments; {} body samples taken, {} ignored, largest sample gap {} ticks; {} ticks a copy carried "
+                  "the player; pilot crates {}",
+                  i, cs.copiesMade, cs.copiesFailed, cs.copiesLost, cs.despawns, cs.toRubble, cs.rests, cs.staleRests, cs.wakes, cs.models,
+                  cs.fragments, cs.bodySamples, cs.bodySamplesIgnored, bots[i].client->Bodies().MaxGap(), cs.heldUnderPlayer,
+                  bots[i].pilot->Crates());
     }
     {
         const sim::ReplicationStats& rs = server.Simulation().Replication().stats;
-        Log::Info("Objects: {} server bodies from terrain pieces, {} object spawns, {} fragments as client rubble, {} models, {} rests, "
-                  "despawns {} destroyed / {} to rubble / {} broken; pieces: {} replicated, {} over the tick budget, {} over the awake cap, {} "
-                  "evicted ({} resting, {} awake), {} body failures, at most {} live / {} awake; crates {} ({} refused); entity events "
-                  "{:.1f} KiB; snapshots up to {} B with {} bodies, {} bodies sent, {} left out",
-                  st.detachBodies, st.objectSpawns, st.fragmentSpawns, st.objectModels, st.rests, st.despawns[1], st.despawns[2],
-                  st.despawns[3], rs.pieces, rs.overTickBudget, rs.overAwakeCap, rs.evictedResting + rs.evictedAwake, rs.evictedResting,
-                  rs.evictedAwake, rs.bodyFailures, rs.maxLive, rs.maxAwake, st.crates, st.cratesRefused,
-                  static_cast<double>(st.entityEventBytes) / 1024.0, st.maxSnapshotBytes, st.maxSnapshotBodies, st.bodySamples, st.bodiesLeftOut);
+        Log::Info("Objects: {} server bodies from terrain pieces, {} object spawns, {} fragments as client rubble, {} models ({} let go "
+                  "over the entity byte budget), {} rests, {} wakes, despawns {} destroyed / {} to rubble / {} broken; pieces: {} replicated, "
+                  "{} over the tick budget, {} over the awake cap, {} over the byte budget, {} evicted ({} resting, {} awake), {} body "
+                  "failures, at most {} live / {} awake; crates {} ({} refused); {} casts hit a body; entity events {:.1f} KiB; snapshots up "
+                  "to {} B with {} bodies, {} bodies sent, {} left out",
+                  st.detachBodies, st.objectSpawns, st.fragmentSpawns, st.objectModels, st.modelsToRubble, st.rests, st.wakes, st.despawns[1],
+                  st.despawns[2], st.despawns[3], rs.pieces, rs.overTickBudget, rs.overAwakeCap, rs.overByteBudget,
+                  rs.evictedResting + rs.evictedAwake, rs.evictedResting, rs.evictedAwake, rs.bodyFailures, rs.maxLive, rs.maxAwake, st.crates,
+                  st.cratesRefused, st.castsAtBodies, static_cast<double>(st.entityEventBytes) / 1024.0, st.maxSnapshotBytes,
+                  st.maxSnapshotBodies, st.bodySamples, st.bodiesLeftOut);
     }
     const voxel::WorldStats ws = server.Simulation().World().Stats();
     Log::Info("Server: world {} dense / {} packed chunks, {:.1f} MiB RLE, store {} / {} slots, search errors {}, incomplete ops {}, "
@@ -514,7 +564,8 @@ int main(int argc, char** argv) {
 
     const voxel::WorldHashResult sh = server.Hash();
     bool ok = !server.Failed() && sh.Complete() && !interrupted;
-    // The entity check (stage 6): the same NetIds and models on every side, rest poses within 5 cm.
+    // The entity check (stage 6): the same NetIds and models on every side, the same rest state, rest
+    // poses within 5 cm and 1 mrad (review of stage 6).
     const std::vector<net::EntityInfo> serverEntities = server.Entities();
     Log::Info("Entities: server {} object(s), {} awake, id hash {:016x}", serverEntities.size(), server.AwakeBodies(),
               net::EntityListHash(serverEntities));
@@ -528,6 +579,7 @@ int main(int argc, char** argv) {
     // What every client that drained must have reached (tools/session-check.sh compares against it).
     Log::Info("Session: server ends at opSeq {}, tick {}, world hash {:016x} ({} chunks)", server.LastOpSeq(), server.TickNumber(), sh.hash,
               sh.solidChunks);
+    logEntities();
     std::string hashes = std::format("server {:016x} ({} chunks)", sh.hash, sh.solidChunks);
     for (size_t i = 0; i < bots.size(); ++i) {
         const BotClient& bot = bots[i];
@@ -551,6 +603,9 @@ int main(int argc, char** argv) {
                       bot.udp->Stats().datagramsDropped, bot.udp->Stats().datagramsReceived, bot.udp->RoundTripSeconds(1) * 1000.0,
                       bot.udp->Stats().messagesSent, bot.udp->Stats().messagesReceived);
     }
+    if (serverUdp)
+        Log::Info("Server: longest pass {:.1f} ms of server work (ticks and drill edits), {} pass(es) longer than a tick", maxPassSeconds * 1000.0,
+                  slowPasses);
     if (serverUdp)
         Log::Info("Server UDP: {} of {} datagrams dropped on receive, {} messages sent / {} received, {:.1f} KiB sent", serverUdp->Stats().datagramsDropped,
                   serverUdp->Stats().datagramsReceived, serverUdp->Stats().messagesSent, serverUdp->Stats().messagesReceived,

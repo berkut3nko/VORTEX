@@ -981,11 +981,12 @@ TEST(PhysicsWorld, CharactersThatMoveNoBodiesNeitherPushNorWeigh) {
         ASSERT_TRUE(f.initialized);
         f.AddGround();
         BodyDesc crate;
-        crate.shape = f.physics.CreateBoxShape({0.4f, 0.4f, 0.4f}, 100.0f);      // 51 kg
+        crate.shape = f.physics.CreateBoxShape({0.4f, 0.4f, 0.4f}, 10.0f);       // 5 kg: a character can push it
         crate.position = {2.0f, kGroundTop + 0.4f, 0.0f};
         const BodyId box = f.physics.CreateBody(crate);
         f.Step(120);
         ASSERT_FALSE(f.physics.GetState(box).active);
+        const float rest = f.physics.GetState(box).position.x;
         CharacterDesc desc;
         desc.position = {0.0f, kGroundTop, 0.0f};
         const CharacterId character = f.physics.CreateCharacter(desc);
@@ -993,7 +994,7 @@ TEST(PhysicsWorld, CharactersThatMoveNoBodiesNeitherPushNorWeigh) {
             f.physics.UpdateCharacter(character, kStep, {3.0f, 0.0f, 0.0f});
             f.physics.Step(kStep);
         }
-        const float moved = f.physics.GetState(box).position.x - 2.0f;
+        const float moved = f.physics.GetState(box).position.x - rest;
         if (moves) {
             EXPECT_GT(moved, 0.05f);
         } else {
