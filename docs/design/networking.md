@@ -2341,7 +2341,16 @@ that next touches the pacing tests. (a)-(d) above stand.
 
 The owner ran the stage 5 acceptance over the home LAN at engine `9cbfdaa` / game `7082a1c` (protocol 10).
 - **Setup:** `vortex_server` with `playground.session --listen 27015 --new-token` on the Arch laptop (UHD 620), which
-  also played with `--connect 127.0.0.1`; a second device joined over Wi-Fi.
+  also played with `--connect 127.0.0.1`. The second device was the **Windows laptop** (Intel Core Ultra 7 356H),
+  which joined over Wi-Fi. This was the first Windows build of the game and the first Windows client against a Linux
+  server. The owner has not yet reported the toolchain, any source changes, or whether the golden tests were run.
+- **Terrain agreement across platforms:** the server log shows both joins as ordinary chunk-sync joins (50
+  `ChunkData` / 75 KiB, 12 baseline entities, 0 requests). A client whose probe chunks differ would have started
+  server terrain mode, which is about 16 MiB on the playground. So the Windows build's 64 probe chunks matched the
+  Linux server's. That is the first evidence from a run that the generator agrees across the two platforms. The golden
+  float-bit tests on Windows remain the release gate ("Known risks of terrain agreement after stage 0").
+- **Server log:** 18 casts from players, 50 -> 65 modified chunks, 0 backlog, bulk work at most 1.1 ms per tick; one
+  126 ms pass at the first join (stage 8 looks at it).
 - **Owner's verdict:** "every things works fine, seamless experience".
 - **Screenshot (host client, windowed):** `ONLINE ... slot 0`, `ping 24 ms`, `players 2`, 43 fps. The other player's
   gold-torso figure is in view, and the craters, a crate and the half-felled watch tower are shared.

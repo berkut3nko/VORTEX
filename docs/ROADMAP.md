@@ -438,7 +438,9 @@ State (stages are those of [design/networking.md](design/networking.md)):
 
 ### M6 - Reach and platforms
 - Far terrain level 1 (150 m) as a setting for discrete GPUs; later levels only if wanted.
-- Windows client build, CI with tests and a headless validation render.
+- Windows client build, CI with tests and a headless validation render. (2026-11-17: the owner built the game on a
+  Windows laptop and played a LAN session against the Linux server, so the probe chunks agreed. Still missing: a
+  documented, repeatable build, the golden tests run on Windows, and CI.)
 
 ### M7 - Online services
 - Accounts, matchmaking, global progression, seamless transfer between regions; replaces the
