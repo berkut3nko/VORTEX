@@ -1506,6 +1506,554 @@ screenshot, review, ROADMAP update in the same commit.
 | 6 | Contacts drained and extended, `ColliderMaterials`, ownership bit, `sim::Impact` with total order, cooldowns and budgets; crush check | `ContactQueueNeverFillsWhenSimulationDrains` (10k ticks), `Impact.HeavyDropCarvesLightDoesNot`, `CooldownAndFatigue`, `BudgetCapsBodiesPerTick`, `ShuffledEventsSameOps` (shuffles include several events with an equal netId pair across two terrain chunks), `ClientRubbleNeverCausesImpacts` on the offline **and** the server config, `Crush.FallingServerBodyDamagesPlayer`, `Crush.RubbleNeverDamages` | terrain side: `CarveSphere` (kind 1, later 7); body side: `ObjectModel`, `EntitySpawn` / `EntityDespawn` (**networking stage 6**); crush: a damage event (M2). Before networking stage 6 impacts act on terrain only | 1-1.5 weeks | M3 / M5 (thrown matter) |
 | 7 | Optional: `ShredSphere = 7`, `DetachFractured = 8` with golden tests; bending / tip check on top of stage 4b; settle-to-heap | `WorldOps.ApplyOpIsTheWorldCallOfEachKind` extended; `ShredSphere.*` and `ShredNoise.GoldenValues`; two-simulation hash tests | new kinds 7, 8 (after networking stage 3; `DetachFractured` after stage 6) | 1-2 weeks | after networking stage 3 / 6 |
 
+## Structural integrity plan (2026-11-17): stages 5, 5b, 6 against the code after networking 7b
+
+Status: **plan, nothing built; amended the same day after a critic's review** (15 findings, all checked against the
+code: 15 accepted, 5 of them with a changed or extended fix - see "Review of the plan"). The owner asked (2026-11-17): "Implement a
+Structural Integrity System to check if object connections can break under their own weight and under inertial
+contact." This section re-plans stages 5, 5b and 6 against the code as it is after networking stages 6-7b (sessions
+with server bodies, NetIds, the entity byte budget, chunk sync and checks) and replaces rows 5, 5b and 6 of "Stages"
+and the unbuilt parts of Part 4 ("Host and scope": the registry and overhang items; "Propagation over ticks") and of
+Part 5 wherever it says so. Row 7 (bending, `ShredSphere`, `DetachFractured`) stays optional; collapse.md stage 1
+(static objects) stays at ROADMAP M3. The fog half of the same message is not part of this plan. Written read-only;
+line numbers are quoted only where the review checked them (networking stage 8 is being built in the same tree: they
+may move). Every time or size marked **(e)** is an estimate. Binding as for every stage: Part 2 (R1-R7), fun and few
+bugs over realism, the UHD 620 frame, tests first, GPU-free logic.
+
+### Decision in brief
+
+1. **Three milestones**, each ending in green tests, a headless demo, a review and a commit: **SI-1** objects break
+   under their own weight, **SI-2** impacts, **SI-3** terrain re-checks for parts a check's cap left. Order SI-1 ->
+   SI-2 -> SI-3 (SI-2 dents resting objects and so calls SI-1's check). SI-3 depends on neither and may go before SI-2;
+   whichever of the two comes first introduces the structure credit (SI-2, "Data"). They start once networking stage 8
+   is committed (one build directory).
+2. **One structural rule everywhere: Part 4b's max-flow load check.** Dynamic objects get it on their own graph (tile
+   graphs of the model volume, the whole object judged, no island box); Static objects are not judged (today's rule;
+   nothing in the game or a session is static: collapse.md stage 1 stays at M3). No second rule:
+   **`StructureRegistry`, the overhang rule, the spawn guard, `StructuralSolver` and `CollapseBudget` are dropped**
+   (reasons below).
+3. **No wire change, no new event kind.** Everything a client sees is what it sees today: `Carve` / `Detach` /
+   `ClearMask` (terrain), `ObjectModel`, `EntitySpawn` (with a NetId or `netId` 0), `EntityDespawn`, `EntityRest`,
+   `EntityWake`. A crater travels as the `ClearMask` of the voxels the integer carve rule removes and a re-check emits
+   no carve at all, so a client presents both as a `deferred` group (dust, no explosion, no flash: `Client::Impl::
+   Present`). `kProtocolVersion` is not touched by SI-1..3.
+4. **Impacts cross one integer boundary, `ImpactQ`** (R3): a Jolt contact is drained in an order fixed by its content,
+   quantised at once, oriented from the striker into the receiver; from there on everything is integer and totally
+   ordered. **Impacts and re-checks have a structure credit of their own** (work and bytes), never read or written by
+   `RunCasts`: a physics event never delays a player's cast, and R5 stays as written.
+5. **A release never needs a re-check** (Part 4b's kept side routes all its mass to the anchors without the released
+   set, so removing that set cannot overload anything: SI-3 pins it in a test). What can need one is only what a check's
+   part cap left (SI-3, terrain) and an object that was moving or over the per-tick bound when it was hit (SI-1's
+   pending checks). A spent work budget is not retried: it waits for a later cast, as today (R7).
+
+### What still holds
+
+| Plan item (Parts 2, 4, 4b, 5) | Still holds because |
+|---|---|
+| R1 server decides, clients apply; R2 integer terrain operations; R4 fixed orders | Unchanged by networking 6-7b. Objects were always different: `Scene::Damage` decides with a float sphere and the server sends the result as a whole model (`ObjectModel`) or a spawn, so an object's decision may read floats (pose, motion) - it is the server's, replicated by value |
+| R5 counted work | Built (networking stage 3): `CastWorkOf`, `kCastWorkPerTick` 60 000, the event byte credit. **Not amended**: impacts and re-checks are charged to their own structure credit, object checks to a per-tick count |
+| R7 over budget = later or cosmetic | Built for casts and pieces (`TakePieceSlot` -> client rubble, the entity byte budget -> `ToRubble`). Impacts keep the one exception (derived, may be dropped, counted) and never cause a `ToRubble` (they are skipped instead) |
+| Part 4b's rule, strengths, budgets (`kNeckFlowWorkBudget` 65 536, 64 parts / 60 000 voxels per check) | Built, reviewed, in `buildHash`. SI-1 reuses its network solver (`voxel::SolveNeckNetwork`) and its node build; terrain results must not change by one voxel or one work unit. No budget is scaled (the strict rule needs fewer than 2^17 directed arcs: 65 535 pairs) |
+| "Never after `FillBox`, editor edits, generation" (no buildings falling on spawn) | Kept and extended to objects: never on spawn, never on rest by itself |
+| Rubble lifetimes and caps (stage 1e), `MinPieceVoxels`, `kMaxIslandVoxels` | Unchanged; every new piece of SI-1/2 goes through `CreateVoxelObject(.debris)` or `TakePieceSlot` |
+| Part 5's integer energy, total order, cooldowns, server-only impacts, no crush from contacts | Kept, simplified (below) |
+| collapse.md's fracture bricks | Kept in a new, simpler place: SI-2's shatter cuts a body into 2-3 blocks |
+
+### What changed since Parts 4 and 5 were written
+
+| Then | Now (code after networking 7b) | Consequence for this plan |
+|---|---|---|
+| "Server bodies need networking stage 6"; every release a `netId` 0 `Detach` | A `Detach` of at least `replicatedPieceVoxels` (0.512 m^3: 262 voxels at 0.125 m) that gets `TakePieceSlot` carries a NetId; the server makes its body after the push (`sim::Blast` step 5) | A neck-released tower is a server body in a session and can strike the ground (SI-2). No new path for terrain releases |
+| `CollapseBudget{releasesPerTick 6, serverBodiesPerTick 2, ...}` | `TakePieceSlot`: 2 bodies per tick, 64 awake replicated bodies (crates included), 256 live pieces, none while the entity byte budget is spent; largest pieces of a cast ask first | `CollapseBudget` is dropped: every new piece of SI-1/2/3 asks `TakePieceSlot`, over budget it is client rubble (a fragment / `netId` 0) |
+| Entity events counted against the event budget | Entity events have their own credit (200 B/tick = 12 kB/s, burst 16 KiB) that never moves a cast; `ObjectModel` resends a whole model (`WriteVolumeRuns`); `EmitObjectEvents` lets a damaged object go `ToRubble` (6 B) once the credit is at or below 0 | Client rubble is `Layer::Rubble`, which session characters never meet (`kSessionCharacterLayers` = Static \| Dynamic): a `ToRubble` makes a landed body a walk-through ghost. **SI-2 never causes one**: an impact `Damage` / shatter needs `entityCredit` >= the model's encoded size (its runs counted, no allocation), else it is skipped and counted. SI-1's survivor is an ordinary `ObjectModel` and inherits the `ToRubble` degradation, as any cast's damage does |
+| Client copies placeholder; "dust until the body exists" | Copies are kinematic; moving replicated bodies are `Layer::Rubble` on both sides (they pass through players); `characterMovesBodies` false; the client builds every copy when its event applies | Crush stays out (a moving body never touches a player; there is no health yet: M2). Contacts on a client are drained and dropped |
+| Join by event log | Join by chunk sync (7a); every server terrain op must go through `Server::Impl::EmitOp` (modified map) | Impact craters and re-checks are emitted through `EmitOp` like casts; joiners get them as modified chunks |
+| No checks | `HashCheck` / `EntityCheck` / `EntityList` (7b) | Nothing new to check: craters are `ClearMask` ops, shatter pieces are entities. Both are in the existing comparisons |
+| `TakeContactEvents` nobody calls; queue fills | Still true (notes/physics.md); `ContactCollector::Publish` keeps one event per body pair after an unstable `std::sort` of events filled in Jolt's thread arrival order (PhysicsWorld.cpp:279-306) | SI-2 drains every tick on every side (also a fix on its own) and makes `Publish`'s order a function of the events' content |
+| A client presents a received `CarveSphere` as a cast (non-deferred group: `fx::SpawnExplosion` and a flash, Blast.cpp:868-891); a `Detach` / `ClearMask` with no open group as `deferred` (no burst, no flash) | Built (Client.cpp `Present`) | Craters are a `ClearMask`, re-checks emit no carve: both are shown as dust. Offline, impact and re-check results set `deferred` too, so one rule shows them everywhere (`BlastResult::cause` is for logs and stats only) |
+| Part 5: `ColliderMaterials`, fatigue, a 30-tick impact queue, `OpBatch` / `PresentOps` | Not built | Simplified away (next table) |
+
+### Dropped or simplified, with the reason
+
+| Item | Decision | Reason |
+|---|---|---|
+| `StructureRegistry`, the overhang rule, the registry's spawn guard | **Dropped** | Part 4b's check gives the "thin necks fall" the owner asked for with one rule and no registry state that a server, its replays, joins and saves must keep in sync. Its gap (no bending: a floor cantilevered from the remaining walls holds by shear) is row 7's bending / lever term on the same check, built only if play shows hanging floors |
+| `StructuralSolver` with dirty boxes after every op, round-robin solves | **Dropped**; SI-3 keeps a re-check queue fed by part-cap leftovers only | Every carve already runs the check at its site (casts and, after SI-2, craters); releases provably cannot overload anything; so the only work left over is what a part cap cut short |
+| `CollapseBudget`, release queue over ticks, "queued parts stay solid" | **Dropped** | `TakePieceSlot` + 4b's per-check caps + SI-3's queue already spread a big collapse over ticks (64 parts per check) |
+| `OpBatch{cause}` / `PresentOps` | **Simplified**: `BlastResult::cause` (`Cast`, `Late`, `Impact`, `Recheck`) for logs and stats; presentation by the existing `deferred` flag | The server's emit path (`RunCast`: `EmitOp`, `EmitObjectEvents`) and the offline `PresentBlast` already take a `BlastResult`; impacts and re-checks are `sim::Blast` calls with options. `cause` never reaches a client (no wire change), so it must not decide what a client shows |
+| Part 5's `ColliderMaterials` (compound child -> material) | **Dropped** | The struck terrain material is read from the world at the quantised point (integer, the same for every side); the striker's material does not enter the rule |
+| Part 5's fatigue (sub-threshold hits add up) | **Dropped** | Hidden state per body, hard to read in play; immunity ticks, the speed floors and "a shattered piece never shatters again" are enough against spam |
+| Part 5's 30-tick impact queue | **Reduced to 10 ticks** | An impact shown half a second late reads as a bug; older ones are dropped and counted (R7's exception) |
+| Part 5's impact record and replay (`ImpactRecord`, `impactSource = Recorded`), and the R5 amendment it carried | **Dropped** (review) | With a content-ordered drain and a credit of their own, impacts never move a cast by credit; Jolt is documented deterministic for the same inputs and call order, which `Impact.SameImpactsWithOneOrThreeThreads` checks. A record would still have read Jolt-made state (the striker) and could not be tested apart from Jolt on one machine |
+| Striker dents (Part 5 and the first draft of SI-2) | **Dropped** (review) | Each resent the striker's whole model (a tower about 6.5 KiB **(e)**) and, once the entity credit was spent, turned a landed body into a walk-through ghost; a stone block chipped by landing on grass also reads wrong. A striker either shatters or stays whole |
+| Crush damage to players | **Out of SI** (M2) | No health system exists; moving bodies are `Layer::Rubble` and never meet a character, so there is nothing to detect in physics either. The server sweep of Part 5 stays the M2 design |
+| collapse.md stage 1 (static objects: `BaseRow` anchors, the anchored remainder stays Static) | **Not in SI** (review) | Nothing in a session or the game is static: `sim::TemplateObject` has no motion field, the server places objects Dynamic (`SpawnObjectAt`), the game spawns only dynamic objects; only the offline editor's `spawnMotion` can. It stays at M3, when static content exists |
+| collapse.md stage 4 for objects (`RebakeRegion`, per-chunk collider boxes) | **Not needed for SI** | Server models are not baked; offline objects are small. Stays a later optimisation |
+| Offline NetIds "as a server does" (Part 5) | **Dropped** | Eligibility to cause an impact is by size (the replicated volume, the same metre size offline and on a server), never by a NetId |
+| Re-checks with 4x budgets (first draft of SI-3) | **Dropped** (review) | A full 4x re-check charges up to about 650 000 work units **(e)** (11 ticks of cast credit), scaling the arc cap breaks the strict rule's 2^17 bound, and no measured cast has spent a budget (largest need 13 000 of 65 536; 0 of 80 stage-4 searches). A spent budget stays "released by a later cast" (R7 as today), logged and counted |
+
+### SI-1 - objects break under their own weight
+
+**Owner-facing behaviour.** A stone-topped table whose leg is shot snaps its other legs and drops the slab; a statue
+whose neck is grazed loses its head, which drops onto the pedestal. A burst of quick shots is judged hit by hit (a
+neck chipped by three shots falls at the shot that overloads it). Nothing falls when it is placed, dropped or comes to
+rest - only after it is damaged (as terrain: never on spawn). A damaged object that is moving is judged once it is
+still. In a session both clients see the same: the survivor as an `ObjectModel`, the released parts as server bodies (2
+per tick, largest first) or as client rubble.
+
+**Data.**
+- `voxel::VolumeLoadCheck` (Core, `voxel/Structure.cppm`, pure function, GPU-free):
+  `VolumeLoadInput{const VoxelVolume&, const GraphMaterials&, const NeckLimits&, uint8_t downAxis (one of 6),
+  uint32_t maxTiles, uint32_t maxMemberVoxels}` -> `VolumeLoadResult{std::vector<VolumePiece> released; uint32_t
+  crumbled; std::vector<NeckCut> cuts; counters: tiles, nodes, arcs, flowWork, skipped, flowBudget}`. Anchors are
+  always the bottom layer (step 4); there is no anchor-rule parameter.
+- `GraphMaterials` per palette: `MakeGraphMaterials(materials, palette, ignoreFlags)` (today world palette only); the
+  scene caches one per palette with its `NeckLimits` for the object's voxel size (`transform.scale`, as `Damage` reads
+  it). A `.vox` palette without strengths gets stone's (the `Material` default).
+- `SceneConfig::objectLoadCheck` (default **false**: every existing test keeps its numbers; the game's offline config
+  and `sim::ServerConfig` set it), `kObjectLoadMaxTiles` = 8 (2^3 tiles: 64^3 voxels, 8 m at 0.125 m; a 22 x 56 x 22
+  tower piece is 2 tiles), `kObjectLoadChecksPerTick` = 2, `kObjectLoadTilesPerTick` = 16, `kLoadMemberVoxels` = 64,
+  `kRestSpeed` 0.1 m/s, `kRestSpin` 0.1 rad/s (all (e)).
+- `scene::LoadCheckPending{uint32 sinceTick}` on an object that was hit while moving or over the per-tick bound;
+  `sim::ObjectLoadBudget{checks, tiles}` per tick (server) or per frame (offline), passed to `Damage` by `sim::Blast`.
+- `DamageResult` gains `loadChecked`, `loadPending` (moving, or over the per-tick bound), `loadSkipped` (tilted, too
+  large, Static), `loadReleased` (voxels), `loadCrumbled`, `cuts`; `BlastResult` sums them (`objectLoad`), the `Blast:`
+  line logs them.
+
+**Algorithm** (inside `Scene::Damage`, after the carve and before `SplitComponents`; and `Scene::CheckLoad` for a
+pending object, the same steps without a carve):
+1. **When:** `objectLoadCheck`, voxels were removed, the body is **Dynamic** (Static: skipped, today's rule - cut apart
+   it becomes Dynamic) and **still before this hit**: not frozen-wanting-to-move, |v| < `kRestSpeed` and |w| <
+   `kRestSpin`, read from the old body before `Damage` removes it (not Jolt's sleep flag: every `Damage` re-creates the
+   body with `EActivation::Activate`, Jolt sleeps a body only after 0.5 s still, a blast wakes everything within two
+   radii, and a player casts every 15 ticks, so after the first hit of a burst every hit would land on an "awake"
+   object). Moving, or the tick's `ObjectLoadBudget` spent (counted in checks and in tiles from the object's own
+   oriented size, never from a time or a cache): `LoadCheckPending` (checked later, step 8). Tilted or too large:
+   skipped (lenient, never pending).
+2. **Down axis:** world down in model space (`inverse(rotation) * (0, -1, 0)`); the model axis with the largest
+   component if that is at least cos 30 deg, else skip (`loadSkipped`, lenient: a tilted object holds). The volume is
+   copied with its axes permuted so that down is -y (a cheap copy; the graph code keeps its fixed -y = compression).
+3. **Graph:** the oriented volume is cut into 32^3 tiles from its corner (air beyond its size); each tile is filled into
+   a scratch `voxel::Chunk` (thread_local, `RebuildOccupancy`) and built with `BuildChunkGraph` - the same build terrain
+   uses, so nodes, splits at the narrowest plane, weakest materials and the anchor bit are the terrain's. More than
+   `kObjectLoadMaxTiles` tiles: skipped (counted; the object breaks only by connectivity, as today).
+4. **Anchors:** every node holding a voxel of the oriented volume's lowest solid layer (what it stands on) and every
+   anchor-material node, with an infinite arc to the sink, as the window's bottom-row nodes have in terrain.
+5. **Network:** every node of every tile is judged (no island box, no exterior floods: an object is small), split
+   halves as in 4b, arcs by bond class and the weaker material, links across tile faces by `BondVoxels`. Built by the
+   same function as terrain: the R-R arc builder of 4b's `NeckCheck` is extracted (`BuildNodeNetwork` over a graph view:
+   the terrain `GraphTable` or the tile list), **keeping the terrain's arc order bit for bit** (every `Neck.*` and
+   `Blast.Neck*` test unchanged, `--neck-blast` flow work 7 055 unchanged). Solved by `SolveNeckNetwork` with the terrain
+   budgets; spent or over the caps: nothing released, counted.
+6. **Released set** A as in 4b (the largest strictly overloaded set, unique). **The kept-side support under each
+   released part crumbles** (new, objects only). Why: a rigid simulation keeps a released part resting on whatever
+   still stands under its cut faces (a neck stub, the legs that just failed), and no push reaches it (`Damage` gives
+   pieces the parent's velocity, 0 at rest; a blast's push reaches 3 x its radius from the body's corner). Rule, per
+   released part: start at the kept voxels directly below its cut faces; walk down column by column, layer by layer,
+   while the layer's in-plane 4-connected kept component holding the column voxel has at most as many voxels as the
+   part's cut faces; stop at the first wider layer or after `kLoadMemberVoxels` voxels for the part (top first). Those
+   voxels are cleared as crumbs. A table's three remaining legs (1 voxel wide down to the floor) go; the statue's neck
+   stub (2 columns of 4 voxels above the 8 x 8 pedestal) goes and the head drops 0.5 m onto the pedestal. Terrain keeps
+   4b exactly (its released tower takes its neck down to the lowest cut and tips on its own).
+7. **Pieces:** released voxels move into their own volumes; `SplitComponents` runs on the remainder and on each released
+   volume; all pieces sorted largest first as today; the largest keeps the entity (unchanged). Below
+   `replicatedPieceVoxels` a piece is a fragment, as today.
+8. **Pending checks** (`sim::CheckPendingObjects`, server after the casts and impacts of a tick, offline once per frame
+   after `ResolveImpacts`): objects with `LoadCheckPending` that are now still by step 1's rule, in key order (NetId on a
+   server, entity value offline), while the tick's `ObjectLoadBudget` holds: `Scene::CheckLoad` (steps 2-7, no carve),
+   emitted like `Damage`. Pending for more than 600 ticks (10 s, a rubble lifetime): dropped, counted. Any later
+   `Damage` of the object runs the check itself and clears the mark.
+
+**The owner's cases** (0.125 m; stone C 800 000 MU per face, wood C 640 000; MU = kg / vs^3; demo models
+`sim::StatueModel` / `sim::TableModel` next to `sim::CrateModel`, both above the replicated size so they are shared
+bodies in a session - a 184-voxel plank table would break into client rubble at its first hit, like a crate):
+
+| Case | Load, MU | Capacity, MU | Result |
+|---|---|---|---|
+| Table: stone slab 24 x 3 x 12 (864 voxels) on four 1 x 8 x 1 wood legs | 2 246 400 | 4 x 640 000 = 2 560 000 | stands, 0.88 |
+| Same, one leg's foot shot (0.25 m): its upper part hangs from the slab | 2 246 400 + 3 500 | 3 x 640 000 = 1 920 000 | **falls, 1.17x**: slab + hanging leg released, the three legs crumble (8 voxels each, 24 for the part), the slab drops 1 m |
+| Statue: stone pedestal 8 x 4 x 8, neck 2 x 6 x 2, head 10 x 10 x 10 (1000 voxels), neck across the cell face y = 8 | 2 620 800 | 4 x 800 000 = 3 200 000 | stands, 0.82 |
+| Same, the neck grazed to 2 faces | 2 620 800 | 1 600 000 | **falls, 1.64x**: the head is released; the stub under its 2 cut faces (part of the pedestal's 272-voxel node, 2 x 4 voxels) crumbles; the head drops 0.5 m onto the pedestal |
+| A dumbbell (two 512-voxel cubes on a 2 x 2 neck) lying on the ground | both cubes anchored by their bottom layer | - | nothing released; the stage-6 dumbbell tests must keep their outcome with the check on |
+
+**Determinism and replication.** Server or offline only (R1); clients never run `Damage`. The decision reads the pose
+and the motion before the hit, like `TakePieceSlot` reads Jolt: a server decision, replicated by value. Survivor ->
+`ObjectModel` (or `ToRubble` while the entity credit is spent, as for any cast's damage), released and split pieces ->
+`TakePieceSlot` (largest first) -> `EntitySpawn` with a NetId or a fragment (`netId` 0) - the existing `sim::Blast` step
+3 path, unchanged. Crumbled voxels become particles on a client through the existing "voxels an `ObjectModel` removed"
+rule (at most 64 bursts). Objects are not in `WorldHash`; `EntityCheck` / `EntityList` compare ids and model hashes as
+today.
+
+**Budgets per tick.** At most `kObjectLoadChecksPerTick` (2) object checks and `kObjectLoadTilesPerTick` (16) tiles per
+tick (offline: per frame), shared by checks inside `Damage` and pending checks; per check the terrain network caps (8192
+nodes, 65 535 arc pairs, 65 536 flow work, 64 parts / 60 000 voxels) and 8 tiles. The object half is not charged to the
+cast work credit (it reads Jolt, R5); the counts bound it, and an object over them waits as `LoadCheckPending`.
+
+**Cost (e).** Orient copy: the model's voxels once (a 22 x 56 x 22 tower piece, 27 k voxels: about 0.03 ms). Tiles:
+25-30 us each (the measured Dense chunk build); the statue and table are one tile, a 64^3 object 8. Network: tens of
+nodes for the demo models, 150-300 for a tower piece; the preflow is microseconds there. **Per check 0.05-0.3 ms; at the
+caps about 1.8 ms** (8 tiles 0.25 ms + 65 536 flow work about 1.5 ms, from 4b's measured 5-6 ms per 207 k scans); **per
+tick at most about 3.6 ms** (2 checks at the caps; typical under 0.6 ms). Session clients: nothing new. Memory: one
+scratch chunk (37 KB) and the tile graphs (5-7 KB each), freed after the call.
+
+**Tests (GPU-free, written first, seen failing against a stub that releases nothing; every negative test has a positive
+control in the same setup).** VortexCoreTests (`tests/core/VolumeLoadTests.cpp`):
+- `VolumeLoad.EqualsTheTerrainCheckOnTheSameVoxels`: the statue, the table (both intact and with one leg shot) and 40
+  random hourglass / slab volumes placed as terrain with their y = 0 row on the bottom row of a full-height window
+  (judged nodes holding a bottom-row voxel are sinks, as `BottomLayer` makes the lowest layer anchors), the whole volume
+  inside a dud's island box, and as volumes: the same released voxels, loads and cuts (before the object-only crumble).
+- `VolumeLoad.BedrockContactIsAKnownDifference`: the one-leg table placed as terrain on bedrock releases the legs with
+  the slab (the feet's finite wood-bedrock arcs are the lower cut of the same strength, 4b's "lower cut wins"); the
+  volume releases the slab and the hanging leg only. Pinned so nobody "fixes" one side to match the other.
+- `VolumeLoad.TableOnThreeLegsFallsOnFourStands`, `VolumeLoad.StatueNeckThresholdIsExact` (4 faces stand, 2 fall; a head
+  of exactly the capacity holds, one MU more falls).
+- `VolumeLoad.DownAxisRotatesTheVolume` (the statue in 6 orientations: the same release; tilted 40 deg: skipped; the same
+  statue tilted 20 deg: released).
+- `VolumeLoad.LyingDumbbellReleasesNothing` (positive control: the same dumbbell standing on one cube releases the
+  other), `VolumeLoad.SupportUnderTheCutCrumbles` (table legs 24 voxels, statue stub 8 voxels; a support wider than the
+  cut stays; a 100-voxel column stops at 64), `VolumeLoad.NeckAcrossATileFace` (a 40^3 volume, the neck at y = 31 /
+  32), `VolumeLoad.TileAndNetworkCapsSkip` (9 tiles: skipped; 8: judged), `VolumeLoad.ReleasedSetIndependentOfArcOrder`
+  (the shuffle hook).
+- Unchanged and green: every `Neck.*` test (the extracted network builder), with their work counters.
+VortexSimTests (`tests/sim/ObjectLoadTests.cpp`):
+- `ObjectLoad.ShotLegDropsTheSlab` (offline config: pieces where their voxels were, legs crumbled, the slab's lowest
+  voxel at least 0.5 m lower within 60 ticks).
+- `ObjectLoad.GrazedNeckDropsTheHead`: the check run at rest with **no blast push** (`Scene::CheckLoad` on a statue whose
+  neck was cut by `Damage` with the check off); the head's lowest voxel moves down at least 0.25 m within 60 ticks.
+- `ObjectLoad.BurstOfShotsIsJudgedHitByHit` (three casts 15 ticks apart chip a resting statue's neck from 4 to 2 faces:
+  the head is released at the hit that overloads it, not left for a later shot).
+- `ObjectLoad.MovingObjectIsPendingThenChecked` (hit while sliding at 2 m/s: pending, checked when still, released;
+  control: the same hit at rest releases at once), `ObjectLoad.NeverOnSpawnOrRest` (an overloaded statue placed and
+  dropped stands for 600 ticks; control: the same statue hit at rest releases), `ObjectLoad.ChecksPerTickBound` (5
+  statues hit in one tick: 2 checked, 3 pending, all released within 3 ticks), `ObjectLoad.PendingIsDroppedAfterTenSeconds`,
+  `ObjectLoad.StaticObjectIsNotChecked` (config on: a static object cut gives today's `Damage` result; control: the
+  same model Dynamic at rest releases), `ObjectLoad.OffKeepsTodaysDamage` (config off: `Damage` results equal before
+  and after).
+- `Replication.ObjectLoadReleaseIsAModelAndPieces` (server config: one `ObjectModel`, pieces largest first through
+  `TakePieceSlot`, over the tick budget fragments; over the entity credit `ToRubble`).
+VortexNetTests: `Entities.StatueAndTableBreakTheSameOnBothClients` (5 % loss, 40 + 0-30 ms: ids, models, rest poses
+agree; hashes equal).
+
+**Headless.** Game `--object-blast` (implies the demo objects, 8 m east of the probe site so the default world is
+unchanged): frame 20 places the table and the statue as dynamic objects; frame 30 a 0.6 m miss beside each removes
+nothing (`ObjectLoad: pristine: 2 objects, 0 checked`); frame 40 a 0.25 m shot at one table foot, frame 50 at the
+statue's neck. Must log `ObjectLoad: table released: 1 part of N voxels, load L > cut C (3 faces), support crumbled
+(24 voxels)` and `ObjectLoad: statue released: head of 1000+ voxels, ... 1.64x, support crumbled (8 voxels)` (the exact
+numbers come from the tests), the released part's lowest voxel lower at +20 frames than at release, `store a/b`; frame
+60 throws a second statue up with a 1 m push and grazes its neck in flight (`ObjectLoad: statue checked at rest after N
+frames: head released`); exit 0 under validation, also at `--voxel-size 0.1` / `0.15` (the models scale with
+`PlaygroundScale`). Session: `vortex_server --object-drill N` (`Server::SpawnObject` places both models at a drill site,
+a cast hits the table foot and the neck) must exit 0 with `hashes equal` and `Entities: ... agree`. The standard,
+editor, `--neck-blast`, `--tower-blast` runs: unchanged numbers.
+
+**Risks.** (1) Bottom-layer anchors are wrong for an object resting on something other than its lowest layer (lying on a
+rock with a leg hanging): it may release a part that a real body would not lose - lenient cases are fine, false falls
+are bounded by "only after damage, only when still" and logged with the ratio. (2) Imported palettes have no strengths
+(stone's apply). (3) The crumble turns up to 64 voxels per released part into particles: a client sees dust, not a
+snapped leg body. (4) The extracted network builder could change terrain work counters: pinned by the unchanged 4b
+tests. (5) "Still" by `kRestSpeed` reads a float velocity: a server decision replicated by value, never a client's.
+(6) Effort (e): 4-6 days.
+
+### SI-2 - impacts (inertial contact)
+
+**Owner-facing behaviour.** A heavy piece that lands hard on soft ground leaves a crater; a felled tower that hits the
+ground breaks into 2-3 big blocks and cracks the turf it lands on (a wall it falls onto may then lose a part by the load
+check); a resting statue a falling block hits is dented and may lose its head. Hard surfaces (the plaza paving, bare
+stone) take no crater. Small rubble, crates and pieces that just broke off never smash anything; a piece that broke from
+a shatter never shatters again. Bodies sliding or tumbling slowly never plough trenches. In the arena margin a landing
+leaves no crater. Players are not hurt (M2). A landing shows dust, never an explosion or a flash.
+
+**Data.**
+- `physics::ContactEvent` gains `invMassA`, `invMassB` (Jolt's inverse mass in the listener, bodies locked; 0 for
+  static, kinematic and frozen bodies).
+- `ContactCollector::Publish` sorts by content: (bodyA, bodyB, approachSpeed desc, position x / y / z, normal x / y / z),
+  the floats compared as bit patterns, so the event kept per body pair never depends on Jolt's thread arrival order (a
+  body landing flat ties on `approachSpeed` across its terrain triangles).
+- `sim::ImpactQ{int32 centreQ[3] (SphereQ units, 1/16 voxel), int8 normal[3] (x 127, **from the striker into the
+  receiver**: Jolt's normal points from body A to body B, negated here when the striker is B; Jolt makes the body of the
+  higher motion type A, so on terrain the striker is A, and between two dynamic bodies either may be), uint16 speedQ (v_n in cm/s), uint32 energyQ
+  (J / 16), uint32 strikerKey, uint32 receiverKey (0 = terrain), uint8 terrainId (the receiver's voxel half a voxel
+  along +normal from the contact point), uint32 tick}` and its total key `(energyQ desc, strikerKey, receiverKey,
+  centreQ.x, .y, .z)`. Keys: the NetId on a server, the entity value offline.
+- `sim::ImpactState{uint32 readyTick; bool shattered}` on every body, stamped by an `on_construct<scene::RigidBody>`
+  observer in `Simulation` (readyTick = tick + 30, shattered false). An observer cannot know a parent, so `Damage` and
+  `Shatter` set each piece's `shattered` explicitly after making it (the parent's flag; true for a shatter's blocks); its
+  readyTick stays the fresh one (pieces are born touching).
+- `SimulationConfig::impacts` (default **false**; the game's offline config and `vortex_server` turn it on,
+  `--no-impacts` turns it off; a session client is always off), `Simulation::PendingImpacts()` (at most 64),
+  `ImpactStats` (drained, eligible, deduplicated, resolved, craters, belowCrater, hardSurface, dents, shatters, dropped
+  by age / budget / bounds / credit / slot).
+- `BlastOptions{bool carveAsClear; bool noCarve; bool objects = true; bool push = true; bool deferred}`:
+  `carveAsClear` applies the voxels the integer carve rule removes as one `WorldOp::Clear` (`ClearMask`: the same
+  voxels and hashes as the `Carve`); `noCarve` emits no carve op (SI-3); `push = false` means every `Detach` carries
+  velocity 0 and no body gets an impulse (bodies in the box are still woken); `deferred` marks the result for
+  presentation.
+- **Structure credit** (server, `ServerStats` logs it): `structureWorkPerTick` 15 000 work units and
+  `structureBytesPerTick` 200 B (e), each `credit = clamp(credit + perTick, -perTick x 6, perTick)` as the cast credit,
+  charged with `CastWorkOf` and the op bytes of every impact and re-check (SI-3). `RunCasts` never reads or writes it.
+- Constants (all **(e)**, tuned by `--impact-drop` and play): dent `kImpactMinEnergy` 20 kJ and `kDentMinSpeed` 4 m/s;
+  crater `kCraterEnergy` 50 kJ and `kCraterMinSpeed` 6 m/s (about a 2 m fall); crater radius `min(1.0 m, 0.35 m x
+  cbrt(E / 50 kJ))` (integer cube root on `energyQ`); power `min(2.5, 1 + E / 500 kJ)` hardness (2.5 = brick: stone,
+  3.0, never craters, so the plaza's stone foundation is never hollowed under its stone_dark paving, 4.0);
+  `kShatterSpecificEnergy` 30 J/kg (a 3 m fall); `kImpactReadyTicks` 30, `kImpactMaxAgeTicks` 10. Every threshold is
+  compared as an integer after quantising.
+
+**Algorithm.**
+1. **Drain every tick** (`Simulation::StepPhysics` and `Step`, every configuration): `TakeContactEvents`. With
+   `impacts` off the events are dropped (this alone fixes the queue that fills, notes/physics.md).
+2. **Eligible striker:** a body side that is Dynamic, holds at least the replicated volume (`kServerReplicatedPieceVolume`
+   in the world's voxels: 262 at 0.125 m, offline too - so a crate, 152 voxels, never strikes, and offline rubble under
+   that size never strikes), is past its `readyTick`, and on a server carries a NetId. Receiver: terrain (`userData` 0),
+   a body with a NetId (server) or any body (offline). **Quantise at once** (R3): centre = contact point
+   (`floor(p / vs x 16)`), normal oriented into the receiver, `speedQ`, `energyQ` from `E = 0.5 v_n^2 / (invA + invB)`
+   (both 0: skipped), keys, `terrainId` (integer read of the world). Then the integer floors: `energyQ` under
+   `kImpactMinEnergy` or `speedQ` under `kDentMinSpeed`: dropped.
+3. **Dedupe** per unordered body pair (the striker is the eligible side with the larger key; one landing across two
+   terrain chunk colliders is one impact against terrain), keeping the highest total key; **sort** by the total key,
+   push into `PendingImpacts` (over 64: the lowest keys are dropped, counted).
+4. **Resolve** (`sim::ResolveImpacts(simulation, limits)` -> `std::vector<BlastResult>` with `cause = Impact` and
+   `deferred` set), per impact in key order, while the tick's limits hold (1 crater, 4 dents, 1 shatter) and (server) the
+   structure credit is positive:
+   - **terrain receiver:** a crater needs `energyQ` >= `kCraterEnergy`, `speedQ` >= `kCraterMinSpeed` and
+     `hardnessQ[terrainId] <= powerQ` (else `belowCrater` / `hardSurface`, counted, no change). The sphere is centred
+     at the contact point (never moved into the ground: a hard skin is never undercut), quantised, and refused unless
+     `sim::CastFitsRegion(region, world, sphere)` holds (server; offline the window-rows test of a cast) - counted, no
+     crater, never a `Fail`. Then `sim::Blast(sphere, power, {.carveAsClear = true, .objects = false, .push = false,
+     .deferred = true})`: the `ClearMask`, island search and load check (a tower landing on a wall can release part of
+     it); bodies in the box are woken, not damaged or pushed. The terrain half reads `ImpactQ` and the world only: the
+     striker need not exist any more;
+   - **body receiver:** a dent `Damage(receiver, contact, r)` with `r = min(0.5 m, 0.2 m x cbrt(E / 20 kJ))`, only if
+     the receiver is still (SI-1 step 1's rule) and (server) `entityCredit` >= its model's encoded size; it runs SI-1's
+     check through the tick's `ObjectLoadBudget` (a resting statue hit by a falling block can lose its head). A moving
+     receiver: nothing. **The striker is never dented**;
+   - **shatter** (the striker, after the terrain or dent step): it still exists and is eligible, `E / mass >=
+     kShatterSpecificEnergy`, its longest axis spans at least 32 voxels, it never shattered, and (server) `entityCredit`
+     >= its model's encoded size and `TakePieceSlot` grants at least one slot (asked before cutting; no slot: no
+     shatter, counted). `Scene::Shatter(entity, blocks, seed)` cuts the body across its longest axis into `blocks =
+     min(granted + 1, 3)` slabs of equal length (offline: 3), the planes shifted by `Hash3(strikerKey)` within one
+     voxel; `SplitComponents` per slab; pieces through `Damage`'s piece path (the largest keeps the entity and its
+     NetId; under the replicated size: fragments). SI-1's check runs on none of them (they move).
+5. **Order in a tick.** Server: `Receive`, streaming, players, `RunCasts`, **`RunImpacts`**, `RunRechecks` (SI-3),
+   `CheckPendingObjects` (SI-1), `StepPhysics` (drains into `PendingImpacts`), lifetimes, despawns, `TrackBodies`, flush,
+   snapshots. Impacts and re-checks are charged to the structure credit only; an impact that waited
+   `kImpactMaxAgeTicks` is dropped (counted). Offline: after `RetryIslandSearches` in `Engine::Run`, the same per-call
+   limits, no credits; `PresentBlast` shows a `deferred` result as dust and debris, no explosion burst and no flash (its
+   fragment loop moves above the `deferred` return, so a deferred result with fragments still makes them).
+
+**The cases (e: the contact speed of a tumbling body is not its centre's; tuned in play).**
+
+| Case | E, v_n | Outcome |
+|---|---|---|
+| 1 m^3 stone block (512 voxels, 2.6 t) dropped 5 m onto dirt (9.9 m/s), past its 30 ticks | 127 kJ, 9.9 m/s | crater r 0.48 m, power 1.25 (grass, dirt, sand go; wood and stone stay); 49 J/kg but 8 voxels long < 32: no shatter |
+| The same from 1 m (4.4 m/s), past its 30 ticks | 26 kJ, 4.4 m/s | eligible, under the crater speed: nothing (`belowCrater`) |
+| The 5 m block onto the plaza paving | 127 kJ | stone_dark 4.0 > power 1.25: nothing (`hardSurface`) |
+| A crate (152 voxels) from any height | - | not a striker; struck at rest by a striker: dented (in a session that breaks it, `Broken`, as a blast does) |
+| The neck-released watch tower (8558 voxels, 35 t) tipping, 5-10 m/s at the contact | 0.44-1.75 MJ | on the plaza paving (stone_dark 4.0, pattern lines stone 3.0): **no crater**; on the turf beside it: crater r 0.73-1.0 m, power 1.9-2.5; shatters at 7.75 m/s and up (30 J/kg) into 2-3 blocks (by the slots granted) |
+| A 35 t block sliding down a 30 deg voxel slope at 5 m/s | v_n well under 6 m/s | no crater (the speed floor); dropped 3 m (7.7 m/s, 1.03 MJ) onto dirt: one crater |
+| A shatter block landing again 0.4 s later | - | immune (30 ticks); after that it may crater or dent, never shatter |
+| Rubble (any size under 262 voxels), offline or in a session | - | never an impact |
+
+**Determinism and replication.** `ImpactQ` is the integer boundary; everything after it (crater sphere, power, the
+`ClearMask`, island search, load check, operation order) is integer and fixed, and which contact survives a body pair is
+fixed by content. Jolt decides which `ImpactQ`s exist; Jolt documents its simulation as deterministic for the same
+inputs and call order, which `Impact.SameImpactsWithOneOrThreeThreads` checks for the thread counts we use. **R5 is not
+amended**: impacts never touch the cast credit, and `CastBudget.ScheduleFollowsCountsNotTimeOrCache` runs with impacts
+on (craters change voxels, so later casts' counted work follows them). Replication: the crater is a `ClearMask` (and
+the search's `Detach` / `ClearMask`) through `EmitOp` (modified map, chunk sync, `HashCheck` as any op); a client shows
+it as a `deferred` group (no burst, no flash). An impact's ops emitted right behind a cast's ops in the same tick, with
+no entity event between them, join that cast's open group on a client and are shown with the cast's dust (accepted:
+the cast's burst is there anyway). Dents and shatters are `ObjectModel`, `EntitySpawn` (NetId or `netId` 0) and
+despawns through `EmitObjectEvents`, gated so they never cause a `ToRubble` (`ServerStats::impactsSkippedByCredit`; the
+`ToRubble` count caused by impacts is logged separately and must be 0). A client applies; its own simulation has
+`impacts` off and drains to nothing. No wire change.
+
+**Budgets per tick.** 64 pending, 1 crater (with its island search and load check: the cast budgets apply inside it),
+4 dents, 1 shatter (at most 3 blocks: the survivor keeps its NetId, at most 2 new server bodies by `TakePieceSlot`),
+inside the structure credit (15 000 work units, 200 B per tick, 6 ticks of debt at most; e); dents and shatters also
+need the entity credit as above; offline the same counts per frame.
+
+**Cost (e).** Drain and quantise: about 1-5 us per event, tens per tick (the content sort adds nothing measurable).
+A crater: one blast's search and check, measured 0.3-1.9 ms at a cached site, up to 3.7 ms cold (Part 4 / 4b),
+charged to the structure credit. A dent: one `Damage` (0.1-0.5 ms). A shatter: `SplitComponents` over the body (about
+25 ns per voxel: 0.2 ms for the tower) plus up to 2 new bodies (server 0.1-0.3 ms each, no bake). **Worst server tick
+from impacts about 3-5 ms**, at most once per 6 ticks by the structure credit's debt. Offline frame: a shatter's 3
+bodies at 0.3-0.5 ms each = 0.9-1.5 ms on the landing frame plus the crater's search (over the 3 ms rule on that frame
+only with a cold crater, like a cold cast). Session client on the UHD 620: one landing = a few ops plus up to 3 copies
+to build (est. 0.5-2 ms). Wire per tower landing (e): a crater `ClearMask` 0.3-0.6 KiB (runs of a half sphere up to
+17^3 voxels), the survivor's `ObjectModel` plus two `EntitySpawn` with models together about the tower's model, about
+6.5 KiB (the review counted 3336 runs for the 8526 voxels above the neck; the stage-6 test cubes were 3.4 KB), inside
+the 16 KiB entity burst and refused while the entity credit is below it.
+
+**Tests (written first; every negative test has a positive control in the same setup).** VortexPhysicsTests:
+`PhysicsWorld.ContactEventsCarryInverseMasses` (static side 0, a frozen body 0), `PhysicsWorld.PublishOrderIsByContent`
+(equal approach speeds on several triangles: the kept event is the one with the lowest position bits, whatever the
+arrival order). VortexSimTests (`tests/sim/ImpactTests.cpp`):
+- `Impact.ContactQueueIsDrainedEveryTick` (10 000 ticks of bouncing bodies, impacts off and on: the queue never reaches
+  its cap, no warning).
+- `Impact.QuantisedOnceAndTotallyOrdered` (events shuffled, two terrain chunk colliders under one body, equal energies:
+  the same `ImpactQ` list and the same operations) and `Impact.SameImpactsWithOneOrThreeThreads` (the same drops with
+  `PhysicsConfig::threads` 1 and 3: equal `ImpactQ` lists and operations).
+- `Impact.NormalPointsIntoTheReceiver` (a block landing on terrain; two dynamic blocks with the striker as A and as B:
+  the normal points into the receiver, `terrainId` is the ground's material).
+- `Impact.HeavyDropCarvesLightDoesNot` (the 512-voxel blocks spawned on `FillBox` ledges; the ledges removed and the box
+  woken 30 ticks later; 5 m: crater voxels > 0; 1 m: counted eligible and `belowCrater`, 0 voxels).
+- `Impact.SpeedFloorStopsTrenches` (the 35 t block pushed down a 30 deg voxel slope at 5 m/s: no crater; dropped 3 m:
+  one).
+- `Impact.HardSurfaceIsNeverCratered` (a heavy drop on the plaza's paving and on a stone pattern line: 0 voxels; the
+  same onto turf: > 0; no voxel removed under an intact surface voxel).
+- `Impact.SmallBodiesCratesAndRubbleNeverStrike` (offline and server configs: a 200-voxel rubble piece and a crate
+  dropped 10 m cause nothing; control: a 262-voxel block from the same height craters).
+- `Impact.NewBodiesAreImmune` (a piece made touching the ground with a blast push: no impact for 30 ticks; control: the
+  same piece dropped again after tick 30 strikes).
+- `Impact.StrikerIsNeverDented`, `Impact.DentsOnlyAStillReceiver` (a falling block on a resting crate dents it; on a
+  sliding one: nothing).
+- `Impact.OnePairOneImpact` (two eligible blocks colliding: one `ImpactQ`, the larger key strikes).
+- `Impact.FelledTowerShattersOnce` (the 4b neck tower released by a cast lands on turf: crater, 2-3 blocks by the slots,
+  every block `shattered`, a block later split by `Damage` keeps `shattered`, none shatters again).
+- `Impact.BudgetPerTickAndAge` (20 blocks landing in one tick: 1 crater, 4 dents, the rest wait and are dropped after 10
+  ticks, counted).
+- `Impact.OutsidePlayBoundsCarvesNothing` (server: contacts 1-4 voxels inside the play-bounds edge with the normal
+  pointing outwards, one in the margin and one at the window's bottom row: counted, no crater where `CastFitsRegion`
+  fails, never a `Fail`; control: the same landing 2 chunks inside craters).
+- `Impact.CraterIsTheCarveRuleAsAMask` (the `ClearMask`'s voxels equal `Carve(sphere, power)`'s on a copy of the world;
+  equal `WorldHash`), `Impact.PushFalseMeansStill` (every `Detach` velocity 0, no body impulse, bodies in the box awake).
+- `Impact.CraterRunsTheLoadCheck` (a block lands beside a 2 x 3 stone neck carrying a load: the neck's part is released).
+- `Impact.TwoSimulationsFedTheOpsHaveEqualHashes`.
+VortexNetTests: `Entities.FelledTowerBreaksTheSameOnBothClients` (5 % loss: hashes equal, ids, models and rest poses
+agree), `Presentation.ImpactsAndRechecksAreDeferred` (a client's presentation of a crater and of a re-check has
+`deferred` set: no explosion, no flash), `Entities.ImpactsNeverCauseToRubble` (entity credit spent: the dent and the
+shatter are skipped and counted, 0 `ToRubble` by impacts), `CastBudget.ScheduleFollowsCountsNotTimeOrCache` with
+impacts on.
+
+**Headless.** Game `--impact-drop` (beside the plaza, not in the default world): frame 20 places the 512-voxel stone
+block on `FillBox` ledges 5 m and 1 m above dirt and a third 5 m above the paving, frame 50 removes the ledges; frame 60
+drops a 2 x 7 x 2 m stone column (16 x 56 x 16 voxels) from 4 m onto turf (8.9 m/s at its lower end). Must log
+`Impact: block (512 voxels, 2.6 t) at 9.9 m/s, 127 kJ: crater r 0.48 m (power 1.25), N voxels`, `Impact: block ... 26
+kJ, 4.4 m/s: below the crater`, `Impact: block ...: hard surface (stone_dark)`, `Impact: column ... shattered into K
+pieces (2 <= K <= 3)`, an `Impacts:` total at exit (drained, resolved, craters, dents, shatters, dropped) and `store a/b`
+under 7000; exit 0 under validation, also at 0.1 / 0.15 m. `--neck-blast` additionally logs the tower's landing
+(`Impact: tower ...`). `vortex_server` (impacts on by default): the CLAUDE.md drill and the arena walk must still exit 0
+with `hashes equal` and every `Entities: ... agree`, and log `Impacts: server: ...` with 0 `ToRubble` by impacts (the
+drill's neck towers now land and break); `tools/session-check.sh` PASS, and it fails on a `ToRubble` by an impact.
+
+**Risks.** (1) Contacts at creation (a piece born touching its crater) would read as impacts: the 30-tick immunity.
+(2) Cascades (blocks shattering blocks): the `shattered` flag, the immunity and the speed floors. (3) A crater that does
+not fit the region would break the server's loaded-flood-box guarantee: refused by `CastFitsRegion` on the final
+sphere. (4) Energy of a tumbling body is overestimated with its whole mass: thresholds are estimates for the owner to
+tune. (5) If Jolt differs between 1 and 3 threads, `CastBudget.ScheduleFollowsCountsNotTimeOrCache` must run with
+impacts off (open question 5). (6) Offline landing frames with a cold crater go over the 3 ms rule. (7) Effort (e):
+1-1.5 weeks.
+
+### SI-3 - re-checks away from casts, only where play needs them
+
+**What can still be left standing that should fall** (with SI-1 and SI-2 built): only a load check that hit its part
+cap (64 parts / 60 000 voxels: `neckDeferredParts`) - the rest is still overloaded. **Not** on the list: a spent work
+budget (`neckFlowBudget`, `neckExteriorBudget`, `attachedByBudget`: logged and counted, released by a later cast, R7 as
+today); an object hit while it moved (SI-1's pending checks); after a release (proven: the kept side holds without
+it); after a crater (it is a blast with its own check); after `FillBox` / editor / generation (never, by design);
+castle-scale parts over 60 000 voxels (stage 4c, owner question 2, unchanged).
+
+**Data.** `sim::RecheckEntry{SphereQ sphere; uint8 attempts}` in `Simulation::Rechecks()` (at most 16; a full list drops
+the new entry, counted); `RecheckStats`.
+
+**Algorithm.**
+1. **Queue** after every cast, crater or re-check with `neckDeferredParts > 0`: the same sphere, normal budgets
+   (progress is guaranteed: released parts are gone). At most 16 attempts per entry (1024 parts). A spent budget or
+   `neckSkipped` (network over the node cap) is never queued.
+2. **Run** one entry per tick: `sim::Blast(sphere, power 0, {.noCarve = true, .objects = false, .push = false,
+   .deferred = true})` - island search and load check only: no carve op is applied or emitted (a power-0 carve changes
+   no voxel, and a received `CarveSphere` would be shown as an explosion), no object damage, `Detach` velocity 0. Server:
+   after the impacts, only while the structure credit is positive, charged to it; emitted through `EmitOp`. Offline:
+   one per frame after `ResolveImpacts`.
+
+**Determinism and replication.** Re-checks are integer and caused by integer counters; their output is ordinary
+`Detach` / `ClearMask`, shown on a client as a `deferred` group. They never touch the cast credit, so the cast schedule
+does not depend on them. No wire change.
+
+**Budgets per tick.** 1 re-check at normal budgets, inside the structure credit. **Cost (e):** a re-check is a dud's
+search and check, 0.1-1 ms cached (up to about 3.7 ms cold).
+
+**Owner-facing behaviour.** A forest of overloaded pillars cut by one shot comes down 64 parts per tick instead of
+waiting for the next shot. Nothing ever falls "by itself" without a shot or a landing before it.
+
+**Tests (written first).** VortexSimTests (`tests/sim/RecheckTests.cpp`):
+- `Recheck.DeferredPartsAreReleasedOverTicks` (4b's 529-pillar case: 64 parts per re-check, all released within 8
+  re-checks after the cast, counters exact).
+- `Recheck.SpentBudgetIsCountedNotRetried` (a network needing about 100 000 flow work: the cast releases nothing, no
+  entry is queued, the counter says why; a later cast with the same counters releases nothing either).
+- `Recheck.AReleaseNeverNeedsARecheck` (property: after every releasing cast of the `Neck.*` arenas, the tower and 50
+  random hourglass forests, a dud at the same sphere releases nothing; at least 60 releasing casts are checked, and the
+  casts with `neckDeferredParts` or a spent budget are excluded by name) - the proof behind dropping the solver.
+- `Recheck.ScheduleFollowsCountsNotTimeOrCache` (server, 1 and 3 workers, cold and warm graph cache: the same ticks and
+  operations), `Recheck.UsesTheStructureCreditNeverTheCastCredit` (a tick of casts at full cast credit: the casts run on
+  the same ticks with and without a pending re-check), `Recheck.EmitsNoCarve` (the result's ops are `Detach` /
+  `ClearMask` only).
+
+**Headless.** Game `--pillar-forest` (beside the plaza): frame 30 `FillBox`es 200 thin stone pillars with heavy caps in
+a 6 m square, frame 40 one dud among them; must log `Recheck: 200 parts released over N ticks (64 per check), 0 left`
+and exit 0.
+
+**Risks.** (1) A full queue drops new entries (counted): only in fights far beyond the measured cases. (2) A spent
+budget leaves an overloaded structure standing until a later cast (as today); counted so play can show whether it
+matters. (3) Effort (e): 1-2 days.
+
+### Review of the plan (2026-11-17)
+
+A critic read the first draft against the code; every finding was checked there. All 15 hold; the fixes above take the
+critic's fix unless a row says otherwise.
+
+| # | Finding (checked at) | Verdict | Change |
+|---|---|---|---|
+| 1 | Craters (`Carve`) and power-0 re-checks reach clients as explosions with a flash; parts they release are pushed (`sim::Blast` always emits the carve, Blast.cpp:600-612; `Client::Impl::Present` opens a non-deferred group for any `CarveSphere`; `PresentBlast` bursts and flashes, Blast.cpp:868-891; every `Detach` carries `BlastPush`, Blast.cpp:481) | Accepted | Crater = `ClearMask` of the carve rule's voxels (`carveAsClear`), re-checks `noCarve`, all `deferred`; `push = false` defined as velocity 0 and no impulses; `Presentation.ImpactsAndRechecksAreDeferred`. The protocol-bump alternative is rejected: no wire change is needed |
+| 2 | Striker dents resend whole models and a spent entity credit turns landed bodies into walk-through ghosts (`EmitObjectEvents` `ToRubble` at credit <= 0; client rubble is `Layer::Rubble`, Scene.cpp:66-69; `kSessionCharacterLayers`, Player.cppm:93) | Accepted, fix changed | No striker dents; the crater blast damages **no** object (`objects = false`) rather than skipping only the striker - a crate in the crater just drops in, and no model is resent; dents only on a still receiver; credit >= encoded size before any impact `Damage` / shatter; 0 `ToRubble` by impacts required; wire estimate corrected to about 6.5 KiB |
+| 3 | The normal's direction is undefined (A -> B, A = higher motion type, PhysicsTests.cpp:491-492) | Accepted | Oriented into the receiver at quantisation; `Impact.NormalPointsIntoTheReceiver` |
+| 4 | Energy alone lets heavy bodies crater at 2-5 m/s, every new sub-shape contact | Accepted | `speedQ`; crater needs 6 m/s, dent 4 m/s; `Impact.SpeedFloorStopsTrenches` |
+| 5 | The crater bounds test is the crate's float test on the pre-move centre; a flood into unloaded chunks `Fail`s the session (`CastFitsRegion`, Region.cpp:131-145) | Accepted | `CastFitsRegion` on the final quantised sphere; the test extended to edge contacts and the bottom row |
+| 6 | The statue head stays perched on its stub (a 272-voxel node, never a member; no push reaches it) | Accepted | Support under the cut faces crumbles, per released part, up to 64 voxels; `GrazedNeckDropsTheHead` runs without a push |
+| 7 | "At rest" by Jolt's sleep skips almost every hit of a burst (`Activate` on create, PhysicsWorld.cpp:697; 0.5 s sleep; 15-tick cast cooldown); 8 checks per cast allowed 16-20 ms uncharged | Accepted | Still = the old body's motion before the hit; pending checks moved from SI-3 into SI-1; 2 checks / 16 tiles per tick, 8 tiles per check |
+| 8 | Craters cannot open the stone_dark paving (4.0) and at power 3.0 hollow the stone foundation under it (Region.cpp:280-285, Material.cpp:139-140) | Accepted, fix extended | Gate on the struck voxel, centre at the contact point, **and** power capped at 2.5 (brick): a struck stone pattern line (3.0) would still have let a 3.0 crater undercut the paving beside it |
+| 9 | A shatter makes up to 6 walk-through client bricks (2 slots per tick); `shattered` leaks to `Damage` pieces; a both-eligible pair makes two impacts | Accepted, fix changed | Slots asked first, at most `granted + 1` blocks, and the cut simplified to 2-3 slabs across the longest axis (one rule offline and online); pieces' `shattered` set explicitly, but their readyTick stays fresh (they are born touching, so copying the parent's would end their immunity); one impact per unordered pair |
+| 10 | Charging impacts to the cast credit ties players' casts to Jolt, against networking stage 6; the record ring does not isolate Jolt | Accepted | A structure credit of their own (shared with SI-3); R5 unamended; record ring dropped |
+| 11 | `Publish`'s unstable sort on thread-ordered events picks the surviving contact by arrival (PhysicsWorld.cpp:279-306); the energy floor was applied before quantising | Accepted | Content tie-break (not `stable_sort`: it would rest on Jolt's job order, which we do not control); integer thresholds after quantising; `SameImpactsWithOneOrThreeThreads` |
+| 12 | The 4x retry costs up to 11 ticks of credit and breaks the 2^17 arc bound (Structure.cpp:696-699; `kNeckMaxArcPairs` 65 535) for a case never measured | Accepted, fix changed | Retry cut. Re-checks run on the structure credit rather than "only when the cast credit is full": a full credit does not stop one re-check from making debt, and a separate credit leaves the casts alone entirely |
+| 13 | `VolumeLoad.EqualsTheTerrainCheck...` compares bedrock (a finite wood-bedrock arc) with `BaseRow` (infinite) | Accepted | Terrain copy on the window's bottom row; bedrock pinned as a known difference |
+| 14 | A 1 m drop lands in 27 ticks, inside the immunity; several tests pass on a no-op | Accepted, adjusted | Ledges removed 30 ticks after spawn; the 1 m block is asserted eligible and `belowCrater` (no "dent": striker dents are gone, finding 2); positive controls added to every negative test |
+| 15 | The Static path acts on no game or session content (`TemplateObject` has no motion, `SpawnObjectAt` Dynamic, main.cpp dynamic only; only the editor's `spawnMotion`) | Accepted | `BaseRow`, the Static remainder and its test dropped; Static objects are not judged |
+
+Rejected: none of the findings. Rejected within the fixes: the protocol bump for a presentation flag (1: not needed),
+the striker-skip field (2: `objects = false` is simpler and resends nothing), `std::stable_sort` (11), "re-check only at
+a full cast credit" (12), copying the parent's readyTick (9).
+
+### Milestones at a glance
+
+| Milestone | Built | Accepted when | Wire / contract | Effort (e) |
+|---|---|---|---|---|
+| SI-1 | `VolumeLoadCheck` on tile graphs (bottom-layer anchors), extracted network builder, `objectLoadCheck` in `Damage` for still Dynamic objects, support crumble, `LoadCheckPending` + `CheckPendingObjects`, per-tick check budget, demo models, `--object-blast`, `vortex_server --object-drill` | SI-1 tests green (each negative with its control), every 4b test unchanged; `--object-blast` logs both releases and the in-flight statue at 0.1 / 0.125 / 0.15 m; drill `hashes equal`, entities agree; standard runs unchanged | none (objects by value) | 4-6 days |
+| SI-2 | contacts drained, content-ordered `Publish`, `invMass`, `ImpactQ` (oriented normal, `speedQ`), `ImpactState`, `ResolveImpacts`, `BlastOptions` (`carveAsClear`, `push`, `objects`, `deferred`), `Scene::Shatter` (2-3 slabs), the structure credit, server `RunImpacts`, `--impact-drop` | SI-2 tests green; `--impact-drop` and `--neck-blast` impact lines; drill, arena walk and `session-check.sh` pass with impacts on and 0 `ToRubble` by impacts; `CastBudget.ScheduleFollowsCountsNotTimeOrCache` green with impacts on | none; R5 unchanged | 1-1.5 weeks |
+| SI-3 | `Rechecks()` for `neckDeferredParts` (normal budgets, `noCarve`), on the structure credit (introduced here if SI-3 goes before SI-2), `--pillar-forest` | SI-3 tests green; `--pillar-forest` releases all 200 parts | none | 1-2 days |
+
+Each commit updates this section ("as built"), notes/physics.md (`TakeContactEvents` now has a caller, `Publish`'s
+order), notes/scene-engine.md (`Damage` options, `CheckLoad`, `Shatter`), notes/net.md and networking.md (impacts and
+re-checks after the cast phase, the structure credit, the `deferred` presentation of craters and re-checks), ARCHITECTURE.md
+7.2, ROADMAP.md (state, test count) and the game's CLAUDE.md (the new flags). Not confirmable headless, for the owner:
+the falls and landings in a window, how the thresholds feel, the UHD 620 frame during a tower landing.
+
+### Open questions for the owner (each with a recommendation)
+
+1. **Should damaged objects be judged at all (SI-1)?** Recommendation: yes, when still, with the support crumble, only
+   after damage; tilted objects (over 30 deg) hold.
+2. **Impact thresholds** (dent 20 kJ and 4 m/s, crater 50 kJ and 6 m/s, power at most 2.5, shatter 30 J/kg into 2-3
+   blocks). Recommendation: start there and tune from `--impact-drop` and play; the tower should break when it falls
+   flat, a block should not crater when dropped 1 m, nothing should plough trenches.
+3. **Crush damage**: stays M2 (needs health). Recommendation: yes, keep it out of SI.
+4. **Floors that hang after their walls go** (no bending term): Recommendation: wait for play; if they read wrong, add
+   row 7's lever term to the same check instead of reviving the overhang rule.
+5. **If Jolt gives different contacts with 1 and 3 threads** (`Impact.SameImpactsWithOneOrThreeThreads` fails):
+   Recommendation: pin the server's physics thread count in `ServerConfig` and run `CastBudget.ScheduleFollowsCounts
+   NotTimeOrCache` with impacts off, recording why; do not bring back the impact record.
+6. **Stone never craters** (power capped at 2.5). Recommendation: keep it - landings on rock and the plaza show dust and
+   a shatter, never a hidden hollow; revisit only if play wants rock craters, and then with a struck-surface-only rule.
+
 ## Rejected alternatives
 
 | Rejected | Why |
