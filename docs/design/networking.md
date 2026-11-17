@@ -7,8 +7,8 @@ built" differs) is built, integrated and accepted on one machine (2026-11-17): m
 wire `EntityCheck` and the entity list) and milestone M-b (server terrain mode, the whole test table on a 250 m region,
 the Windows-build fixes), then reviewed with fresh eyes ("Review of stage 7b": 12 findings, 11 fixed - protocol 10 -
 one in part; the acceptance re-run on the fixed code) and rechecked ("Recheck of stage 7b": 3 findings, all fixed, no
-wire change); not committed ("Stage 7b as built", its "Integration and
-acceptance") (see "Known risks of terrain
+wire change); committed as engine `9cbfdaa` / game `7082a1c` ("Stage 7b as built", its "Integration and
+acceptance"). **The owner's two-machine run passed on 2026-11-17** at those commits (stage 5's acceptance; "Owner's two-machine run" below) (see "Known risks of terrain
 agreement after stage 0", "Stage 1 as built", "Stage 2 as built", "Stage 3 as built", "Stage 4 as built", "Review of
 stage 4", "Stage 5 as built", "Review of stage 5", "Stage 6 as built" and "Review of stage 6"): the protocol runs
 over ENet (UDP) between `vortex_server` and the game (`Shredborne --connect`), and in one process over loopback transports
@@ -327,7 +327,7 @@ manual clock advances all sides. `ImpairedTransport` wraps the loopback. `voxel:
 | 2 | Quantised edits, swap, `ClearMask`, `WorldOp` / `ApplyOp`, skipped / unsynced chunk report, `sim::Blast` (islands as `Detach` with `netId = 0`) + `PresentBlast`, `Scene::Damage` threshold; offline game on this path | Unit tests; two `Simulation`s fed the same events, islands included, have equal hashes; offline blasts look the same | 5-6 |
 | 3 | **Built** ("Stage 3 as built"). `VortexNet`: loopback + `ImpairedTransport`, messages, `Server` / `Client`, `RegionDesc`, fixed server window with margin, probe hashes, event stream with byte budget, session file, `vortex_server`; split template set-up; join = full event log; the cast work budget (R5) | In-process server + 2 clients, 200 server-side blasts that free islands, 5 % loss: hashes equal | 5-6 |
 | 4 | **Built** ("Stage 4 as built", "Review of stage 4"). `StepPlayer` with `HasCollider`, `SetCharacterState`, inputs, snapshots, time sync, prediction, reconciliation (timeouts counted; the visual-only timeout branch is not built, see "Stage 4 as built"), remote players | No correction above 2 cm on flat ground; border-blast, ping-step, lost-cast and hitch tests; correction rate logged | 7-9 |
-| 5 | **Built** ("Stage 5 as built", "Review of stage 5"; the two-machine run is the owner's). `EnetTransport` with `ReliableBytesInFlight`; game `--connect` / `--token`; cast capture, cooldown, cast queue | **Two people on two machines walk and see each other and each other's holes** (est. day 26-30) | 3 |
+| 5 | **Built and accepted** ("Stage 5 as built", "Review of stage 5"; the owner's two-machine run passed 2026-11-17 at stage 7b's commits). `EnetTransport` with `ReliableBytesInFlight`; game `--connect` / `--token`; cast capture, cooldown, cast queue | **Two people on two machines walk and see each other and each other's holes** (est. day 26-30) | 3 |
 | 6 | **Built** ("Stage 6 as built", "Review of stage 6"). `NetId`, despawn observer, replicated `Detach`, `ObjectModel`, `MoveKinematic`, `Layer::Rubble`, character mask, velocity snapshots with priority, `EntityRest`, both caps, `toRubble`, client rubble | Fight test with islands and crates; the collapse, cap, split, rest and falling-piece tests | 9-11 |
 | 7a | **Built** ("Stage 7a plan" (superseded), "Stage 7a as built", "Review of stage 7a"; integrated, accepted, reviewed and rechecked 2026-11-17). Chunk sync: modified map, encode at dequeue, bases, ring, `TakeLoadedChunks` / `WindowRevision`, paced bulk, entity baseline; joins by chunk sync (M-a); a client window smaller than the region that follows the player (M-b) | The 7a rows of "Testing" (the join latency at 128 kB/s and 1 % loss: at 5 % loss unreachable, "Review of stage 7a" 7); the drill (with `--max-join-p99-ticks 15`) and `tools/session-check.sh`; the arena walk on `arena250.session` (hashes over each bot's sync box, store under the game's cap) | 7-8 (with 7b) |
 | 7b | **Built** (M-a and M-b; "Stage 7b plan" with "Amendments after the critic" (superseded where the code differs), "Stage 7b as built"; integrated and accepted 2026-11-17; reviewed ("Review of stage 7b") and rechecked ("Recheck of stage 7b"), not committed). `HashCheck` repair every 2 s, server terrain mode, the wire `EntityCheck` with the list re-sent and bounded tombstones; the Windows-build fixes | The whole test table on a 250 m region (`Region250.*`); the drill, the UDP drill, `tools/session-check.sh` and the arena walk with 0 check mismatches; terrain mode end to end (`--bot-broken-generator`, the game's `--other-terrain`) with equal hashes and its bytes measured on the playground and the arena | (above) |
@@ -2336,6 +2336,17 @@ on how far B's world loaded on its worker threads before the operations came, so
 Recommendation: in `RunLateJoin` wait (ticks, not wall time) until B's window has loaded before the drill steps go on
 (as the gated-generator tests do), or register it `RUN_SERIAL` as `EnetSession` is; a test change only, for the stage
 that next touches the pacing tests. (a)-(d) above stand.
+
+### Owner's two-machine run (2026-11-17)
+
+The owner ran the stage 5 acceptance over the home LAN at engine `9cbfdaa` / game `7082a1c` (protocol 10).
+- **Setup:** `vortex_server` with `playground.session --listen 27015 --new-token` on the Arch laptop (UHD 620), which
+  also played with `--connect 127.0.0.1`; a second device joined over Wi-Fi.
+- **Owner's verdict:** "every things works fine, seamless experience".
+- **Screenshot (host client, windowed):** `ONLINE ... slot 0`, `ping 24 ms`, `players 2`, 43 fps. The other player's
+  gold-torso figure is in view, and the craters, a crate and the half-felled watch tower are shared.
+- **Still open:** the client and server logs (corrections per minute, check counters) were not collected. Stage 8's
+  soak measures those numbers.
 
 ## Out of scope for M1
 
