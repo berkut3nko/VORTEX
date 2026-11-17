@@ -218,6 +218,20 @@ decoding thousands of chunks at once. The voxel size comes in `Welcome`'s `Regio
 networking.md) and the client builds its `World` from it; a client that cannot (a forced `--voxel-size`) refuses
 the session. LOD levels are client-only render data; nothing new on the wire.
 
+**Since networking stage 7a (M-b) a session client's window is the game's** when the region is wider than it:
+48 x the region's rows x 48 chunks, full height, following the camera exactly as offline (`sim::ClientWorldConfig`,
+`ClientSettings::windowChunks` = 48, `EngineConfig::windowFollowsCamera`), packed as offline, in the game's 12 288-slot
+store; a region that fits (playground, drill) keeps the region's fixed window. Unlike offline it follows with one chunk
+of slack (`WorldConfig::recenterSlackChunks` = 1, review of networking 7a: it moves once the camera's chunk is more than
+one chunk from its centre chunk, so 22-24 whole chunks lie ahead of the camera's chunk (offline 23), and stepping
+across a border and back moves nothing). The view radius leaves the slack out (`World::ViewRadius` = (half the window -
+1 - slack) chunks: 88 m instead of 92 m for a session client; recheck of networking 7a), so the edge fog ends before
+the window's edge on the side the player walks toward. Every window step is a `WindowUpdate` (x / z only: the rows never change, as said above; each step is listed
+by `World::TakeWindowSteps`, also two in one frame); chunks that leave are dropped (`WorldConfig::keepUnloadedEdits`
+false) and come back from the server if they were modified. Measured on `arena250.session`: at most 5563 slots used
+while walking across it (networking.md "Stage 7a as built", "M-b as built"; after the review 5500, and half the window
+steps).
+
 ## Stages
 
 | # | Built | Accepted when | Effort (e) |

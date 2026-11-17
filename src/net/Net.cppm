@@ -12,6 +12,7 @@ export import :messages;
 export import :prediction;
 export import :session;
 export import :entities;
+export import :sync;
 export import :server;
 export import :client;
 export import :drill;

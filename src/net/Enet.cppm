@@ -84,6 +84,7 @@ export namespace vortex::net {
         /// the socket, so a stall inflates the smoothed value for seconds, never the lowest.
         double RoundTripSeconds(PeerId peer) const override;
         size_t ReliableBytesInFlight(PeerId peer) const override;
+        size_t ChannelBytesInFlight(PeerId peer, Channel channel) const override;
         void Disconnect(PeerId peer) override;
         void Flush() override;
 

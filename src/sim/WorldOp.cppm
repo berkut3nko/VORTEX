@@ -81,7 +81,19 @@ export namespace vortex::sim {
      * World's edit functions. For a Detach these are the ids of the piece (BuildDetachedPiece),
      * for a ClearMask the crumbs' voxels (particles).
      */
-    OpResult ApplyOp(voxel::World& world, const WorldOp& op, std::vector<voxel::VoxelEdit>* edits = nullptr);
+    /// @param clip If not null, only the chunks inside it are visited (voxel::ChunkClip: the build
+    /// ceiling is still decided on the whole operation; a client applies an operation to the chunks
+    /// that have a base below it, networking stage 7a).
+    OpResult ApplyOp(voxel::World& world, const WorldOp& op, std::vector<voxel::VoxelEdit>* edits = nullptr,
+                     const voxel::ChunkClip* clip = nullptr);
+
+    /// @brief The chunk box [minChunk, maxChunk] (inclusive) of `op.Bounds()`; false when the
+    /// operation's box is empty.
+    bool OpChunkRange(const WorldOp& op, glm::ivec3& minChunk, glm::ivec3& maxChunk);
+    /// @brief True if the operation can change a voxel of `chunk` (exact: the sphere, box and mask
+    /// tests World's edits use to decide whether they touch a chunk). A chunk it does not touch is
+    /// never changed by it, whatever its content.
+    bool OpTouchesChunk(const WorldOp& op, const glm::ivec3& chunk);
 
     /**
      * @brief The volume of a detached piece, made from the voxels its Detach removed: size =

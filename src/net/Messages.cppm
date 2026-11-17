@@ -12,6 +12,7 @@ module;
 
 export module vortex.net:messages;
 
+import vortex.voxel;
 import vortex.sim;
 import :wire;
 
@@ -21,8 +22,11 @@ export namespace vortex::net {
     /// snapshots, the player tuning in Welcome; ServerStatus retired). 3: Snapshot::marginTick, the
     /// tick length and gravity in Welcome. 4: stage 5 (the owner block's lastCastTick / castRejected).
     /// 5: review of stage 5 (RefuseReason::LogTooLarge). 6: stage 6 (entity events, snapshot bodies,
-    /// PlayerButton_Crate). 7: review of stage 6 (EntityWake).
-    inline constexpr uint16_t kProtocolVersion = 7;
+    /// PlayerButton_Crate). 7: review of stage 6 (EntityWake). 8: stage 7a (chunk sync: WindowUpdate,
+    /// WindowAck, ChunkData, ChunkRequest, ModelRequest, BaselineEntity, BaselineEnd; joins start at
+    /// Welcome::joinOpSeq; RefuseReason 6 retired; BaselineNear 15 added by the review of 7a before
+    /// protocol 8 was ever committed).
+    inline constexpr uint16_t kProtocolVersion = 8;
 
     /// @brief First byte of every message. Wire format.
     enum class MessageType : uint8_t {
@@ -33,6 +37,15 @@ export namespace vortex::net {
         // 5 was ServerStatus (protocol 1); the snapshot header replaced it. Never reuse it.
         Inputs = 6,         ///< client -> server, state channel (unreliable): the unacknowledged inputs
         Snapshot = 7,       ///< server -> client, state channel (unreliable), even ticks
+        // Chunk sync (stage 7a, docs/design/networking.md "Stage 7a plan").
+        WindowUpdate = 8,   ///< client -> server, events channel: the client's window
+        WindowAck = 9,      ///< server -> client, events channel: the window's modified chunks at asOfOpSeq
+        ChunkData = 10,     ///< server -> client, bulk channel: one chunk as of asOfOpSeq
+        ChunkRequest = 11,  ///< client -> server, events channel: chunks to send (again)
+        ModelRequest = 12,  ///< client -> server, events channel: replicated objects to send
+        BaselineEntity = 13,///< server -> client, bulk channel: one replicated entity as of asOfOpSeq
+        BaselineEnd = 14,   ///< server -> client, bulk channel: the join's baseline is complete
+        BaselineNear = 15,  ///< server -> client, bulk channel: the baseline's entities near the spawn are out (review of 7a)
     };
 
     using Token = std::array<uint8_t, 16>;
@@ -51,7 +64,7 @@ export namespace vortex::net {
         Token = 3,        ///< wrong token
         Full = 4,         ///< no free slot
         Malformed = 5,    ///< a message that does not decode
-        LogTooLarge = 6,  ///< the event log a joiner would receive is over ServerSettings::maxJoinLogBytes (until stage 7)
+        // 6 was LogTooLarge (protocol 5-7: joins received the whole event log). Never reuse it.
     };
     const char* ToString(RefuseReason reason);
 
@@ -67,8 +80,9 @@ export namespace vortex::net {
     };
 
     /**
-     * @brief The server's answer to a valid Hello. Followed on the same channel by the whole event
-     * log (EventBatch, opSeq 1..`logEnd`) and then the live stream (stage 3: "join = full event log").
+     * @brief The server's answer to a valid Hello. Followed on the same channel by the live stream
+     * from `joinOpSeq + 1` on; what was made before reaches the joiner as chunk data and the entity
+     * baseline (stage 7a; until protocol 7 the whole event log came instead).
      */
     struct Welcome {
         uint8_t slot = 0;
@@ -83,7 +97,8 @@ export namespace vortex::net {
         /// refuses one with others (review of stage 4).
         float tickSeconds = 1.0f / 60.0f;
         glm::vec3 gravity{0.0f, -9.81f, 0.0f};
-        uint32_t logEnd = 0;              ///< opSeq of the last event already in the log.
+        /// The stream position the joiner starts after (J): no event at or before it is ever sent to it.
+        uint32_t joinOpSeq = 0;
         std::vector<ProbeHash> probes;    ///< Hashes of pristine chunks chosen from the seed (ProbeChunks).
     };
 
@@ -186,6 +201,102 @@ export namespace vortex::net {
         /// Awake replicated bodies, by the server's priority for this client (stage 6). At most 255.
         std::vector<BodySample> bodies;
     };
+
+    // --- chunk sync (stage 7a) -------------------------------------------------------------------
+
+    /// Largest client window a decoder accepts per axis, and the chunk coordinates it accepts.
+    inline constexpr int32_t kMaxClientWindowChunks = 128;
+    inline constexpr int32_t kMaxSyncChunkCoordinate = 1 << 24;
+    /// Most coordinates / NetIds in one ChunkRequest / ModelRequest.
+    inline constexpr uint32_t kMaxChunkRequest = 256;
+    inline constexpr uint32_t kMaxModelRequest = 64;
+
+    /// @brief The client's window (a box of chunks), numbered 1, 2, ... per client. Every chunk of
+    /// the window that was not in the previous one (all of them with `kReset` or for the first) is
+    /// "entering": the server says which of them are modified (WindowAck) and sends those.
+    struct WindowUpdate {
+        uint32_t windowSeq = 0;
+        uint8_t flags = 0;
+        glm::ivec3 minChunk{0};
+        glm::ivec3 size{0};
+        static constexpr uint8_t kReset = 1;          ///< every chunk of this window counts as entering
+        static constexpr uint8_t kTerrainMode = 2;    ///< reserved for 7b's server terrain mode (refused in 7a)
+    };
+    inline constexpr size_t kWindowUpdateBytes = 24;
+
+    /// @brief The server's answer to WindowUpdate `windowSeq`: `modified` (over the update's box,
+    /// VoxelMask order: x fastest, then y, then z) has a bit for every entering chunk the server's
+    /// modified map holds at `asOfOpSeq`; it will come as ChunkData. An entering chunk without a bit
+    /// is pristine at `asOfOpSeq` (the client's generator makes it).
+    struct WindowAck {
+        uint32_t windowSeq = 0;
+        uint32_t asOfOpSeq = 0;
+        voxel::VoxelMask modified;
+    };
+
+    /// @brief One chunk as it was after event `asOfOpSeq` (World::EncodeChunkAt bytes), encoded when
+    /// the server dequeued it.
+    struct ChunkData {
+        glm::ivec3 chunk{0};
+        uint32_t asOfOpSeq = 0;
+        std::vector<uint8_t> rle;
+    };
+    inline constexpr size_t kChunkDataHeaderBytes = 17;
+
+    struct ChunkRequest {
+        std::vector<glm::ivec3> chunks;     ///< 1..kMaxChunkRequest
+    };
+    struct ModelRequest {
+        std::vector<uint32_t> netIds;       ///< 1..kMaxModelRequest, none 0
+    };
+
+    /// @brief A replicated entity of a joiner's baseline (or a ModelRequest's answer) as it was after
+    /// event `asOfOpSeq` on server tick `tick`: an EntitySpawn (a light, or an object; a resting object
+    /// carries its exact EntityRest pose and zero velocity, `restTick` its rest's tick).
+    struct BaselineEntity {
+        uint32_t asOfOpSeq = 0;
+        uint32_t tick = 0;
+        uint32_t restTick = kAwake;
+        EntitySpawn spawn;
+        static constexpr uint32_t kAwake = 0xFFFFFFFFu;
+    };
+    /// @brief The join's baseline is complete: `count` BaselineEntity messages were sent before it.
+    struct BaselineEnd {
+        uint32_t asOfOpSeq = 0;
+        uint32_t count = 0;
+    };
+    /// @brief The join's baseline entities within ServerSettings::baselineNearMetres of the spawn are
+    /// sent (`count` BaselineEntity messages so far): the joiner's start gate may open. Same layout as
+    /// BaselineEnd (9 bytes).
+    struct BaselineNear {
+        uint32_t asOfOpSeq = 0;
+        uint32_t count = 0;
+    };
+
+    /// @brief True if `bytes` is a valid EncodeChunk stream (kind, uniform id, runs adding up).
+    bool IsValidChunkStream(std::span<const uint8_t> bytes);
+
+    std::vector<uint8_t> Encode(const WindowUpdate& m);
+    std::vector<uint8_t> Encode(const WindowAck& m);
+    std::vector<uint8_t> Encode(const ChunkData& m);
+    std::vector<uint8_t> Encode(const ChunkRequest& m);
+    std::vector<uint8_t> Encode(const ModelRequest& m);
+    std::vector<uint8_t> Encode(const BaselineEntity& m);
+    std::vector<uint8_t> Encode(const BaselineEnd& m);
+    std::vector<uint8_t> Encode(const BaselineNear& m);
+    /// @brief Refuses a size of 0 or over kMaxClientWindowChunks, coordinates beyond
+    /// kMaxSyncChunkCoordinate, flags other than kReset.
+    bool Decode(std::span<const uint8_t> bytes, WindowUpdate& out);
+    /// @brief Refuses runs that do not add up to the box.
+    bool Decode(std::span<const uint8_t> bytes, WindowAck& out);
+    /// @brief Refuses a chunk body that is not a valid codec stream.
+    bool Decode(std::span<const uint8_t> bytes, ChunkData& out);
+    bool Decode(std::span<const uint8_t> bytes, ChunkRequest& out);
+    bool Decode(std::span<const uint8_t> bytes, ModelRequest& out);
+    /// @brief Refuses an event that is not an EntitySpawn with a NetId, or a model over the batch budget.
+    bool Decode(std::span<const uint8_t> bytes, BaselineEntity& out);
+    bool Decode(std::span<const uint8_t> bytes, BaselineEnd& out);
+    bool Decode(std::span<const uint8_t> bytes, BaselineNear& out);
 
     std::vector<uint8_t> Encode(const Hello& m);
     std::vector<uint8_t> Encode(const Refuse& m);

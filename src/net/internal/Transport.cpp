@@ -1,6 +1,7 @@
 module;
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -22,6 +23,7 @@ namespace vortex::net {
     struct LoopbackTransport::Inbox {
         std::deque<TransportEvent> events;
         size_t reliableBytes = 0;     // undelivered reliable bytes in this inbox
+        std::array<size_t, kChannelCount> channelBytes{};   // ... per channel
     };
 
     LoopbackTransport::LoopbackTransport() : m_Inbox(std::make_shared<Inbox>()) {}
@@ -48,15 +50,21 @@ namespace vortex::net {
         const std::shared_ptr<Inbox> remote = it->second.remote.lock();
         if (!remote) return;
         remote->events.push_back({TransportEvent::Type::Received, it->second.remoteIdForUs, channel, std::vector<uint8_t>(data.begin(), data.end())});
-        if (IsReliable(channel)) remote->reliableBytes += data.size();
+        if (IsReliable(channel)) {
+            remote->reliableBytes += data.size();
+            remote->channelBytes[static_cast<size_t>(channel)] += data.size();
+        }
     }
 
     bool LoopbackTransport::Poll(TransportEvent& out) {
         if (m_Inbox->events.empty()) return false;
         out = std::move(m_Inbox->events.front());
         m_Inbox->events.pop_front();
-        if (out.type == TransportEvent::Type::Received && IsReliable(out.channel))
+        if (out.type == TransportEvent::Type::Received && IsReliable(out.channel)) {
             m_Inbox->reliableBytes -= std::min(m_Inbox->reliableBytes, out.data.size());
+            size_t& channel = m_Inbox->channelBytes[static_cast<size_t>(out.channel)];
+            channel -= std::min(channel, out.data.size());
+        }
         if (out.type == TransportEvent::Type::Disconnected) m_Links.erase(out.peer);
         return true;
     }
@@ -68,6 +76,13 @@ namespace vortex::net {
         if (it == m_Links.end()) return 0;
         const std::shared_ptr<Inbox> remote = it->second.remote.lock();
         return remote ? remote->reliableBytes : 0;   // upper bound: everything queued at the other side
+    }
+
+    size_t LoopbackTransport::ChannelBytesInFlight(PeerId peer, Channel channel) const {
+        const auto it = m_Links.find(peer);
+        if (it == m_Links.end() || !IsReliable(channel)) return 0;
+        const std::shared_ptr<Inbox> remote = it->second.remote.lock();
+        return remote ? remote->channelBytes[static_cast<size_t>(channel)] : 0;
     }
 
     void LoopbackTransport::Disconnect(PeerId peer) {
@@ -82,9 +97,9 @@ namespace vortex::net {
     // --- ImpairedTransport ------------------------------------------------------------------------
 
     ImpairedTransport::ImpairedTransport(ITransport& inner, Impairment impairment, uint64_t seed, std::function<double()> clock)
-        : m_Inner(inner), m_Impairment(std::move(impairment)), m_Rng(seed), m_Clock(std::move(clock)) {}
+        : m_Inner(inner), m_Impairment(std::move(impairment)), m_Rng(seed), m_Clock(std::move(clock)), m_Seed(seed) {}
 
-    double ImpairedTransport::Uniform() { return static_cast<double>(m_Rng.NextU32()) * (1.0 / 4294967296.0); }
+    double ImpairedTransport::Uniform() { return static_cast<double>((m_Active ? *m_Active : m_Rng).NextU32()) * (1.0 / 4294967296.0); }
 
     bool ImpairedTransport::InOutage(double t, double& end) const {
         for (const Impairment::Outage& o : m_Impairment.outages) {
@@ -99,6 +114,8 @@ namespace vortex::net {
     void ImpairedTransport::Send(PeerId peer, Channel channel, std::span<const uint8_t> data) {
         const double now = m_Clock();
         const Impairment& im = m_Impairment;
+        m_Active = im.rngPerPeer ? &m_PeerRng.try_emplace(peer, m_Seed ^ (static_cast<uint64_t>(peer) * 0x9E3779B97F4A7C15ull), peer).first->second
+                                 : &m_Rng;
         ++m_Stats.sent;
         m_Stats.bytes += data.size();
         // Link rate: a packet leaves once the ones before it have.
@@ -106,6 +123,11 @@ namespace vortex::net {
         if (im.bytesPerSecond > 0.0) {
             leave = std::max(now, m_LinkFree) + static_cast<double>(data.size()) / im.bytesPerSecond;
             m_LinkFree = leave;
+        }
+        if (im.peerBytesPerSecond > 0.0) {
+            double& free = m_PeerLinkFree[peer];
+            leave = std::max(leave, free) + static_cast<double>(data.size()) / im.peerBytesPerSecond;
+            free = leave;
         }
         double due = leave + im.delaySeconds + im.jitterSeconds * Uniform();
         const bool reliable = IsReliable(channel);
@@ -173,13 +195,30 @@ namespace vortex::net {
     }
 
     double ImpairedTransport::RoundTripSeconds(PeerId peer) const {
-        return m_Inner.RoundTripSeconds(peer) + 2.0 * m_Impairment.delaySeconds + m_Impairment.jitterSeconds;
+        // What waits in this side's link queues delays the round trip too (as ENet's RTT grows with
+        // its queue: plan amendment 1).
+        double queued = 0.0;
+        if (m_Impairment.bytesPerSecond > 0.0 || m_Impairment.peerBytesPerSecond > 0.0) {
+            const double now = m_Clock();
+            double free = m_LinkFree;
+            if (const auto it = m_PeerLinkFree.find(peer); it != m_PeerLinkFree.end()) free = std::max(free, it->second);
+            queued = std::max(0.0, free - now);
+        }
+        return m_Inner.RoundTripSeconds(peer) + 2.0 * m_Impairment.delaySeconds + m_Impairment.jitterSeconds + queued;
     }
 
     size_t ImpairedTransport::ReliableBytesInFlight(PeerId peer) const {
         size_t bytes = m_Inner.ReliableBytesInFlight(peer);
         for (const Packet& p : m_Queue)
             if (p.peer == peer && IsReliable(p.channel)) bytes += p.data.size();
+        return bytes;
+    }
+
+    size_t ImpairedTransport::ChannelBytesInFlight(PeerId peer, Channel channel) const {
+        size_t bytes = m_Inner.ChannelBytesInFlight(peer, channel);
+        if (!IsReliable(channel)) return bytes;
+        for (const Packet& p : m_Queue)
+            if (p.peer == peer && p.channel == channel) bytes += p.data.size();
         return bytes;
     }
 

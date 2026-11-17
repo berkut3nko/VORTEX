@@ -3,6 +3,7 @@ module;
 #include <enet/enet.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -37,10 +38,22 @@ namespace vortex::net {
 
         /// One ENet peer as the transport knows it. Lives until ENet has reset the peer (its
         /// Disconnect event, or the host's destruction): the packets queued for it point here.
+        struct PeerInfo;
+        /// A reliable packet's owner: its peer and channel (ReleasePacket gives the bytes back to both).
+        struct ChannelBytes {
+            PeerInfo* info = nullptr;
+            size_t bytes = 0;
+        };
         struct PeerInfo {
+            PeerInfo() {
+                for (ChannelBytes& c : channels) c.info = this;
+            }
+            PeerInfo(const PeerInfo&) = delete;
+            PeerInfo& operator=(const PeerInfo&) = delete;
             ENetPeer* peer = nullptr;
             PeerId id = 0;
             size_t reliableBytes = 0;     ///< reliable bytes handed to ENet and not released yet
+            std::array<ChannelBytes, kChannelCount> channels{};   ///< ... per channel (review of stage 7a)
             bool connected = false;       ///< ENet reported the connection
             bool live = true;             ///< false once Disconnect was called: nothing more is reported
             bool outgoing = false;        ///< this side connected (EnetTransport::Connect)
@@ -50,7 +63,10 @@ namespace vortex::net {
         /// ENet releases a packet when every peer it was queued for has acknowledged it (reliable)
         /// or when the connection is reset: the bytes are no longer in flight.
         void ENET_CALLBACK ReleasePacket(ENetPacket* packet) {
-            if (auto* info = static_cast<PeerInfo*>(packet->userData)) info->reliableBytes -= std::min(info->reliableBytes, packet->dataLength);
+            if (auto* channel = static_cast<ChannelBytes*>(packet->userData)) {
+                channel->bytes -= std::min(channel->bytes, packet->dataLength);
+                channel->info->reliableBytes -= std::min(channel->info->reliableBytes, packet->dataLength);
+            }
         }
 
         std::string FormatAddress(const ENetAddress& a) {
@@ -288,9 +304,11 @@ namespace vortex::net {
             return;
         }
         if (reliable) {
-            packet->userData = info;
+            ChannelBytes& counted = info->channels[static_cast<size_t>(channel)];
+            packet->userData = &counted;
             packet->freeCallback = &ReleasePacket;
             info->reliableBytes += data.size();
+            counted.bytes += data.size();
         }
         // The host's packet limit is meant for what peers send here (LimitIncoming); this side's own
         // messages may be larger (a large event goes alone), so it is lifted for this call only.
@@ -330,6 +348,11 @@ namespace vortex::net {
     size_t EnetTransport::ReliableBytesInFlight(PeerId peer) const {
         const PeerInfo* info = m_Impl->Live(peer);
         return info != nullptr ? info->reliableBytes : 0;
+    }
+
+    size_t EnetTransport::ChannelBytesInFlight(PeerId peer, Channel channel) const {
+        const PeerInfo* info = m_Impl->Live(peer);
+        return info != nullptr && IsReliable(channel) ? info->channels[static_cast<size_t>(channel)].bytes : 0;
     }
 
     void EnetTransport::Disconnect(PeerId peer) {

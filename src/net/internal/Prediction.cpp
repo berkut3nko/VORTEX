@@ -235,6 +235,14 @@ namespace vortex::net {
         return it != m_Tracks.end() && !it->second.samples.empty();
     }
 
+    bool RemoteBodies::Oldest(uint32_t netId, uint32_t& tick, BodyPose& pose) const {
+        const auto it = m_Tracks.find(netId);
+        if (it == m_Tracks.end() || it->second.samples.empty()) return false;
+        tick = it->second.samples.front().tick;
+        pose = it->second.samples.front().pose;
+        return true;
+    }
+
     uint32_t RemoteBodies::MaxGap(uint32_t netId) const {
         const auto it = m_Tracks.find(netId);
         return it != m_Tracks.end() ? it->second.maxGap : 0u;

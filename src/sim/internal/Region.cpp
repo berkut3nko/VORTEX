@@ -158,6 +158,54 @@ namespace vortex::sim {
         return static_cast<uint32_t>(std::clamp<uint64_t>(cells, 1024, kMaxRegionStoreSlots));
     }
 
+    bool ClientWindowMoves(const RegionDesc& region, int32_t windowChunks) {
+        if (windowChunks <= 0) return false;
+        const glm::ivec3 size = RegionWindowSize(region);
+        return size.x > windowChunks || size.z > windowChunks;
+    }
+
+    glm::ivec3 ClientWindowSize(const RegionDesc& region, int32_t windowChunks) {
+        const glm::ivec2 rows = RegionRows(region);
+        if (!ClientWindowMoves(region, windowChunks)) {
+            const glm::ivec3 size = RegionWindowSize(region);
+            return glm::ivec3(size.x, rows.y - rows.x, size.z);
+        }
+        return glm::ivec3(windowChunks, rows.y - rows.x, windowChunks);
+    }
+
+    voxel::WorldConfig ClientWorldConfig(const RegionDesc& region, int32_t windowChunks, voxel::WorldConfig base) {
+        base = RegionWorldConfig(region, base);
+        if (ClientWindowMoves(region, windowChunks)) {
+            base.windowSize = glm::ivec3(windowChunks, 1, windowChunks);
+            // Review of stage 7a: a player who steps back and forth across a chunk border does not
+            // drop and fetch a slab (modified chunks come back as ChunkData) every time.
+            base.recenterSlackChunks = kClientWindowSlackChunks;
+        }
+        base.reportLoads = true;
+        base.keepUnloadedEdits = false;
+        return base;
+    }
+
+    glm::ivec3 ClientWindowMinChunk(const RegionDesc& region, int32_t windowChunks, const glm::dvec3& focus) {
+        const glm::ivec2 rows = RegionRows(region);
+        if (!ClientWindowMoves(region, windowChunks)) {
+            const glm::ivec3 corner = RegionWindowMinChunk(region);
+            return glm::ivec3(corner.x, rows.x, corner.z);
+        }
+        // World::WorldToVoxel and World::WindowMinFor, the same arithmetic.
+        const double inv = 1.0 / static_cast<double>(region.terrain.voxelSize);
+        const glm::ivec3 chunk = voxel::VoxelToChunk(glm::ivec3(glm::floor(focus * inv)));
+        const glm::ivec3 half = glm::ivec3(windowChunks, 1, windowChunks) / 2;
+        return glm::ivec3(chunk.x - half.x, rows.x, chunk.z - half.z);
+    }
+
+    uint32_t ClientChunkCapacity(const RegionDesc& region, int32_t windowChunks) {
+        if (!ClientWindowMoves(region, windowChunks)) return RegionChunkCapacity(region);
+        const glm::ivec3 size = ClientWindowSize(region, windowChunks);
+        const uint64_t cells = static_cast<uint64_t>(size.x) * static_cast<uint64_t>(size.y) * static_cast<uint64_t>(size.z);
+        return static_cast<uint32_t>(std::clamp<uint64_t>(cells, 1024, kMaxRegionStoreSlots));
+    }
+
     double PlaygroundScale(float voxelSize) {
         const double scale = 0.1 / static_cast<double>(voxelSize);
         return std::abs(scale - 1.0) < 1.0e-5 ? 1.0 : scale;

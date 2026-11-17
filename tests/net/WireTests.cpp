@@ -10,6 +10,7 @@
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <limits>
 #include <span>
 #include <variant>
@@ -310,7 +311,7 @@ TEST(Wire, MessagesRoundTripAndRefuseTrailingOrMissingBytes) {
     welcome.tick = 999;
     welcome.region = SomeRegion();
     welcome.spawn = glm::dvec3(1.25, 12.0, -3.5);
-    welcome.logEnd = 77;
+    welcome.joinOpSeq = 77;
     welcome.player.runSpeed = std::nextafter(7.0f, 8.0f);          // bit for bit
     welcome.player.castCooldownTicks = 9;
     welcome.tickSeconds = std::nextafter(1.0f / 30.0f, 1.0f);   // bit for bit
@@ -347,7 +348,7 @@ TEST(Wire, MessagesRoundTripAndRefuseTrailingOrMissingBytes) {
         EXPECT_EQ(std::bit_cast<uint32_t>(w.tickSeconds), std::bit_cast<uint32_t>(welcome.tickSeconds));
         EXPECT_EQ(std::bit_cast<uint32_t>(w.gravity.z), std::bit_cast<uint32_t>(welcome.gravity.z));
         EXPECT_EQ(w.gravity, welcome.gravity);
-        EXPECT_EQ(w.logEnd, 77u);
+        EXPECT_EQ(w.joinOpSeq, 77u);
         EXPECT_EQ(w.probes, welcome.probes);
         EXPECT_FALSE(net::Decode(std::span(bytes).first(bytes.size() - 1), w));
     }
@@ -487,15 +488,26 @@ TEST(Wire, ForgedBytesNeverCrashADecoder) {
     model.volume = object.object.volume;
     entities.events = {object, net::EntityDespawn{5, scene::DespawnReason::Broken}, net::EntityRest{5, 7, glm::vec3(1.0f), glm::quat(1, 0, 0, 0)},
                        model, net::EntityWake{5, 9}};
+    // Stage 7a's messages too.
+    net::WindowAck ack;
+    ack.modified = RandomMask(rng, {12, 8, 12}, 0.1f);
+    net::ChunkData chunk;
+    chunk.rle = {2, 3, 0x00, 0x40, 4, 0x00, 0x40};
+    net::BaselineEntity baseline;
+    baseline.spawn = object;
     const std::vector<std::vector<uint8_t>> valid = {net::Encode(batch), net::Encode(net::Welcome{}), net::Encode(net::Hello{}),
-                                                     net::Encode(inputs), net::Encode(snap), net::Encode(entities)};
+                                                     net::Encode(inputs), net::Encode(snap), net::Encode(entities),
+                                                     net::Encode(net::WindowUpdate{1, 0, {1, 2, 3}, {4, 5, 6}}), net::Encode(ack),
+                                                     net::Encode(chunk), net::Encode(net::ChunkRequest{{{1, 2, 3}, {4, 5, 6}}}),
+                                                     net::Encode(net::ModelRequest{{7, 8}}), net::Encode(baseline),
+                                                     net::Encode(net::BaselineEnd{3, 4}), net::Encode(net::BaselineNear{5, 6})};
     uint32_t decoded = 0;
     for (int i = 0; i < 4000; ++i) {
         std::vector<uint8_t> bytes;
         if (i % 2 == 0) {
             bytes.resize(rng.NextBounded(200));
             for (uint8_t& b : bytes) b = static_cast<uint8_t>(rng.NextU32());
-            if (!bytes.empty()) bytes[0] = static_cast<uint8_t>(1 + rng.NextBounded(7));
+            if (!bytes.empty()) bytes[0] = static_cast<uint8_t>(1 + rng.NextBounded(15));
         } else {
             bytes = valid[rng.NextBounded(static_cast<uint32_t>(valid.size()))];
             for (int k = 0; k < 3; ++k) bytes[rng.NextBounded(static_cast<uint32_t>(bytes.size()))] = static_cast<uint8_t>(rng.NextU32());
@@ -508,6 +520,16 @@ TEST(Wire, ForgedBytesNeverCrashADecoder) {
         net::Refuse r;
         decoded += net::Decode(bytes, h) + net::Decode(bytes, w) + net::Decode(bytes, b) + net::Decode(bytes, in) + net::Decode(bytes, s) +
                    net::Decode(bytes, r);
+        net::WindowUpdate wu;
+        net::WindowAck wa;
+        net::ChunkData cd;
+        net::ChunkRequest cr;
+        net::ModelRequest mr;
+        net::BaselineEntity be;
+        net::BaselineEnd bn;
+        net::BaselineNear bnear;
+        decoded += net::Decode(bytes, wu) + net::Decode(bytes, wa) + net::Decode(bytes, cd) + net::Decode(bytes, cr) + net::Decode(bytes, mr) +
+                   net::Decode(bytes, be) + net::Decode(bytes, bn) + net::Decode(bytes, bnear);
     }
     SUCCEED() << decoded << " forged messages happened to decode";
 }
@@ -538,4 +560,121 @@ TEST(Wire, ABatchDecodesABoundedMaskVolume) {
     two.events = {sim::WorldOp::Clear({0, 0, 0}, half), sim::WorldOp::Clear({0, 0, 0}, half)};
     EXPECT_TRUE(net::Decode(net::Encode(two), out));
     ASSERT_EQ(out.events.size(), 2u);
+}
+
+// Stage 7a (protocol 8): every chunk-sync message round-trips at its size and is refused when it is
+// truncated, has trailing bytes, or breaks its rules (window size, coordinates, codec stream, counts,
+// an ack whose runs do not fill its box, a baseline event that is not a spawn with a NetId).
+TEST(Wire, ChunkSyncMessagesRoundTripAtTheirSizes) {
+    auto refusedCut = [](const std::vector<uint8_t>& bytes, auto decoded) {
+        std::vector<uint8_t> shorter(bytes.begin(), bytes.end() - 1), longer = bytes;
+        longer.push_back(0);
+        return !net::Decode(shorter, decoded) && !net::Decode(longer, decoded);
+    };
+    const net::WindowUpdate u{3, net::WindowUpdate::kReset, {-5, 0, 7}, {48, 44, 48}};
+    const std::vector<uint8_t> ub = net::Encode(u);
+    EXPECT_EQ(ub.size(), net::kWindowUpdateBytes);
+    net::WindowUpdate u2;
+    ASSERT_TRUE(net::Decode(ub, u2));
+    EXPECT_EQ(u2.windowSeq, 3u);
+    EXPECT_EQ(u2.flags, net::WindowUpdate::kReset);
+    EXPECT_EQ(u2.minChunk, u.minChunk);
+    EXPECT_EQ(u2.size, u.size);
+    EXPECT_TRUE(refusedCut(ub, net::WindowUpdate{}));
+    for (const net::WindowUpdate& bad : {net::WindowUpdate{1, net::WindowUpdate::kTerrainMode, {0, 0, 0}, {4, 4, 4}},
+                                         net::WindowUpdate{1, 0, {0, 0, 0}, {0, 4, 4}}, net::WindowUpdate{1, 0, {0, 0, 0}, {129, 4, 4}},
+                                         net::WindowUpdate{1, 0, {1 << 25, 0, 0}, {4, 4, 4}}})
+        EXPECT_FALSE(net::Decode(net::Encode(bad), u2));
+
+    Rng rng(7);
+    net::WindowAck ack;
+    ack.windowSeq = 2;
+    ack.asOfOpSeq = 99;
+    ack.modified = RandomMask(rng, {30, 44, 30}, 0.01f);
+    const std::vector<uint8_t> ab = net::Encode(ack);
+    net::WindowAck ack2;
+    ASSERT_TRUE(net::Decode(ab, ack2));
+    EXPECT_EQ(ack2.windowSeq, 2u);
+    EXPECT_EQ(ack2.asOfOpSeq, 99u);
+    EXPECT_EQ(ack2.modified, ack.modified);
+    EXPECT_TRUE(refusedCut(ab, net::WindowAck{}));
+    std::printf("[ wire ] ack of a 30 x 44 x 30 window with %u modified chunks: %zu bytes\n", ack.modified.Count(), ab.size());
+
+    // A chunk: every codec kind; a stream that does not add up to 32 768 voxels is refused.
+    for (const std::vector<uint8_t>& rle : {std::vector<uint8_t>{0}, std::vector<uint8_t>{1, 7}, std::vector<uint8_t>{2, 3, 0x00, 0x40, 4, 0x00, 0x40}}) {
+        const net::ChunkData d{{1, -2, 3}, 42, rle};
+        const std::vector<uint8_t> db = net::Encode(d);
+        EXPECT_EQ(db.size(), net::kChunkDataHeaderBytes + rle.size());
+        net::ChunkData d2;
+        ASSERT_TRUE(net::Decode(db, d2));
+        EXPECT_EQ(d2.chunk, d.chunk);
+        EXPECT_EQ(d2.asOfOpSeq, 42u);
+        EXPECT_EQ(d2.rle, rle);
+    }
+    for (const std::vector<uint8_t>& bad : {std::vector<uint8_t>{}, std::vector<uint8_t>{3}, std::vector<uint8_t>{1, 0}, std::vector<uint8_t>{0, 0},
+                                            std::vector<uint8_t>{2, 3, 0x00, 0x40}, std::vector<uint8_t>{2, 3, 0x00, 0x00, 4, 0x00, 0x80}}) {
+        net::ChunkData d2;
+        EXPECT_FALSE(net::Decode(net::Encode(net::ChunkData{{0, 0, 0}, 1, bad}), d2));
+    }
+
+    const net::ChunkRequest cr{{{1, 2, 3}, {-4, 5, -6}}};
+    const std::vector<uint8_t> crb = net::Encode(cr);
+    EXPECT_EQ(crb.size(), 3u + 12u * 2u);
+    net::ChunkRequest cr2;
+    ASSERT_TRUE(net::Decode(crb, cr2));
+    EXPECT_EQ(cr2.chunks, cr.chunks);
+    EXPECT_TRUE(refusedCut(crb, net::ChunkRequest{}));
+    EXPECT_FALSE(net::Decode(net::Encode(net::ChunkRequest{}), cr2));
+    EXPECT_FALSE(net::Decode(net::Encode(net::ChunkRequest{std::vector<glm::ivec3>(net::kMaxChunkRequest + 1)}), cr2));
+
+    const net::ModelRequest mr{{5, 9}};
+    const std::vector<uint8_t> mrb = net::Encode(mr);
+    EXPECT_EQ(mrb.size(), 3u + 4u * 2u);
+    net::ModelRequest mr2;
+    ASSERT_TRUE(net::Decode(mrb, mr2));
+    EXPECT_EQ(mr2.netIds, mr.netIds);
+    EXPECT_FALSE(net::Decode(net::Encode(net::ModelRequest{{5, 0}}), mr2));
+    EXPECT_FALSE(net::Decode(net::Encode(net::ModelRequest{std::vector<uint32_t>(net::kMaxModelRequest + 1, 3)}), mr2));
+
+    net::BaselineEntity b;
+    b.asOfOpSeq = 12;
+    b.tick = 400;
+    b.restTick = 390;
+    b.spawn.netId = 8;
+    b.spawn.kind = net::EntityKind::Object;
+    b.spawn.object.position = glm::vec3(1.5f, 2.25f, -3.0f);
+    b.spawn.object.flags = net::kObjectResting;
+    b.spawn.object.volume = voxel::VoxelVolume(glm::ivec3(6));
+    b.spawn.object.volume.FillBox(glm::ivec3(0), glm::ivec3(6), 3);
+    const std::vector<uint8_t> bb = net::Encode(b);
+    EXPECT_EQ(bb.size(), 13u + net::EventBytes(net::Event{b.spawn}));
+    net::BaselineEntity b2;
+    ASSERT_TRUE(net::Decode(bb, b2));
+    EXPECT_EQ(b2.asOfOpSeq, 12u);
+    EXPECT_EQ(b2.tick, 400u);
+    EXPECT_EQ(b2.restTick, 390u);
+    EXPECT_EQ(b2.spawn, b.spawn);
+    EXPECT_TRUE(refusedCut(bb, net::BaselineEntity{}));
+    net::BaselineEntity noId = b;
+    noId.spawn.netId = 0;
+    EXPECT_FALSE(net::Decode(net::Encode(noId), b2));
+
+    const std::vector<uint8_t> eb = net::Encode(net::BaselineEnd{12, 34});
+    EXPECT_EQ(eb.size(), 9u);
+    net::BaselineEnd e2;
+    ASSERT_TRUE(net::Decode(eb, e2));
+    EXPECT_EQ(e2.asOfOpSeq, 12u);
+    EXPECT_EQ(e2.count, 34u);
+    EXPECT_TRUE(refusedCut(eb, net::BaselineEnd{}));
+
+    // Review of stage 7a: the near-set marker, BaselineEnd's layout under type 15.
+    const std::vector<uint8_t> nb = net::Encode(net::BaselineNear{56, 78});
+    EXPECT_EQ(nb.size(), 9u);
+    EXPECT_EQ(nb[0], 15u);
+    net::BaselineNear n2;
+    ASSERT_TRUE(net::Decode(nb, n2));
+    EXPECT_EQ(n2.asOfOpSeq, 56u);
+    EXPECT_EQ(n2.count, 78u);
+    EXPECT_TRUE(refusedCut(nb, net::BaselineNear{}));
+    EXPECT_FALSE(net::Decode(eb, n2)) << "a BaselineEnd is not a BaselineNear";
 }

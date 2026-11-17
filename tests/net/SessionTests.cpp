@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <deque>
@@ -83,6 +84,7 @@ namespace {
             std::unique_ptr<net::Client> client;
             std::unique_ptr<sim::Simulation> simulation;
             bool connected = false;
+            bool frozen = false;          ///< connected but never polled (a client that stopped reading)
             sim::SimulationConfig base;
         };
 
@@ -115,10 +117,12 @@ namespace {
 
         void Tick() {
             server.Tick();
+            // Reproducible runs (stage 6 rule): collider cooks finish inside the tick, not on worker timing.
+            if (waitIdle) server.Simulation().Jobs().WaitIdle();
             clock += 1.0 / 60.0;
             for (const std::unique_ptr<Bot>& b : bots) {
                 Bot& bot = *b;
-                if (!bot.connected) continue;
+                if (!bot.connected || bot.frozen) continue;
                 bot.client->Poll();
                 if (bot.client->State() == net::ClientState::Welcomed && !bot.simulation && autoAttach) {
                     bot.simulation = std::make_unique<sim::Simulation>(bot.client->MakeSimulationConfig(bot.base));
@@ -128,16 +132,19 @@ namespace {
                 if (bot.simulation) {
                     for (const sim::BlastResult& blast : bot.client->TakePresentations()) sim::PresentBlast(*bot.simulation, blast);
                     bot.simulation->Step({});
+                    if (waitIdle) bot.simulation->Jobs().WaitIdle();
                 }
             }
         }
 
-        /// Ticks until every attached client has applied the server's last event (and the cast queue is empty).
+        /// Ticks until every attached client has applied the server's last event and is synced (its
+        /// chunks current, its baseline in; stage 7a), and the cast queue is empty.
         bool Drain(uint32_t maxTicks = 900) {
             for (uint32_t i = 0; i < maxTicks; ++i) {
                 bool done = server.QueuedCasts() == 0;
                 for (const std::unique_ptr<Bot>& bot : bots)
-                    done = done && (!bot->connected || (bot->simulation && bot->client->AppliedOpSeq() == server.LastOpSeq()));
+                    done = done && (!bot->connected || bot->frozen ||
+                                    (bot->simulation && bot->client->AppliedOpSeq() == server.LastOpSeq() && bot->client->Synced()));
                 if (done) return true;
                 Tick();
             }
@@ -151,6 +158,7 @@ namespace {
         net::Server server;
         bool started = false;
         bool autoAttach = true;
+        bool waitIdle = false;
         std::vector<std::unique_ptr<Bot>> bots;
     };
 
@@ -541,7 +549,10 @@ TEST(Session, APlaygroundWithoutASiteDoesNotStart) {
     EXPECT_FALSE(s.started);
 }
 
-TEST(Session, TemplateRunsOnTheServerAndReachesClientsAsEvents) {
+// Stage 7a: the template runs on the server; a client that joins afterwards receives none of its
+// events (it starts at its join point): the plaza's chunks come as ChunkData, the lights and crates
+// as its entity baseline (the crates resting, exactly at their rest poses).
+TEST(Session, ATemplateReachesAJoinerAsChunkDataAndBaseline) {
     Session s(Settings(DrillRegion(sim::RegionTemplateId::Playground)));
     ASSERT_TRUE(s.started);
     const sim::RegionTemplate& t = s.server.Template();
@@ -556,7 +567,13 @@ TEST(Session, TemplateRunsOnTheServerAndReachesClientsAsEvents) {
 
     Session::Bot& bot = s.AddClient();
     ASSERT_TRUE(s.Drain());
+    EXPECT_EQ(bot.client->JoinOpSeq(), t.ops.size() + t.lights.size() + t.objects.size());
+    EXPECT_EQ(bot.client->Stats().eventsApplied, 0u) << "an event at or before the join point was sent";
+    EXPECT_GT(bot.client->Stats().chunkData, 0u);
+    EXPECT_EQ(bot.client->Stats().chunkData, s.server.ModifiedChunks());
+    EXPECT_EQ(bot.client->Stats().baselineEntities, 12u);
     EXPECT_EQ(bot.client->Hash().hash, s.server.Hash().hash);
+    EXPECT_TRUE(bot.client->Hash().Complete());
     EXPECT_EQ(bot.client->Stats().lightsSpawned, 6u);
     EXPECT_EQ(bot.client->Spawn(), t.spawn);
     // The crates are kinematic copies of the server's (stage 6): the same NetIds and models.
@@ -688,23 +705,29 @@ TEST(CastBudget, CastWorkIsEqualColdAndWarm) {
 
 namespace {
     struct JoinRun {
-        uint32_t maxLiveLatency = 0;      ///< Ticks between an event being made and client A applying it, after B connected.
-        uint32_t joinTicks = 0;           ///< Ticks until B had applied its whole join log.
-        uint64_t logBytes = 0;
+        uint32_t maxLiveLatency = 0;      ///< Ticks between an event being made and client A applying it, while B joins.
+        uint32_t joinTicks = 0;           ///< Ticks until B was synced.
+        size_t modified = 0;              ///< Chunks the server's modified map held at B's join.
         bool equal = false;
         net::ServerStats stats;
+        uint64_t bulkBytes = 0;
     };
 
-    /// Client A plays from the start; B joins after 30 drill blasts. The server's uplink is 48 kB/s.
-    JoinRun RunLateJoin(uint32_t maxEventBytesInFlight) {
+    enum class JoinMode { None, Paced, Unpaced };
+
+    /// Client A plays from the start; B joins after 30 drill blasts (chunk sync: its modified chunks
+    /// on bulk), or never (the baseline of A's latency). The server's uplink is 48 kB/s, shared: B's
+    /// bulk and A's live events queue on it. A's latency is measured for the events made in the 300
+    /// ticks after B connected.
+    JoinRun RunLateJoin(JoinMode mode) {
+        const bool paced = mode != JoinMode::Unpaced;
         net::Impairment im;
         im.delaySeconds = 0.02;
         im.bytesPerSecond = 48.0 * 1024.0;
         net::ServerSettings settings = Settings(DrillRegion());
-        settings.maxEventBytesInFlight = maxEventBytesInFlight;
+        if (!paced) settings.bulkPacer.floorBytes = settings.bulkPacer.ceilingBytes = size_t{64} << 20;   // the window unlimited
         // Stage 6: snapshots carry the drill's falling pieces; at the design's 1200 B to each of two
-        // clients they alone would fill this 48 kB/s uplink. The test is about the event stream: the
-        // snapshots keep about their stage-5 size (the players and two bodies).
+        // clients they alone would fill this 48 kB/s uplink. The test is about events and bulk.
         settings.snapshotBytes = 128;
         Session s(settings, im);
         EXPECT_TRUE(s.started);
@@ -717,10 +740,10 @@ namespace {
         bool joined = false;
         for (uint32_t step = 0; step < 48; ++step) {
             if (step == 30) {
-                s.Connect(b);
+                if (mode != JoinMode::None) s.Connect(b);
                 joined = true;
                 joinTick = s.server.TickNumber();
-                run.logBytes = s.server.LogBytes();
+                run.modified = s.server.ModifiedChunks();
             }
             EXPECT_TRUE(net::RunDrillStep(s.server, drill.Step(step)));
             for (uint32_t t = 0; t < 12; ++t) {
@@ -728,35 +751,184 @@ namespace {
                 const uint32_t tick = s.server.TickNumber();
                 while (madeAt.size() < s.server.LastOpSeq()) madeAt.push_back(tick);
                 for (; seenA < a.client->AppliedOpSeq(); ++seenA)
-                    if (joined) run.maxLiveLatency = std::max(run.maxLiveLatency, tick - madeAt[seenA]);
-                if (joined && run.joinTicks == 0 && b.simulation && b.client->AppliedOpSeq() >= b.client->LogEnd())
-                    run.joinTicks = tick - joinTick;
+                    if (joined && madeAt[seenA] < joinTick + 300) run.maxLiveLatency = std::max(run.maxLiveLatency, tick - madeAt[seenA]);
+                if (joined && run.joinTicks == 0 && b.simulation && b.client->Synced()) run.joinTicks = tick - joinTick;
             }
         }
         EXPECT_TRUE(s.Drain());
-        run.equal = b.client->State() == net::ClientState::Playing && a.client->Hash().hash == s.server.Hash().hash &&
-                    b.client->Hash().hash == s.server.Hash().hash;
+        run.equal = a.client->Hash().hash == s.server.Hash().hash &&
+                    (mode == JoinMode::None || (b.client->State() == net::ClientState::Playing && b.client->Hash().hash == s.server.Hash().hash));
+        run.stats = s.server.Stats();
+        run.bulkBytes = b.client->Stats().bulkBytes;
+        return run;
+    }
+}
+
+// networking.md "Transport": everything that is sent has a byte budget; stage 7a: a joiner's chunk
+// data is bulk, handed over only while the peer's bytes in flight are under the delay-based window,
+// so on a shared uplink the live stream of the others is not stuck behind it.
+TEST(Session, ALateJoinsBulkIsPacedAndLiveEventsKeepFlowing) {
+    const JoinRun none = RunLateJoin(JoinMode::None);
+    const JoinRun paced = RunLateJoin(JoinMode::Paced);
+    const JoinRun unpaced = RunLateJoin(JoinMode::Unpaced);
+    std::printf("[ pacing ] %zu modified chunks at the join, %.1f KiB of bulk; A's live latency in the 300 ticks after B connected: max %u "
+                "ticks without a join, %u paced, %u unpaced; B synced after %u / %u ticks; bulk held %llu times, window %.1f..%.1f KiB\n",
+                paced.modified, static_cast<double>(paced.bulkBytes) / 1024.0, none.maxLiveLatency, paced.maxLiveLatency, unpaced.maxLiveLatency, paced.joinTicks,
+                unpaced.joinTicks, static_cast<unsigned long long>(paced.stats.bulkHeld), static_cast<double>(paced.stats.minBulkWindow) / 1024.0,
+                static_cast<double>(paced.stats.maxBulkWindow) / 1024.0);
+    EXPECT_TRUE(none.equal);
+    EXPECT_TRUE(paced.equal);
+    EXPECT_TRUE(unpaced.equal);
+    EXPECT_GT(paced.bulkBytes, 32u * 1024u);                 // most of a second of the uplink
+    EXPECT_GT(paced.stats.bulkHeld, 0u);
+    // The join adds little to the others' latency when paced: at most the window (a few ticks of the
+    // link) or one message larger than it, which goes alone (no split in 7a; plan amendment 2), plus
+    // a tick each way; more when the whole join is handed to the link at once.
+    const uint32_t oneMessage = static_cast<uint32_t>(std::ceil(static_cast<double>(paced.stats.maxBulkMessage) / (48.0 * 1024.0 / 60.0)));
+    std::printf("[ pacing ] largest bulk message %zu B = %u ticks of the link\n", paced.stats.maxBulkMessage, oneMessage);
+    EXPECT_LE(paced.maxLiveLatency, none.maxLiveLatency + oneMessage + 2);
+    EXPECT_GT(unpaced.maxLiveLatency, paced.maxLiveLatency);
+    EXPECT_GT(paced.joinTicks, 0u);
+}
+
+// --- a late join under fire (stage 7a) ----------------------------------------------------------------
+
+namespace {
+    struct FireRun {
+        uint32_t p99A = 0, p99B = 0;      ///< event latency p99 (ticks from made to applied) in the measured window
+        uint32_t maxA = 0;
+        uint32_t joinTick = 0, syncTicks = 0;
+        uint64_t bulkBytes = 0;
+        bool converged = false;
+        net::ServerStats stats;
+        std::string entities;
+    };
+
+    uint32_t P99(std::vector<uint32_t> v) {
+        if (v.empty()) return 0;
+        std::sort(v.begin(), v.end());
+        return v[std::min(v.size() - 1, static_cast<size_t>(std::ceil(0.99 * static_cast<double>(v.size()))) - 1)];
+    }
+
+    /// The drill at 10 casts/s with its crates (pieces, crates broken into fragments) beside client A;
+    /// every link 5 % loss and 40 + 0-30 ms, each peer's downlink 64 kB/s (or as given); B joins at step 60 (or
+    /// never), bulk capped at `bulkCap` bytes/s. Latency is measured for the events made in the 600
+    /// ticks after B connected.
+    FireRun RunUnderFire(bool join, double bulkCap, double peerBytesPerSecond = 64.0 * 1024.0, double loss = 0.05) {
+        net::Impairment im = Lossy();
+        im.loss = loss;
+        im.peerBytesPerSecond = peerBytesPerSecond;
+        im.rngPerPeer = true;           // A's packets meet the same losses with and without B
+        net::ServerSettings settings = Settings(DrillRegion());
+        settings.maxBulkBytesPerSecond = bulkCap;
+        Session s(settings, im);
+        s.waitIdle = true;
+        EXPECT_TRUE(s.started);
+        Session::Bot& a = s.AddClient();
+        Session::Bot& b = s.AddClient({}, false);
+        const net::BlastDrill drill(s.server.Region(), DefaultIds(), kGround);
+        FireRun run;
+        std::vector<uint32_t> madeAt;     // [opSeq - 1] -> server tick
+        std::vector<uint32_t> latA, latB;
+        uint32_t seenA = 0, seenB = 0;
+        bool joined = false;
+        auto note = [&] {
+            while (madeAt.size() < s.server.LastOpSeq()) madeAt.push_back(s.server.TickNumber());
+        };
+        for (uint32_t step = 0; step < 200; ++step) {
+            if (step == 60 && join) {
+                s.Connect(b);
+                joined = true;
+                run.joinTick = s.server.TickNumber();
+            } else if (step == 60) {
+                run.joinTick = s.server.TickNumber();
+            }
+            EXPECT_TRUE(net::RunDrillStep(s.server, drill.Step(step)));
+            note();
+            for (uint32_t t = 0; t < kStepTicks; ++t) {
+                s.Tick();
+                note();
+                const uint32_t tick = s.server.TickNumber();
+                const bool measure = run.joinTick != 0;
+                for (; seenA < a.client->AppliedOpSeq(); ++seenA)
+                    if (measure && madeAt[seenA] >= run.joinTick && madeAt[seenA] < run.joinTick + 600) latA.push_back(tick - madeAt[seenA]);
+                if (joined && b.simulation) {
+                    if (seenB == 0) seenB = b.client->JoinOpSeq();
+                    for (; seenB < b.client->AppliedOpSeq(); ++seenB)
+                        if (madeAt[seenB] < run.joinTick + 600) latB.push_back(tick - madeAt[seenB]);
+                    if (run.syncTicks == 0 && b.client->Synced()) run.syncTicks = tick - run.joinTick;
+                }
+            }
+        }
+        // Drain: the casts end, every body rests, every client is synced at the last event.
+        for (int i = 0; i < 1800 && s.server.AwakeBodies() > 0; ++i) s.Tick();
+        EXPECT_TRUE(s.Drain());
+        const voxel::WorldHashResult h = s.server.Hash();
+        run.converged = h.Complete() && a.client->Hash().hash == h.hash;
+        if (join) {
+            const voxel::WorldHashResult hb = b.client->Hash();
+            const net::EntityComparison e = net::CompareEntities(s.server.Entities(), b.client->Entities());
+            run.entities = e.Describe();
+            run.converged = run.converged && hb.Complete() && hb.hash == s.server.Hash(b.client->SyncWindow()).hash && b.client->Synced() &&
+                            e.Agree(0.001f) && net::CompareEntities(s.server.Entities(), a.client->Entities()).Agree(0.001f);
+            run.bulkBytes = b.client->Stats().bulkBytes;
+        }
+        run.p99A = P99(latA);
+        run.p99B = P99(latB);
+        for (const uint32_t l : latA) run.maxA = std::max(run.maxA, l);
         run.stats = s.server.Stats();
         return run;
     }
 }
 
-// networking.md "Transport": everything that is sent has a byte budget. A joiner's catch-up is
-// handed to the transport only while less than maxEventBytesInFlight is on its way to that peer,
-// so on a shared uplink the live stream of the others is not stuck behind the whole log.
-TEST(Session, ALateJoinIsPacedAndLiveEventsKeepFlowing) {
-    const JoinRun paced = RunLateJoin(16384);
-    const JoinRun unpaced = RunLateJoin(0);
-    std::printf("[ pacing ] log at join %.1f KiB; live latency max %u ticks paced / %u unpaced; join %u / %u ticks; %u sends held\n",
-                static_cast<double>(paced.logBytes) / 1024.0, paced.maxLiveLatency, unpaced.maxLiveLatency, paced.joinTicks,
-                unpaced.joinTicks, paced.stats.sendsHeld);
-    EXPECT_TRUE(paced.equal);
-    EXPECT_TRUE(unpaced.equal);
-    EXPECT_GT(paced.logBytes, 48u * 1024u);                  // more than a second of the uplink
-    EXPECT_GT(paced.stats.sendsHeld, 0u);
-    EXPECT_EQ(unpaced.stats.sendsHeld, 0u);
-    EXPECT_LT(paced.maxLiveLatency * 2, unpaced.maxLiveLatency);
-    EXPECT_GT(paced.joinTicks, 0u);
+// networking.md "Testing": "Late join during 10 casts/s and object splits, bulk limited to 32 kB/s ...
+// converges: equal hash, ids and models; event latency p99 under 250 ms during the join". Plan
+// amendment 2: the join's cost is measured against the same run without it (on a 64 kB/s link that
+// also carries the snapshots a lost reliable packet alone costs 10-12 ticks, so there it is asserted
+// relative); the absolute 15 ticks is asserted on a 128 kB/s link (review of stage 7a).
+TEST(ChunkSync, LateJoinDuring10CastsPerSecondConverges) {
+    const FireRun quiet = RunUnderFire(false, 32768.0);
+    const FireRun joined = RunUnderFire(true, 32768.0);
+    const double seconds = static_cast<double>(std::max(1u, joined.syncTicks)) / 60.0;
+    std::printf("[ late join ] event latency p99: A %u ticks without the join, A %u / B %u with it (A's max %u / %u); B synced after %.2f s; "
+                "%.1f KiB of bulk (%.1f KiB/s over the join, cap 32), %llu ChunkData, %u baseline entities, %u model / %u chunk requests; "
+                "entities %s\n",
+                quiet.p99A, joined.p99A, joined.p99B, quiet.maxA, joined.maxA, seconds, static_cast<double>(joined.bulkBytes) / 1024.0,
+                static_cast<double>(joined.bulkBytes) / 1024.0 / seconds, static_cast<unsigned long long>(joined.stats.chunkData),
+                joined.stats.baselineEntities, joined.stats.modelRequests, joined.stats.chunkRequests, joined.entities.c_str());
+    EXPECT_TRUE(quiet.converged);
+    EXPECT_TRUE(joined.converged) << joined.entities;
+    EXPECT_GT(joined.syncTicks, 0u);
+    EXPECT_GT(joined.stats.chunkData, 0u);
+    // The bulk cap holds over the join (its credit allows a 4 KiB burst).
+    EXPECT_LE(static_cast<double>(joined.bulkBytes), 32768.0 * seconds * 1.05 + 4096.0 + 16384.0);
+    // The join adds at most 3 ticks to the live stream's p99 of the client already playing. The
+    // joiner's own events share its downlink with its bulk: at most the same plus one bulk message
+    // larger than the window, which goes alone (7a splits none: plan amendment 2; here a felled
+    // tower's model of about 10 KB, 9-10 ticks of a 64 kB/s link).
+    const uint32_t oneMessage = static_cast<uint32_t>(std::ceil(static_cast<double>(joined.stats.maxBulkMessage) / (64.0 * 1024.0 / 60.0)));
+    std::printf("[ late join ] largest bulk message %zu B = %u ticks of the joiner's link; design target p99 < 15 ticks: A %s, B %s\n",
+                joined.stats.maxBulkMessage, oneMessage, joined.p99A < 15 ? "met" : "NOT met", joined.p99B < 15 ? "met" : "NOT met");
+    EXPECT_LE(joined.p99A, quiet.p99A + 3);
+    // The joiner's own events share its downlink with its bulk: a fixed allowance of 10 ticks (one
+    // felled tower's model of about 10 KB on this link; review of stage 7a: a bound scaled by the
+    // largest message would loosen as messages grow).
+    EXPECT_LE(joined.p99B, quiet.p99A + 10);
+
+    // The design's absolute target where the link allows it (review of stage 7a): 128 kB/s per peer,
+    // bulk capped at 32 kB/s as the design row says, 1 % loss - p99 under 15 ticks (250 ms) for both
+    // clients from B's Welcome until it is synced. (At 5 % loss no pacing can meet it: a lost reliable
+    // packet is resent after about 130 ms and holds the 8 ticks of events behind it, so about 40 % of
+    // the events wait - the quiet run's p99 is 21 ticks on any downlink.)
+    const FireRun wide = RunUnderFire(true, 32768.0, 128.0 * 1024.0, 0.01);
+    std::printf("[ late join ] 128 kB/s per peer, 1 %% loss: event latency p99 A %u / B %u ticks; B synced after %.2f s, %.1f KiB of bulk, "
+                "%llu ChunkData, %u baseline entities, %u model requests, window %.1f..%.1f KiB\n",
+                wide.p99A, wide.p99B, static_cast<double>(wide.syncTicks) / 60.0, static_cast<double>(wide.bulkBytes) / 1024.0,
+                static_cast<unsigned long long>(wide.stats.chunkData), wide.stats.baselineEntities, wide.stats.modelRequests,
+                static_cast<double>(wide.stats.minBulkWindow) / 1024.0, static_cast<double>(wide.stats.maxBulkWindow) / 1024.0);
+    EXPECT_TRUE(wide.converged) << wide.entities;
+    EXPECT_LT(wide.p99A, 15u);
+    EXPECT_LT(wide.p99B, 15u);
 }
 
 // --- the acceptance ----------------------------------------------------------------------------------
@@ -826,7 +998,8 @@ TEST(SessionAcceptance, TwoClientsAgreeAfter200BlastsAt5PercentLoss) {
         EXPECT_EQ(bot->client->Stats().unsyncedChunks, 0u);
         EXPECT_EQ(bot->client->Stats().probeMismatches, 0u);
     }
-    EXPECT_GT(b.client->LogEnd(), s.server.LastOpSeq() / 3);     // B started from the log
+    EXPECT_GT(b.client->JoinOpSeq(), s.server.LastOpSeq() / 3);  // B joined by chunk sync half-way
+    EXPECT_GT(b.client->Stats().chunkData, 0u);
     // The network really was bad: resends and lost / duplicated status packets on the way down.
     EXPECT_GT(s.serverLink.Stats().resent, 20u);
     EXPECT_GT(s.serverLink.Stats().lost, 5u);
@@ -922,26 +1095,265 @@ TEST(CastBudget, DISABLED_CalibrateWorkAgainstTime) {
     }
 }
 
-// Review of stage 5: until stage 7 a joiner receives the whole event log, which grows for the whole
-// session. Past ServerSettings::maxJoinLogBytes a new client is refused with a reason it can show
-// (RefuseReason::LogTooLarge) instead of joining for minutes or timing out; clients already in play on.
-TEST(Session, AJoinIsRefusedOnceTheEventLogIsTooLarge) {
+// Stage 7a: there is no join log any more; what bounds the server's memory per client is the bytes in
+// flight to it. A client that stops reading is disconnected once more than maxPeerBacklogBytes wait for
+// it; the others play on, and the server's backlog is trimmed to the slowest joined peer.
+TEST(Session, ASlowPeerIsDisconnectedWhenItsBacklogOutgrowsTheLimit) {
     net::ServerSettings settings = Settings(DrillRegion());
-    settings.maxJoinLogBytes = 2000;
+    settings.maxPeerBacklogBytes = 4096;
     Session s(settings);
     ASSERT_TRUE(s.started);
     Session::Bot& first = s.AddClient();
-    for (int i = 0; i < 5; ++i) s.Tick();
-    ASSERT_EQ(first.client->State(), net::ClientState::Playing);
-    for (int i = 0; s.server.LogBytes() <= settings.maxJoinLogBytes; ++i)
+    Session::Bot& slow = s.AddClient();
+    ASSERT_TRUE(s.Drain());
+    slow.frozen = true;                                          // it stops reading
+    for (int i = 0; i < 400 && s.server.ClientCount() == 2; ++i) {
         ASSERT_NE(s.server.ApplyOp(sim::WorldOp::Box({i % 64, kGround, i / 64}, {i % 64 + 1, kGround + 1, i / 64 + 1}, DefaultIds().gold)), 0u);
-    Session::Bot& late = s.AddClient();
-    for (int i = 0; i < 5; ++i) s.Tick();
-    EXPECT_EQ(late.client->State(), net::ClientState::Refused);
-    EXPECT_EQ(late.client->RefusalReason(), net::RefuseReason::LogTooLarge);
-    EXPECT_STREQ(net::ToString(net::RefuseReason::LogTooLarge), "the session's event log is too large to join (networking stage 7)");
+        s.Tick();
+    }
+    EXPECT_EQ(s.server.ClientCount(), 1u);
+    EXPECT_EQ(s.server.Stats().peersTooSlow, 1u);
+    EXPECT_EQ(s.server.BacklogBytes(), 0u) << "the backlog keeps events every joined peer has";
     EXPECT_EQ(first.client->State(), net::ClientState::Playing);
-    late.connected = false;                                       // refused: nothing to drain
+    slow.connected = false;
     ASSERT_TRUE(s.Drain());
     EXPECT_EQ(first.client->Hash().hash, s.server.Hash().hash);
+}
+
+// --- review of stage 7a ---------------------------------------------------------------------------
+
+namespace {
+    /// One chunk whose RLE is large: stone in every other x plane of the air chunk (1, 3, 1) above the
+    /// drill region's ground. Returns its ChunkData size.
+    size_t MakeNoisyChunk(net::Server& server) {
+        const voxel::WorldMaterials ids = DefaultIds();
+        const glm::ivec3 lo(32, 96, 32);
+        for (int x = 0; x < 32; x += 2) EXPECT_NE(server.ApplyOp(sim::WorldOp::Box(lo + glm::ivec3(x, 0, 0), lo + glm::ivec3(x + 1, 32, 32), ids.stone)), 0u);
+        std::vector<uint8_t> rle;
+        EXPECT_TRUE(server.Simulation().World().EncodeChunkAt(glm::ivec3(1, 3, 1), rle));
+        return rle.size();
+    }
+
+    /// A peer that speaks the protocol by hand (no net::Client): it can send what a client never would.
+    struct RawPeer {
+        net::LoopbackTransport loop;
+        net::PeerId server = 0;
+        std::vector<net::TransportEvent> received;
+        bool disconnected = false;
+        void Send(const std::vector<uint8_t>& bytes) { loop.Send(server, net::Channel::Events, bytes); }
+        void Poll() {
+            net::TransportEvent e;
+            while (loop.Poll(e)) {
+                if (e.type == net::TransportEvent::Type::Connected) server = e.peer;
+                if (e.type == net::TransportEvent::Type::Disconnected) disconnected = true;
+                if (e.type == net::TransportEvent::Type::Received) received.push_back(std::move(e));
+            }
+        }
+        /// The received messages of one type, decoded.
+        template <typename T>
+        std::vector<T> Take(net::MessageType type) {
+            std::vector<T> out;
+            for (auto it = received.begin(); it != received.end();) {
+                if (net::PeekType(it->data) == type) {
+                    T m;
+                    EXPECT_TRUE(net::Decode(it->data, m));
+                    out.push_back(std::move(m));
+                    it = received.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+            return out;
+        }
+    };
+}
+
+// Review of stage 7a: a bulk message larger than the pacer's window went only when nothing at all was
+// in flight to the peer, so live events every tick (a fight) held it - and the joiner's whole bulk
+// queue behind it - for as long as they flowed. Now it waits only for the peer's bulk in flight.
+TEST(Session, AnOversizeBulkMessageGoesWhileEventsKeepFlowing) {
+    net::Impairment im;
+    im.delaySeconds = 0.05;                  // 100 ms round trip: an event every tick is always in flight
+    Session s(Settings(DrillRegion()), im);
+    ASSERT_TRUE(s.started);
+    Session::Bot& a = s.AddClient();
+    for (int i = 0; i < 60; ++i) s.Tick();
+    const size_t noisy = MakeNoisyChunk(s.server);
+    std::printf("[ oversize ] the noisy chunk's data is %zu B\n", noisy);
+    ASSERT_GT(noisy, 20000u);
+    Session::Bot& b = s.AddClient({}, false);
+    s.Connect(b);
+    const voxel::WorldMaterials ids = DefaultIds();
+    uint32_t syncedAfter = 0;
+    for (uint32_t tick = 1; tick <= 900 && syncedAfter == 0; ++tick) {
+        // One live event every tick, in a far corner of the region (not the noisy chunk).
+        const glm::ivec3 v(-28 + static_cast<int>(tick % 8), kGround, -28);
+        s.server.ApplyOp(sim::WorldOp::Box(v, v + glm::ivec3(1), tick % 2 == 0 ? ids.gold : ids.stone));
+        s.Tick();
+        if (b.simulation && b.client->Synced()) syncedAfter = tick;
+    }
+    const net::ServerStats& st = s.server.Stats();
+    std::printf("[ oversize ] joiner synced after %u ticks with an event every tick; largest bulk message %zu B, %u sent past the window "
+                "(no bulk in flight), window %.1f..%.1f KiB\n",
+                syncedAfter, st.maxBulkMessage, st.bulkAlone, static_cast<double>(st.minBulkWindow) / 1024.0,
+                static_cast<double>(st.maxBulkWindow) / 1024.0);
+    EXPECT_GT(syncedAfter, 0u) << "the oversize ChunkData never left: the joiner never synced";
+    EXPECT_LE(syncedAfter, 240u);
+    EXPECT_GE(st.maxBulkMessage, noisy);
+    EXPECT_GT(st.bulkAlone, 0u);
+    ASSERT_TRUE(s.Drain());
+    EXPECT_EQ(b.client->Hash().hash, s.server.Hash().hash);
+    EXPECT_EQ(a.client->Hash().hash, s.server.Hash().hash);
+}
+
+// Recheck of stage 7a, 1: the oversize fix let one bulk message of any size go whenever no bulk was in
+// flight, even while the peer's live events alone kept its bytes in flight at or over the window (a
+// link the events saturate, the pacer backed off to its floor): bulk then ran at one message per bulk
+// round trip on top of the events. The window holds: a message goes alone only while the bytes in
+// flight are under it; the join finishes once the events ease.
+TEST(Session, BulkWaitsWhileLiveEventsAloneFillTheWindow) {
+    net::Impairment im;
+    im.delaySeconds = 0.02;
+    im.peerBytesPerSecond = 16.0 * 1024.0;   // each peer's downlink: the events below take about 1.4 times it
+    im.rngPerPeer = true;
+    Session s(Settings(DrillRegion()), im);
+    ASSERT_TRUE(s.started);
+    Session::Bot& a = s.AddClient();
+    ASSERT_TRUE(s.Drain());
+    const size_t noisy = MakeNoisyChunk(s.server);     // the joiner's bulk: one large ChunkData and the plaza's
+    ASSERT_GT(noisy, 20000u);
+    for (int i = 0; i < 24; ++i) ASSERT_NE(s.server.ApplyOp(sim::WorldOp::Box({-28 + i, kGround, 20}, {-27 + i, kGround + 2, 21}, DefaultIds().gold)), 0u);
+    Session::Bot& b = s.AddClient({}, false);
+    s.Connect(b);
+    const voxel::WorldMaterials ids = DefaultIds();
+    uint64_t heldBefore = s.server.Stats().bulkHeld;
+    for (uint32_t tick = 1; tick <= 240; ++tick) {
+        // 12 small boxes a tick in a far corner, alternating gold and stone: about 22 kB/s of events.
+        for (int k = 0; k < 12; ++k) {
+            const glm::ivec3 v(-28 + k * 2, kGround, -28);
+            ASSERT_NE(s.server.ApplyOp(sim::WorldOp::Box(v, v + glm::ivec3(1), (tick + k) % 2 == 0 ? ids.gold : ids.stone)), 0u);
+        }
+        s.Tick();
+    }
+    const net::ServerStats& st = s.server.Stats();
+    std::printf("[ events fill ] window %.1f..%.1f KiB, bulk held %llu ticks, %llu B of bulk sent so far (both joins), %u alone, %u over the window\n",
+                static_cast<double>(st.minBulkWindow) / 1024.0, static_cast<double>(st.maxBulkWindow) / 1024.0,
+                static_cast<unsigned long long>(st.bulkHeld - heldBefore), static_cast<unsigned long long>(st.bulkBytes), st.bulkAlone,
+                st.bulkOverWindow);
+    EXPECT_EQ(st.minBulkWindow, net::BulkPacerSettings{}.floorBytes) << "the events never filled the link: the test shows nothing";
+    EXPECT_GT(st.bulkHeld, heldBefore);
+    EXPECT_EQ(st.bulkOverWindow, 0u) << "bulk handed over while the live events alone filled the window";
+    // The events ease: the join finishes and both clients agree.
+    ASSERT_TRUE(s.Drain(3600));
+    EXPECT_EQ(b.client->Hash().hash, s.server.Hash().hash);
+    EXPECT_EQ(a.client->Hash().hash, s.server.Hash().hash);
+}
+
+// Review of stage 7a: a ModelRequest for a NetId whose answer is still queued is answered by that one
+// answer (it is encoded at its dequeue, after the request came); a peer whose queued answers exceed
+// ServerSettings::maxQueuedAnswers is disconnected like one that broke its sync stream.
+TEST(Session, RepeatedModelRequestsAreAnsweredOnceAndAnswersAreBounded) {
+    net::ServerSettings settings = Settings(DrillRegion());
+    settings.maxQueuedAnswers = 64;
+    Session s(settings);
+    ASSERT_TRUE(s.started);
+    const uint32_t crate = s.server.SpawnObject(sim::CrateModel(DefaultIds(), 1.25), glm::dvec3(2.0, 12.5, 2.0));
+    ASSERT_NE(crate, 0u);
+    Session::Bot& a = s.AddClient();
+    ASSERT_TRUE(s.Drain());
+    const uint32_t answersBefore = s.server.Stats().baselineEntities;
+    for (int i = 0; i < 100; ++i) a.loop.Send(1, net::Channel::Events, net::Encode(net::ModelRequest{{crate}}));
+    for (int i = 0; i < 30; ++i) s.Tick();
+    EXPECT_EQ(s.server.Stats().baselineEntities - answersBefore, 1u) << "one answer for 100 requests of a queued id";
+    EXPECT_EQ(s.server.Stats().modelRequestRepeats, 99u);
+    EXPECT_EQ(a.client->State(), net::ClientState::Playing);
+    EXPECT_EQ(a.client->Stats().baselineDiscarded, 1u);       // it holds the copy already
+    // Asked again once that answer has gone: answered again.
+    a.loop.Send(1, net::Channel::Events, net::Encode(net::ModelRequest{{crate}}));
+    for (int i = 0; i < 30; ++i) s.Tick();
+    EXPECT_EQ(s.server.Stats().baselineEntities - answersBefore, 2u);
+    // 65 chunk requests in one message (inside the window, all queued at once): over the bound.
+    const net::SyncBox box = a.client->SyncWindow();
+    net::ChunkRequest many;
+    for (int i = 0; i < 65; ++i) many.chunks.push_back(box.min + glm::ivec3(i % box.size.x, (i / box.size.x) % box.size.y, i / (box.size.x * box.size.y)));
+    a.loop.Send(1, net::Channel::Events, net::Encode(many));
+    for (int i = 0; i < 5; ++i) s.Tick();
+    EXPECT_EQ(s.server.Stats().malformedRequests, 1u);
+    EXPECT_EQ(s.server.ClientCount(), 0u);
+}
+
+// Review of stage 7a: the server's rules for sync messages a client never sends (networking.md "Stage 7a
+// plan", messages): requests outside the windows and for unknown NetIds are ignored and counted; a
+// WindowUpdate out of order, or with rows that are not the region's, ends the peer's session; a window
+// that jumps by more than its size has every modified chunk of its new box marked in the ack.
+TEST(Session, HostileOrOutOfOrderSyncMessagesAreIgnoredOrEndThePeer) {
+    Session s(Settings(DrillRegion()));
+    ASSERT_TRUE(s.started);
+    const voxel::WorldMaterials ids = DefaultIds();
+    // Three modified chunks.
+    for (const glm::ivec3& v : {glm::ivec3(1, kGround, 1), glm::ivec3(40, kGround, 1), glm::ivec3(1, kGround, 40)})
+        ASSERT_NE(s.server.ApplyOp(sim::WorldOp::Box(v, v + glm::ivec3(1), ids.gold)), 0u);
+    s.Tick();
+    const net::SyncBox region = net::RegionSyncBox(s.server.Region());
+    RawPeer raw;
+    net::LoopbackTransport::Connect(s.serverLoop, raw.loop);
+    raw.Poll();
+    raw.Send(net::Encode(net::Hello{net::kProtocolVersion, s.server.BuildHashValue(), TestToken()}));
+    auto run = [&](int ticks) {
+        for (int i = 0; i < ticks; ++i) {
+            s.Tick();
+            raw.Poll();
+        }
+    };
+    run(2);
+    ASSERT_EQ(raw.Take<net::Welcome>(net::MessageType::Welcome).size(), 1u);
+    raw.Send(net::Encode(net::WindowUpdate{1, 0, region.min, region.size}));
+    run(2);
+    std::vector<net::WindowAck> acks = raw.Take<net::WindowAck>(net::MessageType::WindowAck);
+    ASSERT_EQ(acks.size(), 1u);
+    EXPECT_EQ(acks[0].modified.Count(), 3u);
+    run(30);                                                  // its three ChunkData
+    const uint64_t chunkDataBefore = s.server.Stats().chunkData;
+    const uint32_t ignoredBefore = s.server.Stats().requestsIgnored;
+    // A chunk outside its window and the server's, a NetId that never existed: ignored, nothing sent.
+    raw.Send(net::Encode(net::ChunkRequest{{region.Max() + glm::ivec3(5, 0, 5)}}));
+    raw.Send(net::Encode(net::ModelRequest{{9999}}));
+    run(10);
+    EXPECT_EQ(s.server.Stats().requestsIgnored, ignoredBefore + 2u);
+    EXPECT_EQ(s.server.Stats().chunkData, chunkDataBefore);
+    EXPECT_FALSE(raw.disconnected);
+    // Recheck of stage 7a, 4: a server keeps no per-coordinate request counts unless a test asks.
+    EXPECT_TRUE(s.server.ChunkRequestCounts().empty()) << "the request counts grow with every coordinate asked for";
+    // The window jumps far away (nothing of the server's window), then back by more than its size: no
+    // overlap with the previous box, so every modified chunk of the new box is entering.
+    raw.Send(net::Encode(net::WindowUpdate{2, 0, region.min + glm::ivec3(500, 0, 0), region.size}));
+    raw.Send(net::Encode(net::WindowUpdate{3, 0, region.min, region.size}));
+    run(2);
+    acks = raw.Take<net::WindowAck>(net::MessageType::WindowAck);
+    ASSERT_EQ(acks.size(), 2u);
+    EXPECT_EQ(acks[0].modified.Count(), 0u);
+    EXPECT_EQ(acks[1].modified.Count(), 3u);
+    EXPECT_EQ(s.server.Stats().malformedRequests, 0u);
+    // Out of order (4 skipped): the session ends.
+    raw.Send(net::Encode(net::WindowUpdate{5, 0, region.min, region.size}));
+    run(3);
+    EXPECT_EQ(s.server.Stats().malformedRequests, 1u);
+    EXPECT_TRUE(raw.disconnected);
+    EXPECT_EQ(s.server.ClientCount(), 0u);
+    // Rows that are not the region's.
+    RawPeer rows;
+    net::LoopbackTransport::Connect(s.serverLoop, rows.loop);
+    rows.Poll();
+    rows.Send(net::Encode(net::Hello{net::kProtocolVersion, s.server.BuildHashValue(), TestToken()}));
+    for (int i = 0; i < 2; ++i) {
+        s.Tick();
+        rows.Poll();
+    }
+    rows.Send(net::Encode(net::WindowUpdate{1, 0, region.min + glm::ivec3(0, 1, 0), region.size}));
+    for (int i = 0; i < 3; ++i) {
+        s.Tick();
+        rows.Poll();
+    }
+    EXPECT_EQ(s.server.Stats().malformedRequests, 2u);
+    EXPECT_TRUE(rows.disconnected);
 }

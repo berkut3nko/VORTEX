@@ -224,6 +224,8 @@ export namespace vortex::net {
         /// @brief The pose of `netId` at server time `serverTick` minus its delay; false without samples.
         bool Sample(uint32_t netId, double serverTick, double tickSeconds, BodyPose& out) const;
         bool HasSamples(uint32_t netId) const;
+        /// @brief The oldest sample kept for `netId` (tests: a baseline's first sample).
+        bool Oldest(uint32_t netId, uint32_t& tick, BodyPose& pose) const;
         uint32_t MaxGap() const { return m_MaxGap; }
         uint32_t MaxGap(uint32_t netId) const;
         /// @brief Samples of `netId` accepted since it was first seen (0 for an unknown body).

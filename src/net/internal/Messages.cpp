@@ -10,6 +10,7 @@ module;
 #include <optional>
 #include <span>
 #include <utility>
+#include <variant>
 #include <vector>
 
 module vortex.net;
@@ -25,7 +26,6 @@ namespace vortex::net {
             case RefuseReason::Token: return "wrong token";
             case RefuseReason::Full: return "the session is full";
             case RefuseReason::Malformed: return "malformed message";
-            case RefuseReason::LogTooLarge: return "the session's event log is too large to join (networking stage 7)";
         }
         return "unknown reason";
     }
@@ -103,7 +103,7 @@ namespace vortex::net {
         w.F32(m.gravity.x);
         w.F32(m.gravity.y);
         w.F32(m.gravity.z);
-        w.U32(m.logEnd);
+        w.U32(m.joinOpSeq);
         w.U16(static_cast<uint16_t>(m.probes.size()));
         for (const ProbeHash& p : m.probes) {
             w.I32(p.chunk.x);
@@ -222,7 +222,7 @@ namespace vortex::net {
         out.gravity.x = in.F32();
         out.gravity.y = in.F32();
         out.gravity.z = in.F32();
-        out.logEnd = in.U32();
+        out.joinOpSeq = in.U32();
         const uint32_t probes = in.U16();
         if (in.Failed() || probes > kMaxProbes) return false;
         out.probes.clear();
@@ -332,6 +332,222 @@ namespace vortex::net {
             if (!Finite(b.position)) return false;
             out.bodies.push_back(b);
         }
+        return End(in);
+    }
+
+    // --- chunk sync (stage 7a) -------------------------------------------------------------------
+
+    namespace {
+        bool ValidChunk(const glm::ivec3& c) {
+            for (int a = 0; a < 3; ++a)
+                if (c[a] < -kMaxSyncChunkCoordinate || c[a] > kMaxSyncChunkCoordinate) return false;
+            return true;
+        }
+        bool ValidWindowSize(const glm::ivec3& s) {
+            for (int a = 0; a < 3; ++a)
+                if (s[a] <= 0 || s[a] > kMaxClientWindowChunks) return false;
+            return true;
+        }
+        void WriteChunk(ByteWriter& w, const glm::ivec3& c) {
+            w.I32(c.x);
+            w.I32(c.y);
+            w.I32(c.z);
+        }
+        glm::ivec3 ReadChunk(ByteReader& r) {
+            glm::ivec3 c;
+            c.x = r.I32();
+            c.y = r.I32();
+            c.z = r.I32();
+            return c;
+        }
+        void WriteSize(ByteWriter& w, const glm::ivec3& s) {
+            w.U16(static_cast<uint16_t>(s.x));
+            w.U16(static_cast<uint16_t>(s.y));
+            w.U16(static_cast<uint16_t>(s.z));
+        }
+        glm::ivec3 ReadSize(ByteReader& r) {
+            glm::ivec3 s;
+            s.x = r.U16();
+            s.y = r.U16();
+            s.z = r.U16();
+            return s;
+        }
+    }
+
+    bool IsValidChunkStream(std::span<const uint8_t> bytes) {
+        constexpr uint32_t kVolume = 32 * 32 * 32;
+        if (bytes.empty() || bytes[0] > 2) return false;
+        if (bytes[0] == 0) return bytes.size() == 1;
+        if (bytes[0] == 1) return bytes.size() == 2 && bytes[1] != 0;
+        if ((bytes.size() - 1) % 3 != 0) return false;
+        uint32_t total = 0;
+        for (size_t p = 1; p + 2 < bytes.size(); p += 3) {
+            const uint32_t run = static_cast<uint32_t>(bytes[p + 1]) | (static_cast<uint32_t>(bytes[p + 2]) << 8);
+            if (run == 0 || total + run > kVolume) return false;
+            total += run;
+        }
+        return total == kVolume;
+    }
+
+    std::vector<uint8_t> Encode(const WindowUpdate& m) {
+        ByteWriter w;
+        w.U8(static_cast<uint8_t>(MessageType::WindowUpdate));
+        w.U32(m.windowSeq);
+        w.U8(m.flags);
+        WriteChunk(w, m.minChunk);
+        WriteSize(w, m.size);
+        return w.Take();
+    }
+
+    bool Decode(std::span<const uint8_t> bytes, WindowUpdate& out) {
+        ByteReader in(bytes);
+        if (!Begin(in, MessageType::WindowUpdate)) return false;
+        out.windowSeq = in.U32();
+        out.flags = in.U8();
+        out.minChunk = ReadChunk(in);
+        out.size = ReadSize(in);
+        if (!End(in) || (out.flags & ~WindowUpdate::kReset) != 0) return false;
+        return ValidWindowSize(out.size) && ValidChunk(out.minChunk) && ValidChunk(out.minChunk + out.size);
+    }
+
+    std::vector<uint8_t> Encode(const WindowAck& m) {
+        ByteWriter w;
+        w.U8(static_cast<uint8_t>(MessageType::WindowAck));
+        w.U32(m.windowSeq);
+        w.U32(m.asOfOpSeq);
+        WriteSize(w, m.modified.Size());
+        WriteMaskRuns(w, m.modified);
+        return w.Take();
+    }
+
+    bool Decode(std::span<const uint8_t> bytes, WindowAck& out) {
+        ByteReader in(bytes);
+        if (!Begin(in, MessageType::WindowAck)) return false;
+        out.windowSeq = in.U32();
+        out.asOfOpSeq = in.U32();
+        const glm::ivec3 size = ReadSize(in);
+        if (in.Failed() || !ValidWindowSize(size)) return false;
+        if (!ReadMaskRuns(in, size, out.modified)) return false;
+        return End(in);
+    }
+
+    std::vector<uint8_t> Encode(const ChunkData& m) {
+        ByteWriter w;
+        w.U8(static_cast<uint8_t>(MessageType::ChunkData));
+        WriteChunk(w, m.chunk);
+        w.U32(m.asOfOpSeq);
+        w.Bytes(m.rle);
+        return w.Take();
+    }
+
+    bool Decode(std::span<const uint8_t> bytes, ChunkData& out) {
+        ByteReader in(bytes);
+        if (!Begin(in, MessageType::ChunkData)) return false;
+        out.chunk = ReadChunk(in);
+        out.asOfOpSeq = in.U32();
+        if (in.Failed() || !ValidChunk(out.chunk)) return false;
+        const std::span<const uint8_t> rle = in.Bytes(in.Remaining());
+        if (in.Failed() || !IsValidChunkStream(rle)) return false;
+        out.rle.assign(rle.begin(), rle.end());
+        return End(in);
+    }
+
+    std::vector<uint8_t> Encode(const ChunkRequest& m) {
+        ByteWriter w;
+        w.U8(static_cast<uint8_t>(MessageType::ChunkRequest));
+        w.U16(static_cast<uint16_t>(m.chunks.size()));
+        for (const glm::ivec3& c : m.chunks) WriteChunk(w, c);
+        return w.Take();
+    }
+
+    bool Decode(std::span<const uint8_t> bytes, ChunkRequest& out) {
+        ByteReader in(bytes);
+        if (!Begin(in, MessageType::ChunkRequest)) return false;
+        const uint32_t count = in.U16();
+        if (in.Failed() || count == 0 || count > kMaxChunkRequest || in.Remaining() != count * 12u) return false;
+        out.chunks.clear();
+        for (uint32_t i = 0; i < count; ++i) {
+            out.chunks.push_back(ReadChunk(in));
+            if (!ValidChunk(out.chunks.back())) return false;
+        }
+        return End(in);
+    }
+
+    std::vector<uint8_t> Encode(const ModelRequest& m) {
+        ByteWriter w;
+        w.U8(static_cast<uint8_t>(MessageType::ModelRequest));
+        w.U16(static_cast<uint16_t>(m.netIds.size()));
+        for (const uint32_t id : m.netIds) w.U32(id);
+        return w.Take();
+    }
+
+    bool Decode(std::span<const uint8_t> bytes, ModelRequest& out) {
+        ByteReader in(bytes);
+        if (!Begin(in, MessageType::ModelRequest)) return false;
+        const uint32_t count = in.U16();
+        if (in.Failed() || count == 0 || count > kMaxModelRequest || in.Remaining() != count * 4u) return false;
+        out.netIds.clear();
+        for (uint32_t i = 0; i < count; ++i) {
+            out.netIds.push_back(in.U32());
+            if (out.netIds.back() == 0) return false;
+        }
+        return End(in);
+    }
+
+    std::vector<uint8_t> Encode(const BaselineEntity& m) {
+        ByteWriter w;
+        w.U8(static_cast<uint8_t>(MessageType::BaselineEntity));
+        w.U32(m.asOfOpSeq);
+        w.U32(m.tick);
+        w.U32(m.restTick);
+        WriteEvent(w, Event{m.spawn});
+        return w.Take();
+    }
+
+    bool Decode(std::span<const uint8_t> bytes, BaselineEntity& out) {
+        ByteReader in(bytes);
+        if (!Begin(in, MessageType::BaselineEntity)) return false;
+        out.asOfOpSeq = in.U32();
+        out.tick = in.U32();
+        out.restTick = in.U32();
+        Event event;
+        uint64_t budget = kMaxMaskVoxels;
+        if (in.Failed() || !ReadEvent(in, event, &budget)) return false;
+        const EntitySpawn* spawn = std::get_if<EntitySpawn>(&event);
+        if (!spawn || spawn->netId == 0) return false;
+        out.spawn = *spawn;
+        return End(in);
+    }
+
+    std::vector<uint8_t> Encode(const BaselineEnd& m) {
+        ByteWriter w;
+        w.U8(static_cast<uint8_t>(MessageType::BaselineEnd));
+        w.U32(m.asOfOpSeq);
+        w.U32(m.count);
+        return w.Take();
+    }
+
+    bool Decode(std::span<const uint8_t> bytes, BaselineEnd& out) {
+        ByteReader in(bytes);
+        if (!Begin(in, MessageType::BaselineEnd)) return false;
+        out.asOfOpSeq = in.U32();
+        out.count = in.U32();
+        return End(in);
+    }
+
+    std::vector<uint8_t> Encode(const BaselineNear& m) {
+        ByteWriter w;
+        w.U8(static_cast<uint8_t>(MessageType::BaselineNear));
+        w.U32(m.asOfOpSeq);
+        w.U32(m.count);
+        return w.Take();
+    }
+
+    bool Decode(std::span<const uint8_t> bytes, BaselineNear& out) {
+        ByteReader in(bytes);
+        if (!Begin(in, MessageType::BaselineNear)) return false;
+        out.asOfOpSeq = in.U32();
+        out.count = in.U32();
         return End(in);
     }
 }

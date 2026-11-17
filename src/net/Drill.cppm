@@ -90,6 +90,13 @@ export namespace vortex::net {
         uint32_t crateEveryTicks = 0;  ///< a crate (PlayerButton_Crate) every this many ticks; 0 = none (stage 6)
         float castPitch = -0.45f;    ///< radians: where it looks while casting (down, ahead)
         float edgeMargin = 2.0f;     ///< metres inside the play bounds it turns back towards the middle
+        /// Waypoint mode (stage 7a M-b: `vortex_server --walk-across`): when not empty the pilot runs
+        /// to these points (metres, x / z) in order instead of wandering, jumping as set, and stands
+        /// once it reached the last (Done). A waypoint it makes no metre of progress towards for
+        /// `stuckTicks` is given up (counted).
+        std::vector<glm::vec2> waypoints;
+        float reachMetres = 2.0f;
+        uint32_t stuckTicks = 300;
     };
 
     /**
@@ -107,6 +114,10 @@ export namespace vortex::net {
         uint32_t Casts() const { return m_Casts; }
         uint32_t Crates() const { return m_Crates; }
         uint32_t Jumps() const { return m_Jumps; }
+        /// @brief Waypoint mode: every waypoint reached or given up.
+        bool Done() const { return !m_Settings.waypoints.empty() && m_Waypoint >= m_Settings.waypoints.size(); }
+        uint32_t WaypointsReached() const { return m_Reached; }
+        uint32_t WaypointsGivenUp() const { return m_GivenUp; }
 
     private:
         PilotSettings m_Settings;
@@ -119,5 +130,9 @@ export namespace vortex::net {
         int8_t m_Strafe = 0;
         bool m_Run = false;
         uint32_t m_Casts = 0, m_Jumps = 0, m_Crates = 0;
+        size_t m_Waypoint = 0;
+        float m_BestDistance = 0.0f;
+        uint32_t m_SinceProgress = 0;
+        uint32_t m_Reached = 0, m_GivenUp = 0;
     };
 }

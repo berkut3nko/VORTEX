@@ -12,6 +12,7 @@ module;
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -67,6 +68,14 @@ namespace vortex::net {
             std::vector<BodySample> bodies;
         };
 
+        /// What the events channel carries in order after the Welcome: the stream and the window acks
+        /// (an ack is processed in stream order: with every event before it applied).
+        using StreamItem = std::variant<EventBatch, WindowAck>;
+
+        /// Entity events a client holds for a NetId whose copy does not exist yet (stage 7a).
+        constexpr size_t kMaxHeldPerId = 64;
+        constexpr size_t kMaxHeldEvents = 4096;
+
         struct HistoryEntry {
             bool valid = false;
             uint32_t tick = 0;
@@ -76,7 +85,7 @@ namespace vortex::net {
     }
 
     struct Client::Impl {
-        Impl(ClientSettings s, ITransport& t) : settings(s), transport(t), clock(ClockOf(s)) {
+        Impl(ClientSettings s, ITransport& t) : settings(s), transport(t), sync(s.ringOps, s.ringBytes), clock(ClockOf(s)) {
             voxel::MaterialLibrary scratch;
             ids = voxel::RegisterDefaultWorldMaterials(scratch);
             buildHash = settings.buildHash != 0 ? settings.buildHash : BuildHash(scratch);
@@ -91,7 +100,25 @@ namespace vortex::net {
         PeerId server = 0;
         Welcome welcome;
         sim::Simulation* simulation = nullptr;
-        std::deque<EventBatch> pending;   // received before Attach (or not yet applied)
+        std::deque<StreamItem> pending;   // received before Attach (or not yet applied)
+        std::deque<std::vector<uint8_t>> pendingBulk;   // bulk messages not processed yet
+        // Chunk sync (stage 7a).
+        ChunkSync sync;
+        SyncBox syncBox;                  // the window this client asked for, inside the server's
+        uint32_t windowSeq = 0;
+        bool moving = false;              // the window follows the player (stage 7a M-b)
+        uint64_t windowRevision = 0;      // World::WindowRevision of the window last sent
+        uint32_t unsyncedLogged = 0;      // ChunkSync unsynced count last logged
+        uint32_t syncPolls = 0;
+        std::chrono::steady_clock::time_point welcomed;   // the join's wall clock (logged only)
+        double SinceWelcome() const { return std::chrono::duration<double>(std::chrono::steady_clock::now() - welcomed).count(); }
+        bool baselineEnded = false;
+        bool baselineNear = false;        // BaselineNear (or BaselineEnd) arrived: the start gate may open
+        std::unordered_map<uint32_t, uint32_t> staleBefore;   // NetId -> newest held event dropped (overflow)
+        std::map<uint32_t, std::vector<std::pair<uint32_t, Event>>> held;   // NetId -> held entity events
+        size_t heldCount = 0;
+        std::unordered_set<uint32_t> asked;          // NetIds of ModelRequests out
+        std::vector<uint32_t> modelsToAsk;
         uint32_t applied = 0;
         uint32_t serverLast = 0;
         ClientStats stats;
@@ -101,6 +128,7 @@ namespace vortex::net {
             scene::Entity entity = scene::kNoEntity;
             bool resting = false;
             uint64_t modelHash = 0;
+            uint32_t base = 0;            ///< the opSeq its state is as of (its spawn, Detach, model or baseline)
         };
         std::unordered_map<uint32_t, Copy> copies;               // NetId -> copy
         std::unordered_set<uint32_t> tombstones;                 // despawned NetIds (a later spawn of one is discarded)
@@ -127,6 +155,8 @@ namespace vortex::net {
         std::deque<WaitingSnapshot> waiting;   // snapshots not compared yet, oldest first
         bool anySnapshot = false;
         uint32_t newestSnapshot = 0;
+        /// Server ticks since the Welcome as far as this client knows (its newest snapshot), at least 1.
+        uint32_t TicksSinceWelcome() const { return newestSnapshot > welcome.tick ? newestSnapshot - welcome.tick : 1u; }
         ServerTime serverTime;              // where other players are drawn (only moves forward)
         TickClock clock;
         glm::vec3 offset{0.0f};             // visual error being blended out
@@ -134,6 +164,9 @@ namespace vortex::net {
         net::RemotePlayers remotes;
         PredictionStats prediction;
         Client::CastStatus lastCast;
+        bool syncHeld = false;              // the reach holds a chunk that is not current: not moved
+        bool needResume = false;            // replay the inputs after `lastTaken` once current again
+        uint32_t lastTaken = 0;
 
         /// The session's tick (Welcome; the attached simulation has the same, Attach checks it).
         float Dt() const { return simulation ? simulation->FixedTimeStep() : welcome.tickSeconds; }
@@ -150,6 +183,41 @@ namespace vortex::net {
         }
 
         /// Predicts tick `nextTick` with `input` and keeps it.
+        /// The chunks of the own player's reach are current (stage 7a): a step over a chunk without a
+        /// base (its pristine stand-in) would walk where the server's player does not.
+        bool ReachCurrent() const {
+            const math::AABB box = sim::PlayerReach(player.position, welcome.player);
+            const voxel::World& world = simulation->World();
+            const glm::ivec3 lo = voxel::VoxelToChunk(world.WorldToVoxel(glm::dvec3(box.min)));
+            const glm::ivec3 hi = voxel::VoxelToChunk(world.WorldToVoxel(glm::dvec3(box.max)));
+            return sync.AllCurrent(lo, hi);
+        }
+
+        /// Every chunk within `startRadius` (3D, metres) of `feet` inside the window is current.
+        bool NearCurrent(const glm::vec3& feet) const { return NotCurrentNear(feet, true) == 0; }
+
+        /// Chunks within `startRadius` (3D, metres) of `feet` inside the window that are not current
+        /// (with `first`: 0 or 1, it stops at the first).
+        uint32_t NotCurrentNear(const glm::vec3& feet, bool first) const {
+            const double size = static_cast<double>(voxel::kChunkSize) * static_cast<double>(welcome.region.terrain.voxelSize);
+            const double r = static_cast<double>(settings.startRadius);
+            const glm::dvec3 p(feet);
+            const glm::ivec3 lo = glm::ivec3(glm::floor((p - glm::dvec3(r)) / size)), hi = glm::ivec3(glm::floor((p + glm::dvec3(r)) / size));
+            uint32_t n = 0;
+            for (int y = lo.y; y <= hi.y; ++y)
+                for (int z = lo.z; z <= hi.z; ++z)
+                    for (int x = lo.x; x <= hi.x; ++x) {
+                        const glm::ivec3 c(x, y, z);
+                        if (!sync.Window().Contains(c)) continue;
+                        const glm::dvec3 cmin = glm::dvec3(c) * size;
+                        if (glm::length(p - glm::clamp(p, cmin, cmin + glm::dvec3(size))) > r) continue;
+                        if (sync.IsCurrent(c)) continue;
+                        if (first) return 1;
+                        ++n;
+                    }
+            return n;
+        }
+
         sim::PlayerStepResult PredictTick(sim::PlayerInput input) {
             input.tick = nextTick;
             FreshColliders();
@@ -214,6 +282,17 @@ namespace vortex::net {
             const HistoryEntry& h = history[t % kHistoryTicks];
             if (nextTick - t > kHistoryTicks || !h.valid || h.tick != t) {
                 ++prediction.tooOld;
+                return;
+            }
+            if (syncHeld) {
+                // Held over chunks without a base (plan amendment 7): the server's state is taken as it
+                // is, nothing is counted as a correction; the inputs after it are replayed once the
+                // reach is current again.
+                ++prediction.syncTaken;
+                Restore(snap.owner);
+                history[t % kHistoryTicks].state = player;
+                lastTaken = t;
+                needResume = true;
                 return;
             }
             const float error = glm::length(h.state.position - snap.owner.position);
@@ -327,6 +406,15 @@ namespace vortex::net {
         /// wait cannot hide a stall (review of stage 4).
         void TryReconcile() {
             if (waiting.empty() || state != ClientState::Playing || !simulation) return;
+            // The start gate (stage 7a, plan amendment 8): the player starts once the chunks within
+            // startRadius of it are current and the entity baseline near the spawn is in (resting
+            // copies block players; review of stage 7a: BaselineNear, the far ones do not wait). While it is closed every waiting snapshot is dropped, so the fresh-snapshot
+            // rule below starts its age bound again when it opens.
+            if (!predicting && !(baselineNear && NearCurrent(waiting.back().snap.owner.position))) {
+                ++prediction.startGateDrops;
+                waiting.clear();
+                return;
+            }
             size_t ready = waiting.size();
             for (size_t i = waiting.size(); i-- > 0;)
                 if (waiting[i].snap.lastOpSeq <= applied) {
@@ -347,7 +435,11 @@ namespace vortex::net {
                 const WaitingSnapshot w = std::move(waiting[ready]);
                 waiting.erase(waiting.begin(), waiting.begin() + static_cast<std::ptrdiff_t>(ready) + 1);
                 if (w.age > 0) ++prediction.waitedForEvents;
-                if (!predicting) StartPrediction(w.snap);
+                if (!predicting) {
+                    StartPrediction(w.snap);
+                    stats.joinStartTicks = std::max(1u, newestSnapshot - welcome.tick);
+                    stats.joinStartSeconds = SinceWelcome();
+                }
                 else Reconcile(w.snap);
             }
             // Before the prediction starts a joiner waits for its log as long as it takes.
@@ -401,8 +493,71 @@ namespace vortex::net {
                 Log::Error("Client: {} of {} probe chunks differ from the server's: this build generates other terrain (server terrain "
                            "mode is networking stage 7; the session goes on and may diverge)",
                            stats.probeMismatches, welcome.probes.size());
-            serverLast = std::max(serverLast, welcome.logEnd);
+            serverLast = std::max(serverLast, welcome.joinOpSeq);
+            applied = welcome.joinOpSeq;
+            welcomed = std::chrono::steady_clock::now();
             state = ClientState::Welcomed;
+            // Chunk sync (stage 7a, plan amendment 12): the window is known now (the region's, or a
+            // moving one centred on the spawn, where Attach places it); its WindowUpdate goes at once,
+            // so only chunks changed after the ack need data.
+            if (settings.windowChunks < 0 || settings.windowChunks > kMaxClientWindowChunks)
+                return Fail("ClientSettings::windowChunks " + std::to_string(settings.windowChunks) + " is outside 0.." +
+                            std::to_string(kMaxClientWindowChunks));
+            moving = sim::ClientWindowMoves(welcome.region, settings.windowChunks);
+            sync.Start(welcome.joinOpSeq, RegionSyncBox(welcome.region));
+            SyncBox window;
+            window.min = sim::ClientWindowMinChunk(welcome.region, settings.windowChunks, welcome.spawn);
+            window.size = sim::ClientWindowSize(welcome.region, settings.windowChunks);
+            if (window.size.x > kMaxClientWindowChunks || window.size.z > kMaxClientWindowChunks)
+                return Fail("the region's window is " + std::to_string(window.size.x) + " x " + std::to_string(window.size.z) +
+                            " chunks, more than a WindowUpdate may name (" + std::to_string(kMaxClientWindowChunks) +
+                            "): this client needs a moving window (ClientSettings::windowChunks)");
+            SendWindow(window, false);
+        }
+
+        /// WindowUpdate seq + 1 for `window`: cells that entered since the last one (all of them with
+        /// `reset`) wait for its ack.
+        void SendWindow(const SyncBox& window, bool reset) {
+            ++windowSeq;
+            sync.BeginWindow(window, windowSeq, reset);
+            syncBox = Intersect(window, RegionSyncBox(welcome.region));
+            WindowUpdate u;
+            u.windowSeq = windowSeq;
+            u.flags = reset ? WindowUpdate::kReset : uint8_t{0};
+            u.minChunk = window.min;
+            u.size = window.size;
+            transport.Send(server, Channel::Events, Encode(u));
+            ++stats.windowUpdates;
+            stats.windowResets += reset ? 1u : 0u;
+        }
+
+        /// The world's window moved since the last WindowUpdate (stage 7a M-b): the next one. Runs at
+        /// the start of every Poll, before anything is applied: the world moves only in streaming,
+        /// between Polls. Two moves since the last check: a chunk may have left and come back (it was
+        /// regenerated), so the update resets the whole window.
+        void CheckWindow() {
+            if (state != ClientState::Playing || !simulation || server == 0) return;
+            voxel::World& world = simulation->World();
+            const uint64_t revision = world.WindowRevision();
+            const std::vector<glm::ivec3> steps = world.TakeWindowSteps();
+            if (revision == windowRevision) return;
+            const uint64_t moves = revision - windowRevision;
+            windowRevision = revision;
+            if (steps.size() == moves) {
+                // Every step in order (review of stage 7a: the game streams every frame and polls on
+                // ticks, so two steps can fall between two Polls): a chunk that left at one step and
+                // came back at the next enters again with the second update, and the server sends it.
+                for (const glm::ivec3& min : steps) {
+                    const SyncBox window{min, world.WindowSize()};
+                    if (window != sync.Window()) SendWindow(window, false);
+                }
+                return;
+            }
+            // Steps this client did not see apart (never in play: every Recenter is listed): a chunk
+            // may have left and come back regenerated, so the whole window is synced again.
+            Log::Info("Client: the window moved {} times between two checks ({} steps listed): every chunk of it is synced again", moves,
+                      steps.size());
+            SendWindow(SyncBox{world.WindowMinChunk(), world.WindowSize()}, true);
         }
 
         void CloseGroup() { groupOpen = false; }
@@ -454,11 +609,11 @@ namespace vortex::net {
 
         /// A kinematic copy of a server object: Layer::Dynamic at rest (players collide with it),
         /// Layer::Rubble while it moves (no predicted player does).
-        void MakeCopy(uint32_t netId, std::shared_ptr<voxel::VoxelModel> model, const glm::vec3& position, const glm::quat& rotation,
-                      bool resting) {
+        bool MakeCopy(uint32_t netId, std::shared_ptr<voxel::VoxelModel> model, const glm::vec3& position, const glm::quat& rotation,
+                      bool resting, uint32_t base) {
             if (copies.contains(netId) || tombstones.contains(netId)) {
                 ++stats.ignoredEntityEvents;
-                return;
+                return false;
             }
             const uint64_t hash = VolumeHash(model->Volume());
             scene::Scene& scene = simulation->Scene();
@@ -467,11 +622,12 @@ namespace vortex::net {
             if (entity == scene::kNoEntity) {
                 ++stats.copiesFailed;
                 Log::Error("Client: no copy of server object {} could be made (store or bodies full)", netId);
-                return;
+                return false;
             }
             simulation->Physics().SetLayer(BodyOf(entity), resting ? physics::Layer::Dynamic : physics::Layer::Rubble);
-            copies[netId] = {entity, resting, hash};
+            copies[netId] = {entity, resting, hash, base};
             ++stats.copiesMade;
+            return true;
         }
 
         /// Local rubble (presentation): an object fragment, or a copy the server let go of.
@@ -486,7 +642,7 @@ namespace vortex::net {
         }
 
         void ApplyEntity(uint32_t seq, const Event& event) {
-            const bool live = settings.presentation && seq > welcome.logEnd;
+            const bool live = settings.presentation && seq > welcome.joinOpSeq;
             scene::Scene& scene = simulation->Scene();
             physics::PhysicsWorld& physics = simulation->Physics();
             if (const EntitySpawn* spawn = std::get_if<EntitySpawn>(&event)) {
@@ -506,12 +662,35 @@ namespace vortex::net {
                     if (live) MakeRubble(std::move(model), o.position, o.rotation, o.linearVelocity, o.angularVelocity);
                     return;
                 }
-                MakeCopy(spawn->netId, std::move(model), o.position, o.rotation, (o.flags & kObjectResting) != 0);
+                MakeCopy(spawn->netId, std::move(model), o.position, o.rotation, (o.flags & kObjectResting) != 0, seq);
                 return;
+            }
+            // Rest, wake and model of a NetId: dropped when its copy is already as of this event (the
+            // baseline or a model answer was encoded after it), held while its copy may still come.
+            if (!std::holds_alternative<EntityDespawn>(event)) {
+                const uint32_t netId = std::holds_alternative<EntityRest>(event)   ? std::get<EntityRest>(event).netId
+                                       : std::holds_alternative<EntityWake>(event) ? std::get<EntityWake>(event).netId
+                                                                                    : std::get<ObjectModel>(event).netId;
+                const auto copy = copies.find(netId);
+                if (copy != copies.end() && seq <= copy->second.base) {
+                    ++stats.staleEntityEvents;
+                    return;
+                }
+                if (copy == copies.end() && !tombstones.contains(netId) && (!baselineEnded || asked.contains(netId))) {
+                    Hold(netId, seq, event);
+                    return;
+                }
             }
             if (const EntityDespawn* d = std::get_if<EntityDespawn>(&event)) {
                 tombstones.insert(d->netId);
                 bodies.Remove(d->netId);
+                asked.erase(d->netId);
+                staleBefore.erase(d->netId);
+                if (const auto h = held.find(d->netId); h != held.end()) {
+                    stats.droppedHeldEvents += static_cast<uint32_t>(h->second.size());
+                    heldCount -= h->second.size();
+                    held.erase(h);
+                }
                 const auto it = copies.find(d->netId);
                 if (it == copies.end()) {
                     ++stats.ignoredEntityEvents;
@@ -610,7 +789,7 @@ namespace vortex::net {
             // resting copy is re-made moving, and the server's EntityWake / EntityRest follow.
             const bool staticModel = m.motion == static_cast<uint8_t>(physics::MotionType::Static);
             MakeCopy(m.netId, std::make_shared<voxel::VoxelModel>(m.volume, voxel::kWorldPalette, "object"), position, rotation,
-                     staticModel && old.resting);
+                     staticModel && old.resting, seq);
             ++stats.models;
         }
 
@@ -726,26 +905,31 @@ namespace vortex::net {
 
         void Apply(uint32_t seq, const Event& event) {
             if (const sim::WorldOp* op = std::get_if<sim::WorldOp>(&event)) {
-                // Only live events are shown: the join log (template operations included) is history.
-                const bool present = settings.presentation && seq > welcome.logEnd;
+                // Only live events are shown: what came before the join point is history.
+                const bool present = settings.presentation && seq > welcome.joinOpSeq;
                 // A piece with a NetId is a copy of a server body, made from the voxels it removed.
                 const bool replicated = op->kind == sim::WorldOpKind::Detach && op->netId != 0;
                 std::vector<voxel::VoxelEdit> edits;
-                const sim::OpResult r = sim::ApplyOp(simulation->World(), *op, present || replicated ? &edits : nullptr);
+                // The base rule (stage 7a): applied only to the chunks that are current with a base
+                // below `seq`; an operation that skipped a chunk it touches is not complete here.
+                const ChunkSync::OpOutcome out = sync.Apply(simulation->World(), seq, *op, present || replicated ? &edits : nullptr);
+                const sim::OpResult& r = out.result;
                 stats.skippedChunks += static_cast<uint32_t>(r.report.skipped.size());
                 stats.unsyncedChunks += static_cast<uint32_t>(r.report.unsynced.size());
                 ++stats.opsApplied;
-                if (!r.Complete())
-                    return Fail("operation " + std::to_string(seq) + " could not be applied in full (" + std::to_string(r.report.skipped.size()) +
-                                " chunk(s) not loaded, " + std::to_string(r.report.unsynced.size()) +
-                                " without a store slot): this world no longer follows the server's (resync is networking stage 7)");
-                if (replicated) {
-                    voxel::VoxelVolume piece = sim::BuildDetachedPiece(*op, edits);
-                    if (!piece.IsEmpty())
-                        MakeCopy(op->netId, std::make_shared<voxel::VoxelModel>(std::move(piece), voxel::kWorldPalette, "piece"),
-                                 glm::vec3(simulation->World().VoxelToWorld(op->min)), glm::quat(1.0f, 0.0f, 0.0f, 0.0f), false);
+                if (replicated && !tombstones.contains(op->netId) && !copies.contains(op->netId)) {
+                    if (out.complete) {
+                        voxel::VoxelVolume piece = sim::BuildDetachedPiece(*op, edits);
+                        if (!piece.IsEmpty())
+                            MakeCopy(op->netId, std::make_shared<voxel::VoxelModel>(std::move(piece), voxel::kWorldPalette, "piece"),
+                                     glm::vec3(simulation->World().VoxelToWorld(op->min)), glm::quat(1.0f, 0.0f, 0.0f, 0.0f), false, seq);
+                    } else if (asked.insert(op->netId).second) {
+                        // Some of its voxels are not here as the server had them: never a piece from a
+                        // partial volume; the server sends the body (a BaselineEntity on bulk).
+                        modelsToAsk.push_back(op->netId);
+                    }
                 }
-                if (present) Present(*op, r, std::move(edits));
+                if (present && out.complete) Present(*op, r, std::move(edits));
                 else CloseGroup();
                 return;
             }
@@ -753,10 +937,210 @@ namespace vortex::net {
             ApplyEntity(seq, event);
         }
 
+        /// An entity event for a NetId whose copy may still come (the join's baseline is open, or a
+        /// model was asked for): kept in order, applied after the copy if newer than its base.
+        void Hold(uint32_t netId, uint32_t seq, const Event& event) {
+            std::vector<std::pair<uint32_t, Event>>& list = held[netId];
+            if (list.size() >= kMaxHeldPerId || heldCount >= kMaxHeldEvents) {
+                // Too many: they are dropped and the model is asked for again, also when a request is
+                // out already - an answer encoded before this event would miss it (its server dedups
+                // a request whose answer is still queued). An answer older than this event is
+                // discarded when it comes (review of stage 7a).
+                stats.droppedHeldEvents += static_cast<uint32_t>(list.size()) + 1u;
+                heldCount -= list.size();
+                held.erase(netId);
+                uint32_t& newest = staleBefore[netId];
+                newest = std::max(newest, seq);
+                asked.insert(netId);
+                modelsToAsk.push_back(netId);
+                return;
+            }
+            list.emplace_back(seq, event);
+            ++heldCount;
+            ++stats.heldEntityEvents;
+        }
+
+        /// A BaselineEntity: the join's baseline, or the answer to a ModelRequest.
+        void OnBaselineEntity(const BaselineEntity& b) {
+            ++stats.baselineEntities;
+            const uint32_t netId = b.spawn.netId;
+            if (const auto stale = staleBefore.find(netId); stale != staleBefore.end()) {
+                if (b.asOfOpSeq < stale->second && !tombstones.contains(netId)) {
+                    // Made before events of it this client dropped: the re-asked answer follows.
+                    ++stats.staleAnswers;
+                    return;
+                }
+                staleBefore.erase(stale);
+            }
+            asked.erase(netId);
+            if (b.spawn.kind == EntityKind::Light) {
+                if (!entities.contains(netId) && !tombstones.contains(netId)) {
+                    const sim::TemplateLight& l = b.spawn.light;
+                    entities[netId] = simulation->Scene().CreateLight({.position = l.position, .color = l.color, .intensity = l.intensity, .radius = l.radius});
+                    ++stats.lightsSpawned;
+                } else {
+                    ++stats.baselineDiscarded;
+                }
+                return;
+            }
+            const ObjectSpawn& o = b.spawn.object;
+            const bool resting = b.restTick != BaselineEntity::kAwake;
+            if (!MakeCopy(netId, std::make_shared<voxel::VoxelModel>(o.volume, voxel::kWorldPalette, "object"), o.position, o.rotation, resting,
+                          b.asOfOpSeq)) {
+                ++stats.baselineDiscarded;
+            } else if (resting) {
+                bodies.Rest(netId, b.restTick);      // samples of its rest's tick or older stay refused
+            } else {
+                bodies.Add(netId, b.tick, BodyPose{o.position, o.rotation, o.linearVelocity});
+            }
+            // The events held for it: newer than the copy's state applied, the others dropped.
+            const auto h = held.find(netId);
+            if (h == held.end()) return;
+            std::vector<std::pair<uint32_t, Event>> list = std::move(h->second);
+            heldCount -= list.size();
+            held.erase(h);
+            for (const auto& [seq, event] : list) {
+                if (copies.contains(netId) && seq > copies[netId].base) ApplyEntity(seq, event);
+                else ++stats.droppedHeldEvents;
+            }
+        }
+
+        /// Bulk messages (ChunkData, BaselineEntity, BaselineEnd), once attached.
+        void ProcessBulk() {
+            if (state != ClientState::Playing || !simulation) return;
+            const auto start = std::chrono::steady_clock::now();
+            uint32_t installs = 0;
+            // Consecutive ChunkData are installed together: their chunks catch up with one walk of
+            // the ring (recheck of stage 7a, 3). Flushed before any other message keeps its place.
+            std::vector<ChunkData> chunks;
+            const auto flush = [&] {
+                if (chunks.empty()) return;
+                sync.OnChunkData(simulation->World(), chunks, applied);
+                chunks.clear();
+            };
+            while (!pendingBulk.empty() && state == ClientState::Playing) {
+                const std::optional<MessageType> next = PeekType(pendingBulk.front());
+                const bool install = next == MessageType::ChunkData || next == MessageType::BaselineEntity;
+                // A budget per Poll, in arrival order (the server sends nearest first; the markers
+                // keep their place after the entities before them).
+                if (install && settings.maxBulkPerPoll > 0 && installs >= settings.maxBulkPerPoll) break;
+                installs += install ? 1u : 0u;
+                const std::vector<uint8_t> bytes = std::move(pendingBulk.front());
+                pendingBulk.pop_front();
+                const std::optional<MessageType> type = PeekType(bytes);
+                if (type != MessageType::ChunkData) flush();
+                if (type == MessageType::BaselineNear) {
+                    BaselineNear n;
+                    if (!Decode(bytes, n)) return Fail("malformed BaselineNear");
+                    baselineNear = true;
+                    if (stats.baselineNearTicks == 0) stats.baselineNearTicks = TicksSinceWelcome();
+                } else if (type == MessageType::ChunkData) {
+                    ChunkData d;
+                    if (!Decode(bytes, d)) return Fail("malformed ChunkData");
+                    ++stats.chunkData;
+                    chunks.push_back(std::move(d));
+                } else if (type == MessageType::BaselineEntity) {
+                    BaselineEntity b;
+                    if (!Decode(bytes, b)) return Fail("malformed BaselineEntity");
+                    OnBaselineEntity(b);
+                } else if (type == MessageType::BaselineEnd) {
+                    BaselineEnd e;
+                    if (!Decode(bytes, e)) return Fail("malformed BaselineEnd");
+                    baselineEnded = true;
+                    baselineNear = true;
+                    const uint32_t ticks = TicksSinceWelcome();
+                    if (stats.baselineNearTicks == 0) stats.baselineNearTicks = ticks;
+                    if (stats.baselineEndTicks == 0) stats.baselineEndTicks = ticks;
+                    // Held events of NetIds that no baseline holds and nobody asked for: their copies
+                    // will not come (they died, or were never replicated to this client).
+                    for (auto it = held.begin(); it != held.end();) {
+                        if (asked.contains(it->first)) {
+                            ++it;
+                            continue;
+                        }
+                        stats.droppedHeldEvents += static_cast<uint32_t>(it->second.size());
+                        heldCount -= it->second.size();
+                        it = held.erase(it);
+                    }
+                } else {
+                    return Fail("an unknown message on the bulk channel");
+                }
+            }
+            flush();
+            if (installs > 0) {
+                const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+                stats.bulkSeconds += seconds;
+                stats.maxBulkSeconds = std::max(stats.maxBulkSeconds, seconds);
+                stats.maxBulkInPoll = std::max(stats.maxBulkInPoll, installs);
+            }
+        }
+
+        /// Load reports, then the requests owed: chunks (the ring no longer covered them, or a slot
+        /// freed for an Unsynced one) and models.
+        void SyncHousekeeping() {
+            if (state != ClientState::Playing || !simulation || server == 0) return;
+            voxel::World& world = simulation->World();
+            const std::vector<glm::ivec3> loaded = world.TakeLoadedChunks();
+            if (!loaded.empty()) sync.OnLoaded(world, loaded, applied);
+            const uint32_t capacity = simulation->Chunks().Capacity(), used = simulation->Chunks().UsedCount();
+            stats.maxStoreUsed = std::max(stats.maxStoreUsed, used);
+            // A full store (networking.md "Chunk sync"): such chunks are Unsynced - not trusted, not
+            // hashed, not walkable - until slots free and they are requested whole. Logged as it grows.
+            if (const uint32_t unsynced = sync.Stats().unsynced; unsynced != unsyncedLogged) {
+                Log::Warn("Client: {} chunk(s) found no store slot ({} of {} slots used): unsynced until slots free ({} in all)",
+                          unsynced - unsyncedLogged, used, capacity, unsynced);
+                unsyncedLogged = unsynced;
+            }
+            const glm::ivec3 near = voxel::VoxelToChunk(world.WorldToVoxel(glm::dvec3(player.position)));
+            const std::vector<glm::ivec3> chunks =
+                sync.TakeRequests(capacity - std::min(used, capacity), settings.requestReserveSlots, near, kMaxChunkRequest);
+            if (!chunks.empty()) {
+                stats.chunkRequests += static_cast<uint32_t>(chunks.size());
+                transport.Send(server, Channel::Events, Encode(ChunkRequest{chunks}));
+            }
+            for (size_t i = 0; i < modelsToAsk.size(); i += kMaxModelRequest) {
+                ModelRequest m;
+                m.netIds.assign(modelsToAsk.begin() + static_cast<std::ptrdiff_t>(i),
+                                modelsToAsk.begin() + static_cast<std::ptrdiff_t>(std::min(modelsToAsk.size(), i + kMaxModelRequest)));
+                stats.modelRequests += static_cast<uint32_t>(m.netIds.size());
+                transport.Send(server, Channel::Events, Encode(m));
+            }
+            modelsToAsk.clear();
+            // Synced() walks the window's records (101 376 for the game's window): looked at every 16th
+            // Poll only until the join has synced once.
+            if (stats.joinSyncTicks == 0 && ++syncPolls % 16 == 0) {
+                if (stats.joinDataTicks == 0 && baselineEnded) {
+                    const ChunkSyncCounts n = sync.Counts();
+                    if (n.noBase == 0 && n.awaiting == 0 && n.requested == 0 && n.unsynced == 0) {
+                        stats.joinDataTicks = std::max(1u, newestSnapshot - welcome.tick);
+                        stats.joinDataSeconds = SinceWelcome();
+                    }
+                }
+                if (Synced()) {
+                    stats.joinSyncTicks = std::max(1u, newestSnapshot - welcome.tick);
+                    stats.joinSyncSeconds = SinceWelcome();
+                    if (stats.joinDataTicks == 0) {
+                        stats.joinDataTicks = stats.joinSyncTicks;
+                        stats.joinDataSeconds = stats.joinSyncSeconds;
+                    }
+                }
+            }
+        }
+
+        bool Synced() const {
+            return state == ClientState::Playing && simulation && baselineEnded && asked.empty() && held.empty() && modelsToAsk.empty() &&
+                   sync.Synced();
+        }
+
         void ApplyPending() {
             if (state != ClientState::Playing) return;
             while (!pending.empty() && state == ClientState::Playing) {
-                const EventBatch& batch = pending.front();
+                if (const WindowAck* ack = std::get_if<WindowAck>(&pending.front())) {
+                    if (!sync.OnAck(simulation->World(), *ack, applied)) return Fail("a WindowAck for a window this client did not send");
+                    pending.pop_front();
+                    continue;
+                }
+                const EventBatch& batch = std::get<EventBatch>(pending.front());
                 for (size_t i = 0; i < batch.events.size(); ++i) {
                     const uint32_t seq = batch.firstOpSeq + static_cast<uint32_t>(i);
                     if (seq <= applied) {
@@ -822,6 +1206,13 @@ namespace vortex::net {
                             return;
                         } else if (*type == MessageType::Welcome && state == ClientState::Joining) {
                             OnWelcome(e.data);
+                        } else if (e.channel == Channel::Bulk) {
+                            // ChunkData, BaselineEntity, BaselineEnd: decoded when processed (attached). The
+                            // bulk channel is not ordered against the events channel: its first message
+                            // may arrive before the Welcome.
+                            if (state != ClientState::Joining && state != ClientState::Welcomed && state != ClientState::Playing) break;
+                            stats.bulkBytes += e.data.size();
+                            pendingBulk.push_back(std::move(e.data));
                         } else if (*type == MessageType::EventBatch) {
                             EventBatch batch;
                             if (!Decode(e.data, batch)) return Fail("malformed event batch");
@@ -829,6 +1220,10 @@ namespace vortex::net {
                             if (!batch.events.empty())
                                 serverLast = std::max(serverLast, batch.firstOpSeq + static_cast<uint32_t>(batch.events.size()) - 1);
                             pending.push_back(std::move(batch));
+                        } else if (*type == MessageType::WindowAck) {
+                            WindowAck ack;
+                            if (!Decode(e.data, ack)) return Fail("malformed WindowAck");
+                            pending.push_back(std::move(ack));
                         }
                         break;
                     }
@@ -842,8 +1237,26 @@ namespace vortex::net {
 
     void Client::Poll() {
         Impl& s = *m_Impl;
+        using Clock = std::chrono::steady_clock;
         s.Receive();
+        const Clock::time_point t0 = Clock::now();
+        s.CheckWindow();
+        if (s.state == ClientState::Playing && s.simulation) {
+            const std::vector<glm::ivec3> loaded = s.simulation->World().TakeLoadedChunks();
+            if (!loaded.empty()) s.sync.OnLoaded(s.simulation->World(), loaded, s.applied);
+        }
+        const Clock::time_point t1 = Clock::now();
         s.ApplyPending();
+        s.ProcessBulk();
+        const Clock::time_point t2 = Clock::now();
+        s.SyncHousekeeping();
+        // Chunk sync's own cost (review of stage 7a), the bulk installs are timed in ProcessBulk.
+        if (s.state == ClientState::Playing) {
+            const double seconds = std::chrono::duration<double>((t1 - t0) + (Clock::now() - t2)).count();
+            s.stats.syncSeconds += seconds;
+            s.stats.maxSyncSeconds = std::max(s.stats.maxSyncSeconds, seconds);
+            ++s.stats.polls;
+        }
         s.TakeReadySamples();
         s.TryReconcile();
     }
@@ -864,7 +1277,31 @@ namespace vortex::net {
         }
         if (s.state == ClientState::Playing && s.simulation) s.MoveCopies();
         if (!s.predicting || s.state != ClientState::Playing || !s.simulation) return {};
-        const sim::PlayerStepResult r = s.PredictTick(controls);
+        sim::PlayerStepResult r;
+        s.syncHeld = !s.ReachCurrent();
+        if (s.syncHeld) {
+            // A chunk of its reach has no base (plan amendment 7): the player is not moved, the input
+            // is kept and sent (the server moves its player), snapshots are taken as they are.
+            sim::PlayerInput input = controls;
+            input.tick = s.nextTick;
+            s.history[s.nextTick % kHistoryTicks] = {true, s.nextTick, input, s.player};
+            ++s.nextTick;
+            ++s.prediction.syncHeldTicks;
+        } else {
+            if (s.needResume) {
+                // Current again: the inputs after the last snapshot taken are replayed once.
+                s.needResume = false;
+                ++s.prediction.syncResumes;
+                for (uint32_t k = s.lastTaken + 1; k < s.nextTick; ++k) {
+                    HistoryEntry& e = s.history[k % kHistoryTicks];
+                    if (!e.valid || e.tick != k) continue;
+                    s.FreshColliders();
+                    sim::StepPlayer(s.simulation->Physics(), s.simulation->Terrain(), s.character, s.player, e.input, s.welcome.player, s.Dt());
+                    e.state = s.player;
+                }
+            }
+            r = s.PredictTick(controls);
+        }
         ++s.prediction.ticks;
         s.prediction.heldTicks += r.held ? 1u : 0u;
         s.prediction.bleedTicks += s.clock.Rate() < 1.0 ? 1u : 0u;
@@ -884,7 +1321,9 @@ namespace vortex::net {
         }
         sim::Simulation& simulation = *s.simulation;
         const std::array<glm::dvec3, 1> focus = {s.predicting ? glm::dvec3(s.player.position) : s.welcome.spawn};
-        simulation.UpdateStreaming(focus);
+        // A moving window follows the player (stage 7a M-b); Poll sends its WindowUpdate.
+        if (s.moving) simulation.UpdateStreaming(focus[0], focus);
+        else simulation.UpdateStreaming(focus);
         Poll();
         const sim::PlayerStepResult r = StepPlayer(controls);
         simulation.StepPhysics();
@@ -912,7 +1351,9 @@ namespace vortex::net {
     uint8_t Client::Slot() const { return m_Impl->welcome.slot; }
 
     sim::SimulationConfig Client::MakeSimulationConfig(sim::SimulationConfig base, uint32_t storeLimit) const {
-        base.world = sim::RegionWorldConfig(m_Impl->welcome.region, base.world);
+        // The client's window (stage 7a M-b): the region's, or one that follows the player; load
+        // reports on, unloaded edits dropped (a chunk that comes back is the server's to send).
+        base.world = sim::ClientWorldConfig(m_Impl->welcome.region, m_Impl->settings.windowChunks, base.world);
         base.sessionServer = false;
         // The session's tick and gravity: every predicted step depends on them.
         base.fixedTimeStep = m_Impl->welcome.tickSeconds;
@@ -923,8 +1364,8 @@ namespace vortex::net {
         base.physics.characterMovesBodies = false;     // as the server's (its bodies are copies here)
         // This client's own rubble never blocks its predicted player (the server has none of it).
         base.scene.rubbleLayer = true;
-        // The client holds the whole region window until stage 7: its store must hold it too.
-        base.chunkCapacity = std::max(base.chunkCapacity, sim::RegionChunkCapacity(m_Impl->welcome.region));
+        // The store holds every cell of the window.
+        base.chunkCapacity = std::max(base.chunkCapacity, sim::ClientChunkCapacity(m_Impl->welcome.region, m_Impl->settings.windowChunks));
         // ... unless the owner cannot have that many (the game's GPU store): then Attach decides
         // whether the region fits.
         if (storeLimit != 0) base.chunkCapacity = std::min(base.chunkCapacity, storeLimit);
@@ -953,7 +1394,7 @@ namespace vortex::net {
             Log::Error("Client: refused a simulation with a save directory: a session world is memory only");
             return false;
         }
-        const voxel::WorldConfig expect = sim::RegionWorldConfig(region, config);
+        const voxel::WorldConfig expect = sim::ClientWorldConfig(region, s.settings.windowChunks, config);
         const bool sameWorld = std::bit_cast<uint32_t>(config.voxelSize) == std::bit_cast<uint32_t>(region.terrain.voxelSize) &&
                                simulation.World().FullHeight() && config.windowSize.x == expect.windowSize.x &&
                                config.windowSize.z == expect.windowSize.z &&
@@ -977,17 +1418,25 @@ namespace vortex::net {
                        "(build it with MakeSimulationConfig)");
             return false;
         }
+        if (!config.reportLoads || config.keepUnloadedEdits) {
+            Log::Error("Client: refused a simulation whose world keeps no load reports or keeps unloaded edits (build it with "
+                       "MakeSimulationConfig)");
+            return false;
+        }
         if (BuildHash(simulation.Materials()) != s.buildHash) {
             Log::Error("Client: refused a simulation whose material table is not the one this client announced");
             return false;
         }
         voxel::World& world = simulation.World();
-        const glm::dvec3 windowFocus = sim::RegionWindowFocus(region);
+        // A fixed window is loaded whole; a moving one (stage 7a M-b) is placed at the spawn and
+        // loads its surface and everything near the spawn, the rest streams in play.
+        const glm::dvec3 windowFocus = s.moving ? s.welcome.spawn : sim::RegionWindowFocus(region);
+        const voxel::LoadScope scope = s.moving ? voxel::LoadScope::Surface : voxel::LoadScope::Everything;
         if (whileLoading) {
             // Load in streaming steps so the owner can keep its connection alive; LoadBlocking then
             // only finishes what is left (nothing, normally).
             uint32_t step = 0;
-            for (world.Update(windowFocus); !world.IsFilled(voxel::LoadScope::Everything); world.Update(windowFocus)) {
+            for (world.Update(windowFocus); !world.IsFilled(scope); world.Update(windowFocus)) {
                 // World::Stats walks every cell: a store that fills is looked for now and then only.
                 if (++step % 64 == 0) {
                     const voxel::WorldStats ws = world.Stats();
@@ -1005,10 +1454,11 @@ namespace vortex::net {
                 return false;
             }
         }
-        world.LoadBlocking(windowFocus);
-        if (!sim::WindowIsRegions(world, region)) {
-            Log::Error("Client: refused a simulation whose window landed at ({}, {}, {}), not on the region's", world.WindowMinChunk().x,
-                       world.WindowMinChunk().y, world.WindowMinChunk().z);
+        world.LoadBlocking(windowFocus, scope);
+        const glm::ivec3 expectMin = sim::ClientWindowMinChunk(region, s.settings.windowChunks, windowFocus);
+        if (world.WindowMinChunk() != expectMin || world.WindowSize() != sim::ClientWindowSize(region, s.settings.windowChunks)) {
+            Log::Error("Client: refused a simulation whose window landed at ({}, {}, {}), not at ({}, {}, {})", world.WindowMinChunk().x,
+                       world.WindowMinChunk().y, world.WindowMinChunk().z, expectMin.x, expectMin.y, expectMin.z);
             return false;
         }
         const voxel::WorldStats ws = world.Stats();
@@ -1029,10 +1479,20 @@ namespace vortex::net {
         }
         // The world must be what this client's generator makes, untouched: another generator, or a
         // world edited before Attach, would follow the server's operations into another world.
-        if (const uint32_t differ = CheckProbes(s.ownProbes, world); differ > 0) {
+        // A moving window checks the probes it has loaded (the others are checked against the
+        // generator at the Welcome).
+        std::vector<ProbeHash> loadedProbes;
+        for (const ProbeHash& p : s.ownProbes)
+            if (world.IsChunkLoaded(p.chunk)) loadedProbes.push_back(p);
+        if (const uint32_t differ = CheckProbes(loadedProbes, world); differ > 0) {
             Log::Error("Client: refused a simulation whose world differs from its generator's in {} of {} probe chunks (another "
                        "generator, or edited before Attach)",
-                       differ, s.ownProbes.size());
+                       differ, loadedProbes.size());
+            return false;
+        }
+        if (!s.moving && loadedProbes.size() != s.ownProbes.size()) {
+            Log::Error("Client: {} of {} probe chunks are not loaded after the region's window was", s.ownProbes.size() - loadedProbes.size(),
+                       s.ownProbes.size());
             return false;
         }
         s.simulation = &simulation;
@@ -1046,7 +1506,16 @@ namespace vortex::net {
         const std::array<glm::dvec3, 1> focus = {s.welcome.spawn};
         simulation.Terrain().Update(focus, simulation.Config().colliderRadius);
         simulation.Terrain().Flush();
+        // Nothing is based yet (the ack, kept in the stream, bases what is loaded). The window is the
+        // one the Welcome's WindowUpdate named; should it not be, the next update says so (nothing has
+        // been applied to any chunk yet, so no reset is needed).
+        s.windowRevision = world.WindowRevision();
+        (void)world.TakeWindowSteps();       // the placement: named by the Welcome's update (or the next line)
+        if (const SyncBox window{world.WindowMinChunk(), world.WindowSize()}; window != s.sync.Window()) s.SendWindow(window, false);
+        s.sync.OnLoaded(world, world.TakeLoadedChunks(), s.applied);
         s.ApplyPending();
+        s.ProcessBulk();
+        s.SyncHousekeeping();
         s.TakeReadySamples();
         s.TryReconcile();
         return s.state == ClientState::Playing;
@@ -1054,7 +1523,19 @@ namespace vortex::net {
 
     uint32_t Client::AppliedOpSeq() const { return m_Impl->applied; }
     uint32_t Client::ServerOpSeq() const { return m_Impl->serverLast; }
-    uint32_t Client::LogEnd() const { return m_Impl->welcome.logEnd; }
+    uint32_t Client::JoinOpSeq() const { return m_Impl->welcome.joinOpSeq; }
+    bool Client::Synced() const { return m_Impl->Synced(); }
+    SyncBox Client::SyncWindow() const { return m_Impl->syncBox; }
+    SyncBox Client::Window() const { return m_Impl->sync.Window(); }
+    bool Client::WindowMoves() const { return m_Impl->moving; }
+    uint32_t Client::ChunksToStart() const {
+        const Impl& s = *m_Impl;
+        if (s.predicting) return 0;
+        if (s.state != ClientState::Playing || !s.simulation) return s.sync.NotCurrent();
+        // The server holds the player at the spawn until its client predicts (it sends no inputs).
+        return s.NotCurrentNear(glm::vec3(s.welcome.spawn), false);
+    }
+    const ChunkSync& Client::Sync() const { return m_Impl->sync; }
     const ClientStats& Client::Stats() const { return m_Impl->stats; }
 
     std::vector<EntityInfo> Client::Entities() const {
@@ -1093,7 +1574,11 @@ namespace vortex::net {
     }
 
     voxel::WorldHashResult Client::Hash() const {
-        if (!m_Impl->simulation) return {};
-        return RegionHash(m_Impl->simulation->World(), m_Impl->welcome.region);
+        const Impl& s = *m_Impl;
+        if (!s.simulation) return {};
+        voxel::WorldHashResult h = voxel::WorldHash(s.simulation->World(), s.syncBox.min, s.syncBox.Max());
+        // A chunk without a current base is not this client's copy of the server's (stage 7a).
+        h.notLoaded += s.sync.NotCurrent();
+        return h;
     }
 }

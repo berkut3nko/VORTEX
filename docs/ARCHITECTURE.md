@@ -829,7 +829,7 @@ network client will predict with (`docs/design/networking.md`).
 
 `vortex.net` (library `Vortex::Net`, GPU-free) is the M1 protocol of `docs/design/networking.md`; it runs over ENet
 (UDP) between `vortex_server` and the game (`Shredborne --connect`) and in one process over loopback transports for
-the tests ("Stage 3 as built" to "Stage 6 as built" there have every choice).
+the tests ("Stage 3 as built" to "Stage 7a as built" there have every choice).
 
 * **Region.** `sim::RegionDesc` (`vortex.sim:region`) = template id, seed, play bounds (whole chunks), height
   range, generator and `TerrainSettings` (the session's voxel size included). `sim::RegionWorldConfig` turns it into
@@ -848,19 +848,43 @@ the tests ("Stage 3 as built" to "Stage 6 as built" there have every choice).
   delay, jitter, duplicates, reordering, a rate limit and outages, keeping ENet's promise on reliable channels
   (resent, in order).
 * **Server.** `net::Server` owns one `sim::Simulation` built with `sim::ServerConfig` and the region's world. A tick:
-  receive (handshake: `Hello` with protocol version, `net::BuildHash` and token -> `Welcome` + the whole event log,
-  or `Refuse`) -> streaming -> queued casts within the cast work budget (`sim::CastWorkOf`) and the event byte
-  budget -> physics -> lifetimes -> the tick's `EventBatch`es (paced per peer by `ReliableBytesInFlight`) ->
-  a `Snapshot` per client on even ticks; since stage 4 the inputs go into each player's queue on receive and every
-  player steps (`sim::StepPlayer`, slot order) between streaming and the casts. Every event is encoded once,
-  numbered (`opSeq`) and kept. Casts must fit the window
+  receive (handshake: `Hello` with protocol version, `net::BuildHash` and token -> `Welcome` with the join point
+  `joinOpSeq`, or `Refuse`; a joined client's `WindowUpdate` / `ChunkRequest` / `ModelRequest`) -> streaming ->
+  queued casts within the cast work budget (`sim::CastWorkOf`) and the event byte budget -> physics -> lifetimes ->
+  every joined peer's `EventBatch`es (never held), then its bulk while its bytes in flight are under its
+  `net::BulkPacer` window -> a `Snapshot` per client on even ticks; since stage 4 the inputs go into each player's queue
+  on receive and every player steps (`sim::StepPlayer`, slot order) between streaming and the casts. Every event is
+  encoded once and numbered (`opSeq`); the encoded events stay in a backlog only until every joined peer has them.
+  Casts must fit the window
   (`sim::CastFitsRegion`). A full store, an incomplete operation or an island search that meets an unloaded chunk
   marks it `Failed`, which ends the session (peers disconnected, nothing more sent).
 * **Client.** `net::Client` does not own a simulation: once `Welcomed`, the owner builds one from
   `MakeSimulationConfig` / `MakeGenerator` and gives it to `Attach`, which checks it against the session, loads the
   region window, checks that the store held it and that the probe chunks are its generator's, and applies the events
-  in `opSeq` order with `sim::ApplyOp` (duplicates ignored; a gap or an operation it cannot apply in full is a
-  failure, and a failed client disconnects). Terrain is never predicted; no operation is ever sent.
+  after its join point in `opSeq` order through `net::ChunkSync` (duplicates ignored; a gap is a failure, and a failed
+  client disconnects). Terrain is never predicted; no operation is ever sent.
+* **Chunk sync (stage 7a).** A joiner gets no history as events: its `WindowUpdate` (sent on `Welcome`) is answered by
+  a `WindowAck{asOfOpSeq, modified bits}` on the events channel; the server keeps a sparse modified map (chunk ->
+  last opSeq, fed from the chunks each operation changed, never cleared) and sends the modified chunks of the window as
+  `ChunkData{chunk, asOfOpSeq, RLE}` on bulk, encoded when dequeued (nearest first, request answers ahead), then the
+  entity baseline (`BaselineEntity` per live NetId with its own asOf and rest tick, nearest the spawn first,
+  `BaselineNear` after those within 32 m, `BaselineEnd`). Bulk is paced per peer by a delay-based window over all its
+  reliable bytes; a message that does not fit waits only for that peer's bulk in flight (`ITransport::ChannelBytesInFlight`). The client keeps a
+  state and a base per chunk (`NoBase`, `Awaiting`, `Based`, `Requested`, `Unsynced`) and one rule: an operation is
+  applied to a chunk only if the chunk is current and the opSeq is above its base, live or replayed from its ring of
+  the last 1024 operations (`OpRing`); a chunk the ring no longer covers, or that found no store slot, is requested
+  whole (`ChunkRequest`). Entity events for a NetId whose copy has not come yet are held; a replicated `Detach` over
+  chunks without a base asks for its body (`ModelRequest`). The player starts once the chunks within 32 m are current
+  and the baseline near the spawn is in (`BaselineNear`); hashes are compared over the client's sync box (its window inside the server's) once it
+  is `Synced()`. The client window is the region's when it fits `ClientSettings::windowChunks` (the game: 48); a wider
+  region (the 250 m arena) gets a `windowChunks`-wide window that follows the player with one chunk of slack
+  (`sim::ClientWorldConfig`, `WorldConfig::recenterSlackChunks`): every step (`World::TakeWindowSteps`, taken at the start
+  of `Poll`, two or more between `Poll`s each sent in order) is a `WindowUpdate`, whose ack marks the entering
+  modified chunks; chunks that leave are dropped (`keepUnloadedEdits` false) and come back from the server; chunks
+  beyond the server's window are never edited (current once loaded). An installed `ChunkData` is a content change of
+  the whole chunk for the renderer (dirty slot) and for physics (the change's edit box is the chunk: no body is
+  simulated against its old collider). A window-sized client's hash is `WorldHash` over its sync box, compared with the
+  server's over the same box at the same opSeq once the client is `Synced()`.
 * **Players (stage 4).** `sim::StepPlayer(physics, terrain, character, state, input, tuning, dt)` is the one
   movement rule (server, predicting client, offline game): integer inputs (`PlayerInput`: move axes, yaw, pitch,
   button levels), edges derived from the levels before, a cooldown, the `HasCollider` gate. A client sends the inputs
@@ -905,7 +929,7 @@ the tests ("Stage 3 as built" to "Stage 6 as built" there have every choice).
   A player's cast hits the replicated body in front of the terrain.
   Clients make their own rubble (shred.md stage 1e lifetimes and caps) from `netId`-0 pieces and fragments and from
   copies evicted `ToRubble`. `net::CompareEntities` / `EntityListHash` are the entity check (`vortex_server`,
-  `tools/session-check.sh`); the wire `EntityCheck` is stage 7.
+  `tools/session-check.sh`); the wire `EntityCheck` is stage 7b.
 * **Agreement.** `net::RegionHash` is `voxel::WorldHash` over the region window; probe chunks in `Welcome` compare
   the generators; `buildHash` covers the generator's golden values (`voxel::kGeneratorGoldenHash`) and the material
   table (`voxel::MaterialTableHash`).

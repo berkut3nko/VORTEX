@@ -58,6 +58,12 @@ export namespace vortex::net {
         virtual double RoundTripSeconds(PeerId peer) const = 0;
         /// @brief Bytes on reliable channels sent to `peer` and not yet delivered.
         virtual size_t ReliableBytesInFlight(PeerId peer) const = 0;
+        /// @brief The part of ReliableBytesInFlight sent on `channel` (review of stage 7a: the bulk
+        /// pacer tells its own bytes from the live events'). The default is the upper bound.
+        virtual size_t ChannelBytesInFlight(PeerId peer, Channel channel) const {
+            (void)channel;
+            return ReliableBytesInFlight(peer);
+        }
         /// @brief Closes the connection; both sides get a Disconnected event (this side at once).
         virtual void Disconnect(PeerId peer) = 0;
         /// @brief Hands whatever Send queued to the network now (ENet: one datagram per peer instead
@@ -84,6 +90,7 @@ export namespace vortex::net {
         bool Poll(TransportEvent& out) override;
         double RoundTripSeconds(PeerId peer) const override;
         size_t ReliableBytesInFlight(PeerId peer) const override;
+        size_t ChannelBytesInFlight(PeerId peer, Channel channel) const override;
         void Disconnect(PeerId peer) override;
 
     private:
@@ -105,6 +112,13 @@ export namespace vortex::net {
         double duplicate = 0.0;          ///< State channel: probability a packet arrives twice.
         double reorder = 0.0;            ///< State channel: probability a packet is held back one extra delay.
         double bytesPerSecond = 0.0;     ///< Link rate (0 = unlimited): packets queue behind each other.
+        /// Per-peer link rate (0 = unlimited): each peer's packets queue behind that peer's own (a
+        /// joiner's slow downlink; stage 7a), after the shared link above.
+        double peerBytesPerSecond = 0.0;
+        /// Each peer draws its loss, jitter, duplicates and reordering from a random stream of its own
+        /// (seeded from the transport's seed and the peer): another peer's traffic does not change
+        /// them, so two runs that differ in one peer compare the others packet for packet (stage 7a).
+        bool rngPerPeer = false;
         /// Reliable resend after a loss (ENet resends after about one round trip); 0 = 2 x delay +
         /// jitter + 20 ms.
         double resendSeconds = 0.0;
@@ -142,6 +156,7 @@ export namespace vortex::net {
         bool Poll(TransportEvent& out) override;
         double RoundTripSeconds(PeerId peer) const override;
         size_t ReliableBytesInFlight(PeerId peer) const override;
+        size_t ChannelBytesInFlight(PeerId peer, Channel channel) const override;
         void Disconnect(PeerId peer) override;
         /// @brief Hands the packets that are due to the inner transport and flushes it.
         void Flush() override;
@@ -170,6 +185,10 @@ export namespace vortex::net {
         std::deque<Packet> m_Queue;      // sorted by (due, order)
         std::unordered_map<uint64_t, double> m_LastDue;   // (peer, channel) -> latest reliable due time
         double m_LinkFree = 0.0;
+        std::unordered_map<PeerId, double> m_PeerLinkFree;
+        uint64_t m_Seed = 0;
+        std::unordered_map<PeerId, Rng> m_PeerRng;
+        Rng* m_Active = nullptr;          // the stream Uniform() draws from (Send sets it)
         uint64_t m_Order = 0;
         ImpairmentStats m_Stats;
     };

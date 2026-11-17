@@ -11,6 +11,8 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <set>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -79,15 +81,54 @@ namespace {
             base.physics.maxContactConstraints = 512;
         }
 
-        net::Welcome MakeWelcome(uint32_t logEnd = 0) const {
+        net::Welcome MakeWelcome(uint32_t joinOpSeq = 0) const {
             net::Welcome w;
             w.region = SmallRegion();
-            w.logEnd = logEnd;
+            w.joinOpSeq = joinOpSeq;
             w.probes = net::ProbeChunks(w.region, *sim::MakeRegionGenerator(w.region, Ids()));
             return w;
         }
 
         void Send(const std::vector<uint8_t>& bytes) { serverEnd.Send(peer, net::Channel::Events, bytes); }
+        void SendBulk(const std::vector<uint8_t>& bytes) { serverEnd.Send(peer, net::Channel::Bulk, bytes); }
+
+        /// The join of stage 7a: Welcome, the ack of the client's first WindowUpdate (the region's
+        /// window; `modified` chunks will come as ChunkData, the rest are pristine at `asOf`), and
+        /// optionally the end of an empty entity baseline.
+        void Join(const net::Welcome& w, bool baselineEnd = true, const std::vector<glm::ivec3>& modified = {}) {
+            Send(net::Encode(w));
+            Ack(w.joinOpSeq, modified);
+            if (baselineEnd) SendBulk(net::Encode(net::BaselineEnd{w.joinOpSeq, 0}));
+        }
+        void Ack(uint32_t asOf, const std::vector<glm::ivec3>& modified = {}, uint32_t windowSeq = 1) {
+            const net::SyncBox box = net::RegionSyncBox(SmallRegion());
+            net::WindowAck ack;
+            ack.windowSeq = windowSeq;
+            ack.asOfOpSeq = asOf;
+            ack.modified = voxel::VoxelMask(box.size);
+            for (const glm::ivec3& c : modified) ack.modified.Set(c - box.min, true);
+            Send(net::Encode(ack));
+        }
+        /// `chunk` as `world` has it, on the bulk channel.
+        void SendChunk(const voxel::World& world, const glm::ivec3& chunk, uint32_t asOf) {
+            net::ChunkData d;
+            d.chunk = chunk;
+            d.asOfOpSeq = asOf;
+            EXPECT_TRUE(world.EncodeChunkAt(chunk, d.rle));
+            SendBulk(net::Encode(d));
+        }
+        /// Reads what the client sent on the events channel: requests are counted per coordinate / id.
+        void ReadRequests() {
+            net::TransportEvent e;
+            while (serverEnd.Poll(e)) {
+                if (e.type == net::TransportEvent::Type::Disconnected) left = true;
+                if (e.type != net::TransportEvent::Type::Received || e.channel != net::Channel::Events) continue;
+                net::ChunkRequest cr;
+                net::ModelRequest mr;
+                if (net::Decode(e.data, cr)) chunkRequests.insert(chunkRequests.end(), cr.chunks.begin(), cr.chunks.end());
+                if (net::Decode(e.data, mr)) modelRequests.insert(modelRequests.end(), mr.netIds.begin(), mr.netIds.end());
+            }
+        }
 
         /// Events first..last as one batch.
         void SendBatch(uint32_t first, uint32_t last, sim::WorldOp (*make)(uint32_t) = BoxEvent) {
@@ -119,12 +160,23 @@ namespace {
         sim::SimulationConfig base;
         std::unique_ptr<sim::Simulation> simulation;
         bool left = false;
+        std::vector<glm::ivec3> chunkRequests;
+        std::vector<uint32_t> modelRequests;
     };
+
+    /// A world with events 1..count applied once each (a server's, for chunk data).
+    std::unique_ptr<FakeServer> ReferenceWorld(uint32_t count, sim::WorldOp (*make)(uint32_t) = BoxEvent) {
+        auto ref = std::make_unique<FakeServer>();
+        ref->Join(ref->MakeWelcome());
+        EXPECT_TRUE(ref->Attach());
+        for (uint32_t i = 1; i <= count; ++i) sim::ApplyOp(ref->simulation->World(), make(i));
+        return ref;
+    }
 
     /// The hash of the region after events 1..count applied once each, on a fresh world.
     uint64_t ReferenceHash(uint32_t count, sim::WorldOp (*make)(uint32_t) = BoxEvent) {
         FakeServer ref;
-        ref.Send(net::Encode(ref.MakeWelcome()));
+        ref.Join(ref.MakeWelcome());
         EXPECT_TRUE(ref.Attach());
         for (uint32_t i = 1; i <= count; ++i) sim::ApplyOp(ref.simulation->World(), make(i));
         return net::RegionHash(ref.simulation->World(), SmallRegion()).hash;
@@ -135,7 +187,7 @@ namespace {
 // applied from 8 on; batches that arrive before Attach are kept and applied by it.
 TEST(Client, OverlappingBatchesApplyEachEventOnce) {
     FakeServer s;
-    s.Send(net::Encode(s.MakeWelcome()));
+    s.Join(s.MakeWelcome());
     s.SendBatch(1, 7);
     s.SendBatch(5, 9);
     ASSERT_TRUE(s.Attach());
@@ -154,7 +206,7 @@ TEST(Client, OverlappingBatchesApplyEachEventOnce) {
 // A gap fails the client, and a failed client leaves the session (its slot is freed on the server).
 TEST(Client, AGapInTheStreamFailsTheClientAndItLeaves) {
     FakeServer s;
-    s.Send(net::Encode(s.MakeWelcome()));
+    s.Join(s.MakeWelcome());
     s.SendBatch(1, 3);
     ASSERT_TRUE(s.Attach());
     s.SendBatch(5, 6);                           // 4 is missing
@@ -194,30 +246,44 @@ TEST(Client, AWelcomeWithProbesOutsideTheWindowIsRefused) {
     }
     {
         FakeServer s;                             // the unforged one is taken
-        s.Send(net::Encode(s.MakeWelcome()));
+        s.Join(s.MakeWelcome());
         s.client->Poll();
         EXPECT_EQ(s.client->State(), net::ClientState::Welcomed);
         EXPECT_EQ(s.client->Stats().probeMismatches, 0u);
     }
 }
 
-// A client that joins late presents only live events: the join log (and a template's operations
-// in it) is history, not blasts to show again.
-TEST(Client, ALateJoinerPresentsOnlyLiveEvents) {
+// Stage 7a: a joiner's stream starts after its join point J. What was made before reaches it as
+// chunk data (the ack marks the chunks ops 1..3 changed; their ChunkData follows on bulk); only events
+// after J are presented, and the world equals the server's.
+TEST(Client, ALateJoinerPresentsOnlyEventsAfterItsJoinPoint) {
+    std::unique_ptr<FakeServer> ref = ReferenceWorld(3, CarveEvent);
+    std::vector<glm::ivec3> changed;
+    for (uint32_t i = 1; i <= 3; ++i) {
+        glm::ivec3 lo, hi;
+        ASSERT_TRUE(sim::OpChunkRange(CarveEvent(i), lo, hi));
+        for (int y = lo.y; y <= hi.y; ++y)
+            for (int z = lo.z; z <= hi.z; ++z)
+                for (int x = lo.x; x <= hi.x; ++x) changed.push_back({x, y, z});
+    }
     net::ClientSettings presenting;
     presenting.presentation = true;
     FakeServer s(presenting);
-    s.Send(net::Encode(s.MakeWelcome(3)));
-    s.SendBatch(1, 3, CarveEvent);
+    s.Join(s.MakeWelcome(3), true, changed);
+    for (const glm::ivec3& c : changed) s.SendChunk(ref->simulation->World(), c, 3);
+    s.SendBatch(1, 3, CarveEvent);               // nothing at or before J is ever sent: duplicates if it were
     ASSERT_TRUE(s.Attach());
     EXPECT_EQ(s.client->AppliedOpSeq(), 3u);
+    EXPECT_EQ(s.client->Stats().duplicateEvents, 3u);
     EXPECT_TRUE(s.client->TakePresentations().empty());
+    EXPECT_TRUE(s.client->Synced());
     s.SendBatch(4, 4, CarveEvent);
     s.client->Poll();
     const std::vector<sim::BlastResult> live = s.client->TakePresentations();
     ASSERT_EQ(live.size(), 1u);
     EXPECT_EQ(live[0].ops.size(), 1u);
     EXPECT_EQ(s.client->Hash().hash, ReferenceHash(4, CarveEvent));
+    EXPECT_TRUE(s.client->Hash().Complete());
 }
 
 // The world the client is given must be the one its generator makes, untouched: a simulation built
@@ -225,7 +291,7 @@ TEST(Client, ALateJoinerPresentsOnlyLiveEvents) {
 TEST(Client, AttachRefusesAWorldItsGeneratorDidNotMake) {
     {
         FakeServer s;
-        s.Send(net::Encode(s.MakeWelcome()));
+        s.Join(s.MakeWelcome());
         s.client->Poll();
         ASSERT_EQ(s.client->State(), net::ClientState::Welcomed);
         sim::Simulation other(s.client->MakeSimulationConfig(s.base));
@@ -235,7 +301,7 @@ TEST(Client, AttachRefusesAWorldItsGeneratorDidNotMake) {
     }
     {
         FakeServer s;
-        s.Send(net::Encode(s.MakeWelcome()));
+        s.Join(s.MakeWelcome());
         s.client->Poll();
         ASSERT_EQ(s.client->State(), net::ClientState::Welcomed);
         sim::Simulation edited(s.client->MakeSimulationConfig(s.base));
@@ -259,7 +325,7 @@ TEST(Client, AttachRefusesAWorldItsGeneratorDidNotMake) {
 // refused, and the session's own config sizes the store for the region.
 TEST(Client, AttachRefusesAStoreTooSmallForTheRegion) {
     FakeServer s;
-    s.Send(net::Encode(s.MakeWelcome()));
+    s.Join(s.MakeWelcome());
     s.client->Poll();
     ASSERT_EQ(s.client->State(), net::ClientState::Welcomed);
     sim::SimulationConfig small = s.client->MakeSimulationConfig(s.base);
@@ -283,7 +349,7 @@ TEST(Client, AttachRefusesAStoreTooSmallForTheRegion) {
 TEST(Client, ASessionThatEndsWhileTheRegionLoadsIsNotAttached) {
     for (const bool disconnect : {true, false}) {
         FakeServer s;
-        s.Send(net::Encode(s.MakeWelcome()));
+        s.Join(s.MakeWelcome());
         s.client->Poll();
         ASSERT_EQ(s.client->State(), net::ClientState::Welcomed);
         sim::Simulation simulation(s.client->MakeSimulationConfig(s.base));
@@ -314,7 +380,7 @@ TEST(Client, ASessionThatEndsWhileTheRegionLoadsIsNotAttached) {
 // the rest: 0.3 s at 60 Hz is 18 ticks, as 8 + 8 + 2.
 TEST(Client, TicksAboveTheCallersCapAreCarriedToTheNextFrames) {
     FakeServer s;
-    s.Send(net::Encode(s.MakeWelcome()));
+    s.Join(s.MakeWelcome());
     s.client->Poll();
     ASSERT_EQ(s.client->State(), net::ClientState::Welcomed);
     EXPECT_EQ(s.client->TicksDue(0.3 + 1.0e-6, 8), 8u);
@@ -330,7 +396,7 @@ TEST(Client, TicksAboveTheCallersCapAreCarriedToTheNextFrames) {
 // moving again (Layer::Rubble: no predicted player meets it).
 TEST(Client, ALateSnapshotAfterAnEntityRestKeepsTheRestPose) {
     FakeServer s;
-    s.Send(net::Encode(s.MakeWelcome()));
+    s.Join(s.MakeWelcome());
     ASSERT_TRUE(s.Attach());
     voxel::VoxelVolume crate(glm::ivec3(4));
     crate.FillBox(glm::ivec3(0), glm::ivec3(4), Ids().planks);
@@ -449,7 +515,7 @@ namespace {
 // moves (Layer::Rubble). Now the sample waits, and the copy ends moving and follows it.
 TEST(Client, ASnapshotsSamplesWaitForItsEvents) {
     FakeServer s;
-    s.Send(net::Encode(s.MakeWelcome()));
+    s.Join(s.MakeWelcome());
     ASSERT_TRUE(s.Attach());
     net::EventBatch batch;
     batch.firstOpSeq = 1;
@@ -494,7 +560,7 @@ TEST(Client, ASnapshotsSamplesWaitForItsEvents) {
 // sample waits for the model, the copy is re-made moving, and it stays on the sample.
 TEST(Client, AnObjectModelAndItsSnapshotInOnePollKeepTheCopyOnTheSample) {
     FakeServer s;
-    s.Send(net::Encode(s.MakeWelcome()));
+    s.Join(s.MakeWelcome());
     ASSERT_TRUE(s.Attach());
     const glm::vec3 restAt(1.0f, 12.0f, 1.0f);
     net::EventBatch batch;
@@ -546,7 +612,7 @@ TEST(Client, AnObjectModelAndItsSnapshotInOnePollKeepTheCopyOnTheSample) {
 // Now a joiner waits for a snapshot close to the newest one (ClientSettings::startFreshTicks).
 TEST(Client, AJoinerStartsPredictingFromAFreshSnapshot) {
     FakeServer s;
-    s.Send(net::Encode(s.MakeWelcome()));
+    s.Join(s.MakeWelcome());
     ASSERT_TRUE(s.Attach());
     auto snapshot = [&](uint32_t tick, uint32_t lastOpSeq) {
         net::Snapshot snap;
@@ -570,4 +636,338 @@ TEST(Client, AJoinerStartsPredictingFromAFreshSnapshot) {
     s.client->RunTick({});
     ASSERT_TRUE(s.client->Predicting());
     EXPECT_GT(s.client->PredictTick(), 60u);
+}
+
+// Stage 7a, review case of the plan (amendment 8): the start gate (chunks within 32 m current, the
+// entity baseline ended) is evaluated before the fresh-snapshot rule, and while it is closed the
+// waiting snapshots are dropped, so a gate closed for longer than startWaitTicks does not let a stale
+// snapshot start the player when it opens.
+TEST(Client, AJoinerHeldByTheStartGateStartsFromAFreshSnapshot) {
+    FakeServer s;
+    s.Join(s.MakeWelcome(), false);              // the baseline has not ended
+    ASSERT_TRUE(s.Attach());
+    auto snapshot = [&](uint32_t tick) {
+        net::Snapshot snap;
+        snap.tick = tick;
+        snap.hasOwner = true;
+        snap.owner.position = glm::vec3(s.client->Spawn());
+        s.serverEnd.Send(s.peer, net::Channel::State, net::Encode(snap));
+    };
+    uint32_t t = 2;
+    for (; t <= 300; t += 2) {                   // 150 snapshots: longer than startWaitTicks (120)
+        snapshot(t);
+        s.client->RunTick({});
+    }
+    EXPECT_FALSE(s.client->Predicting());
+    EXPECT_GT(s.client->Prediction().startGateDrops, 100u);
+    s.SendBulk(net::Encode(net::BaselineEnd{0, 0}));
+    snapshot(t);
+    s.client->RunTick({});
+    ASSERT_TRUE(s.client->Predicting());
+    EXPECT_GT(s.client->PredictTick(), t) << "started from a stale snapshot";
+    EXPECT_EQ(s.client->Prediction().staleStarts, 0u);
+}
+
+namespace {
+    /// 1: a netId-0 Detach (client rubble), 2: the Detach of server body 9; both of 6 x 4 x 6 stone
+    /// voxels of chunk (0, 2, 0).
+    sim::WorldOp DetachEvent(uint32_t i) {
+        voxel::VoxelMask m(glm::ivec3(6, 4, 6));
+        for (int z = 0; z < 6; ++z)
+            for (int y = 0; y < 4; ++y)
+                for (int x = 0; x < 6; ++x) m.Set(x, y, z, true);
+        return sim::WorldOp::Detach(i == 1 ? glm::ivec3(4, 90, 4) : glm::ivec3(14, 90, 14), m, glm::vec3(0.0f), i == 2 ? 9u : 0u);
+    }
+
+    /// A sphere half in the ground, half in the air, at (20, 96, 20) voxels: chunks (0, 2..3, 0).
+    voxel::SphereQ GroundSphere() { return voxel::SphereQ{glm::ivec3(20, 96, 20) * 16 + glm::ivec3(8), 5 * 16}; }
+    /// 1: stone -> gold, 2: air -> stone, on the same voxels. The pair is not idempotent: applying
+    /// 1..2 again on the result turns the former air into gold (where the reference has stone).
+    sim::WorldOp SwapPair(uint32_t i) {
+        return i == 1 ? sim::WorldOp::Swap(GroundSphere(), Ids().stone, Ids().gold) : sim::WorldOp::Swap(GroundSphere(), 0, Ids().stone);
+    }
+    std::vector<glm::ivec3> RangeOf(const sim::WorldOp& op) {
+        std::vector<glm::ivec3> out;
+        glm::ivec3 lo, hi;
+        if (!sim::OpChunkRange(op, lo, hi)) return out;
+        for (int y = lo.y; y <= hi.y; ++y)
+            for (int z = lo.z; z <= hi.z; ++z)
+                for (int x = lo.x; x <= hi.x; ++x) out.push_back({x, y, z});
+        return out;
+    }
+}
+
+// Stage 7a (networking.md "Testing": bulk delivered ahead of events with a pair on the same voxels;
+// plan amendment 4): chunk data and events reach a client in either order and the base rule makes the
+// world equal: data as of 2 before the batch 1..2 (both events skipped for those chunks: seq <= base),
+// or the batch before data as of 1 (installed, then op 2 replayed from the ring).
+TEST(Client, BulkAheadOfEventsWithASwapPairOnTheSameVoxels) {
+    std::unique_ptr<FakeServer> at1 = ReferenceWorld(1, SwapPair), at2 = ReferenceWorld(2, SwapPair);
+    const uint64_t expect = net::RegionHash(at2->simulation->World(), SmallRegion()).hash;
+    ASSERT_NE(expect, net::RegionHash(at1->simulation->World(), SmallRegion()).hash);
+    const std::vector<glm::ivec3> chunks = RangeOf(SwapPair(1));
+    {
+        FakeServer s;                              // data as of 2 first, then the events
+        s.Join(s.MakeWelcome());
+        ASSERT_TRUE(s.Attach());
+        for (const glm::ivec3& c : chunks) s.SendChunk(at2->simulation->World(), c, 2);
+        s.client->Poll();
+        s.SendBatch(1, 2, SwapPair);
+        s.client->Poll();
+        EXPECT_EQ(s.client->Hash().hash, expect);
+        for (const glm::ivec3& c : chunks) {
+            if (!sim::OpTouchesChunk(SwapPair(1), c)) continue;
+            EXPECT_EQ(s.client->Sync().SkippedAtOrBelowBase(c), 2u) << "an event at or below its chunk's base was applied";
+            EXPECT_EQ(s.client->Sync().AppliedOps(c), 0u);
+        }
+        EXPECT_TRUE(s.client->Synced());
+    }
+    {
+        FakeServer s;                              // the events first, then data as of 1
+        s.Join(s.MakeWelcome());
+        ASSERT_TRUE(s.Attach());
+        s.SendBatch(1, 2, SwapPair);
+        s.client->Poll();
+        for (const glm::ivec3& c : chunks) s.SendChunk(at1->simulation->World(), c, 1);
+        s.client->Poll();
+        EXPECT_EQ(s.client->Hash().hash, expect);
+        EXPECT_GT(s.client->Sync().Stats().replays, 0u);
+        EXPECT_TRUE(s.client->Synced());
+    }
+}
+
+// Stage 7a (networking.md "Testing": a client with a deliberately small store): an operation that
+// needs a slot the store does not have marks its chunks Unsynced (no Fail); nothing is requested while
+// the store is full; once slots are free each chunk is requested exactly once, and its data makes the
+// hash equal again.
+TEST(Client, ASmallStoreMarksChunksUnsyncedAndRequestsEachOnceWhenSlotsFree) {
+    // Boxes in the air above the ground (Empty chunks: each needs a slot to change).
+    auto airBox = [](uint32_t i) {
+        const glm::ivec3 p(static_cast<int>(i) * 40 - 120, 140, 0);
+        return sim::WorldOp::Box(p, p + glm::ivec3(2), Ids().gold);
+    };
+    std::unique_ptr<FakeServer> ref = ReferenceWorld(5, airBox);
+    FakeServer s;
+    s.Join(s.MakeWelcome());
+    ASSERT_TRUE(s.Attach());
+    std::vector<uint32_t> taken;
+    for (uint32_t slot; (slot = s.simulation->Chunks().Alloc()) != voxel::ChunkStore::kInvalidSlot;) taken.push_back(slot);
+    s.SendBatch(1, 5, airBox);
+    for (int i = 0; i < 5; ++i) s.client->Poll();
+    s.ReadRequests();
+    EXPECT_EQ(s.client->State(), net::ClientState::Playing);
+    EXPECT_EQ(s.client->Stats().unsyncedChunks, 5u);
+    EXPECT_EQ(s.chunkRequests.size(), 0u) << "requested while the store is full";
+    EXPECT_FALSE(s.client->Synced());
+    EXPECT_FALSE(s.client->Hash().Complete());
+    for (const uint32_t slot : taken) (void)s.simulation->Chunks().Release(slot);
+    for (int i = 0; i < 5; ++i) s.client->Poll();
+    s.ReadRequests();
+    ASSERT_EQ(s.chunkRequests.size(), 5u);
+    std::set<std::tuple<int, int, int>> unique;
+    for (const glm::ivec3& c : s.chunkRequests) unique.insert({c.x, c.y, c.z});
+    EXPECT_EQ(unique.size(), 5u) << "a chunk requested twice";
+    for (const glm::ivec3& c : s.chunkRequests) s.SendChunk(ref->simulation->World(), c, 5);
+    for (int i = 0; i < 5; ++i) s.client->Poll();
+    s.ReadRequests();
+    EXPECT_EQ(s.chunkRequests.size(), 5u);
+    EXPECT_TRUE(s.client->Synced());
+    EXPECT_EQ(s.client->Hash().hash, net::RegionHash(ref->simulation->World(), SmallRegion()).hash);
+}
+
+// Stage 7a (networking.md "Entity replication": "an ObjectModel for an unknown id waits for its spawn
+// and replaces an older baseline model"): entity events of a NetId the joiner has no copy of yet are
+// held while its baseline is open, applied after the BaselineEntity when newer than its asOf, dropped
+// when not; a tombstoned id's baseline is discarded; after BaselineEnd unknown ids are ignored.
+TEST(Client, EntityEventsForAnUnknownIdWaitForItsSpawn) {
+    voxel::VoxelVolume cube(glm::ivec3(4)), smaller(glm::ivec3(3));
+    cube.FillBox(glm::ivec3(0), glm::ivec3(4), Ids().planks);
+    smaller.FillBox(glm::ivec3(0), glm::ivec3(3), Ids().planks);
+    for (const uint32_t asOf : {4u, 7u}) {
+        FakeServer s;
+        s.Join(s.MakeWelcome(4), false);
+        ASSERT_TRUE(s.Attach());
+        net::ObjectModel model;
+        model.netId = 9;
+        model.volume = smaller;
+        const net::EntityRest rest{9, 40, glm::vec3(1.25f, 12.0f, -2.5f), glm::normalize(glm::quat(0.9f, 0.1f, 0.3f, 0.0f))};
+        net::EventBatch batch;
+        batch.firstOpSeq = 5;
+        batch.events = {model, rest, net::EntityDespawn{11, scene::DespawnReason::Destroyed}};
+        s.Send(net::Encode(batch));
+        s.client->Poll();
+        EXPECT_TRUE(s.client->Entities().empty());
+        EXPECT_EQ(s.client->Stats().heldEntityEvents, 2u);
+        net::BaselineEntity b;
+        b.asOfOpSeq = asOf;
+        b.tick = 30;
+        b.spawn.netId = 9;
+        b.spawn.kind = net::EntityKind::Object;
+        b.spawn.object.position = glm::vec3(1.0f, 13.0f, 1.0f);
+        b.spawn.object.volume = cube;
+        s.SendBulk(net::Encode(b));
+        net::BaselineEntity dead = b;              // despawned at 7: its baseline is discarded
+        dead.spawn.netId = 11;
+        s.SendBulk(net::Encode(dead));
+        s.SendBulk(net::Encode(net::BaselineEnd{asOf, 2}));
+        s.client->Poll();
+        const std::vector<net::EntityInfo> copies = s.client->Entities();
+        ASSERT_EQ(copies.size(), 1u);
+        EXPECT_EQ(copies[0].netId, 9u);
+        if (asOf == 4) {
+            EXPECT_EQ(copies[0].modelHash, net::VolumeHash(smaller)) << "the newer model replaces the baseline's";
+            EXPECT_TRUE(copies[0].resting);
+            EXPECT_EQ(copies[0].position, rest.position);
+            EXPECT_EQ(copies[0].rotation, rest.rotation);
+        } else {
+            EXPECT_EQ(copies[0].modelHash, net::VolumeHash(cube)) << "an event the baseline already holds was applied";
+            EXPECT_FALSE(copies[0].resting);
+            EXPECT_EQ(s.client->Stats().droppedHeldEvents, 2u);
+        }
+        EXPECT_EQ(s.client->Stats().baselineDiscarded, 1u);
+        const uint32_t ignored = s.client->Stats().ignoredEntityEvents;
+        batch.firstOpSeq = 8;
+        batch.events = {net::EntityRest{12, 41, glm::vec3(0.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)}};
+        s.Send(net::Encode(batch));
+        s.client->Poll();
+        EXPECT_EQ(s.client->Stats().ignoredEntityEvents, ignored + 1);
+        EXPECT_TRUE(s.client->Synced());
+    }
+}
+
+// Stage 7a (networking.md "World operations" 3: "if a touched chunk has no base yet, netId = 0 makes
+// no rubble and netId != 0 sends ModelRequest"): a Detach over a chunk that waits for its data builds
+// no piece from a partial volume; a replicated one asks for its model once, and the copy comes from
+// the answer with the server's model; the chunk's data later replays nothing into a second copy.
+TEST(Client, ADetachOverChunksWithoutABaseAsksForTheModel) {
+    net::ClientSettings presenting;
+    presenting.presentation = true;
+    FakeServer s(presenting);
+    const glm::ivec3 chunk(0, 2, 0);
+    s.Join(s.MakeWelcome(), true, {chunk});      // the chunk is modified at 0: its data is coming
+    ASSERT_TRUE(s.Attach());
+    net::EventBatch batch;
+    batch.firstOpSeq = 1;
+    batch.events = {DetachEvent(1), DetachEvent(2)};
+    s.Send(net::Encode(batch));
+    s.client->Poll();
+    s.ReadRequests();
+    EXPECT_TRUE(s.client->Entities().empty());
+    ASSERT_EQ(s.modelRequests.size(), 1u);
+    EXPECT_EQ(s.modelRequests[0], 9u);
+    EXPECT_TRUE(s.client->TakePresentations().empty()) << "rubble from a partial volume";
+    EXPECT_FALSE(s.client->Synced());
+    // The answer: the server's body of piece 9 (its model is the voxels the Detach removed there).
+    voxel::VoxelVolume piece(DetachEvent(2).mask.Size());
+    piece.FillBox(glm::ivec3(0), piece.Size(), Ids().stone);
+    net::BaselineEntity b;
+    b.asOfOpSeq = 2;
+    b.tick = 10;
+    b.spawn.netId = 9;
+    b.spawn.kind = net::EntityKind::Object;
+    b.spawn.object.position = glm::vec3(0.5f, 11.25f, 0.5f);
+    b.spawn.object.volume = piece;
+    s.SendBulk(net::Encode(b));
+    std::unique_ptr<FakeServer> ref = ReferenceWorld(2, DetachEvent);
+    s.SendChunk(ref->simulation->World(), chunk, 1);   // data as of 1: op 2 is replayed (voxels only)
+    for (int i = 0; i < 3; ++i) s.client->Poll();
+    s.ReadRequests();
+    const std::vector<net::EntityInfo> copies = s.client->Entities();
+    ASSERT_EQ(copies.size(), 1u);
+    EXPECT_EQ(copies[0].modelHash, net::VolumeHash(piece));
+    EXPECT_EQ(s.client->Stats().copiesMade, 1u);
+    EXPECT_EQ(s.modelRequests.size(), 1u);
+    EXPECT_TRUE(s.client->Synced());
+    EXPECT_EQ(s.client->Hash().hash, net::RegionHash(ref->simulation->World(), SmallRegion()).hash);
+}
+
+// Review of stage 7a: a NetId whose held events overflow (64) is asked for again even though a request
+// is out - an answer encoded before the dropped events would miss them - and an answer older than the
+// newest dropped event is discarded: the copy comes from the newer one (here with the model the dropped
+// ObjectModel carried).
+TEST(Client, AnAnswerOlderThanDroppedHeldEventsIsDiscarded) {
+    FakeServer s;
+    const glm::ivec3 chunk(0, 2, 0);
+    s.Join(s.MakeWelcome(), true, {chunk});       // the chunk waits for its data: the Detach of 9 asks for it
+    ASSERT_TRUE(s.Attach());
+    net::EventBatch batch;
+    batch.firstOpSeq = 1;
+    batch.events = {DetachEvent(2)};
+    s.Send(net::Encode(batch));
+    s.client->Poll();
+    s.ReadRequests();
+    ASSERT_EQ(s.modelRequests.size(), 1u);
+    // 64 rest / wake events of 9 are held; the 65th, a new model, overflows: all dropped, asked again.
+    voxel::VoxelVolume cube(glm::ivec3(4)), smaller(glm::ivec3(3));
+    cube.FillBox(glm::ivec3(0), glm::ivec3(4), Ids().planks);
+    smaller.FillBox(glm::ivec3(0), glm::ivec3(3), Ids().planks);
+    batch.firstOpSeq = 2;
+    batch.events.clear();
+    for (uint32_t i = 0; i < 64; ++i) {
+        if (i % 2 == 0) batch.events.push_back(net::EntityWake{9, 10 + i});
+        else batch.events.push_back(net::EntityRest{9, 10 + i, glm::vec3(0.5f, 12.0f, 0.5f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)});
+    }
+    net::ObjectModel model;
+    model.netId = 9;
+    model.volume = smaller;
+    batch.events.push_back(model);                // opSeq 66
+    s.Send(net::Encode(batch));
+    s.client->Poll();
+    s.client->Poll();
+    s.ReadRequests();
+    EXPECT_EQ(s.client->Stats().droppedHeldEvents, 65u);
+    ASSERT_EQ(s.modelRequests.size(), 2u) << "asked again although a request was out";
+    // The answer to the first request, encoded at opSeq 1 (before the model): discarded.
+    net::BaselineEntity old;
+    old.asOfOpSeq = 1;
+    old.tick = 5;
+    old.restTick = 5;
+    old.spawn.netId = 9;
+    old.spawn.kind = net::EntityKind::Object;
+    old.spawn.object.position = glm::vec3(0.5f, 12.0f, 0.5f);
+    old.spawn.object.volume = cube;
+    old.spawn.object.flags = net::kObjectResting;
+    s.SendBulk(net::Encode(old));
+    s.client->Poll();
+    EXPECT_TRUE(s.client->Entities().empty()) << "a copy from an answer that misses a dropped event";
+    EXPECT_EQ(s.client->Stats().staleAnswers, 1u);
+    // The answer to the second, as of 66: the copy, with the newer model.
+    net::BaselineEntity fresh = old;
+    fresh.asOfOpSeq = 66;
+    fresh.tick = 80;
+    fresh.restTick = 73;
+    fresh.spawn.object.volume = smaller;
+    s.SendBulk(net::Encode(fresh));
+    std::unique_ptr<FakeServer> ref = ReferenceWorld(2, DetachEvent);
+    s.SendChunk(ref->simulation->World(), chunk, 66);
+    s.client->Poll();
+    const std::vector<net::EntityInfo> copies = s.client->Entities();
+    ASSERT_EQ(copies.size(), 1u);
+    EXPECT_EQ(copies[0].modelHash, net::VolumeHash(smaller));
+    EXPECT_TRUE(s.client->Synced());
+}
+
+// Review of stage 7a: bulk installs are bounded per Poll (ClientSettings::maxBulkPerPoll), in arrival
+// order; the rest wait for the next Poll.
+TEST(Client, BulkInstallsAreBoundedPerPoll) {
+    net::ClientSettings settings;
+    settings.maxBulkPerPoll = 4;
+    FakeServer s(settings);
+    std::vector<glm::ivec3> chunks;
+    for (int x = -2; x < 2; ++x)
+        for (int z = -2; z < 1; ++z) chunks.emplace_back(x, 2, z);
+    s.Join(s.MakeWelcome(), false, chunks);
+    ASSERT_TRUE(s.Attach());
+    std::unique_ptr<FakeServer> ref = ReferenceWorld(0);
+    for (const glm::ivec3& c : chunks) s.SendChunk(ref->simulation->World(), c, 0);
+    s.SendBulk(net::Encode(net::BaselineEnd{0, 0}));
+    uint32_t polls = 0;
+    while (!s.client->Synced() && polls < 10) {
+        s.client->Poll();
+        ++polls;
+    }
+    EXPECT_TRUE(s.client->Synced());
+    EXPECT_EQ(s.client->Stats().maxBulkInPoll, 4u);
+    EXPECT_GE(polls, 3u);
+    EXPECT_EQ(s.client->Sync().Stats().chunksInstalled, static_cast<uint32_t>(chunks.size()));
 }

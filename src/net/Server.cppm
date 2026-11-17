@@ -9,6 +9,7 @@ module;
 #include <deque>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 export module vortex.net:server;
@@ -19,6 +20,7 @@ import :transport;
 import :messages;
 import :session;
 import :entities;
+import :sync;
 
 export namespace vortex::net {
 
@@ -51,23 +53,37 @@ export namespace vortex::net {
         /// larger than this is a batch of its own). A batch also holds at most kMaxMaskVoxels of
         /// masks (what a client decodes).
         uint32_t maxBatchBytes = 16384;
-        /// Pacing per peer (networking.md "Transport": everything sent has a byte budget): the next
-        /// batch for a peer is handed to the transport only while less than this is in flight to
-        /// it (ITransport::ReliableBytesInFlight), so a joiner's catch-up waits in the server's log,
-        /// not in the transport ahead of everyone's live events. 0 = unpaced (tests).
-        uint32_t maxEventBytesInFlight = 32768;
+        /// Live events are not held by bytes in flight (stage 7a: a joiner starts at its join point,
+        /// there is no join log to pace; plan amendment 2). A test may still hold a peer's next batch
+        /// while this much is in flight to it (ITransport::ReliableBytesInFlight). 0 = never.
+        uint32_t maxEventBytesInFlight = 0;
+        /// A peer with more than this in flight (reliable bytes it has not taken) is disconnected
+        /// (ServerStats::peersTooSlow): the memory bound of a client that stopped reading.
+        size_t maxPeerBacklogBytes = size_t{8} << 20;
+        /// Bulk (ChunkData, the entity baseline, model answers; stage 7a): the delay-based window
+        /// (BulkPacer), an optional hard cap in bytes per second per peer (0 = none; tests, admins),
+        /// and the distance (metres, horizontal) within which a peer's chunks go before its baseline.
+        BulkPacerSettings bulkPacer;
+        double maxBulkBytesPerSecond = 0.0;
+        float bulkNearMetres = 32.0f;
+        /// The join's baseline is sent nearest the spawn first; after the entities that come within
+        /// this many metres of it (3D, the model's extent included) a BaselineNear opens the joiner's
+        /// start gate (review of stage 7a: the far ones no longer hold the player).
+        float baselineNearMetres = 32.0f;
+        /// A peer's request answers (ChunkRequest coordinates, ModelRequest NetIds) queued at most;
+        /// beyond, the peer is disconnected as for a broken sync message (review of stage 7a: a
+        /// repeated request cannot grow the queue without bound). Repeats of a queued one are free.
+        uint32_t maxQueuedAnswers = 1u << 17;
+        /// Tests: count every ChunkRequest coordinate as received, per coordinate
+        /// (Server::ChunkRequestCounts). Off by default: the map would grow with every coordinate any
+        /// peer ever asked for (recheck of stage 7a, 4).
+        bool countChunkRequests = false;
         /// A connected peer that has not sent a valid Hello after this many ticks is disconnected.
         uint32_t helloTimeoutTicks = 600;
         /// A refused peer is disconnected once its refusal has left the transport, or after this many ticks.
         uint32_t closeGraceTicks = 120;
         /// CastRecords kept (the most recent; running totals are in ServerStats).
         uint32_t castRecordLimit = 4096;
-        /// The event log grows for the whole session and a joiner receives all of it (until stage 7's
-        /// chunk sync; review of stage 5): above `joinLogWarnBytes` the server logs a warning once,
-        /// above `maxJoinLogBytes` it refuses new clients (RefuseReason::LogTooLarge) so that a late
-        /// join fails visibly instead of loading for minutes. Clients already in play on.
-        size_t joinLogWarnBytes = size_t{32} << 20;
-        size_t maxJoinLogBytes = size_t{128} << 20;
         /// Movement and cast tuning of every player; sent in Welcome (clients predict with it).
         sim::PlayerTuning player;
         /// Inputs a player may be ahead of the server (docs/design/networking.md "Time and ticks": the
@@ -136,8 +152,36 @@ export namespace vortex::net {
         uint32_t clientsDisconnected = 0; ///< Joined clients that left (or were dropped when the session failed).
         uint32_t peersTimedOut = 0;       ///< Peers that sent no Hello in time, or never took their refusal.
         uint64_t sentBytes = 0;           ///< Event batches and status messages.
-        uint32_t sendsHeld = 0;           ///< Times a peer's next batch waited for its bytes in flight to drop.
+        uint32_t sendsHeld = 0;           ///< Times a peer's next batch waited for its bytes in flight to drop (maxEventBytesInFlight).
         uint32_t maxBacklogEvents = 0;    ///< Most events made but not yet handed to one peer's transport.
+
+        // Chunk sync (stage 7a).
+        uint32_t windowUpdates = 0, windowAcks = 0;
+        uint64_t ackedModified = 0;       ///< entering chunks the acks marked modified (queued as ChunkData)
+        uint64_t chunkData = 0, chunkDataBytes = 0;
+        uint32_t chunksDropped = 0;       ///< queued chunks that had left the peer's window at dequeue
+        uint32_t chunkRequests = 0, modelRequests = 0;   ///< coordinates / NetIds asked for
+        uint32_t requestsIgnored = 0;     ///< ... outside the windows, or of NetIds that are gone
+        uint32_t baselineEntities = 0;    ///< BaselineEntity messages (joins and model answers)
+        uint64_t baselineBytes = 0;
+        uint32_t baselineDropped = 0;     ///< baseline NetIds despawned before their dequeue
+        uint64_t bulkBytes = 0;           ///< every bulk message
+        uint64_t bulkHeld = 0;            ///< ticks a peer's bulk waited for its window (or the cap)
+        uint32_t bulkOversize = 0;        ///< bulk messages over 16 KiB (one may overshoot the window)
+        uint32_t peersTooSlow = 0;        ///< disconnected: over maxPeerBacklogBytes in flight
+        uint32_t malformedRequests = 0;   ///< sync messages that did not decode or broke the window order: disconnected
+        size_t minBulkWindow = 0, maxBulkWindow = 0;
+        size_t maxBulkMessage = 0;        ///< the largest bulk message (one larger than the window goes alone)
+        uint32_t bulkAlone = 0;           ///< bulk messages handed over past the window because no bulk was in flight
+        /// Bulk messages handed over while the peer's bytes in flight (its live events) were already at
+        /// or over the window: never (recheck of stage 7a, 1: the events alone filling the window hold
+        /// the bulk, whatever the bulk in flight).
+        uint32_t bulkOverWindow = 0;
+        uint32_t modelRequestRepeats = 0; ///< ModelRequest NetIds already queued for that peer (ignored)
+        uint32_t baselineNear = 0;        ///< BaselineNear markers sent
+        /// Wall clock of the bulk encodes (EncodeChunkAt, baseline entities) per tick: sum and the
+        /// largest tick (logged only; review of stage 7a).
+        double encodeSeconds = 0.0, maxEncodeSecondsPerTick = 0.0;
         /// Wall clock of the casts (logged only, never read by the schedule).
         double castSeconds = 0.0, maxCastSeconds = 0.0;
         double maxCastMsPer10k = 0.0;     ///< The highest ms per 10 000 work units of one cast (of at least 1000 units).
@@ -187,19 +231,20 @@ export namespace vortex::net {
     };
 
     /**
-     * @brief The session server (docs/design/networking.md stages 3-4): one sim::Simulation with a
+     * @brief The session server (docs/design/networking.md stages 3-7a): one sim::Simulation with a
      * fixed window (play bounds + 3 chunks, the region's height range), the template's operations
      * as opSeq 1..k, an event stream with a byte budget, a cast queue with a work budget, joiners
-     * who receive the whole event log, and one player per joined client moved by its inputs.
-     * GPU-free.
+     * synced by chunk data (stage 7a: the modified map, WindowUpdate / WindowAck, ChunkData and the
+     * entity baseline on paced bulk, encoded at dequeue), and one player per joined client moved by
+     * its inputs. GPU-free.
      * @details Tick order (one call of Tick): receive (inputs into each player's queue; a cast
      * edge in a late input is judged and captured at the input's tick) -> streaming (colliders
      * around the players) -> sim::StepPlayer per player in slot order (its input for this tick, or
      * the last movement repeated; a cast edge the cooldown accepts is captured as {eye, look,
      * input tick, loadout} and queued) -> queued casts within the work and event budgets (a
      * player's ray is cast into the world when its cast runs) -> body guard,
-     * physics, pose sync -> lifetimes -> each joined client's next batches while its bytes in
-     * flight are under maxEventBytesInFlight -> a snapshot per client on even ticks. Operations and casts given between ticks (ApplyOp, QueueCast) are applied / queued at
+     * physics, pose sync -> lifetimes -> each joined client's batches, then its bulk while its bytes
+     * in flight are under its bulk window -> a snapshot per client on even ticks. Operations and casts given between ticks (ApplyOp, QueueCast) are applied / queued at
      * once and go out with the next tick. Once Failed, the session is over: peers are
      * disconnected, Tick only turns new peers away, ApplyOp and QueueCast refuse.
      */
@@ -268,10 +313,24 @@ export namespace vortex::net {
         const std::vector<ProbeHash>& Probes() const;
         uint64_t BuildHashValue() const;
         voxel::WorldHashResult Hash() const;
+        /// @brief WorldHash over a box of chunks (a window-sized client's sync box).
+        voxel::WorldHashResult Hash(const SyncBox& box) const;
+        /// @brief Chunks the modified map holds (every chunk an event changed, never cleared).
+        size_t ModifiedChunks() const;
+        /// @brief How many times each chunk coordinate came in a ChunkRequest (any peer, as received;
+        /// tests: no chunk is requested twice). Empty unless ServerSettings::countChunkRequests.
+        std::vector<std::pair<glm::ivec3, uint32_t>> ChunkRequestCounts() const;
+        /// @brief The sync box of the joined client in `slot`: its last WindowUpdate's window inside
+        /// the server's (what its Client::Hash covers); empty when there is no such client or it sent
+        /// no window yet. Valid inside the SetOnClientLeft callback.
+        SyncBox ClientSyncBox(uint8_t slot) const;
+        /// @brief Changes ServerSettings::maxBulkBytesPerSecond from the next tick on (0 = no cap; an
+        /// admin's knob, and tests that hold a chunk's data back).
+        void SetMaxBulkBytesPerSecond(double bytesPerSecond);
         const ServerStats& Stats() const;
         const std::deque<CastRecord>& Casts() const;   ///< The most recent ServerSettings::castRecordLimit.
-        /// @brief Every event made so far, encoded (WriteEvent), with its tick: the join log.
-        size_t LogBytes() const;
+        /// @brief Events made but not yet handed to every joined peer, encoded (stage 7a: no join log).
+        size_t BacklogBytes() const;
 
     private:
         struct Impl;

@@ -1,7 +1,8 @@
 # Notes: sessions (`src/net`, `src/sim/Region.cppm`, `tests/net`, `tools/server`)
 
 Read `CLAUDE.md`, `docs/ARCHITECTURE.md` 7.5 and `docs/design/networking.md` ("Stage 3 as built", "Stage 4 as
-built", "Stage 5 as built", "Stage 6 as built", "Review of stage 6") first; nothing from them is repeated here. Paths
+built", "Stage 5 as built", "Stage 6 as built", "Review of stage 6", "Stage 7a plan" with its amendments, "Stage 7a as
+built") first; nothing from them is repeated here. Paths
 are relative to `engine/`. Written at networking stage 3, extended at stages 4, 5 and 6 and the reviews of stages 5
 and 6. The game's session
 mode is `../src/Session.cpp`.
@@ -28,10 +29,14 @@ mode is `../src/Session.cpp`.
 - `src/net/Prediction.cppm`, `internal/Prediction.cpp` - `TickClock` (the client clock: jumps, bleed, catch-up,
   holds), `ServerTime` (the server tick other players are drawn at; only moves forward), `RemotePlayers` (other
   players drawn in the past) and `RemoteBodies` (stage 6: replicated bodies drawn in the past, the rest rule).
+- `src/net/Sync.cppm`, `internal/Sync.cpp` - stage 7a's chunk sync pieces: `SyncBox`, `RegionSyncBox` (the server
+  window), `ChunkCoordHash`, `OpRing` (the client's ring of applied terrain ops as wire bytes), `ChunkSync` (the
+  client's per-chunk states and bases, the base rule, replay, requests), `BulkPacer` (the server's per-peer bulk window).
 - `src/net/Session.cppm`, `internal/Session.cpp` - `SessionConfig`, `ParseSession` / `LoadSessionFile` /
   `FormatSession`, tokens, `BuildHash`, `ProbeChunks` / `CheckProbes`, `RegionHash`.
 - `src/net/Server.cppm`, `internal/Server.cpp` - `ServerSettings`, `CastRecord`, `ServerStats`, `net::Server`
-  (event log, peers with send cursors, cast queue and the two credits).
+  (event backlog, peers with send cursors, the modified map, per-peer bulk queues and pacers, the entity baseline, cast
+  queue and the credits).
 - `src/net/Client.cppm`, `internal/Client.cpp` - `ClientSettings`, `ClientState`, `ClientStats`, `PredictionStats`,
   `net::Client` (events; the own player's prediction, input sends and reconciliation).
 - `src/net/Drill.cppm`, `internal/Drill.cpp` - `BlastDrill`: mushroom / bar / neck tower per step, sites of 100 x 100
@@ -52,7 +57,15 @@ mode is `../src/Session.cpp`.
   sample sequences; `RemoteBodies`), `MovementTests.cpp` (the `Match` fixture: a server driven by `Advance` and player
   bots each on its own `TicksDue`; the stage-4 acceptance; the disabled correction rate over seeds),
   `EntityTests.cpp` (stage 6: the `Arena` fixture, `Match` with presenting bots and a settle that waits for every
-  body to rest; the fight, collapse, split, falling-piece and crate tests).
+  body to rest; the fight, collapse, split, falling-piece and crate tests), `SyncTests.cpp` (stage 7a: `ChunkSync` and
+  `OpRing` against a World without a transport, `BulkPacer` against a simulated link). Late-join tests are in
+  `SessionTests.cpp` (`ChunkSync.LateJoinDuring10CastsPerSecondConverges`), the FakeServer join helpers (`Join`, `Ack`,
+  `SendChunk`, `ReadRequests`) in `ClientTests.cpp`. `ClientWindowTests.cpp` (stage 7a M-b: the `Field` fixture, a
+  flat region 40 chunks wide and a 12-chunk client window; walk-in, leave-and-return, teleport, reset, hash box, held
+  player, a full store while walking, a piece that breaks off outside the window). Trap for store tests on the flat
+  region: its surface row is Dense when pristine (grass over dirt), so the window holds a constant number of slots
+  as it moves and crater chunks overwrite slots they already have; a chunk that needs a slot of its own is one that is
+  Empty when pristine (a box in the air).
 - `tests/sim/ReplicationTests.cpp` - the server half of stage 6 on one `Simulation` (piece slots, caps, damage).
 - `tests/sim/PlayerTests.cpp` - `StepPlayer` alone and two simulations stepped with the same inputs.
 
@@ -61,13 +74,41 @@ mode is `../src/Session.cpp`.
 - **Integers on the wire decide voxels.** Everything a client applies is a `sim::WorldOp`'s integers; floats travel
   as raw bits (`RegionDesc`) or are presentation (`Detach` velocity, light colour). Never add a float that a client
   turns into a voxel decision.
-- **One order.** The server numbers events as it makes them (`opSeq` = index in its log + 1); batches carry
-  consecutive runs; a client applies `opSeq == applied + 1` only. A cast's operations are consecutive (casts run one
-  after another inside a tick).
+- **One order.** The server numbers events as it makes them (`opSeq`, counting up from 1); batches carry consecutive
+  runs; a client's stream starts after its join point (`Welcome::joinOpSeq`, stage 7a) and it applies `opSeq ==
+  applied + 1` only. A cast's operations are consecutive (casts run one after another inside a tick).
+- **The base rule (stage 7a).** A terrain operation reaches a client chunk only if the chunk is current (`Based` and
+  caught up) and the opSeq is above its base, live or replayed from the ring (`ChunkSync::Apply`, `CatchUp`). A chunk
+  without a current base keeps whatever it has and is never hashed (`Client::Hash` counts it `notLoaded`) or walked on.
+  An op that skips a chunk it touches is "not complete here": no presentation, and a replicated `Detach` asks for its
+  model (`ModelRequest`) instead of building a piece from a partial volume.
+- **The modified map is fed from the chunks an op changed** (`EditReport::changed`, `Server::Impl::EmitOp`), never
+  from its box: a chunk an op did not change still equals the generator's output wherever it did before. Every server
+  path that applies a terrain op must go through `EmitOp` (or a joiner will take a changed chunk as pristine).
+- **Bulk is encoded at dequeue** (`NextBulk`): its asOf is the last event made then, so the client's ring covers the
+  transit, never the queue. A message that does not fit the window is held encoded (`heldBulk`) - still covered - but
+  only until the peer's **bulk** in flight has drained (`ITransport::ChannelBytesInFlight(peer, Bulk)`), then it goes
+  alone while the bytes in flight (the live events) are under the window (review of 7a: a held message waiting for
+  `ReliableBytesInFlight == 0` never left while events flowed; recheck of 7a: going alone whatever the events let bulk
+  run on a link the events alone saturate). Two tests, both needed: the total in flight under the window (always), and
+  the bulk in flight drained (for a message larger than what is left). `ServerStats::bulkOverWindow` stays 0.
+- **The ring covers by count first.** `OpRing` keeps ops as wire bytes (masks as runs), 1024 ops or 1 MiB of those
+  bytes; a base below its floor is requested whole, never replayed in part.
+- **Entity events wait for their copy.** While the join's baseline is open, or for a NetId asked for, rest / wake /
+  model events of an unknown NetId are held and applied after the copy if newer than its base (`Copy::base`); an event at
+  or below a copy's base is dropped (the baseline holds it). `BaselineEnd` drops what nobody claimed. When a NetId's
+  held events overflow (64) they are dropped and the model is asked for **again**, also with a request out (an answer
+  already on its way may predate them); an answer older than the newest dropped event is discarded
+  (`ClientStats::staleAnswers`). The server answers a `ModelRequest` whose answer is still queued with that one answer
+  (`modelsQueued`), and disconnects a peer with more than `maxQueuedAnswers` queued.
+- **The start gate opens on `BaselineNear`** (message 15, review of 7a): the baseline is sent nearest the spawn first
+  (distance to each model's bounding sphere) and the marker follows the entities within `baselineNearMetres` (32 m);
+  `BaselineEnd` opens it too. `Synced()` still waits for `BaselineEnd`.
 - **Event kinds** 1-6 = `sim::WorldOpKind`, 32 = `EntitySpawn`, 33 `EntityDespawn`, 34 `EntityRest`, 35
   `ObjectModel`, 36 `EntityWake`; `EntityKind::Light` = 1, `Object` = 2; `scene::DespawnReason` (1 Destroyed, 2
   ToRubble, 3 Broken), `PlayerButton_Crate` = 8, `RegionGenerator`, `RegionTemplateId`, `MessageType`, `RefuseReason`
-  values are wire format. Change any byte -> bump `kProtocolVersion` (7 since the review of stage 6).
+  values are wire format. Change any byte -> bump `kProtocolVersion` (8 since stage 7a: `MessageType` 8-15,
+  `Welcome::joinOpSeq`, `RefuseReason` 6 retired; 15 `BaselineNear` came with the review, before 8 was committed).
 - **Every NetId destruction is an event.** The server connects `on_destroy<scene::NetId>` at `Start`; whatever
   destroys a replicated entity (Damage, `DestroyBelow`, eviction, `ClearBodies`, a player's crate limit) queues an
   `EntityDespawn` with `NetId::despawn` as its reason (set it before destroying: `sim::Despawn`), emitted by
@@ -107,16 +148,44 @@ mode is `../src/Session.cpp`.
   the rows). An island search error, an incomplete operation or a full store marks the server `Failed`, and
   **`Failed` is terminal**: peers are disconnected, nothing more is made or sent (not even the rest of the failing
   cast), new peers are disconnected on connect.
-- **A client holds the whole region window** (until stage 7) and loads it before applying anything; its store is
-  `sim::RegionChunkCapacity` (`MakeSimulationConfig`). An operation it cannot apply in full fails it: there is no
-  resync before stage 7.
+- **A client's window is the region's when it fits `ClientSettings::windowChunks`** (0 = always; the game and the
+  arena bots pass 48), loaded whole before anything is applied; else it is `windowChunks` x the rows x `windowChunks`,
+  follows the player (`RunTick`; the game's engine follows the camera), loads its surface at `Attach` and streams the
+  rest (stage 7a M-b, `sim::ClientWorldConfig`). Its store is `sim::ClientChunkCapacity` (every cell of that window),
+  capped by the owner's `storeLimit`. An operation it cannot apply in full no longer fails it (stage 7a): the chunks it
+  could not change become Unsynced and are requested whole once more than `requestReserveSlots` are free.
+- **A window move is noticed at the start of `Poll`** (`CheckWindow`) and nowhere else: the world moves only in
+  streaming, outside `Poll`, so every op is applied against `ChunkSync`'s current window. Every step is listed by the
+  world (`World::TakeWindowSteps`, with `reportLoads`) and sent as its own `WindowUpdate`, in order: a chunk that left at
+  one step and came back (regenerated) at the next enters again with the second, and the server sends it again. The game
+  streams every frame and polls on ticks, so two steps between `Poll`s are normal (review of 7a: they used to reset the
+  whole window). A reset is left only for steps that were not listed (never in play).
+- **A moving window follows with slack** (`WorldConfig::recenterSlackChunks`, `sim::kClientWindowSlackChunks` = 1): it
+  moves once the focus chunk is more than one chunk from its centre chunk, then centres on it; `sim::ClientWindowMinChunk`
+  is where it is placed (or moved to), not where every focus puts it. Offline worlds keep 0. The focus may sit one
+  chunk off the centre, so `World::ViewRadius` leaves the slack out (88 m for the game's 48-chunk window instead of 92:
+  the edge fog ends before the window's edge; recheck of 7a).
+- **Chunks beyond the server's window are never edited** (`ChunkSync`'s `neverEdited`): current once loaded, never
+  requested, never replayed. A moving window is not clamped to the region.
 - **Session worlds are memory only, built from `Welcome` and pristine at `Attach`** (`Client::Attach` checks save
   directory, voxel size bits, window, height range and `BuildHash` of the simulation's materials; after loading the
   window's corner, a store that never filled, and the probe chunks of the loaded world against its own generator).
-- **Every send is paced per peer.** `Peer::sentUpTo` advances only while `ReliableBytesInFlight(peer)` is below
-  `maxEventBytesInFlight`; a joiner starts at 0 after `Welcome`. One batch = one tick's events, <= `maxBatchBytes`,
-  <= `kMaxMaskVoxels` of masks (the decoder's per-batch bound).
-- **Only live events are presented** (`opSeq > logEnd`).
+- **Live events are never held; bulk is paced.** Every Flush hands each joined peer all its events (one batch = one
+  tick's events, <= `maxBatchBytes`, <= `kMaxMaskVoxels` of masks), then its bulk while its reliable bytes in flight are
+  under its `BulkPacer` window (delay-based: rate x (base RTT + 2 ticks), halved at most once per round trip while the
+  RTT is more than that above its base; the base is the lowest RTT of the last 12 x 10 s, so a lasting rise of the path
+  becomes the new base) - a message larger than what is left going alone once none of its bulk is in flight, still only
+  while the total is under the window. The drain rate counts every
+  reliable byte handed over (`BulkPacer::Sent` with the events since the last tick: counting only bulk let the rate
+  decay to its minimum while only events flowed). `maxEventBytesInFlight` (default 0) holds events only for a test;
+  `maxPeerBacklogBytes` disconnects a peer that stopped reading. A joiner starts at its join point. While a peer's
+  events alone fill its link its bulk waits (no minimum share is reserved: a long fight on a saturated downlink delays
+  that peer's sync). `ServerSettings::countChunkRequests` (tests only) keeps per-coordinate request counts; off, the
+  server keeps none (they would grow with every coordinate asked for).
+- **Only live events are presented** (`opSeq > joinOpSeq`).
+- **A comparison needs `Synced()`.** Drains (`vortex_server`, the game, the test fixtures) wait until the client is
+  `Synced()` (every chunk current, no request out, baseline ended, nothing held) at the server's last opSeq; the hash is
+  over `SyncWindow()` (the region's window while windows are fixed).
 - **Nothing in the schedule reads a clock.** `CastRecord::seconds` and the `ServerStats` cast times are logged only.
 - **One movement rule.** Server, predicting client and offline game move a player only with `sim::StepPlayer` from
   integer inputs; anything that changes how a player moves goes there (and into `PlayerTuning`, which travels in
@@ -201,8 +270,8 @@ mode is `../src/Session.cpp`.
   cannot: the hash it logs is then comparable with the server's last one.
 - A wall-clock loop may run no tick in a pass: anything scheduled "on tick T" must remember that it ran (the drill
   queued a step on every pass of the same tick once).
-- Growth over a session: the event log (about 2 KB per cast) and nothing else; `CastRecord`s are a ring of
-  `castRecordLimit`.
+- Growth over a session: the modified map (one entry per chunk ever changed, sparse) and the tombstones; the event
+  backlog is trimmed every tick to the slowest joined peer; `CastRecord`s are a ring of `castRecordLimit`.
 - Players do not join in `PeerId` order: a bot's slot depends on whose `Hello` arrived first. Tests take the slot
   from `Client::Slot()`.
 - `PhysicsConfig::characterLayers` is `sim::kSessionCharacterLayers` (Static | Dynamic since stage 6) on a server
@@ -215,7 +284,47 @@ mode is `../src/Session.cpp`.
   `SessionTests.cpp` does that; `Arena` and `Match` do not).
 - A client's copy removed by its own scene (`DestroyBelow`: drawn in the past it can fall out first) is dropped and
   counted (`ClientStats::copiesLost`); the entity check shows it missing until the server's despawn comes.
-- Tombstones of despawned NetIds grow for the session (4 bytes each); stage 7's join changes how they start.
+- Tombstones of despawned NetIds grow for the session (4 bytes each); since stage 7a a joiner starts with none (dead
+  NetIds never reach it).
+- The bulk channel is not ordered against the events channel: a `BaselineEnd` can arrive before the `Welcome`. The
+  client keeps bulk from `Joining` on (stage 7a: a Match-fixture join hung on a dropped `BaselineEnd`).
+- `ImpairedTransport` draws every peer's losses from one random stream unless `Impairment::rngPerPeer`: two runs that
+  differ in one peer then differ in every peer's losses (a latency comparison across runs is noise without it).
+- A `WindowAck` is processed in stream order with the batches (it waits in `pending`); processing it early would base
+  pristine chunks before the events before it are applied (harmless for content, but the replay then has work).
+- A moving window is `Synced()` only once every chunk of it has loaded, caves included: on the arena that is many
+  seconds of a bot's workers after it stops (a 3600-tick drain was too short once on the loopback, whose ticks race).
+  Drains of a moving window wait for the world's loading on the wall clock (`vortex_server`), or stream while they
+  wait (the game's drain; it does not run the engine's streaming otherwise).
+- `Synced()` walks the window's records (101 376 for the game's) unless something is Unsynced or owed:
+  `SyncHousekeeping` looks at it every 16th `Poll` until the join has synced once. Do not call it per tick elsewhere.
+  `TakeRequests` walks them only while some record is Unsynced (`ChunkSync::SetState` keeps that count: every state
+  change goes through it), and a window step visits only its entering columns (`ChunkSyncStats::recordsVisited`).
+- Bulk installs are bounded per `Poll` (`ClientSettings::maxBulkPerPoll`, 64, a count so runs stay reproducible); the
+  rest wait in `pendingBulk` in arrival order. Chunks that catch up together (one `WindowAck`, one load report, one
+  `Poll`'s consecutive `ChunkData` via `ChunkSync::OnChunkData(span)`) walk the op ring once (`OpRing::Walk`): each op
+  is decoded once per batch, not per chunk (`ChunkSyncStats::opsDecoded`; recheck of 7a: the old 16-entry FIFO cache
+  never hit once a batch shared more than 16 ops). Keep catch-ups batched; per chunk the ops keep stream order. Costs are logged: `ClientStats::syncSeconds` / `bulkSeconds` on the
+  `Join:` lines (the game on the arena: 0.017 ms per `Poll`, at most 2.0 ms for 64 installs), the server's
+  `encodeSeconds` on its `Join:` / `Sync:` lines.
+- "Synced after" is not a join time for a walker: its window keeps entering chunks to generate, so the first moment
+  every chunk is current comes only once it stops (the arena walker: 25 s, after the walk). The join's own end is
+  `ClientStats::joinDataTicks` (baseline ended, no chunk waiting for the server: none without a base, awaiting,
+  requested or unsynced); `vortex_server`'s `Latency:` join windows end there.
+- `vortex_server --enet` runs every bot in one thread: a joiner's events made while its own world loads wait for the
+  load (0.5-0.7 s), and the server then catches up two ticks a pass, so latency p99 over UDP is stalls (15-47 ticks
+  for the bot playing, 23-75 for joiners in the review's runs; the same with the review's changes put back), not stream
+  lag. The loopback runs keep the load outside the simulated clock; read latency there (`--max-join-p99-ticks` only
+  on the loopback; the p99 must be under N, as in the unit test).
+- Stepping back and forth at the edge of a modified area re-sends its chunks each time they enter (chunks that leave
+  are dropped, `keepUnloadedEdits` false). The follow slack cut it by a third (a bot wandering beside the arena's drill
+  sites: 4.6 -> 3.1 MiB); a cache of the slab last left would cut the rest.
+- The p99 < 250 ms join target cannot be met on a 5 %-loss link at any rate: a lost reliable packet is resent after
+  about 130 ms and holds the 8 ticks of events behind it (the quiet p99 is 21 ticks at 64 and at 128 kB/s). The unit
+  test asserts it at 128 kB/s and 1 % loss (13 / 12 ticks).
+- Test hooks: `Server::SetMaxBulkBytesPerSecond` holds data back (1 B/s lets one message through, then nothing for
+  minutes); a test moves a client's window itself with `Simulation::UpdateStreaming(focus, ...)` and `Poll` instead of
+  `RunTick` (`ClientWindowTests.cpp`'s `manual` bots).
 - A player's crates go when it leaves (`DropPlayer`); a crate is refused at the awake cap. So a departure makes events:
   what a departing client drained to is the opSeq before them, which `Server::SetOnClientLeft` reports (vortex_server
   logs its "client left" line there; `tools/session-check.sh` compares at it).
@@ -282,6 +391,18 @@ mode is `../src/Session.cpp`.
   player's corrections (stage 4: 6 and 1 in 20 s, no snaps; after the review 4 and 4, the late joiner's 7 given-up
   snapshots now counted). Add `--bot-casts 90` for bots that cast too.
 - `--session=.../arena250.session --ticks=60` logs the server's preload time and memory (the 10 s / 150 MiB gates).
+- Stage 7a: every `vortex_server` run logs per joiner `Join: client N ...` (server: window, modified chunks, bytes,
+  bulk window, queue empty after) and `Join: bot N ...` (started / join data in / synced, bulk received, requests), and
+  per bot `Latency: bot N: ...` (server ticks from an event being made to the bot applying it: p99 and max for the
+  events made while some bot joined, and for all; `--max-join-p99-ticks N` fails the run unless the p99 is under N ticks, the drill uses 15 = 250 ms).
+  The arena walk (M-b acceptance, 35 s):
+  `vortex_server --session=engine/tools/server/sessions/arena250.session --clients 2 --client-window 48 --walk-across
+  --precasts 40 --join-step 20 --drill 40 --loss 0.05 --delay-ms 40 --jitter-ms 30 --memory` must exit 0 (hashes over
+  each bot's sync box, entities, store at most 12 288 - 2048 slots; after the review of 7a: 5500 / 5447, latency during
+  joins p99 11 / 10 ticks, RSS 1100 MiB, server world 48.4 MiB RLE, the walker 60 window updates). A game client on the arena: `vortex_server ... arena250.session
+  --listen 27016 --bind 127.0.0.1 --token T --exit-when-empty --precasts 40` and `Shredborne --connect 127.0.0.1:27016
+  --token T --headless --validation --frames 900 --screenshot a.png` (`--frames 15` shows the `JOINING` line); its
+  `world hash ... over [box]` must equal the server's `window hash ... over [box]` at the same opSeq.
 - The game's standard headless run must still log `Beam cut: 13 voxels removed, 1 new object(s)` (the plaza comes
   from the template now).
 - Stage 6: `-R "Entities|Replication|RemoteBodies|Client"` (11 `Entities.*` since the review); the drill's

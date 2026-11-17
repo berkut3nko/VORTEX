@@ -15,6 +15,10 @@
 # =============================================================================
 include(GoogleTest)
 
+# Every test is stopped after this many seconds (review of stage 7a: a test that hangs fails instead
+# of holding ctest for its 1500 s default; the slowest test takes about 30 s alone).
+set(VORTEX_TEST_TIMEOUT 180)
+
 function(vortex_add_tests name dir)
     file(GLOB_RECURSE _sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${dir}/*.cpp")
     if(NOT _sources)
@@ -31,11 +35,12 @@ function(vortex_add_tests name dir)
     # VORTEX_SERIAL_TESTS_<name>: a gtest filter of tests that measure on the wall clock; they are
     # registered on their own, RUN_SERIAL, so a parallel ctest does not load the machine under them.
     if(DEFINED VORTEX_SERIAL_TESTS_${name})
-        gtest_discover_tests(${name} DISCOVERY_TIMEOUT 60 TEST_FILTER "-${VORTEX_SERIAL_TESTS_${name}}")
+        gtest_discover_tests(${name} DISCOVERY_TIMEOUT 60 TEST_FILTER "-${VORTEX_SERIAL_TESTS_${name}}"
+                             PROPERTIES TIMEOUT ${VORTEX_TEST_TIMEOUT})
         gtest_discover_tests(${name} DISCOVERY_TIMEOUT 60 TEST_FILTER "${VORTEX_SERIAL_TESTS_${name}}"
-                             PROPERTIES RUN_SERIAL TRUE LABELS wall-clock)
+                             PROPERTIES RUN_SERIAL TRUE LABELS wall-clock TIMEOUT ${VORTEX_TEST_TIMEOUT})
     else()
-        gtest_discover_tests(${name} DISCOVERY_TIMEOUT 60)
+        gtest_discover_tests(${name} DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT ${VORTEX_TEST_TIMEOUT})
     endif()
 endfunction()
 

@@ -174,7 +174,10 @@ namespace vortex::voxel {
 
     double World::ViewRadius() const {
         const int half = std::min(m_Config.windowSize.x, m_Config.windowSize.z) / 2;
-        return static_cast<double>(std::max(half - 1, 0)) * kChunkSize * static_cast<double>(m_Config.voxelSize);
+        // The follow slack lets the focus sit that many chunks off the centre chunk, so the edge on
+        // that side comes as many chunks nearer (recheck of networking 7a, 2).
+        const int slack = std::max(m_Config.recenterSlackChunks, 0);
+        return static_cast<double>(std::max(half - 1 - slack, 0)) * kChunkSize * static_cast<double>(m_Config.voxelSize);
     }
 
     uint32_t World::CellIndex(const glm::ivec3& chunk) const {
@@ -217,6 +220,16 @@ namespace vortex::voxel {
         return min;
     }
 
+    glm::ivec3 World::FollowMinFor(const glm::ivec3& focusChunk) const {
+        const glm::ivec3 min = WindowMinFor(focusChunk);
+        const int32_t slack = m_Config.recenterSlackChunks;
+        if (!m_HasWindow || slack <= 0 || min.y != m_WindowMin.y) return min;
+        // The centre chunk of the current window is the focus chunk it was placed for.
+        const glm::ivec3 centre = m_WindowMin + m_Config.windowSize / 2;
+        if (std::abs(focusChunk.x - centre.x) <= slack && std::abs(focusChunk.z - centre.z) <= slack) return m_WindowMin;
+        return min;
+    }
+
     double World::DistanceToFocus(const glm::ivec3& chunk) const {
         const double size = static_cast<double>(kChunkSize) * m_Config.voxelSize;
         const glm::dvec3 lo = glm::dvec3(chunk) * size;
@@ -243,7 +256,7 @@ namespace vortex::voxel {
         m_Focus = focus;
         if (glm::length(focus - m_NearScanFocus) > NearSlack()) m_NearPromotePending = true;
         m_FocusChunk = VoxelToChunk(WorldToVoxel(focus));
-        const glm::ivec3 newMin = WindowMinFor(m_FocusChunk);
+        const glm::ivec3 newMin = FollowMinFor(m_FocusChunk);
         if (!m_HasWindow || newMin != m_WindowMin) Recenter(newMin);
         IntegrateResults(m_Config.maxIntegrationsPerUpdate);
         m_DecodeBudget = m_Config.maxDecodesPerUpdate;
@@ -301,7 +314,7 @@ namespace vortex::voxel {
             m_Focus = focus;
             if (glm::length(focus - m_NearScanFocus) > NearSlack()) m_NearPromotePending = true;
             m_FocusChunk = VoxelToChunk(WorldToVoxel(focus));
-            const glm::ivec3 newMin = WindowMinFor(m_FocusChunk);
+            const glm::ivec3 newMin = FollowMinFor(m_FocusChunk);
             if (!m_HasWindow || newMin != m_WindowMin) Recenter(newMin);
             IntegrateResults(0xFFFFFFFFu);
             m_DecodeBudget = 0xFFFFFFFFu;
@@ -333,6 +346,8 @@ namespace vortex::voxel {
         m_WindowMin = newMin;
         m_HasWindow = true;
         ++m_GridRevision;
+        ++m_WindowRevision;
+        if (m_Config.reportLoads) m_WindowSteps.push_back(newMin);
 
         // Only columns whose chunk coordinate changed are touched: on a step of one chunk that is
         // one slab of columns (all their rows), not the whole window.
@@ -496,7 +511,9 @@ namespace vortex::voxel {
         Cell& cell = m_Cells[index];
         const bool hadContent = cell.state == CellState::Dense || cell.state == CellState::Uniform || cell.state == CellState::Packed;
         // A Packed chunk is never modified (an edit makes it resident first).
-        if (cell.modified && (cell.state == CellState::Dense || cell.state == CellState::Uniform || cell.state == CellState::Empty))
+        // (A session client drops it: keepUnloadedEdits false, the server sends it again.)
+        if (m_Config.keepUnloadedEdits && cell.modified &&
+            (cell.state == CellState::Dense || cell.state == CellState::Uniform || cell.state == CellState::Empty))
             PersistCell(cell);
         // Memory goes to a worker to be released (Recenter frees a whole slab of columns: hundreds
         // of heap blocks allocated by other threads).
@@ -679,6 +696,7 @@ namespace vortex::voxel {
             BumpRevision(cell);
             SetGrid(index, cell);
             if (cell.state == CellState::Uniform) QueueChange(cell);
+            if (m_Config.reportLoads) m_LoadedChunks.push_back(cell.coord);
             return;
         }
         if (saved || IsSurfaceRow(column, row)) {
@@ -1112,6 +1130,7 @@ namespace vortex::voxel {
             BumpRevision(cell);
             SetGrid(r.cellIndex, cell);
             if (cell.state == CellState::Dense || cell.state == CellState::Uniform || cell.state == CellState::Packed) QueueChange(cell);
+            if (m_Config.reportLoads) m_LoadedChunks.push_back(cell.coord);
             // An edit of an earlier visit (a crater, a tunnel) exposes its face neighbours,
             // whichever of them loaded first.
             if (cell.fromSave && m_Pack) PromoteFaceNeighbours(cell.coord);
@@ -1425,7 +1444,7 @@ namespace vortex::voxel {
 
     template <typename Fn, typename Touches, typename Rows>
     uint32_t World::EditRegion(const glm::ivec3& min, const glm::ivec3& max, Fn&& decide, Touches&& touches,
-                               std::vector<VoxelEdit>* edits, EditReport* report, Rows rows) {
+                               std::vector<VoxelEdit>* edits, EditReport* report, const ChunkClip* clip, Rows rows) {
         if (max.x <= min.x || max.y <= min.y || max.z <= min.z) return 0;
 
         // Build ceiling (full-height window): an edit that would put solid voxels above the top
@@ -1451,8 +1470,14 @@ namespace vortex::voxel {
         }
 
         uint32_t changedTotal = 0;
-        const glm::ivec3 cmin = VoxelToChunk(min);
-        const glm::ivec3 cmax = VoxelToChunk(max - glm::ivec3(1));
+        glm::ivec3 cmin = VoxelToChunk(min);
+        glm::ivec3 cmax = VoxelToChunk(max - glm::ivec3(1));
+        // A clip restricts the chunks visited, never the decisions: the ceiling was decided on the
+        // whole operation above, and each voxel decides from (voxel, old id) alone.
+        if (clip) {
+            cmin = glm::max(cmin, clip->min);
+            cmax = glm::min(cmax, clip->max);
+        }
         std::vector<glm::ivec3> changedChunks;
 
         for (int cy = cmin.y; cy <= cmax.y; ++cy)
@@ -1514,6 +1539,7 @@ namespace vortex::voxel {
 
                     if (failed && report) report->unsynced.push_back(coord);
                     if (changed > 0) {
+                        if (report) report->changed.push_back(coord);
                         m_Store.MarkDirty(cell->slot);
                         cell->modified = true;
                         DropKeptBytes(index);     // the bytes a resident buried chunk kept are stale now
@@ -1530,6 +1556,107 @@ namespace vortex::voxel {
         for (const glm::ivec3& coord : changedChunks) PromoteFaceNeighbours(coord);
         RefreshContentTop();
         return changedTotal;
+    }
+
+    // --- chunk sync (networking stage 7a) -----------------------------------------------------
+
+    bool World::EncodeChunkAt(const glm::ivec3& chunk, std::vector<uint8_t>& out) const {
+        out.clear();
+        const Cell* cell = FindCell(chunk);
+        if (!cell) return false;
+        switch (cell->state) {
+            case CellState::Packed: {
+                const std::vector<uint8_t>& bytes = m_Packed[CellIndex(chunk)];
+                out.assign(bytes.begin(), bytes.end());
+                return true;
+            }
+            case CellState::Dense: {
+                const Chunk& c = m_Store.Get(cell->slot);
+                if (c.IsEmpty()) out = EncodeChunk(ChunkKind::Empty, 0, nullptr);
+                else if (const int uniform = c.UniformId(); uniform > 0) out = EncodeChunk(ChunkKind::Uniform, static_cast<uint8_t>(uniform), nullptr);
+                else out = EncodeChunk(ChunkKind::Dense, 0, &c);
+                return true;
+            }
+            case CellState::Uniform: out = EncodeChunk(ChunkKind::Uniform, cell->uniformId, nullptr); return true;
+            case CellState::Empty: out = EncodeChunk(ChunkKind::Empty, 0, nullptr); return true;
+            default: return false;
+        }
+    }
+
+    void World::SettleLoading(uint32_t index) {
+        // Trap (networking stage 7a, notes/voxel.md): a cell that streaming still owes is counted in
+        // its column (row bits, surfaceLeft) and may have a job in flight. Installing a chunk there
+        // must take it out of both, or the job overwrites it, or LoadBlocking waits for ever.
+        Cell& cell = m_Cells[index];
+        ++cell.generation;            // a job in flight for it is stale now
+        const glm::ivec3 s = m_Config.windowSize;
+        Column& column = m_Columns[index / static_cast<uint32_t>(s.y)];
+        if (column.classState != Column::Class::Known) return;   // PlaceCell skips a cell that is not Unloaded
+        const int rel = cell.coord.y - m_WindowMin.y;
+        const bool counted = cell.state == CellState::Loading ? (TestBit(column.savedRows, rel) || IsSurfaceRow(column, cell.coord.y))
+                                                              : TestBit(column.surfaceRows, rel);
+        ClearBit(column.surfaceRows, rel);
+        ClearBit(column.caveRows, rel);
+        if (counted && column.surfaceLeft > 0) --column.surfaceLeft;
+    }
+
+    SetChunkResult World::SetChunkEncoded(const glm::ivec3& chunk, std::span<const uint8_t> rle) {
+        Cell* cell = FindCell(chunk);
+        if (!cell) return SetChunkResult::OutsideWindow;
+        if (!m_Scratch) m_Scratch = std::make_unique<Chunk>();
+        ChunkKind kind = ChunkKind::Empty;
+        uint8_t id = 0;
+        if (!DecodeChunk(rle, kind, id, *m_Scratch)) return SetChunkResult::Malformed;
+        if (kind == ChunkKind::Dense) {
+            if (m_Scratch->IsEmpty()) {
+                kind = ChunkKind::Empty;
+            } else if (const int uniform = m_Scratch->UniformId(); uniform > 0) {
+                kind = ChunkKind::Uniform;
+                id = static_cast<uint8_t>(uniform);
+            }
+        }
+        const uint32_t index = CellIndex(chunk);
+        uint32_t slot = ChunkStore::kInvalidSlot;
+        if (kind == ChunkKind::Dense) {
+            slot = cell->state == CellState::Dense ? cell->slot : m_Store.Alloc();
+            if (slot == ChunkStore::kInvalidSlot) return SetChunkResult::StoreFull;
+            m_Store.Get(slot) = *m_Scratch;
+            m_Store.MarkDirty(slot);
+        } else if (cell->state == CellState::Dense && cell->slot != ChunkStore::kInvalidSlot) {
+            m_Garbage.chunks.push_back(m_Store.Release(cell->slot));
+        }
+        DropKeptBytes(index);         // Packed bytes, or the copy a resident buried chunk kept
+        const bool wasLoaded = cell->state != CellState::Unloaded && cell->state != CellState::Loading;
+        if (!wasLoaded) SettleLoading(index);
+        cell->slot = slot;
+        cell->state = kind == ChunkKind::Dense ? CellState::Dense : kind == ChunkKind::Uniform ? CellState::Uniform : CellState::Empty;
+        cell->uniformId = kind == ChunkKind::Uniform ? id : uint8_t{0};
+        cell->packedId = 0;
+        cell->modified = true;        // not the generator's output (never packed, kept as an edit)
+        cell->fromSave = false;
+        SetGrid(index, *cell);
+        ChunkChange& change = QueueChange(*cell);
+        if (wasLoaded) {
+            // Content replaced: the old collider is stale everywhere in the chunk (physics simulates no
+            // body against a stale part of a collider; an empty box would mean "only loaded").
+            change.editMin = ChunkToVoxel(chunk);
+            change.editMax = change.editMin + glm::ivec3(kChunkSize);
+        }
+        if (m_Pack) PromoteFaceNeighbours(chunk);
+        RefreshContentTop();
+        return SetChunkResult::Installed;
+    }
+
+    std::vector<glm::ivec3> World::TakeWindowSteps() {
+        std::vector<glm::ivec3> out = std::move(m_WindowSteps);
+        m_WindowSteps.clear();
+        return out;
+    }
+
+    std::vector<glm::ivec3> World::TakeLoadedChunks() {
+        std::vector<glm::ivec3> out = std::move(m_LoadedChunks);
+        m_LoadedChunks.clear();
+        return out;
     }
 
     // --- quantised edits ----------------------------------------------------------------------
@@ -1560,18 +1687,6 @@ namespace vortex::voxel {
             return a * a;
         }
 
-        /// True if some voxel of the box [lo, hi) is inside the sphere (exact).
-        bool SphereTouchesBox(const SphereQ& s, const glm::ivec3& lo, const glm::ivec3& hi) {
-            const int64_t r = s.radius;
-            int64_t sum = 0;
-            for (int a = 0; a < 3; ++a) {
-                const int64_t d2 = AxisDistance2(s.center[a], r, lo[a], hi[a]);
-                if (d2 < 0) return false;
-                sum += d2;
-            }
-            return sum <= r * r;
-        }
-
         /// Builds the per-material "may be carved" table of one carve.
         std::array<bool, 256> CarvableIds(const MaterialLibrary* materials, uint16_t power) {
             std::array<bool, 256> carvable{};
@@ -1588,6 +1703,18 @@ namespace vortex::voxel {
             }
             return carvable;
         }
+    }
+
+    bool SphereTouchesBox(const SphereQ& s, const glm::ivec3& lo, const glm::ivec3& hi) {
+        if (hi.x <= lo.x || hi.y <= lo.y || hi.z <= lo.z) return false;
+        const int64_t r = s.radius;
+        int64_t sum = 0;
+        for (int a = 0; a < 3; ++a) {
+            const int64_t d2 = AxisDistance2(s.center[a], r, lo[a], hi[a]);
+            if (d2 < 0) return false;
+            sum += d2;
+        }
+        return sum <= r * r;
     }
 
     SphereQ QuantizeSphere(const glm::dvec3& centerVoxels, double radiusVoxels) {
@@ -1639,58 +1766,57 @@ namespace vortex::voxel {
         if (!IsChunkLoaded(VoxelToChunk(v))) return false;
         if (GetVoxel(v) == id) return true;
         return EditRegion(v, v + glm::ivec3(1), [id](const glm::ivec3&, uint8_t) { return static_cast<int>(id); },
-                          [](const glm::ivec3&, const glm::ivec3&) { return true; }, nullptr, nullptr) == 1;
+                          [](const glm::ivec3&, const glm::ivec3&) { return true; }, nullptr, nullptr, nullptr) == 1;
     }
 
-    uint32_t World::FillBox(const glm::ivec3& min, const glm::ivec3& max, uint8_t id, std::vector<VoxelEdit>* edits, EditReport* report) {
+    uint32_t World::FillBox(const glm::ivec3& min, const glm::ivec3& max, uint8_t id, std::vector<VoxelEdit>* edits, EditReport* report,
+                            const ChunkClip* clip) {
         // Clipped to the editable range: no integer overflow at chunk borders near the int limits.
         const glm::ivec3 lo = glm::clamp(min, glm::ivec3(-kMaxEditVoxel), glm::ivec3(kMaxEditVoxel));
         const glm::ivec3 hi = glm::clamp(max, glm::ivec3(-kMaxEditVoxel), glm::ivec3(kMaxEditVoxel));
         return EditRegion(lo, hi, [id](const glm::ivec3&, uint8_t) { return static_cast<int>(id); },
-                          [](const glm::ivec3&, const glm::ivec3&) { return true; }, edits, report);
+                          [](const glm::ivec3&, const glm::ivec3&) { return true; }, edits, report, clip);
     }
 
-    uint32_t World::FillSphereQ(const SphereQ& sphere, uint8_t id, std::vector<VoxelEdit>* edits, EditReport* report) {
+    uint32_t World::FillSphereQ(const SphereQ& sphere, uint8_t id, std::vector<VoxelEdit>* edits, EditReport* report, const ChunkClip* clip) {
         glm::ivec3 mn, mx;
         SphereVoxelBounds(sphere, mn, mx);
         return EditRegion(mn, mx, [&sphere, id](const glm::ivec3& v, uint8_t) { return InSphereQ(sphere, v) ? static_cast<int>(id) : -1; },
-                          [&sphere](const glm::ivec3& lo, const glm::ivec3& hi) { return SphereTouchesBox(sphere, lo, hi); }, edits, report);
+                          [&sphere](const glm::ivec3& lo, const glm::ivec3& hi) { return SphereTouchesBox(sphere, lo, hi); }, edits, report,
+                          clip);
     }
 
-    uint32_t World::CarveSphereQ(const SphereQ& sphere, uint16_t power, std::vector<VoxelEdit>* removed, EditReport* report) {
+    uint32_t World::CarveSphereQ(const SphereQ& sphere, uint16_t power, std::vector<VoxelEdit>* removed, EditReport* report,
+                                 const ChunkClip* clip) {
         glm::ivec3 mn, mx;
         SphereVoxelBounds(sphere, mn, mx);
         const std::array<bool, 256> carvable = CarvableIds(m_Materials, power);
         return EditRegion(mn, mx, [&sphere, &carvable](const glm::ivec3& v, uint8_t oldId) {
             if (oldId == 0 || !carvable[oldId] || !InSphereQ(sphere, v)) return -1;
             return 0;
-        }, [&sphere](const glm::ivec3& lo, const glm::ivec3& hi) { return SphereTouchesBox(sphere, lo, hi); }, removed, report);
+        }, [&sphere](const glm::ivec3& lo, const glm::ivec3& hi) { return SphereTouchesBox(sphere, lo, hi); }, removed, report, clip);
     }
 
     uint32_t World::CarveSphereQInChunk(const SphereQ& sphere, uint16_t power, const glm::ivec3& chunk, std::vector<VoxelEdit>* removed,
                                         EditReport* report) {
-        glm::ivec3 mn, mx;
-        SphereVoxelBounds(sphere, mn, mx);
-        const glm::ivec3 origin = ChunkToVoxel(chunk);
-        mn = glm::max(mn, origin);
-        mx = glm::min(mx, origin + glm::ivec3(kChunkSize));
-        const std::array<bool, 256> carvable = CarvableIds(m_Materials, power);
-        return EditRegion(mn, mx, [&sphere, &carvable](const glm::ivec3& v, uint8_t oldId) {
-            if (oldId == 0 || !carvable[oldId] || !InSphereQ(sphere, v)) return -1;
-            return 0;
-        }, [&sphere](const glm::ivec3& lo, const glm::ivec3& hi) { return SphereTouchesBox(sphere, lo, hi); }, removed, report);
+        // A carve never puts solid voxels anywhere, so the ceiling (now decided on the whole
+        // sphere) never refused one: the same result as the old clip of the box.
+        const ChunkClip clip = ChunkClip::One(chunk);
+        return CarveSphereQ(sphere, power, removed, report, &clip);
     }
 
-    uint32_t World::SwapSphereQ(const SphereQ& sphere, uint8_t from, uint8_t to, std::vector<VoxelEdit>* edits, EditReport* report) {
+    uint32_t World::SwapSphereQ(const SphereQ& sphere, uint8_t from, uint8_t to, std::vector<VoxelEdit>* edits, EditReport* report,
+                                const ChunkClip* clip) {
         if (from == to) return 0;
         glm::ivec3 mn, mx;
         SphereVoxelBounds(sphere, mn, mx);
         return EditRegion(mn, mx, [&sphere, from, to](const glm::ivec3& v, uint8_t oldId) {
             return oldId == from && InSphereQ(sphere, v) ? static_cast<int>(to) : -1;
-        }, [&sphere](const glm::ivec3& lo, const glm::ivec3& hi) { return SphereTouchesBox(sphere, lo, hi); }, edits, report);
+        }, [&sphere](const glm::ivec3& lo, const glm::ivec3& hi) { return SphereTouchesBox(sphere, lo, hi); }, edits, report, clip);
     }
 
-    uint32_t World::ClearMask(const glm::ivec3& origin, const VoxelMask& mask, std::vector<VoxelEdit>* removed, EditReport* report) {
+    uint32_t World::ClearMask(const glm::ivec3& origin, const VoxelMask& mask, std::vector<VoxelEdit>* removed, EditReport* report,
+                              const ChunkClip* clip) {
         const glm::ivec3 size = mask.Size();
         if (size.x <= 0 || size.y <= 0 || size.z <= 0) return 0;
         // The box must stay inside the editable range (no integer overflow of origin + size).
@@ -1711,7 +1837,7 @@ namespace vortex::voxel {
                     if (anyInRow(glm::ivec3(lo.x, y, z), hi.x - lo.x)) return true;
                 }
             return false;
-        }, removed, report, anyInRow);
+        }, removed, report, clip, anyInRow);
     }
 
     uint32_t World::FillSphere(const glm::vec3& center, float radius, uint8_t id, std::vector<VoxelEdit>* edits) {

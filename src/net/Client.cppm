@@ -18,6 +18,7 @@ import :messages;
 import :prediction;
 import :session;
 import :entities;
+import :sync;
 
 export namespace vortex::net {
 
@@ -53,6 +54,24 @@ export namespace vortex::net {
         /// adds: chunks a carve materialises or decodes, its own rubble models (networking.md
         /// "Stage 5 as built").
         uint32_t minFreeStoreSlots = 0;
+        /// Chunk sync (stage 7a): the player starts once every chunk within `startRadius` metres of it
+        /// is current and the entity baseline has ended; Unsynced chunks are requested only while the
+        /// store has more than `requestReserveSlots` free; the op ring's bounds.
+        float startRadius = 32.0f;
+        uint32_t requestReserveSlots = 64;
+        size_t ringOps = 1024;
+        size_t ringBytes = size_t{1} << 20;
+        /// The widest window (chunks, x and z) this client may hold (stage 7a M-b): 0 = the region's
+        /// window, fixed (every region fits). When the region's window is wider
+        /// (sim::ClientWindowMoves) the client's world is `windowChunks` x the region's rows x
+        /// `windowChunks`, follows its player (RunTick; the game: the engine's window follows the
+        /// camera) and is kept in sync chunk by chunk (WindowUpdate on every move). At most
+        /// kMaxClientWindowChunks.
+        int32_t windowChunks = 0;
+        /// Bulk messages (ChunkData, BaselineEntity) installed per Poll at most, in arrival order; the
+        /// rest wait for the next Poll (review of stage 7a: after the game's 3 s Attach hundreds arrive
+        /// at once). A count, not a time: runs stay reproducible. 0 = no limit.
+        uint32_t maxBulkPerPoll = 64;
     };
 
     enum class ClientState : uint8_t {
@@ -62,7 +81,7 @@ export namespace vortex::net {
         Playing,      ///< attached: events are applied as they arrive
         Refused,      ///< the server said no (RefusalReason)
         Closed,       ///< disconnected
-        Failed,       ///< a malformed message, a gap in the stream, an invalid region, an operation it could not apply in full (logged; it disconnects)
+        Failed,       ///< a malformed message, a gap in the stream, an invalid region, an ack it did not ask for (logged; it disconnects)
     };
 
     struct ClientStats {
@@ -74,10 +93,11 @@ export namespace vortex::net {
         uint32_t snapshotsReceived = 0;
         uint32_t snapshotsStale = 0;      ///< older than one already received (reordered or duplicated): only their margin is ignored too
         uint32_t malformedSnapshots = 0;  ///< state-channel messages that are not a valid snapshot (ignored)
-        /// Chunks an operation could not change on this client (not loaded / no store slot): until
-        /// networking stage 7 a divergence, so the first one fails the client (the window is loaded
-        /// before anything is applied and the store sized for it, so it does not happen).
+        /// Chunks the World skipped although chunk sync held them current (not loaded after all): they
+        /// catch up when they load. 0 in a fixed window (loaded whole before anything is applied).
         uint32_t skippedChunks = 0;
+        /// Chunks an operation found without a store slot (they became Unsynced: requested whole once
+        /// slots free). 0 with a store sized for the window.
         uint32_t unsyncedChunks = 0;
         uint32_t probeMismatches = 0;     ///< Probe chunks this client generates differently (stage 7: server terrain mode)
 
@@ -96,6 +116,42 @@ export namespace vortex::net {
         uint64_t bodySamples = 0;         ///< snapshot samples taken
         uint64_t bodySamplesIgnored = 0;  ///< ... ignored: no copy, or not newer than its rest or newest sample, or dropped waiting
         uint32_t heldUnderPlayer = 0;     ///< ticks a moving copy stayed solid because the own player stands on it
+
+        // Chunk sync and the join (stage 7a).
+        uint64_t bulkBytes = 0;           ///< bulk messages received
+        uint32_t chunkData = 0;           ///< ChunkData received
+        uint32_t baselineEntities = 0;    ///< BaselineEntity received (the join's baseline and model answers)
+        uint32_t baselineDiscarded = 0;   ///< ... for a tombstoned NetId or one with a copy already
+        uint32_t heldEntityEvents = 0;    ///< entity events held for a NetId whose copy did not exist yet
+        uint32_t droppedHeldEvents = 0;   ///< ... dropped (at or below the copy's base, or never claimed)
+        uint32_t staleEntityEvents = 0;   ///< live entity events at or below their copy's base (the baseline holds them)
+        uint32_t chunkRequests = 0, modelRequests = 0;   ///< coordinates / NetIds asked for
+        /// Server ticks from the Welcome to the prediction's start (32 m current, baseline ended), to
+        /// the join's data being in (the baseline ended and no chunk of the window waiting for the
+        /// server: none without a base, awaiting data, requested or unsynced; chunks may still be
+        /// generating here), and to the first Synced() (every chunk current: for a window that follows a
+        /// walking player that is only once it stops); 0 until then.
+        uint32_t joinStartTicks = 0, joinDataTicks = 0, joinSyncTicks = 0;
+        /// Server ticks from the Welcome to the baseline's near-set marker (BaselineNear) and to its
+        /// end (BaselineEnd) being processed; 0 until then (review of stage 7a).
+        uint32_t baselineNearTicks = 0, baselineEndTicks = 0;
+        /// The same on the wall clock (steady_clock, logged only: a server catching up after its
+        /// preload runs ticks faster than real time).
+        double joinStartSeconds = 0.0, joinDataSeconds = 0.0, joinSyncSeconds = 0.0;
+        /// WindowUpdates sent (the first at Welcome), and those that reset the window (the world moved
+        /// twice between two checks: every chunk of it counts as entering again).
+        uint32_t windowUpdates = 0, windowResets = 0;
+        uint32_t maxStoreUsed = 0;        ///< the most chunk-store slots in use at a Poll after Attach
+        /// Model answers older than entity events this client dropped for that NetId (a held-event
+        /// overflow): discarded, the re-asked answer is newer (review of stage 7a).
+        uint32_t staleAnswers = 0;
+        /// Wall clock per Poll (logged only; review of stage 7a): chunk sync's housekeeping (window
+        /// steps, load reports and their replays, requests) and the bulk installs (ChunkData with its
+        /// ring replay, baseline entities), summed and the largest Poll; Polls counted.
+        double syncSeconds = 0.0, maxSyncSeconds = 0.0;
+        double bulkSeconds = 0.0, maxBulkSeconds = 0.0;
+        uint64_t polls = 0;
+        uint32_t maxBulkInPoll = 0;       ///< bulk messages processed in one Poll at most
     };
 
     /// @brief How the own player's prediction went (networking.md stage 4: "correction rate logged").
@@ -123,6 +179,10 @@ export namespace vortex::net {
         uint32_t castsRejected = 0;       ///< Casts the server reported it did not run (Snapshot::castRejected, stage 5)
         uint64_t bleedTicks = 0;          ///< Ticks run while the clock bled a surplus
         uint64_t catchUpTicks = 0;        ///< Ticks run while the clock made up a deficit
+        /// Chunk sync (stage 7a): ticks the own player was held because a chunk of its reach was not
+        /// current (inputs still sent), snapshots taken as they are meanwhile, and the replays after.
+        uint64_t syncHeldTicks = 0, syncTaken = 0, syncResumes = 0;
+        uint64_t startGateDrops = 0;      ///< Polls that dropped the waiting snapshots: the start gate was closed
         int32_t lastMargin = 0, minMargin = 0, maxMargin = 0;
         bool anyMargin = false;
         /// Corrections per minute of prediction.
@@ -207,9 +267,10 @@ export namespace vortex::net {
         const sim::RegionDesc& Region() const;            ///< From Welcomed on.
         glm::dvec3 Spawn() const;
         uint8_t Slot() const;
-        /// @brief `base` with the session's world: memory only, the region's voxel size, window and
-        /// height range (sim::RegionWorldConfig), a store of at least sim::RegionChunkCapacity slots
-        /// (the client holds the whole window until stage 7), the server's tick length and gravity
+        /// @brief `base` with the session's world: memory only, the region's voxel size and height
+        /// range, the client's window (sim::ClientWorldConfig: the region's, or a `windowChunks` window
+        /// that follows the player), load reports, a store of at least sim::ClientChunkCapacity slots
+        /// (every cell of that window), the server's tick length and gravity
         /// (Welcome), the session's character mask (sim::kSessionCharacterLayers: terrain and Dynamic,
         /// as on the server) and own rubble in physics::Layer::Rubble (SceneConfig::rubbleLayer: it
         /// never blocks the predicted player). Valid from Welcomed on.
@@ -223,8 +284,9 @@ export namespace vortex::net {
          * @brief Takes the simulation the events are applied to: refused (false, logged; the state
          * stays Welcomed) when it is not initialised, has a save directory (a session world is
          * memory only), or its voxel size, window, height range, material table, tick length,
-         * gravity or character mask differ from the session's. Loads the whole window (World::LoadBlocking) and refuses it when the window did
-         * not land on the region's, the store filled, or a probe chunk is not what this client's
+         * gravity or character mask differ from the session's. Loads the whole window (World::LoadBlocking;
+         * a moving window: placed at the spawn, its surface and the chunks near the spawn) and refuses it when the window did
+         * not land where it should, the store filled, or a loaded probe chunk is not what this client's
          * generator makes (another generator, or edited before Attach), or it leaves fewer than
          * ClientSettings::minFreeStoreSlots free. Then applies the events received so far.
          * @param whileLoading Called between streaming steps while the window loads (the game polls
@@ -235,7 +297,23 @@ export namespace vortex::net {
 
         uint32_t AppliedOpSeq() const;    ///< The last event applied.
         uint32_t ServerOpSeq() const;     ///< The last event the server said it made (status or batch).
-        uint32_t LogEnd() const;          ///< opSeq the join log ends at (Welcome).
+        uint32_t JoinOpSeq() const;       ///< The join point (Welcome): the stream started after it.
+        /// @brief Every chunk of the window current, no chunk or model request out, the entity baseline
+        /// ended and no entity event held: Hash() is comparable with the server's (at the same opSeq).
+        bool Synced() const;
+        /// @brief The box Hash() covers: the window intersected with the server's (the region's
+        /// window for a fixed-window client).
+        SyncBox SyncWindow() const;
+        /// @brief The whole window of the last WindowUpdate (the world's; SyncWindow is its part inside
+        /// the server's window).
+        SyncBox Window() const;
+        /// @brief The window follows the player (sim::ClientWindowMoves with ClientSettings::windowChunks).
+        bool WindowMoves() const;
+        /// @brief Chunks within ClientSettings::startRadius of the player (the spawn before the
+        /// prediction starts) that are not current yet: what the start gate waits for (the game's
+        /// JOINING line). 0 once predicting.
+        uint32_t ChunksToStart() const;
+        const ChunkSync& Sync() const;
         const ClientStats& Stats() const;
         /// @brief This client's copies of the server's replicated objects (the entity check).
         std::vector<EntityInfo> Entities() const;
@@ -244,10 +322,12 @@ export namespace vortex::net {
         bool IsCopy(scene::Entity entity) const;
         /// @brief The snapshot samples of the copies (largest sample gap per body: RemoteBodies::MaxGap).
         const RemoteBodies& Bodies() const;
-        /// @brief The applied live operations (after LogEnd) since the last call, one BlastResult per
+        /// @brief The applied live operations (after JoinOpSeq) since the last call, one BlastResult per
         /// cast (a carve and the Detach / ClearMask after it; `deferred` when there is no carve).
         /// Empty without `presentation`; the join log is never presented.
         std::vector<sim::BlastResult> TakePresentations();
+        /// @brief WorldHash over SyncWindow(); every chunk there that is not current counts in
+        /// `notLoaded` (incomplete: not comparable).
         voxel::WorldHashResult Hash() const;
 
     private:

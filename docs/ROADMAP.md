@@ -22,8 +22,8 @@ What exists today, and what was designed for but is not built yet. See
 | Renderer | Ray-marched G-buffer, ray-traced sun shadows, ambient occlusion, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping, ImGui. Headless mode with screenshots. Validation-clean on Intel UHD 620. |
 | Editor | `vortex.editor`: in-game editor toggled with F1 - fly camera, entity selection with a translate / rotate gizmo, inspector, terrain brush, primitive spawning, `.vox` / glTF import, environment / render / profiler / world panels. Tool logic is separate from the widgets and unit tested. |
 | Simulation | `vortex.sim`: `sim::Simulation` owns world, physics, terrain colliders and scene and steps them on a numbered fixed tick; `sim::WorldOp` / `ApplyOp` replay terrain changes exactly; `sim::Blast`. Library `Vortex::Sim` links no renderer or window. `Engine` owns one and draws it. |
-| Sessions | `vortex.net` (`Vortex::Net`, GPU-free): the M1 protocol over ENet (UDP, `EnetTransport`) and in-process loopback transports (`ImpairedTransport`: seeded loss, delay, jitter, duplicates, reordering, rate limit, outages), `net::Server` (fixed region window, template as operations 1..k, event stream with a byte budget, cast queue with a work budget, join = full event log, one player per client moved by its inputs, snapshots at 30 Hz) and `net::Client` (handshake with token and build hash, region from `Welcome`, operations applied in `opSeq` order, the own player predicted with `sim::StepPlayer` and reconciled with the snapshots on a clock kept ahead of the server, other players interpolated); `vortex_server` runs a session file headless, listens on UDP (`--listen`, ENet) and runs in-process bot players over loopback or UDP. The game joins a session with `Shredborne --connect HOST[:PORT] --token HEX` (stage 5): its engine is built from the server's region and ticks on the client clock, its player is predicted, other players are voxel figures, every hole is the server's (one round trip after the click). Since stage 6 crates (the plaza's and E), terrain pieces of 0.512 m^3 or more and object pieces are server bodies with a NetId (at most 2 new per tick, 64 awake, 256 live), sent as entity events and in the snapshots; clients hold kinematic copies drawn in the past and put exactly at their rest poses, players collide with them at rest on both sides, smaller pieces are each client's own rubble. Tested on one machine (server + two headless game clients on localhost: equal world hashes and entity lists); the two-machine run is the owner's. |
-| Tests | 634 unit tests (six disabled measurements), none needing a GPU (the ENet ones use UDP sockets on 127.0.0.1). |
+| Sessions | `vortex.net` (`Vortex::Net`, GPU-free): the M1 protocol over ENet (UDP, `EnetTransport`) and in-process loopback transports (`ImpairedTransport`: seeded loss, delay, jitter, duplicates, reordering, rate limit, outages), `net::Server` (fixed region window, template as operations 1..k, event stream with a byte budget, cast queue with a work budget, join by chunk sync since stage 7a (modified chunks as paced bulk, the entity baseline), one player per client moved by its inputs, snapshots at 30 Hz) and `net::Client` (handshake with token and build hash, region from `Welcome`, operations applied in `opSeq` order above each chunk's base, a window that follows its player on regions wider than 48 chunks (stage 7a), the own player predicted with `sim::StepPlayer` and reconciled with the snapshots on a clock kept ahead of the server, other players interpolated); `vortex_server` runs a session file headless, listens on UDP (`--listen`, ENet) and runs in-process bot players over loopback or UDP. The game joins a session with `Shredborne --connect HOST[:PORT] --token HEX` (stage 5): its engine is built from the server's region and ticks on the client clock, its player is predicted, other players are voxel figures, every hole is the server's (one round trip after the click). Since stage 6 crates (the plaza's and E), terrain pieces of 0.512 m^3 or more and object pieces are server bodies with a NetId (at most 2 new per tick, 64 awake, 256 live), sent as entity events and in the snapshots; clients hold kinematic copies drawn in the past and put exactly at their rest poses, players collide with them at rest on both sides, smaller pieces are each client's own rubble. Tested on one machine (server + two headless game clients on localhost: equal world hashes and entity lists); the two-machine run is the owner's. |
+| Tests | 674 unit tests (six disabled measurements), none needing a GPU (the ENet ones use UDP sockets on 127.0.0.1). |
 
 ## Performance (Intel UHD 620, 1280x720 output, 768x432 internal)
 
@@ -267,10 +267,55 @@ State (stages are those of [design/networking.md](design/networking.md)):
   longer follow worker timing (the session tests are reproducible bit for bit); players' crates go with the player;
   the game's drain waits for rest; a late joiner starts predicting from a fresh snapshot (the drill's joiner had a
   hard resync). **Not done / open:** windowed play and the two-machine run with bodies (owner); the wire
-  `EntityCheck` and entity baseline (7); the replicated threshold (owner question in networking.md "Review of stage
-  6": a crate is 152 voxels, under the 262 of 0.512 m^3, so it breaks at its first hit); crush damage (M2). Choices:
+  `EntityCheck` and entity baseline (7); the replicated threshold was decided on 2026-11-16: it stays at 0.512 m^3, so a crate
+  (152 voxels) breaks at its first hit; fun and few bugs come before synced rubble; crush damage (M2). Choices:
   `design/networking.md`, "Stage 6 as built", "Review of stage 6".
-- Stages 7-9: not started. Before stage 3: shred.md stage 1 changed the search result (face flood), the server
+- **Stage 7a (chunk sync: joins and a moving client window) - milestones M-a and M-b built, integrated, accepted,
+  reviewed and rechecked (2026-11-17), not committed.** A joiner no longer receives the event log: it starts at its join point; the server's modified map (fed
+  from the chunks each operation changed) says which chunks of its window come as `ChunkData` (encoded at dequeue,
+  paced bulk: a delay-based window per peer), the rest it generates; the entity baseline brings every live replicated
+  body (resting ones at their exact rest pose). The client applies an operation to a chunk only above its base (live or
+  replayed from a 1024-op ring), holds entity events until their copy exists, asks for a model when a replicated
+  `Detach` meets chunks without a base, requests chunks it could not keep (full store) or replay, starts its player
+  once the chunks within 32 m are current and the baseline has ended. Protocol 8. **M-b:** on a region wider than 48
+  chunks (`arena250.session`) a session client's window is the game's (48 x the rows x 48, full height) and follows
+  its player: every move is a `WindowUpdate`, entering modified chunks come as `ChunkData`, chunks that leave are
+  dropped and come back from the server; playground and drill keep the fixed region window. Measured: the drill's late
+  joiner 64 KiB of bulk instead of a ~236 KiB log, synced about 0.5 s after its `Welcome`; the playground's join 76 KiB
+  (larger than its old 64-event log: the plan's first risk); the join adds nothing to another client's event latency on
+  its own link; the arena walk (`vortex_server ... arena250.session --client-window 48 --walk-across ...`): a bot walks
+  -118 to +122 m, both bots' hashes over their windows equal the server's, store at most 5576 of 12 288 slots, the
+  walker's join 855 KiB (737 KiB of chunks) and 1.9 MiB of `ChunkData` over the walk, event latency during the joins p99
+  183 ms on a 5 %-loss, 40-70 ms link (the stream's floor there), RSS 1.1 GiB for the server and two bot worlds (the
+  server alone 0.5 GiB), server world 48 MiB RLE; a headless game client on the arena keeps its hash equal to the
+  server's over its window and shows `JOINING ... N chunks` while it joins. One fix in the integration: an installed
+  chunk is a whole-chunk edit for physics. The design's p99 250 ms is not met on a 64 kB/s, 5 %-loss link even without
+  a join (21 ticks; the unit test asserts the join's cost relative to that).
+  **Review of 7a** (16 findings, 14 distinct, two more found while verifying; every bug first a failing GPU-free test;
+  10 new tests, **671 in all (six disabled)**): an oversize bulk message waits only for the peer's bulk in flight
+  (transports count bytes in flight per channel; it waited for an idle event stream before), the pacer's drain counts
+  the events and its base RTT ages (12 x 10 s; halving once per round trip), the start gate opens on `BaselineNear`
+  (message 15: the baseline's entities within 32 m of the spawn; 229 crates: start 0.15 s, baseline end 1.08 s), a
+  moving client window follows with one chunk of slack and sends every step (`World::TakeWindowSteps`: two steps between
+  `Poll`s, normal in the game, reset the whole window before; the arena's wandering bot 4.6 -> 3.1 MiB of re-sends),
+  the baseline names the tick it was stepped on, chunk sync walks only entering slabs and only Unsynced records, bulk
+  installs are bounded per `Poll` (64) and timed (the game on the arena: 0.017 ms of chunk sync per `Poll`, at most
+  2.0 ms of installs), repeated `ModelRequest`s are answered once and stale answers discarded, the join latency target
+  is asserted at 128 kB/s and 1 % loss (13 / 12 ticks; at 5 % loss it is unreachable on any link) and by
+  `vortex_server --max-join-p99-ticks 15` in the drill, hostile sync messages and per-coordinate requests are tested,
+  every test has a 180 s timeout.
+  **Recheck of 7a** (6 findings, all real; 3 new tests, one extended, **674 in all (six disabled)**): bulk goes only
+  while the bytes in flight are under the window again (the review's oversize fix let one message go whatever the
+  events in flight; now a larger one goes alone only once its bulk drained and the total is under the window), the
+  view radius leaves the follow slack out (88 m for a session client: the window's edge never inside the edge fog), a
+  batch of chunks catching up walks the op ring once and decodes each op once (the 16-op FIFO cache never hit), the
+  server's per-coordinate request counts are a test-only setting, `--max-join-p99-ticks N` requires under N, docs and
+  log lines match the code. While a peer's events alone fill its link its join waits (no reserved bulk share).
+  **Not done:** 7b (`HashCheck`, server terrain mode, the wire `EntityCheck`), splitting large bulk messages, encoding
+  chunks against their pristine version (join bytes), a client cache of the slab last left (the rest of the re-sends);
+  windowed play on the arena is the owner's. Choices: `design/networking.md`, "Stage 7a plan" (with its amendments),
+  "Stage 7a as built", "Review of stage 7a", "Recheck of stage 7a".
+- Stages 7b-9: not started. Before stage 3: shred.md stage 1 changed the search result (face flood), the server
   window margin (3 chunks, flood box) and the cast budget (a work budget); shred.md stage 4 (built, the owner's answer
   to its question 4) moved the island search onto the cell graph - same results except where a work budget runs out,
   node visits and chunk graphs used (at a cold price; never graphs built, which depend on the cache) to count in stage
@@ -487,7 +532,7 @@ State (stages are those of [design/networking.md](design/networking.md)):
 - **Game UI**: the HUD layer exists (ARCHITECTURE.md section 11). Still missing: input action mapping and
   key rebinding, a settings menu (mouse sensitivity is a constant), gamepad navigation, Unicode / TTF text,
   textured widgets, in-game chat (M1).
-- **Networking**: server-authoritative simulation (M1, stages 2-9; 7-9 left). `Vortex::Core`, `Vortex::Physics` and
+- **Networking**: server-authoritative simulation (M1, stages 2-9; 7b, 8, 9 left). `Vortex::Core`, `Vortex::Physics` and
   `Vortex::Sim` build without GPU or window, the simulation runs on a numbered fixed tick and the world is stored
   as chunk deltas.
 - **Double-precision physics** for worlds far from the origin (rendering is already origin-relative).

@@ -85,27 +85,60 @@ namespace vortex::sim {
         outMin = outMax = glm::ivec3(0);
     }
 
-    OpResult ApplyOp(voxel::World& world, const WorldOp& op, std::vector<voxel::VoxelEdit>* edits) {
+    OpResult ApplyOp(voxel::World& world, const WorldOp& op, std::vector<voxel::VoxelEdit>* edits, const voxel::ChunkClip* clip) {
         OpResult result;
         switch (op.kind) {
             case WorldOpKind::CarveSphere:
-                result.changed = world.CarveSphereQ(op.sphere, op.power, edits, &result.report);
+                result.changed = world.CarveSphereQ(op.sphere, op.power, edits, &result.report, clip);
                 break;
             case WorldOpKind::FillSphere:
-                result.changed = world.FillSphereQ(op.sphere, op.id, edits, &result.report);
+                result.changed = world.FillSphereQ(op.sphere, op.id, edits, &result.report, clip);
                 break;
             case WorldOpKind::SwapSphere:
-                result.changed = world.SwapSphereQ(op.sphere, op.from, op.id, edits, &result.report);
+                result.changed = world.SwapSphereQ(op.sphere, op.from, op.id, edits, &result.report, clip);
                 break;
             case WorldOpKind::FillBox:
-                result.changed = world.FillBox(op.min, op.max, op.id, edits, &result.report);
+                result.changed = world.FillBox(op.min, op.max, op.id, edits, &result.report, clip);
                 break;
             case WorldOpKind::Detach:
             case WorldOpKind::ClearMask:
-                result.changed = world.ClearMask(op.min, op.mask, edits, &result.report);
+                result.changed = world.ClearMask(op.min, op.mask, edits, &result.report, clip);
                 break;
         }
         return result;
+    }
+
+    bool OpChunkRange(const WorldOp& op, glm::ivec3& minChunk, glm::ivec3& maxChunk) {
+        glm::ivec3 lo, hi;
+        op.Bounds(lo, hi);
+        if (hi.x <= lo.x || hi.y <= lo.y || hi.z <= lo.z) return false;
+        minChunk = voxel::VoxelToChunk(lo);
+        maxChunk = voxel::VoxelToChunk(hi - glm::ivec3(1));
+        return true;
+    }
+
+    bool OpTouchesChunk(const WorldOp& op, const glm::ivec3& chunk) {
+        glm::ivec3 lo, hi;
+        op.Bounds(lo, hi);
+        const glm::ivec3 origin = voxel::ChunkToVoxel(chunk);
+        lo = glm::max(lo, origin);
+        hi = glm::min(hi, origin + glm::ivec3(voxel::kChunkSize));
+        if (hi.x <= lo.x || hi.y <= lo.y || hi.z <= lo.z) return false;
+        switch (op.kind) {
+            case WorldOpKind::CarveSphere:
+            case WorldOpKind::FillSphere:
+            case WorldOpKind::SwapSphere: return voxel::SphereTouchesBox(op.sphere, lo, hi);
+            case WorldOpKind::FillBox: return true;
+            case WorldOpKind::Detach:
+            case WorldOpKind::ClearMask:
+                for (int z = lo.z; z < hi.z; ++z)
+                    for (int y = lo.y; y < hi.y; ++y) {
+                        const size_t i = op.mask.Index(lo.x - op.min.x, y - op.min.y, z - op.min.z);
+                        if (op.mask.AnyInRange(i, i + static_cast<size_t>(hi.x - lo.x))) return true;
+                    }
+                return false;
+        }
+        return false;
     }
 
     voxel::VoxelVolume BuildDetachedPiece(const WorldOp& op, std::span<const voxel::VoxelEdit> removed) {

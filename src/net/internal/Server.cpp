@@ -15,9 +15,12 @@ module;
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
+#include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -91,6 +94,30 @@ namespace vortex::net {
             void Store(uint32_t tick) { history[tick % kStateHistory] = {tick, state}; }
         };
 
+        /// One bulk message waiting for a peer (stage 7a), encoded when it is dequeued.
+        struct BulkItem {
+            enum class Kind : uint8_t { Chunk, Entity } kind = Kind::Chunk;
+            glm::ivec3 chunk{0};
+            uint32_t netId = 0;
+        };
+
+        /// What a join cost (the `Join:` log line; stage 7a).
+        struct JoinRecord {
+            uint32_t joinTick = 0;
+            uint32_t windowChunks = 0, modifiedChunks = 0;
+            uint32_t chunkData = 0;
+            uint64_t chunkBytes = 0;
+            uint32_t baseline = 0;
+            uint64_t baselineBytes = 0;
+            uint32_t requests = 0;
+            size_t minWindow = 0, maxWindow = 0;
+            double peakRate = 0.0;        ///< bulk bytes per second, the largest one-second sum
+            double encodeSeconds = 0.0;   ///< wall clock of its bulk encodes and hand-overs (logged only)
+            uint64_t secondBytes = 0;
+            uint32_t secondStart = 0;
+            bool logged = false;
+        };
+
         struct Peer {
             bool joined = false;
             bool closing = false;         ///< refused: disconnect once the refusal is delivered
@@ -102,11 +129,35 @@ namespace vortex::net {
             /// Snapshot priority of each awake body for this client (stage 6): grows by one every
             /// snapshot that left it out, back to 0 when it was sent.
             std::unordered_map<uint32_t, float> priority;
+
+            // Chunk sync (stage 7a).
+            bool hasWindow = false;
+            uint32_t windowSeq = 0;       ///< the last WindowUpdate taken
+            SyncBox window;
+            std::deque<BulkItem> front;   ///< request answers, first in first out
+            std::vector<glm::ivec3> chunks;   ///< queued chunks, farthest first (the nearest is at the back)
+            std::unordered_set<glm::ivec3, ChunkCoordHash> queued;   ///< in `chunks` or in `front`
+            glm::ivec3 sortedFor{0};      ///< the player's chunk when `chunks` was sorted
+            std::deque<uint32_t> baseline;    ///< NetIds of the join's baseline, nearest first
+            bool baselineOpen = false;    ///< BaselineEnd not sent yet
+            uint32_t baselineSent = 0;
+            uint32_t nearLeft = 0;        ///< baseline NetIds within baselineNearMetres not dequeued yet
+            bool nearSent = false;        ///< BaselineNear sent
+            std::unordered_set<uint32_t> modelsQueued;   ///< NetIds of ModelRequest answers in `front`
+            std::unique_ptr<BulkPacer> pacer;
+            std::vector<uint8_t> heldBulk;    ///< encoded, waiting for room in the window
+            size_t eventBytesSince = 0;   ///< reliable non-bulk bytes sent to it since its last PumpBulk (the pacer's drain)
+            double bulkCredit = 0.0;      ///< maxBulkBytesPerSecond
+            JoinRecord join;
         };
 
-        /// A replicated object's rest state as the clients were told it (EntityRest).
+        /// A replicated object's rest state as the clients were told it (EntityRest), and the rest's
+        /// tick and pose (a joiner's baseline puts a resting copy exactly there; stage 7a).
         struct BodyTrack {
             bool resting = false;
+            uint32_t restTick = 0;
+            glm::vec3 restPosition{0.0f};
+            glm::quat restRotation{1.0f, 0.0f, 0.0f, 0.0f};
         };
 
         /// A cast waiting for the cast phase. A player's cast is a ray (captured at its input tick:
@@ -157,7 +208,19 @@ namespace vortex::net {
         bool started = false;
         bool failed = false;
 
-        std::vector<LoggedEvent> log;     // log[i] has opSeq i + 1
+        // Events made but not handed to every joined peer yet: backlog[i] has opSeq backlogFirst + i
+        // (stage 7a: no join log; a joiner starts at its join point).
+        std::deque<LoggedEvent> backlog;
+        uint32_t backlogFirst = 1;
+        uint32_t lastOpSeq = 0;
+        uint32_t steppedTick = 0;         // the tick whose physics was stepped last (the bodies' state is of it)
+        double encodeTickSeconds = 0.0;   // bulk encodes of the current tick (wall clock, logged only)
+        size_t backlogBytes = 0;
+        // Every chunk an event changed and the last such event (never cleared; sparse: stage 9's
+        // on-demand world needs nothing else). What a joiner or a moving window is sent.
+        std::unordered_map<glm::ivec3, uint32_t, ChunkCoordHash> modified;
+        std::unordered_map<glm::ivec3, uint32_t, ChunkCoordHash> requestCounts;   // ChunkRequest coordinates received (tests only)
+        std::map<uint32_t, sim::TemplateLight> lights;    // the template's lights (a joiner's baseline)
         std::map<PeerId, Peer> peers;
         std::deque<QueuedCast> queue;
         int64_t castCredit = 0;
@@ -166,7 +229,6 @@ namespace vortex::net {
         double accumulator = 0.0;
         ServerStats stats;
         std::deque<CastRecord> casts;
-        size_t logBytes = 0;
         // Replicated objects (stage 6).
         std::vector<EntityDespawn> despawned;              // the on_destroy<NetId> observer's queue
         std::unordered_map<uint32_t, BodyTrack> tracks;   // NetId -> rest state the clients know
@@ -217,7 +279,14 @@ namespace vortex::net {
             spawn.netId = netId;
             spawn.kind = EntityKind::Object;
             if (!DescribeObject(entity, spawn.object)) return;
-            tracks[netId].resting = (spawn.object.flags & kObjectResting) != 0;
+            BodyTrack& t = tracks[netId];
+            t.resting = (spawn.object.flags & kObjectResting) != 0;
+            if (t.resting) {
+                // Created at rest: its rest is the spawn (no EntityRest follows until it moved).
+                t.restTick = Tick();
+                t.restPosition = spawn.object.position;
+                t.restRotation = spawn.object.rotation;
+            }
             Emit(spawn);
             ++stats.objectSpawns;
         }
@@ -313,6 +382,9 @@ namespace vortex::net {
                     t.resting = true;
                     if (body.motion != physics::MotionType::Static) physics.SetLayer(body.body, physics::Layer::Dynamic);
                     const physics::BodyState state = physics.GetState(body.body);
+                    t.restTick = tick;
+                    t.restPosition = state.position;
+                    t.restRotation = state.rotation;
                     Emit(EntityRest{id.value, tick, state.position, state.rotation});
                     ++stats.rests;
                 }
@@ -410,7 +482,7 @@ namespace vortex::net {
         }
 
         uint32_t Tick() const { return simulation ? simulation->Tick() : 0; }
-        uint32_t LastOpSeq() const { return static_cast<uint32_t>(log.size()); }
+        uint32_t LastOpSeq() const { return lastOpSeq; }
 
         /// Logs and numbers one event. Only terrain operations charge the event credit (the cast
         /// queue's byte budget): entity events follow from Jolt's float poses and sleep (where a
@@ -423,15 +495,13 @@ namespace vortex::net {
             const bool entity = !std::holds_alternative<sim::WorldOp>(event);
             if (bytes > settings.eventBurstBytes) {
                 ++stats.oversizeEvents;
-                Log::Warn("Server: event {} is {} bytes, more than the {}-byte event burst (sent anyway)", log.size() + 1, bytes,
+                Log::Warn("Server: event {} is {} bytes, more than the {}-byte event burst (sent anyway)", lastOpSeq + 1, bytes,
                           settings.eventBurstBytes);
             }
-            log.push_back({Tick(), MaskVoxels(event), w.Take()});
-            if (logBytes <= settings.joinLogWarnBytes && logBytes + bytes > settings.joinLogWarnBytes)
-                Log::Warn("Server: the event log passed {:.1f} MiB: every joiner receives all of it (until networking stage 7); joins are "
-                          "refused above {:.1f} MiB",
-                          static_cast<double>(settings.joinLogWarnBytes) / 1048576.0, static_cast<double>(settings.maxJoinLogBytes) / 1048576.0);
-            logBytes += bytes;
+            if (backlog.empty()) backlogFirst = lastOpSeq + 1;
+            backlog.push_back({Tick(), MaskVoxels(event), w.Take()});
+            backlogBytes += bytes;
+            ++lastOpSeq;
             ++stats.events;
             stats.eventBytes += bytes;
             if (entity) {
@@ -441,6 +511,15 @@ namespace vortex::net {
                 eventCredit -= static_cast<int64_t>(bytes);
             }
             return LastOpSeq();
+        }
+
+        /// A terrain operation applied to the server's world: numbered, and every chunk it changed is
+        /// marked modified at its opSeq (stage 7a; a chunk it did not change still equals the
+        /// generator's output where it did before).
+        uint32_t EmitOp(const sim::WorldOp& op, const sim::OpResult& result) {
+            const uint32_t seq = Emit(op);
+            for (const glm::ivec3& c : result.report.changed) modified[c] = seq;
+            return seq;
         }
 
         /// False (and the session fails) when the server's own world could not apply `r` in full.
@@ -773,19 +852,22 @@ namespace vortex::net {
         void Send(PeerId peer, Channel channel, const std::vector<uint8_t>& bytes) {
             transport.Send(peer, channel, bytes);
             stats.sentBytes += bytes.size();
+            if (channel == Channel::Events)
+                if (const auto it = peers.find(peer); it != peers.end()) it->second.eventBytesSince += bytes.size();
         }
 
         /// Sends the batch that starts after `from` (events of one tick, at most maxBatchBytes and
         /// kMaxMaskVoxels of masks; one larger event goes alone) and returns its last opSeq.
         uint32_t SendBatch(PeerId peer, uint32_t from, uint32_t to) {
             const uint32_t seq = from + 1;
-            const uint32_t tick = log[seq - 1].tick;
+            const auto at = [this](uint32_t opSeq) -> const LoggedEvent& { return backlog[opSeq - backlogFirst]; };
+            const uint32_t tick = at(seq).tick;
             std::vector<uint8_t> bytes;
             uint64_t maskVoxels = 0;
             uint32_t count = 0;
             uint32_t s = seq;
-            while (s <= to && log[s - 1].tick == tick && count < kMaxBatchEvents) {
-                const LoggedEvent& e = log[s - 1];
+            while (s <= to && at(s).tick == tick && count < kMaxBatchEvents) {
+                const LoggedEvent& e = at(s);
                 if (count > 0 && (bytes.size() + e.bytes.size() > settings.maxBatchBytes || maskVoxels + e.maskVoxels > kMaxMaskVoxels)) break;
                 bytes.insert(bytes.end(), e.bytes.begin(), e.bytes.end());
                 maskVoxels += e.maskVoxels;
@@ -796,8 +878,8 @@ namespace vortex::net {
             return s - 1;
         }
 
-        /// Hands a peer its next batches while less than maxEventBytesInFlight is on its way to it
-        /// (all of them when unpaced): a joiner's catch-up waits here, in the log.
+        /// Hands a peer its next batches (all of them, unless a test holds them while
+        /// maxEventBytesInFlight is on its way to it).
         void Pump(PeerId id, Peer& p) {
             const uint32_t last = LastOpSeq();
             const size_t limit = settings.maxEventBytesInFlight;
@@ -833,12 +915,6 @@ namespace vortex::net {
                     used[other.slot] = true;
                 }
             if (joined >= settings.session.maxClients) return Refuse(peer, p, RefuseReason::Full);
-            // Until stage 7 a joiner receives the whole log: past the limit it would load for minutes.
-            if (logBytes > settings.maxJoinLogBytes) {
-                Log::Warn("Server: a join refused: the event log is {:.1f} MiB, over the {:.1f} MiB a joiner may be sent (networking stage 7)",
-                          static_cast<double>(logBytes) / 1048576.0, static_cast<double>(settings.maxJoinLogBytes) / 1048576.0);
-                return Refuse(peer, p, RefuseReason::LogTooLarge);
-            }
             uint8_t slot = 0;
             while (used[slot]) ++slot;
             Welcome welcome;
@@ -849,14 +925,18 @@ namespace vortex::net {
             welcome.player = settings.player;
             welcome.tickSeconds = simulation->FixedTimeStep();
             welcome.gravity = simulation->Config().physics.gravity;
-            welcome.logEnd = LastOpSeq();
+            welcome.joinOpSeq = LastOpSeq();
             welcome.probes = probes;
             Send(peer, Channel::Events, Encode(welcome));
-            // Join = the whole event log (until stage 7's chunk sync), on the same ordered channel,
-            // paced by Flush like the live stream behind it.
+            // Join by chunk sync (stage 7a): the live stream from the join point on; what was made
+            // before comes as ChunkData (its WindowUpdate says where) and the entity baseline.
             p.joined = true;
             p.slot = slot;
-            p.sentUpTo = 0;
+            p.sentUpTo = LastOpSeq();
+            p.pacer = std::make_unique<BulkPacer>(settings.bulkPacer);
+            p.join = JoinRecord{};
+            p.join.joinTick = Tick();
+            QueueBaseline(p, glm::dvec3(tmpl.spawn));
             // Its player stands at the spawn point; the ground under every player gets its collider
             // before the next step (a gate that held the player here would hold it for another
             // number of ticks than its client's).
@@ -868,11 +948,360 @@ namespace vortex::net {
             simulation->Terrain().Update(focus, simulation->Config().colliderRadius);
             simulation->Terrain().Flush();
             ++stats.clientsJoined;
-            Log::Info("Server: client {} joined at tick {} (slot {}, {} events / {} bytes of log)", peer, Tick(), slot, LastOpSeq(), logBytes);
+            Log::Info("Server: client {} joined at tick {} (slot {}, join point opSeq {}, {} entities in its baseline, {} modified chunks)",
+                      peer, Tick(), slot, LastOpSeq(), p.baseline.size(), modified.size());
+        }
+
+        // --- chunk sync (stage 7a) ---------------------------------------------------------------
+
+        /// The NetIds alive now (template lights, replicated objects), nearest `at` first: the join's
+        /// baseline, made into BaselineEntity messages when they are dequeued.
+        void QueueBaseline(Peer& p, const glm::dvec3& at) {
+            // Nearest first by the distance to the nearest point of the model's bounding sphere (the
+            // body's origin is a corner of its model): the near set is a prefix of the order.
+            std::vector<std::pair<double, uint32_t>> ids;
+            for (const auto& [netId, light] : lights) ids.emplace_back(glm::distance(glm::dvec3(light.position), at), netId);
+            const physics::PhysicsWorld& physics = simulation->Physics();
+            const double voxelSize = static_cast<double>(simulation->World().VoxelSize());
+            const scene::Scene& scene = simulation->Scene();
+            for (const auto [entity, id, body] : scene.Registry().view<const scene::NetId, const scene::RigidBody>().each()) {
+                double extent = 0.0;
+                if (const scene::VoxelBody* voxels = scene.TryGet<scene::VoxelBody>(entity); voxels && voxels->model)
+                    extent = glm::length(glm::dvec3(voxels->model->Volume().Size())) * voxelSize;
+                ids.emplace_back(std::max(0.0, glm::distance(glm::dvec3(physics.GetState(body.body).position), at) - extent), id.value);
+            }
+            std::sort(ids.begin(), ids.end());
+            p.baseline.clear();
+            p.nearLeft = 0;
+            p.nearSent = false;
+            for (const auto& [d, netId] : ids) {
+                p.baseline.push_back(netId);
+                p.nearLeft += d <= static_cast<double>(settings.baselineNearMetres) ? 1u : 0u;
+            }
+            p.baselineOpen = true;
+            p.baselineSent = 0;
+        }
+
+        /// A replicated entity as it is now (light or object; a resting object at its EntityRest pose
+        /// bit for bit, zero velocity). False when it is gone.
+        bool MakeBaselineEntity(uint32_t netId, BaselineEntity& out) {
+            out = BaselineEntity{};
+            out.asOfOpSeq = LastOpSeq();
+            // The tick whose physics made the state (Flush runs after StepPhysics, which already
+            // counted the next tick): snapshots, EntityRest and the rest tick label it the same
+            // (review of stage 7a).
+            out.tick = steppedTick;
+            out.spawn.netId = netId;
+            if (const auto light = lights.find(netId); light != lights.end()) {
+                out.spawn.kind = EntityKind::Light;
+                out.spawn.light = light->second;
+                return true;
+            }
+            const scene::Entity entity = EntityOf(netId);
+            if (entity == scene::kNoEntity) return false;
+            out.spawn.kind = EntityKind::Object;
+            if (!DescribeObject(entity, out.spawn.object)) return false;
+            const auto t = tracks.find(netId);
+            const bool resting = t != tracks.end() && t->second.resting;
+            if (resting) {
+                out.restTick = t->second.restTick;
+                out.spawn.object.position = t->second.restPosition;
+                out.spawn.object.rotation = t->second.restRotation;
+                out.spawn.object.linearVelocity = glm::vec3(0.0f);
+                out.spawn.object.angularVelocity = glm::vec3(0.0f);
+                out.spawn.object.flags = kObjectResting;
+            } else {
+                out.spawn.object.flags = 0;
+            }
+            return true;
+        }
+
+        bool QueueChunk(Peer& p, const glm::ivec3& c) {
+            if (!p.queued.insert(c).second) return false;
+            p.chunks.push_back(c);
+            return true;
+        }
+
+        /// Horizontal distance (metres) from a chunk's centre to the peer's player.
+        double ChunkDistance(const Peer& p, const glm::ivec3& c) const {
+            const double size = static_cast<double>(voxel::kChunkSize) * static_cast<double>(simulation->World().VoxelSize());
+            const glm::dvec3 player = p.player ? glm::dvec3(p.player->state.position) : glm::dvec3(tmpl.spawn);
+            const glm::dvec2 centre = (glm::dvec2(c.x, c.z) + glm::dvec2(0.5)) * size;
+            return glm::length(centre - glm::dvec2(player.x, player.z));
+        }
+
+        /// Keeps `chunks` sorted farthest first (pop_back = nearest), re-sorted when the player's
+        /// chunk changed or something was added at the end.
+        void SortChunks(Peer& p, bool force) {
+            const glm::ivec3 at = p.player ? voxel::VoxelToChunk(simulation->World().WorldToVoxel(glm::dvec3(p.player->state.position)))
+                                           : glm::ivec3(0);
+            if (!force && at == p.sortedFor) return;
+            p.sortedFor = at;
+            std::vector<std::pair<double, glm::ivec3>> keyed;
+            keyed.reserve(p.chunks.size());
+            for (const glm::ivec3& c : p.chunks) keyed.emplace_back(ChunkDistance(p, c), c);
+            std::stable_sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) {
+                if (a.first != b.first) return a.first > b.first;
+                return std::tie(a.second.y, a.second.z, a.second.x) > std::tie(b.second.y, b.second.z, b.second.x);
+            });
+            for (size_t i = 0; i < keyed.size(); ++i) p.chunks[i] = keyed[i].second;
+        }
+
+        /// WindowUpdate: entering chunks (all of them with reset or for the first) the modified map
+        /// holds are queued and get their bit in the ack; the ack goes at once, after the events made
+        /// so far (so a client applies it with every event up to its asOf applied).
+        bool OnWindowUpdate(PeerId id, Peer& p, std::span<const uint8_t> bytes) {
+            WindowUpdate u;
+            if (!Decode(bytes, u) || u.windowSeq != p.windowSeq + 1) return false;
+            const glm::ivec2 rows = sim::RegionRows(region);
+            if (u.minChunk.y != rows.x || u.size.y != rows.y - rows.x) return false;
+            ++stats.windowUpdates;
+            const SyncBox box{u.minChunk, u.size};
+            const bool all = !p.hasWindow || (u.flags & WindowUpdate::kReset) != 0;
+            WindowAck ack;
+            ack.windowSeq = u.windowSeq;
+            ack.modified = voxel::VoxelMask(u.size);
+            uint32_t marked = 0;
+            const SyncBox server = RegionSyncBox(region);
+            const SyncBox inside = Intersect(box, server);
+            auto mark = [&](const glm::ivec3& c) {
+                ack.modified.Set(c - box.min, true);
+                ++marked;
+                QueueChunk(p, c);
+            };
+            const size_t cells = static_cast<size_t>(inside.size.x) * static_cast<size_t>(inside.size.y) * static_cast<size_t>(inside.size.z);
+            if (inside.Empty()) {
+                // Nothing of the server's window: every chunk of it is pristine for good.
+            } else if (modified.size() < cells) {
+                // Fewer modified chunks than cells in the box (early in a session, a large window): one
+                // pass over the map. The queue's order does not depend on the map's (SortChunks).
+                for (const auto& [c, seq] : modified)
+                    if (inside.Contains(c) && (all || !p.window.Contains(c))) mark(c);
+            } else {
+                for (int y = inside.min.y; y < inside.Max().y; ++y)
+                    for (int z = inside.min.z; z < inside.Max().z; ++z)
+                        for (int x = inside.min.x; x < inside.Max().x; ++x) {
+                            const glm::ivec3 c(x, y, z);
+                            if (!all && p.window.Contains(c)) continue;
+                            if (modified.contains(c)) mark(c);
+                        }
+            }
+            p.hasWindow = true;
+            p.window = box;
+            p.windowSeq = u.windowSeq;
+            if (marked > 0) SortChunks(p, true);
+            // The events made so far go first: a client takes the ack with them applied.
+            Pump(id, p);
+            ack.asOfOpSeq = LastOpSeq();
+            Send(id, Channel::Events, Encode(ack));
+            ++stats.windowAcks;
+            stats.ackedModified += marked;
+            if (u.windowSeq == 1) {
+                p.join.windowChunks = static_cast<uint32_t>(box.size.x * box.size.y * box.size.z);
+                p.join.modifiedChunks = marked;
+            }
+            return true;
+        }
+
+        bool OnChunkRequest(Peer& p, std::span<const uint8_t> bytes) {
+            ChunkRequest r;
+            if (!Decode(bytes, r)) return false;
+            const SyncBox server = RegionSyncBox(region);
+            for (const glm::ivec3& c : r.chunks) {
+                ++stats.chunkRequests;
+                ++p.join.requests;
+                if (settings.countChunkRequests) ++requestCounts[c];
+                if (!p.hasWindow || !p.window.Contains(c) || !server.Contains(c)) {
+                    ++stats.requestsIgnored;
+                    continue;
+                }
+                // Answers go first; one queued further back moves to the front.
+                if (p.queued.contains(c)) {
+                    const auto it = std::find(p.chunks.begin(), p.chunks.end(), c);
+                    if (it == p.chunks.end()) continue;      // already in the front
+                    p.chunks.erase(it);
+                }
+                p.queued.insert(c);
+                p.front.push_back({BulkItem::Kind::Chunk, c, 0});
+                if (p.front.size() > settings.maxQueuedAnswers) return false;
+            }
+            return true;
+        }
+
+        bool OnModelRequest(Peer& p, std::span<const uint8_t> bytes) {
+            ModelRequest r;
+            if (!Decode(bytes, r)) return false;
+            for (const uint32_t netId : r.netIds) {
+                ++stats.modelRequests;
+                if (!lights.contains(netId) && EntityOf(netId) == scene::kNoEntity) {
+                    ++stats.requestsIgnored;      // gone: its EntityDespawn is in the stream
+                    continue;
+                }
+                // An answer still queued is encoded at its dequeue, after this request arrived: it
+                // answers this one too (review of stage 7a).
+                if (!p.modelsQueued.insert(netId).second) {
+                    ++stats.modelRequestRepeats;
+                    continue;
+                }
+                p.front.push_back({BulkItem::Kind::Entity, glm::ivec3(0), netId});
+                if (p.front.size() > settings.maxQueuedAnswers) return false;
+            }
+            return true;
+        }
+
+        /// The next bulk message of a peer, encoded now (asOf = the last event made): request answers,
+        /// chunks within bulkNearMetres of its player, the baseline, then the other chunks nearest first.
+        /// Empty when nothing is left; `dropped` when the item had left the window or was gone.
+        std::vector<uint8_t> NextBulk(Peer& p, bool& any) {
+            any = true;
+            BulkItem item;
+            bool end = false;
+            if (!p.front.empty()) {
+                item = p.front.front();
+                p.front.pop_front();
+                if (item.kind == BulkItem::Kind::Entity) p.modelsQueued.erase(item.netId);
+            } else if (!p.chunks.empty() && ChunkDistance(p, p.chunks.back()) <= static_cast<double>(settings.bulkNearMetres)) {
+                item = {BulkItem::Kind::Chunk, p.chunks.back(), 0};
+                p.chunks.pop_back();
+            } else if (p.baselineOpen && !p.nearSent && p.nearLeft == 0) {
+                // The entities near the spawn are out: the joiner's start gate may open (the far
+                // ones follow; their events are held meanwhile).
+                p.nearSent = true;
+                ++stats.baselineNear;
+                return Encode(BaselineNear{LastOpSeq(), p.baselineSent});
+            } else if (p.baselineOpen && !p.baseline.empty()) {
+                item = {BulkItem::Kind::Entity, glm::ivec3(0), p.baseline.front()};
+                p.baseline.pop_front();
+                ++p.baselineSent;
+                if (p.nearLeft > 0) --p.nearLeft;
+            } else if (p.baselineOpen) {
+                end = true;
+            } else if (!p.chunks.empty()) {
+                item = {BulkItem::Kind::Chunk, p.chunks.back(), 0};
+                p.chunks.pop_back();
+            } else {
+                any = false;
+                return {};
+            }
+            if (end) {
+                p.baselineOpen = false;
+                return Encode(BaselineEnd{LastOpSeq(), p.baselineSent});
+            }
+            if (item.kind == BulkItem::Kind::Chunk) {
+                p.queued.erase(item.chunk);
+                ChunkData data;
+                data.chunk = item.chunk;
+                data.asOfOpSeq = LastOpSeq();
+                if (!p.window.Contains(item.chunk) || !simulation->World().EncodeChunkAt(item.chunk, data.rle)) {
+                    ++stats.chunksDropped;
+                    return {};
+                }
+                std::vector<uint8_t> bytes = Encode(data);
+                ++stats.chunkData;
+                stats.chunkDataBytes += bytes.size();
+                ++p.join.chunkData;
+                p.join.chunkBytes += bytes.size();
+                return bytes;
+            }
+            BaselineEntity e;
+            if (!MakeBaselineEntity(item.netId, e)) {
+                ++stats.baselineDropped;
+                if (p.baselineOpen && p.baselineSent > 0) --p.baselineSent;
+                return {};
+            }
+            std::vector<uint8_t> bytes = Encode(e);
+            ++stats.baselineEntities;
+            stats.baselineBytes += bytes.size();
+            ++p.join.baseline;
+            p.join.baselineBytes += bytes.size();
+            return bytes;
+        }
+
+        /// Bulk of one peer, after its events: while its bytes in flight are under the pacer's window
+        /// and within the optional hard cap. A message that does not fit what is left of the window
+        /// waits for the peer's bulk in flight to drain, then goes alone while the bytes in flight
+        /// (the live events) are under the window (review of stage 7a, 3); while the events alone fill
+        /// the window nothing goes (recheck of stage 7a, 1: that is the pacer's back-off).
+        void PumpBulk(PeerId id, Peer& p) {
+            if (!p.pacer) return;
+            const double dt = static_cast<double>(simulation->FixedTimeStep());
+            size_t inFlight = transport.ReliableBytesInFlight(id);
+            size_t bulkInFlight = transport.ChannelBytesInFlight(id, Channel::Bulk);
+            // The live events handed over since the last tick count in what drained (the window is the
+            // peer's whole reliable traffic; review of stage 7a).
+            p.pacer->Sent(p.eventBytesSince);
+            p.eventBytesSince = 0;
+            p.pacer->Update(inFlight, transport.RoundTripSeconds(id), dt);
+            const size_t window = p.pacer->Window();
+            stats.minBulkWindow = stats.minBulkWindow == 0 ? window : std::min(stats.minBulkWindow, window);
+            stats.maxBulkWindow = std::max(stats.maxBulkWindow, window);
+            p.join.minWindow = p.join.minWindow == 0 ? window : std::min(p.join.minWindow, window);
+            p.join.maxWindow = std::max(p.join.maxWindow, window);
+            const double cap = settings.maxBulkBytesPerSecond;
+            if (cap > 0.0) p.bulkCredit = std::min(p.bulkCredit + cap * dt, std::max(cap * dt, 4096.0));
+            SortChunks(p, false);
+            const auto encodeStart = std::chrono::steady_clock::now();
+            bool any = true;
+            while (any) {
+                const bool pending = !p.heldBulk.empty() || !p.front.empty() || !p.chunks.empty() || p.baselineOpen;
+                if (!pending) break;
+                // Under the window, always (recheck of stage 7a, 1): a few events in flight are under it,
+                // so they never keep the bulk from moving; events that fill it by themselves do.
+                if (!p.pacer->MayHandOver(inFlight) || (cap > 0.0 && p.bulkCredit <= 0.0)) {
+                    ++stats.bulkHeld;
+                    break;
+                }
+                std::vector<uint8_t> bytes = std::move(p.heldBulk);
+                p.heldBulk.clear();
+                if (bytes.empty()) bytes = NextBulk(p, any);
+                if (bytes.empty()) continue;
+                // A message that does not fit the window waits until the bulk in flight has drained,
+                // then goes alone (the bytes in flight are under the window here): the window is never
+                // overshot by more than one message (plus the live events, which are never held).
+                const bool fits = inFlight + bytes.size() <= window;
+                if (!fits && bulkInFlight > 0) {
+                    p.heldBulk = std::move(bytes);
+                    ++stats.bulkHeld;
+                    break;
+                }
+                stats.bulkAlone += fits ? 0u : 1u;
+                stats.bulkOverWindow += inFlight >= window ? 1u : 0u;
+                Send(id, Channel::Bulk, bytes);
+                inFlight += bytes.size();
+                bulkInFlight += bytes.size();
+                p.pacer->Sent(bytes.size());
+                if (cap > 0.0) p.bulkCredit -= static_cast<double>(bytes.size());
+                stats.bulkBytes += bytes.size();
+                stats.bulkOversize += bytes.size() > 16384 ? 1u : 0u;
+                stats.maxBulkMessage = std::max(stats.maxBulkMessage, bytes.size());
+                if (Tick() - p.join.secondStart >= 60) {
+                    p.join.secondStart = Tick();
+                    p.join.secondBytes = 0;
+                }
+                p.join.secondBytes += bytes.size();
+                p.join.peakRate = std::max(p.join.peakRate, static_cast<double>(p.join.secondBytes));
+            }
+            const double encoded = std::chrono::duration<double>(std::chrono::steady_clock::now() - encodeStart).count();
+            encodeTickSeconds += encoded;
+            stats.encodeSeconds += encoded;
+            p.join.encodeSeconds += encoded;
+            const bool empty = p.heldBulk.empty() && p.front.empty() && p.chunks.empty() && !p.baselineOpen;
+            if (empty && p.hasWindow && !p.join.logged) {
+                p.join.logged = true;
+                const double seconds = static_cast<double>(Tick() - p.join.joinTick) * dt;
+                Log::Info("Join: client {} (slot {}): window {} chunks, {} modified; {} ChunkData / {:.1f} KiB, {} baseline entities / {:.1f} "
+                          "KiB, {} requests; queue empty after {:.2f} s; bulk window {:.1f}..{:.1f} KiB, peak {:.1f} KiB/s; bulk work {:.1f} ms "
+                          "(the server's busiest tick so far {:.2f} ms)",
+                          id, p.slot, p.join.windowChunks, p.join.modifiedChunks, p.join.chunkData,
+                          static_cast<double>(p.join.chunkBytes) / 1024.0, p.join.baseline, static_cast<double>(p.join.baselineBytes) / 1024.0,
+                          p.join.requests, seconds, static_cast<double>(p.join.minWindow) / 1024.0, static_cast<double>(p.join.maxWindow) / 1024.0,
+                          p.join.peakRate / 1024.0, p.join.encodeSeconds * 1000.0, stats.maxEncodeSecondsPerTick * 1000.0);
+            }
         }
 
         void Receive() {
             TransportEvent e;
+            std::vector<PeerId> broken;
             while (transport.Poll(e)) {
                 switch (e.type) {
                     case TransportEvent::Type::Connected: {
@@ -901,11 +1330,24 @@ namespace vortex::net {
                         } else if (it->second.joined && e.channel == Channel::State) {
                             // Unreliable: anything that is not a valid InputBatch is counted and ignored.
                             OnInputs(it->second, e.data);
+                        } else if (it->second.joined && e.channel == Channel::Events) {
+                            // Chunk sync (stage 7a). A broken reliable stream ends the peer's session.
+                            const std::optional<MessageType> type = PeekType(e.data);
+                            bool ok = false;
+                            if (type == MessageType::WindowUpdate) ok = OnWindowUpdate(e.peer, it->second, e.data);
+                            else if (type == MessageType::ChunkRequest) ok = OnChunkRequest(it->second, e.data);
+                            else if (type == MessageType::ModelRequest) ok = OnModelRequest(it->second, e.data);
+                            if (!ok) {
+                                ++stats.malformedRequests;
+                                Log::Warn("Server: client {} sent a malformed or out-of-order sync message: disconnected", e.peer);
+                                broken.push_back(e.peer);
+                            }
                         }
                         break;
                     }
                 }
             }
+            for (const PeerId id : broken) DropPeer(id);
             // A refused peer is disconnected once its refusal has left (ENet's disconnect_later), or
             // after a grace period; a peer that never says Hello, after the Hello timeout.
             std::vector<PeerId> close;
@@ -956,7 +1398,7 @@ namespace vortex::net {
             // A cast the server could not run in full is not sent (the session has ended).
             for (const sim::AppliedOp& applied : r.ops) {
                 if (failed || !CheckOp(applied.result)) break;
-                Emit(applied.op);
+                EmitOp(applied.op, applied.result);
                 ++rec.opCount;
             }
             // The objects it changed or made, and every despawn it caused (stage 6).
@@ -1030,9 +1472,52 @@ namespace vortex::net {
             stats.ticksWaitedForBytes += waitedForBytes ? 1u : 0u;
         }
 
+        /// Disconnects a joined peer at once (a broken sync stream, too slow).
+        void DropPeer(PeerId id) {
+            const auto it = peers.find(id);
+            if (it == peers.end()) return;
+            if (it->second.joined) {
+                ++stats.clientsDisconnected;
+                Log::Info("Server: client {} left (slot {})", id, it->second.slot);
+                if (onClientLeft) onClientLeft(it->second.slot);
+            }
+            transport.Disconnect(id);
+            DropPlayer(it->second);
+            peers.erase(it);
+        }
+
         void Flush() {
-            for (auto& [id, p] : peers)
-                if (p.joined) Pump(id, p);
+            encodeTickSeconds = 0.0;
+            std::vector<PeerId> slow;
+            for (auto& [id, p] : peers) {
+                if (!p.joined) continue;
+                if (transport.ReliableBytesInFlight(id) > settings.maxPeerBacklogBytes) {
+                    slow.push_back(id);
+                    continue;
+                }
+                Pump(id, p);
+                PumpBulk(id, p);
+            }
+            for (const PeerId id : slow) {
+                ++stats.peersTooSlow;
+                Log::Warn("Server: client {} takes nothing: over {:.1f} MiB in flight to it, disconnected", id,
+                          static_cast<double>(settings.maxPeerBacklogBytes) / 1048576.0);
+                DropPeer(id);
+            }
+            stats.maxEncodeSecondsPerTick = std::max(stats.maxEncodeSecondsPerTick, encodeTickSeconds);
+            TrimBacklog();
+        }
+
+        /// Events every joined peer has: gone (a joiner starts at the newest one).
+        void TrimBacklog() {
+            uint32_t keepAfter = lastOpSeq;
+            for (const auto& [id, p] : peers)
+                if (p.joined) keepAfter = std::min(keepAfter, p.sentUpTo);
+            while (!backlog.empty() && backlogFirst <= keepAfter) {
+                backlogBytes -= backlog.front().bytes.size();
+                backlog.pop_front();
+                ++backlogFirst;
+            }
         }
 
         void CheckStore() {
@@ -1101,6 +1586,7 @@ namespace vortex::net {
             EntitySpawn spawn;
             spawn.netId = sim::AllocateNetId(*s.simulation);
             spawn.light = light;
+            s.lights[spawn.netId] = light;
             s.Emit(spawn);
         }
         // The template's objects (the crates) are replicated server bodies (stage 6).
@@ -1128,6 +1614,7 @@ namespace vortex::net {
         s.RunCasts();
         const uint32_t tick = s.Tick();
         s.simulation->StepPhysics();
+        s.steppedTick = tick;
         s.simulation->UpdateLifetimes(s.simulation->FixedTimeStep());
         // What fell out of the world is despawned; what came to rest is announced (stage 6).
         s.DrainDespawns();
@@ -1156,8 +1643,9 @@ namespace vortex::net {
     uint32_t Server::ApplyOp(const sim::WorldOp& op) {
         Impl& s = *m_Impl;
         if (!s.started || s.failed) return 0;
-        if (!s.CheckOp(sim::ApplyOp(s.simulation->World(), op))) return 0;
-        return s.Emit(op);
+        const sim::OpResult r = sim::ApplyOp(s.simulation->World(), op);
+        if (!s.CheckOp(r)) return 0;
+        return s.EmitOp(op, r);
     }
 
     bool Server::QueueCast(const voxel::SphereQ& sphere, uint16_t power) {
@@ -1268,5 +1756,18 @@ namespace vortex::net {
     voxel::WorldHashResult Server::Hash() const { return RegionHash(m_Impl->simulation->World(), m_Impl->region); }
     const ServerStats& Server::Stats() const { return m_Impl->stats; }
     const std::deque<CastRecord>& Server::Casts() const { return m_Impl->casts; }
-    size_t Server::LogBytes() const { return m_Impl->logBytes; }
+    size_t Server::BacklogBytes() const { return m_Impl->backlogBytes; }
+    voxel::WorldHashResult Server::Hash(const SyncBox& box) const { return voxel::WorldHash(m_Impl->simulation->World(), box.min, box.Max()); }
+    size_t Server::ModifiedChunks() const { return m_Impl->modified.size(); }
+    std::vector<std::pair<glm::ivec3, uint32_t>> Server::ChunkRequestCounts() const {
+        return {m_Impl->requestCounts.begin(), m_Impl->requestCounts.end()};
+    }
+    void Server::SetMaxBulkBytesPerSecond(double bytesPerSecond) { m_Impl->settings.maxBulkBytesPerSecond = std::max(0.0, bytesPerSecond); }
+
+    SyncBox Server::ClientSyncBox(uint8_t slot) const {
+        const Impl& s = *m_Impl;
+        for (const auto& [id, p] : s.peers)
+            if (p.joined && p.slot == slot) return p.hasWindow ? Intersect(p.window, RegionSyncBox(s.region)) : SyncBox{};
+        return {};
+    }
 }

@@ -99,6 +99,35 @@ export namespace vortex::sim {
     /// check after World::LoadBlocking(RegionWindowFocus).
     bool WindowIsRegions(const voxel::World& world, const RegionDesc& region);
 
+    // --- a session client's window (docs/design/networking.md "Stage 7a plan", "The moving client
+    // window (M-b)") ------------------------------------------------------------------------------
+
+    /// @brief True when a client whose window may be `windowChunks` wide (x and z) cannot hold the
+    /// region's whole window: its window then follows its player. False for `windowChunks` 0 (the
+    /// region's window, fixed) and for every region that fits.
+    bool ClientWindowMoves(const RegionDesc& region, int32_t windowChunks);
+    /// @brief The follow hysteresis of a moving client window (WorldConfig::recenterSlackChunks).
+    inline constexpr int32_t kClientWindowSlackChunks = 1;
+    /**
+     * @brief A session client's world: RegionWorldConfig when the region fits in `windowChunks`
+     * (ClientWindowMoves false), else a `windowChunks` x the region's rows x `windowChunks` window
+     * that follows the player and is never clamped to the region (columns beyond the server's window
+     * are pristine for good), with `recenterSlackChunks` = kClientWindowSlackChunks (it moves once
+     * the player is more than that from its centre chunk: review of stage 7a). Always `reportLoads`
+     * (chunk sync replays what a chunk missed while it loaded) and no `keepUnloadedEdits` (a chunk
+     * that leaves the window comes back from the server).
+     */
+    voxel::WorldConfig ClientWorldConfig(const RegionDesc& region, int32_t windowChunks, voxel::WorldConfig base = {});
+    /// @brief The minimum corner (y = the region's first row) of the window World::Update(focus)
+    /// gives a ClientWorldConfig world placed there (or moved there: a step past the slack centres it
+    /// on the focus); the region's window when it does not move.
+    glm::ivec3 ClientWindowMinChunk(const RegionDesc& region, int32_t windowChunks, const glm::dvec3& focus);
+    /// @brief The window size of ClientWorldConfig (y = the region's rows).
+    glm::ivec3 ClientWindowSize(const RegionDesc& region, int32_t windowChunks);
+    /// @brief Store slots of a ClientWorldConfig world: RegionChunkCapacity, or the cells of the
+    /// moving window (at least 1024, at most kMaxRegionStoreSlots).
+    uint32_t ClientChunkCapacity(const RegionDesc& region, int32_t windowChunks);
+
     /// Store slots a session world gets at most by default (2 GiB of dense chunks): a store that
     /// fills is the designed failure, before the process runs out of memory.
     inline constexpr uint32_t kMaxRegionStoreSlots = static_cast<uint32_t>((2ull << 30) / sizeof(voxel::Chunk));

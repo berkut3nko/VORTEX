@@ -248,7 +248,31 @@ do not bounds-check (0..31 only); `GetSafe` does. A `Chunk` is 36 KB: keep it on
 **Shared GLSL.** `trace.glsl` is included *inside* `struct TraceKernel` (`Trace.cpp:20-44`); data is reached only through
 the `VX_*` accessor macros defined there and, with the same names, in the shaders.
 
+- **Chunk sync calls (networking stage 7a).** Edits take a `ChunkClip`: the build ceiling is decided on the whole
+  edit first, then only the chunks inside the clip are visited, in the same order with the same per-voxel decisions,
+  so one clipped call per chunk equals the whole call (`World.EditClipEqualsTheWholeEditChunkByChunk`).
+  `EditReport::changed` lists the chunks an edit changed (a server's modified map). `EncodeChunkAt` gives any loaded
+  chunk in `EncodeChunk` form (a Packed cell's own bytes); `SetChunkEncoded` installs one into a cell in any state as a
+  content change (`modified`, `QueueChange`, `MarkDirty`; never reported by `TakeLoadedChunks`). With
+  `WorldConfig::reportLoads` every cell streaming loads is listed once (`TakeLoadedChunks`: job results and the column
+  pass's `PlaceCell` cells) and every window corner since the last take (`TakeWindowSteps`, in order: a session client
+  sends each step); `WindowRevision` counts window moves; `keepUnloadedEdits = false` drops a modified chunk that leaves
+  the window instead of keeping it in the `RegionStore`. `recenterSlackChunks` (session clients 1, offline 0): the window
+  moves only once the focus chunk is more than that many chunks from its centre chunk (`FollowMinFor`, used by `Update`
+  and `LoadBlocking`), so `WindowMinFor(focus)` is where a move puts it, not where every focus does. `ViewRadius`
+  subtracts the slack (the focus may be that many chunks off the centre): (half - 1 - slack) chunks.
+
 ## 3. Traps
+
+- **A cell that streaming owes is in its column's bookkeeping** (row bits, `Column::surfaceLeft`) and may have a job in
+  flight. Anything that fills such a cell other than `IntegrateResults` / `PlaceCell` must take it out of both
+  (`World::SettleLoading`: clear the row bits, decrement `surfaceLeft` if the row counted, bump the generation), or
+  the job's result overwrites it later or `LoadBlocking` / `IsFilled` wait for ever
+  (`World.SetChunkEncodedInstallsAnyChunkAndIsAContentChange` runs `LoadBlocking` under a timeout).
+- **A Dense install must `MarkDirty` its slot**, even in place: the renderer re-uploads only `ChunkStore::TakeDirty`.
+- **An install over a loaded chunk is an edit of the whole chunk** for `TakeChunkChanges` (`editMin` / `editMax` = the
+  chunk): physics reads an empty box as "only loaded" and would keep simulating bodies against the old collider
+  (`BodyReady` / `StaleWhere`). An install into an Unloaded / Loading cell stays a load (empty box).
 
 - **Edits never free a slot.** A chunk carved completely empty stays `Dense` until it leaves the window; `PersistCell`
   (`:167`) demotes it to Empty/Uniform only in the saved bytes. Demoting inside `EditRegion` would also have to handle

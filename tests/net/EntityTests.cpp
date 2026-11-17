@@ -21,7 +21,9 @@
 #include <functional>
 #include <tuple>
 #include <string>
+#include <map>
 #include <memory>
+#include <set>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -187,7 +189,8 @@ namespace {
             for (int i = 0; i < maxPasses; ++i) {
                 bool done = server.QueuedCasts() == 0 && server.AwakeBodies() == 0;
                 for (const std::unique_ptr<Bot>& bot : bots)
-                    done = done && (bot->gone || (bot->simulation && bot->client->AppliedOpSeq() == server.LastOpSeq()));
+                    done = done && (bot->gone || (bot->simulation && bot->client->AppliedOpSeq() == server.LastOpSeq() &&
+                                                  bot->client->Synced()));
                 held = done ? held + 1 : 0;
                 if (held >= quiet) return true;
                 Pass();
@@ -444,6 +447,70 @@ TEST(Entities, CollapseWith64AwakePiecesAt5PercentLoss) {
     }
     EXPECT_GT(one.client->Stats().toRubble, 0u);   // the presenting client keeps evicted pieces as its rubble
     EXPECT_EQ(two.client->Stats().toRubble, 0u);
+}
+
+// Stage 7a (networking.md "Testing": a late join during a collapse): a client that joins while 64
+// replicated bodies are awake gets them from its entity baseline - awake ones with their state at
+// dequeue, resting ones at their exact EntityRest pose - and from the events after its join point;
+// after the settle it holds the same bodies as the server and the one that played from the start.
+TEST(Entities, ALateJoinerDuringACollapseGetsTheSameBodies) {
+    net::ServerSettings settings = ArenaSettings();
+    settings.simulation.replication.maxLivePieces = 72;
+    Arena a(settings, LossyLink(0.04, 0.03));
+    ASSERT_TRUE(a.started);
+    Arena::Bot& one = a.AddBot(nullptr);
+    ASSERT_TRUE(a.Join());
+    const std::vector<glm::ivec2> grid = MushroomGrid(a.server, 96);
+    for (const glm::ivec2& m : grid) Mushroom(a.server, m);
+    ASSERT_TRUE(a.Settle());
+    size_t next = 0;
+    for (int i = 0; i < 40; ++i) {
+        for (size_t k = 0; k < 2 && next < 80; ++k) ASSERT_TRUE(a.server.QueueCast(StemCut(grid[next++]), kStrong));
+        a.Pass();
+    }
+    const size_t awakeAtJoin = a.server.AwakeBodies();
+    Arena::Bot& late = a.AddBot(nullptr);
+    // The server's body poses after each stepped tick (what its snapshots label that tick): an awake
+    // baseline copy's first sample is the pose of the tick it names (review of stage 7a: the baseline
+    // named the tick after it, one tick of motion off).
+    std::map<uint32_t, std::map<uint32_t, glm::vec3>> posesAt;
+    std::set<uint32_t> seen;
+    uint32_t firstSamples = 0;
+    float firstSampleError = 0.0f;
+    for (int i = 0; i < 30 || (late.client->Stats().baselineEntities == 0 && i < 600); ++i) {      // the collapse goes on while it loads and syncs
+        a.Pass();
+        std::map<uint32_t, glm::vec3>& now = posesAt[a.server.TickNumber() - 1];
+        for (const net::EntityInfo& e : a.server.Entities()) now[e.netId] = e.position;
+        for (const net::EntityInfo& e : late.client->Entities()) {
+            if (!seen.insert(e.netId).second || e.resting) continue;
+            uint32_t tick = 0;
+            net::BodyPose pose;
+            if (!late.client->Bodies().Oldest(e.netId, tick, pose)) continue;
+            const auto at = posesAt.find(tick);
+            if (at == posesAt.end() || !at->second.contains(e.netId)) continue;
+            firstSampleError = std::max(firstSampleError, glm::length(pose.position - at->second[e.netId]));
+            ++firstSamples;
+        }
+    }
+    ASSERT_TRUE(a.Settle());
+    std::printf("late joiner: %u awake baseline copies checked, first sample at most %.5f m from the server's pose of its tick\n",
+                firstSamples, firstSampleError);
+    EXPECT_GT(firstSamples, 0u);
+    EXPECT_LT(firstSampleError, 1.0e-4f);
+    std::printf("late joiner: %zu bodies awake at its join; %u baseline entities, %u ChunkData, %u held / %u dropped entity events, %u "
+                "stale\n",
+                awakeAtJoin, late.client->Stats().baselineEntities, late.client->Stats().chunkData, late.client->Stats().heldEntityEvents,
+                late.client->Stats().droppedHeldEvents, late.client->Stats().staleEntityEvents);
+    EXPECT_GE(awakeAtJoin, 32u);
+    EXPECT_GT(late.client->Stats().baselineEntities, 0u);
+    for (const Arena::Bot* bot : {&one, &late}) {
+        const net::EntityComparison e = a.Compare(*bot);
+        EXPECT_TRUE(e.Agree(0.001f)) << e.Describe();
+        EXPECT_EQ(e.restStateMismatches, 0u);
+        EXPECT_EQ(bot->client->Stats().copiesFailed, 0u);
+        EXPECT_EQ(bot->client->Stats().copiesLost, 0u);
+        EXPECT_EQ(bot->client->Hash().hash, a.server.Hash().hash);
+    }
 }
 
 // A split (networking.md "Testing": "split below threshold"): a replicated dumbbell of two 8^3

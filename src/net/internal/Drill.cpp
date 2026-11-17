@@ -136,6 +136,45 @@ namespace vortex::net {
     sim::PlayerInput BotPilot::Next(const sim::PlayerState& state) {
         sim::PlayerInput in;
         ++m_Tick;
+        const glm::vec2 feet(state.position.x, state.position.z);
+        if (!m_Settings.waypoints.empty()) {
+            // Waypoint mode: run to the next point; stand once the last is behind.
+            while (m_Waypoint < m_Settings.waypoints.size()) {
+                const float d = glm::length(m_Settings.waypoints[m_Waypoint] - feet);
+                if (d <= m_Settings.reachMetres) {
+                    ++m_Reached;
+                } else if (m_SinceProgress >= m_Settings.stuckTicks) {
+                    ++m_GivenUp;
+                } else {
+                    if (m_SinceProgress == 0 && m_BestDistance == 0.0f) m_BestDistance = d;
+                    if (d < m_BestDistance - 1.0f) {
+                        m_BestDistance = d;
+                        m_SinceProgress = 0;
+                    } else {
+                        ++m_SinceProgress;
+                    }
+                    break;
+                }
+                ++m_Waypoint;
+                m_BestDistance = 0.0f;
+                m_SinceProgress = 0;
+            }
+            if (Done()) return in;
+            const glm::vec2 to = m_Settings.waypoints[m_Waypoint] - feet;
+            in.yaw = sim::QuantizeYaw(std::atan2(-to.x, -to.y));
+            in.moveZ = 127;
+            in.buttons = m_Settings.run ? sim::PlayerButton_Run : 0;
+            // Jump now and then, and whenever it stops making progress (a step, a bank).
+            const bool stuck = m_SinceProgress > 30 && m_SinceProgress % 30 < 2;
+            if ((m_Settings.jumps && m_Tick >= m_NextJump) || stuck) {
+                in.buttons |= sim::PlayerButton_Jump;
+                if (m_Tick >= m_NextJump + 1) {
+                    m_NextJump = m_Tick + 60 + m_Rng.NextBounded(61);
+                    ++m_Jumps;
+                }
+            }
+            return in;
+        }
         if (m_SegmentLeft == 0) {
             m_SegmentLeft = 20 + m_Rng.NextBounded(61);
             m_Yaw = static_cast<uint16_t>(m_Rng.NextU32());
@@ -145,7 +184,6 @@ namespace vortex::net {
         }
         --m_SegmentLeft;
         // Outside the inner bounds: head for the middle (and keep heading there for a while).
-        const glm::vec2 feet(state.position.x, state.position.z);
         if (feet.x < m_Min.x || feet.y < m_Min.y || feet.x > m_Max.x || feet.y > m_Max.y) {
             const glm::vec2 to = 0.5f * (m_Min + m_Max) - feet;
             m_Yaw = sim::QuantizeYaw(std::atan2(-to.x, -to.y));
