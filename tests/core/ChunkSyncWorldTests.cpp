@@ -16,6 +16,7 @@
 #include <span>
 #include <thread>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 import vortex.core;
@@ -470,4 +471,304 @@ TEST(World, UnloadedEditsAreDroppedWithoutKeepUnloadedEdits) {
         EXPECT_EQ(HashOf(*b.world, {0, 1, 0}), keep ? edited : pristine);
         b.jobs.WaitIdle();
     }
+}
+
+// Networking stage 7b (HashCheck): ChunkHashAt is ChunkHash of the chunk's voxels whatever the cell
+// holds - Empty, Uniform, Dense, Packed (hashed from its runs), and a Dense chunk whose voxels all
+// carry one id hashes like the Uniform cell. A server holding a chunk Packed and a client holding the
+// same voxels Dense must agree, or every HashCheck of a buried chunk would be a false mismatch. False
+// (the out value untouched) for a chunk that is not loaded.
+TEST(World, ChunkHashAtEqualsChunkHashInEveryCellState) {
+    ChunkStore store(4096), store2(4096);
+    JobSystem jobs(3);
+    MaterialLibrary materials;
+    WorldConfig config;
+    config.voxelSize = 0.5f;
+    config.windowSize = {8, 8, 8};
+    config.fullHeight = true;
+    config.heightRange = {-64.0f, 64.0f};
+    config.packHidden = true;
+    config.nearRadius = 4.0f;
+    TerrainSettings terrain;
+    terrain.seed = 1337;
+    terrain.voxelSize = 0.5f;
+    terrain.materials = RegisterDefaultWorldMaterials(materials);
+    World a(config, store, jobs, CreateTerrainGenerator(terrain), &materials);
+    WorldConfig unpacked = config;
+    unpacked.packHidden = false;
+    World b(unpacked, store2, jobs, CreateFlatGenerator(kGround, kSurface, kRock), &materials);
+    a.LoadBlocking(glm::dvec3(0.0, 30.0, 0.0));
+    b.LoadBlocking(glm::dvec3(0.0, 30.0, 0.0));
+    std::set<CellState> seen;
+    uint32_t packedAsDense = 0;
+    const glm::ivec3 min = a.WindowMinChunk(), size = a.WindowSize();
+    for (int y = 0; y < size.y; ++y)
+        for (int z = 0; z < size.z; ++z)
+            for (int x = 0; x < size.x; ++x) {
+                const glm::ivec3 c = min + glm::ivec3(x, y, z);
+                uint64_t ha = 0, hb = 0;
+                ASSERT_TRUE(ChunkHashAt(a, c, ha));
+                EXPECT_EQ(ha, HashOf(a, c)) << "state " << static_cast<int>(a.StateOf(c));
+                seen.insert(a.StateOf(c));
+                // The same voxels in the other world, installed whole (a Packed chunk arrives Dense).
+                std::vector<uint8_t> bytes;
+                ASSERT_TRUE(a.EncodeChunkAt(c, bytes));
+                ASSERT_EQ(b.SetChunkEncoded(c, bytes), SetChunkResult::Installed);
+                ASSERT_TRUE(ChunkHashAt(b, c, hb));
+                EXPECT_EQ(hb, ha);
+                packedAsDense += a.StateOf(c) == CellState::Packed && b.StateOf(c) == CellState::Dense ? 1u : 0u;
+            }
+    EXPECT_TRUE(seen.contains(CellState::Dense));
+    EXPECT_TRUE(seen.contains(CellState::Packed));
+    EXPECT_TRUE(seen.contains(CellState::Uniform));
+    EXPECT_TRUE(seen.contains(CellState::Empty));
+    EXPECT_GT(packedAsDense, 0u) << "no Packed chunk was compared with a resident Dense one";
+
+    // A Dense chunk whose voxels are all rock hashes like a Uniform rock cell.
+    Bench d;
+    d.Load();
+    const glm::ivec3 rockChunk(1, -1, 1);
+    ASSERT_EQ(d.world->StateOf(rockChunk), CellState::Uniform);
+    uint64_t uniform = 0;
+    ASSERT_TRUE(ChunkHashAt(*d.world, rockChunk, uniform));
+    EXPECT_EQ(uniform, UniformChunkHash(kRock));
+    const glm::ivec3 v = ChunkToVoxel(rockChunk) + glm::ivec3(3);
+    ASSERT_TRUE(d.world->SetVoxel(v, 0));
+    uint64_t carved = 0;
+    ASSERT_TRUE(ChunkHashAt(*d.world, rockChunk, carved));
+    EXPECT_NE(carved, uniform);
+    ASSERT_TRUE(d.world->SetVoxel(v, kRock));
+    uint64_t again = 0;
+    ASSERT_TRUE(ChunkHashAt(*d.world, rockChunk, again));
+    EXPECT_EQ(again, uniform) << "state " << static_cast<int>(d.world->StateOf(rockChunk));
+
+    // Not loaded: outside the window.
+    uint64_t untouched = 123;
+    EXPECT_FALSE(ChunkHashAt(a, min + glm::ivec3(100, 0, 0), untouched));
+    EXPECT_EQ(untouched, 123u);
+    jobs.WaitIdle();
+}
+
+// Networking stage 7b, server terrain mode (amendment 1): a client installs the server's window by
+// the server's packing, never by its own column classes. World `a` is the server (noise terrain,
+// packHidden); world `b` is a client whose generator is another (flat) one, so its classes disagree
+// with `a`'s everywhere. Chunks `a` holds Packed install as HiddenContent: Packed in `b` with no slot;
+// made resident they are packed again once the focus is far and no edit shows them; an edit next to
+// one reveals it as on the server. Chunks `a` holds Dense install as Content: never packed, and a
+// crater chunk received as data stays shown. Edit installs keep 7a's behaviour, and the hash is the
+// same whichever mode.
+TEST(World, ContentInstallsPackHiddenChunksLikeLoads) {
+    ChunkStore storeA(4096), storeB(4096), storeC(4096);
+    JobSystem jobs(3);
+    MaterialLibrary materials;
+    WorldConfig config;
+    config.voxelSize = 0.5f;
+    config.windowSize = {8, 8, 8};
+    config.fullHeight = true;
+    config.heightRange = {-64.0f, 64.0f};
+    config.packHidden = true;
+    config.nearRadius = 4.0f;
+    TerrainSettings terrain;
+    terrain.seed = 1337;
+    terrain.voxelSize = 0.5f;
+    terrain.materials = RegisterDefaultWorldMaterials(materials);
+    World a(config, storeA, jobs, CreateTerrainGenerator(terrain), &materials);
+    // The client's ground is at -60 m: by its own classes nearly every row of the window is above its
+    // surface (visible), where the server buries most of them.
+    World b(config, storeB, jobs, CreateFlatGenerator(-120, kSurface, kRock), &materials);
+    WorldConfig unpacked = config;
+    unpacked.packHidden = false;
+    World c(unpacked, storeC, jobs, CreateFlatGenerator(kGround, kSurface, kRock), &materials);
+    const glm::dvec3 focus(8.0, 30.0, 8.0);     // inside the window's centre chunk column: no window move
+    a.LoadBlocking(focus);
+    b.LoadBlocking(focus);
+    c.LoadBlocking(focus);
+    const glm::ivec3 min = a.WindowMinChunk(), size = a.WindowSize();
+    ASSERT_EQ(b.WindowMinChunk(), min);
+
+    // A crater on the server before the client gets the window: a Packed chunk carved (Dense and
+    // modified on `a` now, its face neighbours made resident).
+    glm::ivec3 crater(0);
+    bool found = false;
+    for (int y = 0; y < size.y && !found; ++y)
+        for (int z = 1; z < size.z - 1 && !found; ++z)
+            for (int x = 1; x < size.x - 1 && !found; ++x) {
+                const glm::ivec3 ch = min + glm::ivec3(x, y, z);
+                if (a.StateOf(ch) == CellState::Packed && a.StateOf(ch + glm::ivec3(0, 1, 0)) == CellState::Packed) {
+                    crater = ch;
+                    found = true;
+                }
+            }
+    ASSERT_TRUE(found) << "no buried chunk to carve";
+    const glm::ivec3 centre = ChunkToVoxel(crater) + glm::ivec3(kChunkSize / 2);
+    ASSERT_GT(a.CarveSphereQ(SphereQ{centre * kQuantaPerVoxel, static_cast<uint16_t>(6 * kQuantaPerVoxel)}, 4000, nullptr, nullptr), 0u);
+    ASSERT_EQ(a.StateOf(crater), CellState::Dense);
+
+    uint32_t packedA = 0, denseA = 0;
+    for (int y = 0; y < size.y; ++y)
+        for (int z = 0; z < size.z; ++z)
+            for (int x = 0; x < size.x; ++x) {
+                const glm::ivec3 ch = min + glm::ivec3(x, y, z);
+                std::vector<uint8_t> bytes;
+                ASSERT_TRUE(a.EncodeChunkAt(ch, bytes));
+                const bool hidden = a.StateOf(ch) == CellState::Packed;
+                packedA += hidden ? 1u : 0u;
+                denseA += a.StateOf(ch) == CellState::Dense ? 1u : 0u;
+                const InstallMode mode = hidden ? InstallMode::HiddenContent : InstallMode::Content;
+                ASSERT_EQ(b.SetChunkEncoded(ch, bytes, mode), SetChunkResult::Installed);
+                ASSERT_EQ(c.SetChunkEncoded(ch, bytes, mode), SetChunkResult::Installed);
+                // The server's packing, decided before any slot: Packed stays Packed, Dense stays Dense.
+                EXPECT_EQ(b.StateOf(ch) == CellState::Packed, hidden) << ch.x << "," << ch.y << "," << ch.z;
+                if (a.StateOf(ch) == CellState::Dense) EXPECT_EQ(b.StateOf(ch), CellState::Dense);
+                EXPECT_EQ(b.ServerVisibility(ch), hidden ? 2 : 1);
+                // Without packHidden a hidden chunk is simply resident.
+                EXPECT_NE(c.StateOf(ch), CellState::Packed);
+            }
+    ASSERT_GT(packedA, 20u);
+    EXPECT_EQ(storeB.UsedCount(), denseA) << "a hidden install took a slot";
+    EXPECT_EQ(WorldHash(a, min, min + size).hash, WorldHash(b, min, min + size).hash);
+    EXPECT_EQ(WorldHash(a, min, min + size).hash, WorldHash(c, min, min + size).hash);
+    EXPECT_EQ(b.StateOf(crater), CellState::Dense);
+
+    // Everything resident, then the focus stays: hidden chunks far from it are packed again (by the
+    // server's bit - `b`'s flat classes call the rows above its -60 m ground visible), the crater
+    // chunk and its neighbours stay resident.
+    ASSERT_EQ(b.EnsureResident(min, min + size - glm::ivec3(1)), 0u);
+    for (int i = 0; i < 400; ++i) b.Update(focus);
+    uint32_t repacked = 0, mustRepack = 0;
+    for (int y = 0; y < size.y; ++y)
+        for (int z = 0; z < size.z; ++z)
+            for (int x = 0; x < size.x; ++x) {
+                const glm::ivec3 ch = min + glm::ivec3(x, y, z);
+                if (b.StateOf(ch) == CellState::Packed) {
+                    ++repacked;
+                    EXPECT_EQ(a.StateOf(ch), CellState::Packed) << "packed a chunk the server shows";
+                }
+                const glm::dvec3 lo = glm::dvec3(ch) * 16.0;
+                if (a.StateOf(ch) == CellState::Packed && glm::length(focus - glm::clamp(focus, lo, lo + glm::dvec3(16.0))) > 13.0) ++mustRepack;
+            }
+    EXPECT_GE(repacked, mustRepack);
+    EXPECT_GT(repacked, 0u);
+    EXPECT_EQ(b.StateOf(crater), CellState::Dense);
+    EXPECT_EQ(WorldHash(a, min, min + size).hash, WorldHash(b, min, min + size).hash);
+
+    // An edit next to a hidden chunk reveals it (as on the server) and keeps it resident.
+    glm::ivec3 hiddenChunk(0), denseNeighbour(0);
+    found = false;
+    for (int y = 1; y < size.y - 1 && !found; ++y)
+        for (int z = 1; z < size.z - 1 && !found; ++z)
+            for (int x = 1; x < size.x - 1 && !found; ++x) {
+                const glm::ivec3 ch = min + glm::ivec3(x, y, z);
+                if (b.StateOf(ch) != CellState::Packed) continue;
+                for (const glm::ivec3 f : {glm::ivec3(1, 0, 0), glm::ivec3(-1, 0, 0), glm::ivec3(0, 0, 1), glm::ivec3(0, 0, -1)})
+                    if (!found && b.StateOf(ch + f) == CellState::Dense && ch + f != crater) {
+                        hiddenChunk = ch;
+                        denseNeighbour = ch + f;
+                        found = true;
+                    }
+            }
+    ASSERT_TRUE(found);
+    const glm::ivec3 n = ChunkToVoxel(denseNeighbour) + glm::ivec3(kChunkSize / 2);
+    ASSERT_GT(b.FillBox(n, n + glm::ivec3(2), kRock) + b.FillBox(n, n + glm::ivec3(2), 0), 0u);
+    EXPECT_EQ(b.StateOf(hiddenChunk), CellState::Dense);
+    for (int i = 0; i < 100; ++i) b.Update(focus);
+    EXPECT_EQ(b.StateOf(hiddenChunk), CellState::Dense) << "a chunk next to an edit was packed again";
+
+    // 7a's Edit install of a chunk the server holds packed: resident and an edit, never packed.
+    glm::ivec3 other(0);
+    found = false;
+    for (int y = 0; y < size.y && !found; ++y)
+        for (int z = 0; z < size.z && !found; ++z)
+            for (int x = 0; x < size.x && !found; ++x) {
+                const glm::ivec3 ch = min + glm::ivec3(x, y, z);
+                if (a.StateOf(ch) == CellState::Packed && b.StateOf(ch) == CellState::Packed) {
+                    other = ch;
+                    found = true;
+                }
+            }
+    ASSERT_TRUE(found);
+    std::vector<uint8_t> bytes;
+    ASSERT_TRUE(a.EncodeChunkAt(other, bytes));
+    ASSERT_EQ(b.SetChunkEncoded(other, bytes), SetChunkResult::Installed);
+    EXPECT_EQ(b.StateOf(other), CellState::Dense);
+    EXPECT_EQ(b.ServerVisibility(other), 0);
+    for (int i = 0; i < 100; ++i) b.Update(focus);
+    EXPECT_EQ(b.StateOf(other), CellState::Dense);
+    jobs.WaitIdle();
+}
+
+// Review of stage 7b (finding 1): a server-hidden chunk is shown when the server shows it. Installed
+// after an edit of a face neighbour here (the edit ran while the chunk still waited for its data, so
+// PromoteFaceNeighbours had nothing to unpack), a HiddenContent install is a Content install: resident,
+// shown for good. And ShowServerHiddenNeighbours (an operation the client skipped on a neighbour) shows
+// a chunk already installed packed: decoded at the next update, never packed again. Hashes unchanged.
+TEST(World, AHiddenInstallNextToAnEditIsShown) {
+    ChunkStore storeA(4096), storeB(4096);
+    JobSystem jobs(3);
+    MaterialLibrary materials;
+    WorldConfig config;
+    config.voxelSize = 0.5f;
+    config.windowSize = {8, 8, 8};
+    config.fullHeight = true;
+    config.heightRange = {-64.0f, 64.0f};
+    config.packHidden = true;
+    config.nearRadius = 4.0f;
+    TerrainSettings terrain;
+    terrain.seed = 1337;
+    terrain.voxelSize = 0.5f;
+    terrain.materials = RegisterDefaultWorldMaterials(materials);
+    World a(config, storeA, jobs, CreateTerrainGenerator(terrain), &materials);
+    World b(config, storeB, jobs, CreateFlatGenerator(-120, kSurface, kRock), &materials);
+    const glm::dvec3 focus(8.0, 30.0, 8.0);
+    a.LoadBlocking(focus);
+    b.LoadBlocking(focus);
+    const glm::ivec3 min = a.WindowMinChunk(), size = a.WindowSize();
+    const auto farFromFocus = [&](const glm::ivec3& ch) {
+        const glm::dvec3 lo = glm::dvec3(ch) * 16.0;
+        return glm::length(focus - glm::clamp(focus, lo, lo + glm::dvec3(16.0))) > 24.0;
+    };
+    // Two server-packed chunks far from the focus, each with a face neighbour inside the window.
+    std::vector<std::pair<glm::ivec3, glm::ivec3>> picks;
+    for (int y = 1; y < size.y - 1 && picks.size() < 2; ++y)
+        for (int z = 1; z < size.z - 1 && picks.size() < 2; ++z)
+            for (int x = 1; x < size.x - 1 && picks.size() < 2; ++x) {
+                const glm::ivec3 ch = min + glm::ivec3(x, y, z);
+                if (a.StateOf(ch) != CellState::Packed || !farFromFocus(ch)) continue;
+                if (!picks.empty() && glm::length(glm::vec3(ch - picks[0].first)) < 3.0f) continue;
+                picks.emplace_back(ch, ch + glm::ivec3(1, 0, 0));
+            }
+    ASSERT_EQ(picks.size(), 2u);
+    const auto [h, n] = picks[0];
+    const auto [h2, n2] = picks[1];
+    // Install the server's window on `b` as terrain mode does, but for h.
+    for (int y = 0; y < size.y; ++y)
+        for (int z = 0; z < size.z; ++z)
+            for (int x = 0; x < size.x; ++x) {
+                const glm::ivec3 ch = min + glm::ivec3(x, y, z);
+                if (ch == h) continue;
+                std::vector<uint8_t> bytes;
+                ASSERT_TRUE(a.EncodeChunkAt(ch, bytes));
+                const InstallMode mode = a.StateOf(ch) == CellState::Packed ? InstallMode::HiddenContent : InstallMode::Content;
+                ASSERT_EQ(b.SetChunkEncoded(ch, bytes, mode), SetChunkResult::Installed);
+            }
+    // An edit of n, then h's data with the code the ack gave it (hidden): shown, not packed.
+    ASSERT_EQ(b.EnsureResident(n, n), 0u);
+    const glm::ivec3 v = ChunkToVoxel(n) + glm::ivec3(kChunkSize / 2);
+    ASSERT_GT(a.FillBox(v, v + glm::ivec3(2), kRock) + a.FillBox(v, v + glm::ivec3(2), 0) +
+                  b.FillBox(v, v + glm::ivec3(2), kRock) + b.FillBox(v, v + glm::ivec3(2), 0),
+              0u);
+    std::vector<uint8_t> hBytes;
+    ASSERT_TRUE(a.EncodeChunkAt(h, hBytes));
+    ASSERT_EQ(b.SetChunkEncoded(h, hBytes, InstallMode::HiddenContent), SetChunkResult::Installed);
+    EXPECT_NE(b.StateOf(h), CellState::Packed) << "packed next to an edit";
+    EXPECT_EQ(b.ServerVisibility(h), 1);
+    // h2 is packed; the server changed n2 (this world skipped the operation): shown and decoded.
+    ASSERT_EQ(b.StateOf(h2), CellState::Packed);
+    b.ShowServerHiddenNeighbours(n2);
+    EXPECT_EQ(b.ServerVisibility(h2), 1);
+    for (int i = 0; i < 100; ++i) b.Update(focus);
+    EXPECT_EQ(b.StateOf(h), CellState::Dense);
+    EXPECT_EQ(b.StateOf(h2), CellState::Dense) << "a shown chunk stayed packed";
+    EXPECT_EQ(WorldHash(a, min, min + size).hash, WorldHash(b, min, min + size).hash);
+    jobs.WaitIdle();
 }

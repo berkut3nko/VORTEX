@@ -11,6 +11,7 @@ module;
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <format>
 #include <functional>
 #include <map>
 #include <memory>
@@ -70,7 +71,10 @@ namespace vortex::net {
 
         /// What the events channel carries in order after the Welcome: the stream and the window acks
         /// (an ack is processed in stream order: with every event before it applied).
-        using StreamItem = std::variant<EventBatch, WindowAck>;
+        /// Stage 7b: the checks and the entity list ride the same channel right after the events up to
+        /// their opSeq, so a client processes them exactly at that stream position.
+        /// Stage 7b M-b: a terrain-mode window's TerrainAck takes a WindowAck's place.
+        using StreamItem = std::variant<EventBatch, WindowAck, HashCheck, EntityCheck, EntityList, TerrainAck>;
 
         /// Entity events a client holds for a NetId whose copy does not exist yet (stage 7a).
         constexpr size_t kMaxHeldPerId = 64;
@@ -132,6 +136,19 @@ namespace vortex::net {
         };
         std::unordered_map<uint32_t, Copy> copies;               // NetId -> copy
         std::unordered_set<uint32_t> tombstones;                 // despawned NetIds (a later spawn of one is discarded)
+        std::deque<uint32_t> tombstoneOrder;                     // ... oldest first (bounded: maxTombstones, stage 7b)
+        // The checks (stage 7b).
+        uint32_t entityAsOf = 0;          // the newest asOf of entity data processed from bulk (amendment 3)
+        bool listOpen = false;            // an EntityListRequest is out, its EntityList not processed
+        uint32_t listsInARow = 0;         // lists asked for since the last matching EntityCheck
+        uint32_t lastListTick = 0;        // server tick (newest snapshot) of the last request
+        bool listToSend = false;
+        uint32_t listCheckSeq = 0;        // the check the request is about
+        std::unordered_set<glm::ivec3, ChunkCoordHash> pristineFailures;   // distinct chunks this client generated differently
+        // Server terrain mode (stage 7b M-b).
+        std::shared_ptr<SessionGenerator> sessionGenerator;   // what MakeGenerator hands out (from the Welcome)
+        bool terrainMode = false;
+        TerrainModeReason terrainReason = TerrainModeReason::None;
         RemoteBodies bodies;
         std::deque<WaitingSamples> waitingSamples;               // snapshot samples whose events are not applied yet
         double bodyTime = 0.0;                                   // server tick the copies are moved to (per tick)
@@ -449,6 +466,12 @@ namespace vortex::net {
             }
         }
 
+        /// The region's generator, wrapped when a test or a broken bot asks for it.
+        std::shared_ptr<voxel::IWorldGenerator> Generator() const {
+            std::shared_ptr<voxel::IWorldGenerator> g = sim::MakeRegionGenerator(welcome.region, ids);
+            return settings.wrapGenerator ? settings.wrapGenerator(std::move(g)) : g;
+        }
+
         /// A failed client leaves the session: its slot is freed on the server (until stage 7 there
         /// is no resync).
         void Fail(const std::string& why) {
@@ -485,14 +508,12 @@ namespace vortex::net {
                     return Fail("malformed Welcome: a probe chunk outside the region's window");
             welcome = std::move(w);
             // Terrain agreement: the probe chunks from this client's own generator.
-            const std::shared_ptr<voxel::IWorldGenerator> generator = sim::MakeRegionGenerator(welcome.region, ids);
+            const std::shared_ptr<voxel::IWorldGenerator> generator = Generator();
             ownProbes = RehashProbes(welcome.probes, *generator);
             stats.probeMismatches = 0;
             for (size_t i = 0; i < ownProbes.size(); ++i) stats.probeMismatches += ownProbes[i].hash != welcome.probes[i].hash ? 1u : 0u;
-            if (stats.probeMismatches > 0)
-                Log::Error("Client: {} of {} probe chunks differ from the server's: this build generates other terrain (server terrain "
-                           "mode is networking stage 7; the session goes on and may diverge)",
-                           stats.probeMismatches, welcome.probes.size());
+            const SyncBox serverWindow = RegionSyncBox(welcome.region);
+            sessionGenerator = std::make_shared<SessionGenerator>(generator, serverWindow.min, serverWindow.Max());
             serverLast = std::max(serverLast, welcome.joinOpSeq);
             applied = welcome.joinOpSeq;
             welcomed = std::chrono::steady_clock::now();
@@ -505,6 +526,18 @@ namespace vortex::net {
                             std::to_string(kMaxClientWindowChunks));
             moving = sim::ClientWindowMoves(welcome.region, settings.windowChunks);
             sync.Start(welcome.joinOpSeq, RegionSyncBox(welcome.region));
+            if (stats.probeMismatches > 0) {
+                if (settings.terrainModeOnProbeMismatch) {
+                    Log::Warn("Client: {} of {} probe chunks differ from the server's: this build generates other terrain - server terrain "
+                              "mode (the server sends the whole window)",
+                              stats.probeMismatches, welcome.probes.size());
+                    StartTerrainMode(TerrainModeReason::Probes);
+                } else {
+                    Log::Error("Client: {} of {} probe chunks differ from the server's: this build generates other terrain (terrain mode "
+                               "off by its settings; the session goes on and may diverge)",
+                               stats.probeMismatches, welcome.probes.size());
+                }
+            }
             SyncBox window;
             window.min = sim::ClientWindowMinChunk(welcome.region, settings.windowChunks, welcome.spawn);
             window.size = sim::ClientWindowSize(welcome.region, settings.windowChunks);
@@ -524,11 +557,24 @@ namespace vortex::net {
             WindowUpdate u;
             u.windowSeq = windowSeq;
             u.flags = reset ? WindowUpdate::kReset : uint8_t{0};
+            if (terrainMode) u.flags |= WindowUpdate::kTerrainMode;      // sticky: every update from the switch on
             u.minChunk = window.min;
             u.size = window.size;
             transport.Send(server, Channel::Events, Encode(u));
             ++stats.windowUpdates;
             stats.windowResets += reset ? 1u : 0u;
+        }
+
+        /// Server terrain mode (stage 7b): from now on the server's terrain is not generated here
+        /// (the SessionGenerator answers Empty inside the server's window) and every WindowUpdate
+        /// asks for the whole entering set (TerrainAck); data installs as content. Sticky.
+        void StartTerrainMode(TerrainModeReason why) {
+            if (terrainMode) return;
+            terrainMode = true;
+            terrainReason = why;
+            if (sessionGenerator) sessionGenerator->SetTerrainMode(true);
+            sync.SetTerrainMode(true);
+            stats.terrainModeTick = why == TerrainModeReason::PristineChecks ? newestSnapshot : 0u;
         }
 
         /// The world's window moved since the last WindowUpdate (stage 7a M-b): the next one. Runs at
@@ -607,6 +653,22 @@ namespace vortex::net {
             return simulation->Physics().GetCharacterState(character).groundBody == body ? physics::Layer::Dynamic : physics::Layer::Rubble;
         }
 
+        /// A despawned NetId: remembered (a later spawn or answer of it is discarded), at most
+        /// maxTombstones of them, oldest forgotten first (stage 7b).
+        void Tombstone(uint32_t netId) {
+            if (!tombstones.insert(netId).second) return;
+            tombstoneOrder.push_back(netId);
+            while (tombstoneOrder.size() > std::max<size_t>(1, settings.maxTombstones)) {
+                tombstones.erase(tombstoneOrder.front());
+                tombstoneOrder.pop_front();
+                ++stats.tombstonesEvicted;
+            }
+        }
+        void Untombstone(uint32_t netId) {
+            if (tombstones.erase(netId) == 0) return;
+            if (const auto it = std::find(tombstoneOrder.begin(), tombstoneOrder.end(), netId); it != tombstoneOrder.end()) tombstoneOrder.erase(it);
+        }
+
         /// A kinematic copy of a server object: Layer::Dynamic at rest (players collide with it),
         /// Layer::Rubble while it moves (no predicted player does).
         bool MakeCopy(uint32_t netId, std::shared_ptr<voxel::VoxelModel> model, const glm::vec3& position, const glm::quat& rotation,
@@ -682,7 +744,7 @@ namespace vortex::net {
                 }
             }
             if (const EntityDespawn* d = std::get_if<EntityDespawn>(&event)) {
-                tombstones.insert(d->netId);
+                Tombstone(d->netId);
                 bodies.Remove(d->netId);
                 asked.erase(d->netId);
                 staleBefore.erase(d->netId);
@@ -972,6 +1034,7 @@ namespace vortex::net {
                 }
                 staleBefore.erase(stale);
             }
+            entityAsOf = std::max(entityAsOf, b.asOfOpSeq);
             asked.erase(netId);
             if (b.spawn.kind == EntityKind::Light) {
                 if (!entities.contains(netId) && !tombstones.contains(netId)) {
@@ -1033,11 +1096,16 @@ namespace vortex::net {
                     BaselineNear n;
                     if (!Decode(bytes, n)) return Fail("malformed BaselineNear");
                     baselineNear = true;
+                    entityAsOf = std::max(entityAsOf, n.asOfOpSeq);
                     if (stats.baselineNearTicks == 0) stats.baselineNearTicks = TicksSinceWelcome();
                 } else if (type == MessageType::ChunkData) {
                     ChunkData d;
                     if (!Decode(bytes, d)) return Fail("malformed ChunkData");
                     ++stats.chunkData;
+                    if (terrainMode) {
+                        ++stats.terrainChunkData;
+                        stats.terrainChunkBytes += bytes.size();
+                    }
                     chunks.push_back(std::move(d));
                 } else if (type == MessageType::BaselineEntity) {
                     BaselineEntity b;
@@ -1047,6 +1115,7 @@ namespace vortex::net {
                     BaselineEnd e;
                     if (!Decode(bytes, e)) return Fail("malformed BaselineEnd");
                     baselineEnded = true;
+                    entityAsOf = std::max(entityAsOf, e.asOfOpSeq);
                     baselineNear = true;
                     const uint32_t ticks = TicksSinceWelcome();
                     if (stats.baselineNearTicks == 0) stats.baselineNearTicks = ticks;
@@ -1098,6 +1167,20 @@ namespace vortex::net {
                 stats.chunkRequests += static_cast<uint32_t>(chunks.size());
                 transport.Send(server, Channel::Events, Encode(ChunkRequest{chunks}));
             }
+            // Check entries kept while their chunks loaded (review of stage 7b), then the HashCheck
+            // mismatches (stage 7b): the chunks again, with reason Repair (the server counts them).
+            CheckDeferred();
+            if (state != ClientState::Playing) return;
+            if (const std::vector<glm::ivec3> repairs = sync.TakeRepairs(kMaxChunkRequest); !repairs.empty()) {
+                stats.chunkRequests += static_cast<uint32_t>(repairs.size());
+                stats.repairsRequested += static_cast<uint32_t>(repairs.size());
+                transport.Send(server, Channel::Events, Encode(ChunkRequest{repairs, ChunkRequestReason::Repair}));
+            }
+            if (listToSend) {
+                listToSend = false;
+                ++stats.entityListRequests;
+                transport.Send(server, Channel::Events, Encode(EntityListRequest{listCheckSeq}));
+            }
             for (size_t i = 0; i < modelsToAsk.size(); i += kMaxModelRequest) {
                 ModelRequest m;
                 m.netIds.assign(modelsToAsk.begin() + static_cast<std::ptrdiff_t>(i),
@@ -1116,20 +1199,231 @@ namespace vortex::net {
                         stats.joinDataSeconds = SinceWelcome();
                     }
                 }
-                if (Synced()) {
-                    stats.joinSyncTicks = std::max(1u, newestSnapshot - welcome.tick);
-                    stats.joinSyncSeconds = SinceWelcome();
-                    if (stats.joinDataTicks == 0) {
-                        stats.joinDataTicks = stats.joinSyncTicks;
-                        stats.joinDataSeconds = stats.joinSyncSeconds;
-                    }
-                }
+                if (Synced()) NoteSynced();
+            }
+        }
+
+        /// The join's "synced after" (logged only): the first time Synced() was seen true - every 16th
+        /// Poll, or when a caller asked (Client::Synced: a client that syncs during a drain's last
+        /// Polls would otherwise log 0 s).
+        void NoteSynced() {
+            if (stats.joinSyncTicks != 0) return;
+            stats.joinSyncTicks = std::max(1u, newestSnapshot - welcome.tick);
+            stats.joinSyncSeconds = SinceWelcome();
+            if (stats.joinDataTicks == 0) {
+                stats.joinDataTicks = stats.joinSyncTicks;
+                stats.joinDataSeconds = stats.joinSyncSeconds;
             }
         }
 
         bool Synced() const {
             return state == ClientState::Playing && simulation && baselineEnded && asked.empty() && held.empty() && modelsToAsk.empty() &&
-                   sync.Synced();
+                   !listOpen && sync.Synced();
+        }
+
+        // --- the checks (stage 7b) ---------------------------------------------------------------
+
+        void AddCheckTime(std::chrono::steady_clock::time_point start) {
+            const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+            stats.checkSeconds += seconds;
+            stats.maxCheckSeconds = std::max(stats.maxCheckSeconds, seconds);
+        }
+
+        /// A HashCheck at its stream position: chunks that differ become Requested (reason Repair).
+        void OnHashCheck(const HashCheck& check) {
+            const auto start = std::chrono::steady_clock::now();
+            const HashCheckOutcome o = sync.OnHashCheck(simulation->World(), check, applied);
+            if (!o.compared) {
+                ++stats.checksOutOfOrder;
+                Log::Warn("Client: a HashCheck at opSeq {} came at opSeq {}: ignored", check.asOfOpSeq, applied);
+                return;
+            }
+            ++stats.hashChecks;
+            OnMismatches(o, check.asOfOpSeq);
+            AddCheckTime(start);
+        }
+
+        /// Entries of earlier HashChecks whose chunks were still loading here, compared once the chunks
+        /// are current (review of stage 7b; ChunkSync::CheckDeferred).
+        void CheckDeferred() {
+            if (!sync.HasDeferredChecks()) return;
+            const auto start = std::chrono::steady_clock::now();
+            const uint32_t before = sync.Stats().deferredEqual + sync.Stats().deferredMismatches;
+            const HashCheckOutcome o = sync.CheckDeferred(simulation->World(), applied);
+            OnMismatches(o, applied);
+            if (sync.Stats().deferredEqual + sync.Stats().deferredMismatches != before) AddCheckTime(start);
+        }
+
+        /// What a HashCheck (or a deferred entry) found different: counted, logged; chunks asked for again
+        /// (by ChunkSync) unless a repeat was refused.
+        void OnMismatches(const HashCheckOutcome& o, uint32_t opSeq) {
+            for (const HashCheckOutcome::Mismatch& m : o.mismatches) {
+                if (m.pristine) ++stats.mismatchesPristine;
+                else ++stats.mismatchesModified;
+                // A pristine chunk this client's generator made differently: the generator is suspect
+                // (3 distinct ones start server terrain mode, M-b). Re-checks count once.
+                if (m.pristine && m.generated) {
+                    pristineFailures.insert(m.chunk);
+                    stats.pristineFailures = static_cast<uint32_t>(pristineFailures.size());
+                }
+                if (m.refused) {
+                    Log::Error("Client: chunk ({}, {}, {}) differs from the server's again at opSeq {} soon after its repair ({}): not asked "
+                               "for again - a bug to look at (its later differences are only counted)",
+                               m.chunk.x, m.chunk.y, m.chunk.z, opSeq, m.pristine ? "pristine" : "modified");
+                    continue;
+                }
+                Log::Warn("Client: chunk ({}, {}, {}) differs from the server's at opSeq {} ({}{}{}{}): asked for again", m.chunk.x, m.chunk.y,
+                          m.chunk.z, opSeq, m.pristine ? "pristine" : "modified", m.generated ? ", generated here" : ", from data",
+                          m.repeat ? ", repaired before" : "", m.deferred ? ", compared once it had loaded" : "");
+            }
+            // Too many pristine chunks made differently here: this generator is not trusted any more
+            // (stage 7b M-b). The whole window again, as the server holds it: a reset, with the flag.
+            if (!terrainMode && settings.pristineFailuresForTerrainMode > 0 && pristineFailures.size() >= settings.pristineFailuresForTerrainMode) {
+                StartTerrainMode(TerrainModeReason::PristineChecks);
+                Log::Warn("Client: {} pristine chunks differed from the server's (tick {}): server terrain mode - the whole window is "
+                          "asked for again",
+                          pristineFailures.size(), stats.terrainModeTick);
+                SendWindow(sync.Window(), true);
+            }
+        }
+
+        /// This client's copies as an EntityCheck counts them; NetIds asked for count as present.
+        EntityCheck OwnEntityCheck(bool withAsked) const {
+            EntityCheck c;
+            for (const auto& [netId, copy] : copies) {
+                ++c.count;
+                c.idXor ^= netId;
+                c.modelXor ^= EntityModelTerm(netId, copy.modelHash);
+            }
+            if (withAsked)
+                for (const uint32_t netId : asked)
+                    if (!copies.contains(netId)) {
+                        ++c.count;
+                        c.idXor ^= netId;
+                    }
+            return c;
+        }
+
+        /// An EntityCheck at its stream position (amendments 3 and 8): compared when the baseline has
+        /// ended, no list is out and no entity data ahead of it was processed; while models are asked
+        /// for only the count and ids (the asked ones counted as present). A mismatch asks for the list.
+        void OnEntityCheck(const EntityCheck& check) {
+            const auto start = std::chrono::steady_clock::now();
+            if (applied != check.asOfOpSeq) {
+                ++stats.checksOutOfOrder;
+                Log::Warn("Client: an EntityCheck at opSeq {} came at opSeq {}: ignored", check.asOfOpSeq, applied);
+                return;
+            }
+            if (!baselineEnded || listOpen) {
+                ++stats.entityChecksSkipped;
+                return;
+            }
+            if (check.asOfOpSeq < entityAsOf) {
+                ++stats.entityChecksAhead;
+                return;
+            }
+            const bool partial = !asked.empty() || !held.empty() || !modelsToAsk.empty();
+            const EntityCheck own = OwnEntityCheck(partial);
+            ++(partial ? stats.entityChecksPartial : stats.entityChecks);
+            const bool match = own.count == check.count && own.idXor == check.idXor && (partial || own.modelXor == check.modelXor);
+            AddCheckTime(start);
+            if (match) {
+                listsInARow = 0;
+                return;
+            }
+            ++stats.entityMismatches;
+            // Back-off: a client that cannot make a copy (bodies full) does not ask every 2 s.
+            const uint32_t now = newestSnapshot;
+            if (listsInARow >= settings.entityListsBeforeBackoff) {
+                const uint32_t wait = settings.entityListBackoffTicks * (listsInARow == settings.entityListsBeforeBackoff ? 1u : 3u);
+                if (now - lastListTick < wait) {
+                    ++stats.entityListsBackedOff;
+                    return;
+                }
+            }
+            Log::Warn("Client: the replicated objects differ from the server's at opSeq {} ({} here{}, {} there): asking for the list",
+                      check.asOfOpSeq, own.count, partial ? " with models asked for" : "", check.count);
+            ++listsInARow;
+            lastListTick = now;
+            listOpen = true;
+            listToSend = true;
+            listCheckSeq = check.asOfOpSeq;
+        }
+
+        /// A NetId whose body this client lacks: asked for (7a's ModelRequest; its events are held).
+        void AskModel(uint32_t netId) {
+            if (asked.insert(netId).second) modelsToAsk.push_back(netId);
+        }
+
+        /// Removes a copy (no tombstone; its samples go too).
+        void RemoveCopy(uint32_t netId) {
+            const auto it = copies.find(netId);
+            if (it == copies.end()) return;
+            simulation->Scene().Destroy(it->second.entity);
+            bodies.Remove(netId);
+            copies.erase(it);
+        }
+
+        /// The EntityList at its stream position Q (amendment 2): copies the list does not have and
+        /// that are as old as it are dropped; listed NetIds without a copy, or whose copy has another
+        /// model, are asked for (their bodies come as answers, with the exact rest state); copies newer
+        /// than the list are left alone.
+        void OnEntityList(const EntityList& list) {
+            const auto start = std::chrono::steady_clock::now();
+            listOpen = false;
+            if (applied != list.asOfOpSeq) {
+                ++stats.checksOutOfOrder;
+                Log::Warn("Client: an EntityList at opSeq {} came at opSeq {}: ignored", list.asOfOpSeq, applied);
+                return;
+            }
+            ++stats.entityLists;
+            std::unordered_map<uint32_t, uint64_t> listed;
+            listed.reserve(list.entries.size());
+            for (const EntityListEntry& e : list.entries) listed.emplace(e.netId, e.modelHash);
+            std::vector<uint32_t> drop;
+            for (const auto& [netId, copy] : copies)
+                if (!listed.contains(netId) && copy.base <= list.asOfOpSeq) drop.push_back(netId);
+            std::sort(drop.begin(), drop.end());
+            for (const uint32_t netId : drop) {
+                RemoveCopy(netId);
+                Tombstone(netId);
+                ++stats.copiesDropped;
+            }
+            // A NetId asked for that the list does not have died at or before Q (every ask came from an
+            // event at or below Q, and a despawn processed since would have cleared it): no answer
+            // will come (the server answers nothing for a gone NetId), so it is forgotten - else
+            // Synced() would wait for it for ever (review of 7b M-a).
+            std::vector<uint32_t> gone;
+            for (const uint32_t netId : asked)
+                if (!listed.contains(netId) && !copies.contains(netId)) gone.push_back(netId);
+            std::sort(gone.begin(), gone.end());
+            for (const uint32_t netId : gone) {
+                asked.erase(netId);
+                std::erase(modelsToAsk, netId);
+                if (const auto h = held.find(netId); h != held.end()) {
+                    heldCount -= h->second.size();
+                    stats.droppedHeldEvents += static_cast<uint32_t>(h->second.size());
+                    held.erase(h);
+                }
+                Tombstone(netId);
+                ++stats.copiesDropped;
+            }
+            for (const EntityListEntry& e : list.entries) {
+                if (const auto it = copies.find(e.netId); it != copies.end()) {
+                    if (it->second.base > list.asOfOpSeq || it->second.modelHash == e.modelHash) continue;
+                    RemoveCopy(e.netId);
+                    AskModel(e.netId);
+                    ++stats.copiesReplaced;
+                    continue;
+                }
+                if (asked.contains(e.netId)) continue;      // its answer is on the way
+                Untombstone(e.netId);                       // alive at Q on the server: the list wins
+                AskModel(e.netId);
+                ++stats.copiesRestored;
+            }
+            Log::Info("Client: entity list at opSeq {}: {} object(s); {} dropped, {} asked for again", list.asOfOpSeq, list.entries.size(),
+                      drop.size(), modelsToAsk.size());
+            AddCheckTime(start);
         }
 
         void ApplyPending() {
@@ -1137,6 +1431,27 @@ namespace vortex::net {
             while (!pending.empty() && state == ClientState::Playing) {
                 if (const WindowAck* ack = std::get_if<WindowAck>(&pending.front())) {
                     if (!sync.OnAck(simulation->World(), *ack, applied)) return Fail("a WindowAck for a window this client did not send");
+                    pending.pop_front();
+                    continue;
+                }
+                if (const TerrainAck* ack = std::get_if<TerrainAck>(&pending.front())) {
+                    if (!sync.OnTerrainAck(simulation->World(), *ack, applied))
+                        return Fail("a TerrainAck for a window this client did not send, or one that leaves an entering chunk undescribed");
+                    pending.pop_front();
+                    continue;
+                }
+                if (const HashCheck* check = std::get_if<HashCheck>(&pending.front())) {
+                    OnHashCheck(*check);
+                    pending.pop_front();
+                    continue;
+                }
+                if (const EntityCheck* check = std::get_if<EntityCheck>(&pending.front())) {
+                    OnEntityCheck(*check);
+                    pending.pop_front();
+                    continue;
+                }
+                if (const EntityList* list = std::get_if<EntityList>(&pending.front())) {
+                    OnEntityList(*list);
                     pending.pop_front();
                     continue;
                 }
@@ -1149,7 +1464,12 @@ namespace vortex::net {
                     }
                     if (seq != applied + 1) return Fail("a gap in the event stream: expected " + std::to_string(applied + 1) + ", got " +
                                                         std::to_string(seq));
-                    Apply(seq, batch.events[i]);
+                    if (settings.testDropEntityEvent && !std::holds_alternative<sim::WorldOp>(batch.events[i]) &&
+                        settings.testDropEntityEvent(seq, batch.events[i])) {
+                        ++stats.testDroppedEvents;      // a test's fault: as if it never came
+                    } else {
+                        Apply(seq, batch.events[i]);
+                    }
                     if (state != ClientState::Playing) return;
                     applied = seq;
                     ++stats.eventsApplied;
@@ -1223,6 +1543,26 @@ namespace vortex::net {
                         } else if (*type == MessageType::WindowAck) {
                             WindowAck ack;
                             if (!Decode(e.data, ack)) return Fail("malformed WindowAck");
+                            pending.push_back(std::move(ack));
+                        } else if (*type == MessageType::HashCheck) {
+                            HashCheck check;
+                            if (!Decode(e.data, check)) return Fail("malformed HashCheck");
+                            pending.push_back(std::move(check));
+                        } else if (*type == MessageType::EntityCheck) {
+                            EntityCheck check;
+                            if (!Decode(e.data, check)) return Fail("malformed EntityCheck");
+                            pending.push_back(check);
+                        } else if (*type == MessageType::EntityList) {
+                            EntityList list;
+                            if (!Decode(e.data, list)) return Fail("malformed EntityList");
+                            pending.push_back(std::move(list));
+                        } else if (*type == MessageType::TerrainAck) {
+                            // Only for a terrain-mode WindowUpdate (stage 7b M-b).
+                            if (!terrainMode) return Fail("a TerrainAck for a window this client did not send in terrain mode");
+                            TerrainAck ack;
+                            if (!Decode(e.data, ack)) return Fail("malformed TerrainAck");
+                            ++stats.terrainAcks;
+                            stats.terrainAckBytes += e.data.size();
                             pending.push_back(std::move(ack));
                         }
                         break;
@@ -1373,8 +1713,12 @@ namespace vortex::net {
     }
 
     std::shared_ptr<voxel::IWorldGenerator> Client::MakeGenerator() const {
-        return sim::MakeRegionGenerator(m_Impl->welcome.region, m_Impl->ids);
+        if (m_Impl->sessionGenerator) return m_Impl->sessionGenerator;
+        return m_Impl->Generator();
     }
+    bool Client::TerrainMode() const { return m_Impl->terrainMode; }
+    TerrainModeReason Client::TerrainModeWhy() const { return m_Impl->terrainReason; }
+    std::shared_ptr<const SessionGenerator> Client::ClientGenerator() const { return m_Impl->sessionGenerator; }
 
     bool Client::Attach(sim::Simulation& simulation, const std::function<void()>& whileLoading) {
         Impl& s = *m_Impl;
@@ -1481,16 +1825,18 @@ namespace vortex::net {
         // world edited before Attach, would follow the server's operations into another world.
         // A moving window checks the probes it has loaded (the others are checked against the
         // generator at the Welcome).
+        // In server terrain mode (stage 7b) the world inside the server's window is the server's to
+        // give: its probe chunks are the SessionGenerator's air until then, nothing to compare.
         std::vector<ProbeHash> loadedProbes;
         for (const ProbeHash& p : s.ownProbes)
-            if (world.IsChunkLoaded(p.chunk)) loadedProbes.push_back(p);
+            if (!s.terrainMode && world.IsChunkLoaded(p.chunk)) loadedProbes.push_back(p);
         if (const uint32_t differ = CheckProbes(loadedProbes, world); differ > 0) {
             Log::Error("Client: refused a simulation whose world differs from its generator's in {} of {} probe chunks (another "
                        "generator, or edited before Attach)",
                        differ, loadedProbes.size());
             return false;
         }
-        if (!s.moving && loadedProbes.size() != s.ownProbes.size()) {
+        if (!s.moving && !s.terrainMode && loadedProbes.size() != s.ownProbes.size()) {
             Log::Error("Client: {} of {} probe chunks are not loaded after the region's window was", s.ownProbes.size() - loadedProbes.size(),
                        s.ownProbes.size());
             return false;
@@ -1524,7 +1870,11 @@ namespace vortex::net {
     uint32_t Client::AppliedOpSeq() const { return m_Impl->applied; }
     uint32_t Client::ServerOpSeq() const { return m_Impl->serverLast; }
     uint32_t Client::JoinOpSeq() const { return m_Impl->welcome.joinOpSeq; }
-    bool Client::Synced() const { return m_Impl->Synced(); }
+    bool Client::Synced() const {
+        const bool synced = m_Impl->Synced();
+        if (synced) m_Impl->NoteSynced();     // the join's log time only (see NoteSynced)
+        return synced;
+    }
     SyncBox Client::SyncWindow() const { return m_Impl->syncBox; }
     SyncBox Client::Window() const { return m_Impl->sync.Window(); }
     bool Client::WindowMoves() const { return m_Impl->moving; }
@@ -1573,6 +1923,16 @@ namespace vortex::net {
         return out;
     }
 
+    size_t Client::Tombstones() const { return m_Impl->tombstones.size(); }
+
+    bool Client::TestDestroyCopy(uint32_t netId) {
+        Impl& s = *m_Impl;
+        if (!s.simulation || !s.copies.contains(netId)) return false;
+        s.RemoveCopy(netId);
+        ++s.stats.copiesLost;
+        return true;
+    }
+
     voxel::WorldHashResult Client::Hash() const {
         const Impl& s = *m_Impl;
         if (!s.simulation) return {};
@@ -1580,5 +1940,37 @@ namespace vortex::net {
         // A chunk without a current base is not this client's copy of the server's (stage 7a).
         h.notLoaded += s.sync.NotCurrent();
         return h;
+    }
+
+    std::string DescribeChecks(const Client& client) {
+        const ClientStats& c = client.Stats();
+        const ChunkSyncStats& s = client.Sync().Stats();
+        return std::format("{} hash checks ({} equal, {} ahead, {} not current ({} kept until loaded, {} equal then), {} outside), {} hash "
+                           "mismatches ({} pristine, {} modified), {} repairs requested / {} installed, {} repeated ({} refused), {} pristine "
+                           "failures; {} entity checks + {} partial ({} skipped, {} "
+                           "ahead), {} entity mismatches, {} lists ({} restored / {} replaced / {} dropped, {} backed off); {} out of order; "
+                           "tombstones {} ({} evicted); checks {:.2f} ms max, {:.1f} ms in all",
+                           c.hashChecks, s.checkEqual, s.checkAhead, s.checkNotCurrent, s.checkDeferred, s.deferredEqual, s.checkOutside, s.mismatches,
+                           c.mismatchesPristine, c.mismatchesModified, c.repairsRequested, s.repairsInstalled, s.repeatRepairs, s.repairsRefused,
+                           c.pristineFailures, c.entityChecks,
+                           c.entityChecksPartial, c.entityChecksSkipped, c.entityChecksAhead, c.entityMismatches, c.entityLists, c.copiesRestored,
+                           c.copiesReplaced, c.copiesDropped, c.entityListsBackedOff, c.checksOutOfOrder, client.Tombstones(),
+                           c.tombstonesEvicted, c.maxCheckSeconds * 1000.0, c.checkSeconds * 1000.0);
+    }
+
+    std::string DescribeTerrainMode(const Client& client) {
+        if (!client.TerrainMode()) return "no";
+        const ClientStats& c = client.Stats();
+        const ChunkSyncStats& s = client.Sync().Stats();
+        const std::shared_ptr<const SessionGenerator> g = client.ClientGenerator();
+        const std::string why = client.TerrainModeWhy() == TerrainModeReason::Probes
+                                    ? std::format("since the Welcome ({} of {} probes differ)", c.probeMismatches, kProbeChunks)
+                                    : std::format("at tick {} (pristine chunks made differently)", c.terrainModeTick);
+        return std::format("{}; {} acks / {:.1f} KiB, {} uniform based without data + {} installed, {} awaiting data ({} hidden); {} ChunkData / "
+                           "{:.2f} MiB received ({} installed packed, {} shown); {} chunks answered Empty by the generator, {} dense made "
+                           "inside the server's window; player held {} ticks",
+                           why, c.terrainAcks, static_cast<double>(c.terrainAckBytes) / 1024.0, s.uniformBased, s.uniformInstalled, s.awaitingData,
+                           s.awaitingHidden, c.terrainChunkData, static_cast<double>(c.terrainChunkBytes) / (1024.0 * 1024.0), s.installedHidden,
+                           s.installedShown, g ? g->Skipped() : 0, g ? g->DenseInsideInTerrainMode() : 0, client.Prediction().syncHeldTicks);
     }
 }

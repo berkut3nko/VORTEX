@@ -431,6 +431,7 @@ namespace vortex::voxel {
         cell.assigned = true;
         cell.state = CellState::Unloaded;
         cell.fromSave = false;
+        cell.serverVisibility = 0;
         BumpRevision(cell);
     }
 
@@ -530,6 +531,7 @@ namespace vortex::voxel {
         cell.modified = false;
         cell.changeQueued = false;
         cell.fromSave = false;
+        cell.serverVisibility = 0;
         ++cell.generation;   // results of jobs still in flight for the old chunk are now stale
         BumpRevision(cell);
         WriteGrid(index, 0u);
@@ -760,6 +762,10 @@ namespace vortex::voxel {
         // through a cave, and a cave mouth farther than nearRadius looks plugged. (The design's
         // extra chunk under the surface held about 600 more slots at the spawn and no ray needs it.)
         if (cell.modified || cell.fromSave) return true;
+        // Server terrain mode (networking stage 7b): the server decided. This world's column classes
+        // come from a generator that differs from the server's and are not asked.
+        if (cell.serverVisibility == kServerShown) return true;
+        if (cell.serverVisibility == kServerHidden) return FaceNeighbourEdited(cell.coord);
         for (int dz = -1; dz <= 1; ++dz)
             for (int dx = -1; dx <= 1; ++dx) {
                 const Column* n = FindColumn(cell.coord.x + dx, cell.coord.z + dz);
@@ -1070,6 +1076,7 @@ namespace vortex::voxel {
             cell.packedId = 0;
             cell.slot = ChunkStore::kInvalidSlot;
             cell.fromSave = r.fromSave;
+            cell.serverVisibility = 0;
             switch (r.kind) {
                 case ChunkKind::Empty:
                     cell.state = CellState::Empty;
@@ -1600,7 +1607,7 @@ namespace vortex::voxel {
         if (counted && column.surfaceLeft > 0) --column.surfaceLeft;
     }
 
-    SetChunkResult World::SetChunkEncoded(const glm::ivec3& chunk, std::span<const uint8_t> rle) {
+    SetChunkResult World::SetChunkEncoded(const glm::ivec3& chunk, std::span<const uint8_t> rle, InstallMode mode) {
         Cell* cell = FindCell(chunk);
         if (!cell) return SetChunkResult::OutsideWindow;
         if (!m_Scratch) m_Scratch = std::make_unique<Chunk>();
@@ -1616,8 +1623,18 @@ namespace vortex::voxel {
             }
         }
         const uint32_t index = CellIndex(chunk);
+        const bool wasLoaded = cell->state != CellState::Unloaded && cell->state != CellState::Loading;
+        // Server terrain mode (networking stage 7b): a chunk the server holds packed is installed
+        // packed - decided here, before any slot is taken - unless this world packs nothing or the
+        // cell is an edit here (then it is shown, as an edit is on the server).
+        const bool keepEdit = wasLoaded && cell->modified;
+        // ... and unless a face neighbour is an edit here: the server shows such a chunk (an edit next
+        // to it unpacked it), and nothing would reveal it after this install (review of stage 7b: the
+        // neighbour's edit ran while this cell was still waiting for its data).
+        if (mode == InstallMode::HiddenContent && (!m_Pack || keepEdit || FaceNeighbourEdited(chunk))) mode = InstallMode::Content;
+        const bool pack = mode == InstallMode::HiddenContent && kind == ChunkKind::Dense;
         uint32_t slot = ChunkStore::kInvalidSlot;
-        if (kind == ChunkKind::Dense) {
+        if (kind == ChunkKind::Dense && !pack) {
             slot = cell->state == CellState::Dense ? cell->slot : m_Store.Alloc();
             if (slot == ChunkStore::kInvalidSlot) return SetChunkResult::StoreFull;
             m_Store.Get(slot) = *m_Scratch;
@@ -1626,13 +1643,27 @@ namespace vortex::voxel {
             m_Garbage.chunks.push_back(m_Store.Release(cell->slot));
         }
         DropKeptBytes(index);         // Packed bytes, or the copy a resident buried chunk kept
-        const bool wasLoaded = cell->state != CellState::Unloaded && cell->state != CellState::Loading;
         if (!wasLoaded) SettleLoading(index);
         cell->slot = slot;
-        cell->state = kind == ChunkKind::Dense ? CellState::Dense : kind == ChunkKind::Uniform ? CellState::Uniform : CellState::Empty;
+        cell->state = pack ? CellState::Packed
+                           : kind == ChunkKind::Dense ? CellState::Dense : kind == ChunkKind::Uniform ? CellState::Uniform : CellState::Empty;
         cell->uniformId = kind == ChunkKind::Uniform ? id : uint8_t{0};
         cell->packedId = 0;
-        cell->modified = true;        // not the generator's output (never packed, kept as an edit)
+        if (pack) {
+            // The message's own bytes are the cell's (a valid Dense stream: DecodeChunk took it, and
+            // its hash is canonical over runs); the grid word shows its most frequent solid id.
+            std::vector<uint8_t> bytes(rle.begin(), rle.end());
+            cell->uniformId = MostFrequentSolidId(bytes);
+            m_Counters.packedBytes += bytes.size();
+            m_Packed[index] = std::move(bytes);
+        }
+        if (mode == InstallMode::Edit) {
+            cell->modified = true;    // not the generator's output (never packed, kept as an edit)
+            cell->serverVisibility = 0;
+        } else {
+            cell->modified = keepEdit;   // content, not an edit: buried neighbours stay packed
+            cell->serverVisibility = mode == InstallMode::HiddenContent ? kServerHidden : kServerShown;
+        }
         cell->fromSave = false;
         SetGrid(index, *cell);
         ChunkChange& change = QueueChange(*cell);
@@ -1642,9 +1673,27 @@ namespace vortex::voxel {
             change.editMin = ChunkToVoxel(chunk);
             change.editMax = change.editMin + glm::ivec3(kChunkSize);
         }
-        if (m_Pack) PromoteFaceNeighbours(chunk);
+        if (m_Pack && mode == InstallMode::Edit) PromoteFaceNeighbours(chunk);
+        // A packed chunk near the focus is made resident like a loaded one (PromoteNear; Repack packs
+        // it again once the focus has moved on and no edit shows it).
+        if (pack) m_NearPromotePending = true;
         RefreshContentTop();
         return SetChunkResult::Installed;
+    }
+
+    uint8_t World::ServerVisibility(const glm::ivec3& chunk) const {
+        const Cell* cell = FindCell(chunk);
+        return cell ? cell->serverVisibility : uint8_t{0};
+    }
+
+    void World::ShowServerHiddenNeighbours(const glm::ivec3& chunk) {
+        static constexpr glm::ivec3 kFaces[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+        for (const glm::ivec3& f : kFaces) {
+            Cell* cell = FindCell(chunk + f);
+            if (!cell || cell->serverVisibility != kServerHidden) continue;
+            cell->serverVisibility = kServerShown;
+            if (cell->state == CellState::Packed) m_Reveal.push_back(CellIndex(chunk + f));
+        }
     }
 
     std::vector<glm::ivec3> World::TakeWindowSteps() {

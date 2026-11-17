@@ -15,6 +15,7 @@ module;
 
 module vortex.net;
 
+import vortex.voxel;
 import vortex.sim;
 
 namespace vortex::net {
@@ -406,7 +407,7 @@ namespace vortex::net {
         out.flags = in.U8();
         out.minChunk = ReadChunk(in);
         out.size = ReadSize(in);
-        if (!End(in) || (out.flags & ~WindowUpdate::kReset) != 0) return false;
+        if (!End(in) || (out.flags & ~(WindowUpdate::kReset | WindowUpdate::kTerrainMode)) != 0) return false;
         return ValidWindowSize(out.size) && ValidChunk(out.minChunk) && ValidChunk(out.minChunk + out.size);
     }
 
@@ -455,6 +456,7 @@ namespace vortex::net {
     std::vector<uint8_t> Encode(const ChunkRequest& m) {
         ByteWriter w;
         w.U8(static_cast<uint8_t>(MessageType::ChunkRequest));
+        w.U8(static_cast<uint8_t>(m.reason));
         w.U16(static_cast<uint16_t>(m.chunks.size()));
         for (const glm::ivec3& c : m.chunks) WriteChunk(w, c);
         return w.Take();
@@ -463,6 +465,9 @@ namespace vortex::net {
     bool Decode(std::span<const uint8_t> bytes, ChunkRequest& out) {
         ByteReader in(bytes);
         if (!Begin(in, MessageType::ChunkRequest)) return false;
+        const uint8_t reason = in.U8();
+        if (in.Failed() || reason > kMaxChunkRequestReason) return false;
+        out.reason = static_cast<ChunkRequestReason>(reason);
         const uint32_t count = in.U16();
         if (in.Failed() || count == 0 || count > kMaxChunkRequest || in.Remaining() != count * 12u) return false;
         out.chunks.clear();
@@ -548,6 +553,151 @@ namespace vortex::net {
         if (!Begin(in, MessageType::BaselineNear)) return false;
         out.asOfOpSeq = in.U32();
         out.count = in.U32();
+        return End(in);
+    }
+
+    // --- checks and server terrain mode (stage 7b) ------------------------------------------------
+
+    uint64_t EntityModelTerm(uint32_t netId, uint64_t modelHash) { return voxel::HashMix64(voxel::HashMix64(0x454e54ull, netId), modelHash); }
+
+    std::vector<uint8_t> Encode(const TerrainAck& m) {
+        ByteWriter w;
+        w.U8(static_cast<uint8_t>(MessageType::TerrainAck));
+        w.U32(m.windowSeq);
+        w.U32(m.asOfOpSeq);
+        WriteSize(w, m.size);
+        uint64_t cells = 0;
+        for (const TerrainRun& r : m.runs) cells += r.count;
+        w.VarU(cells);
+        for (const TerrainRun& r : m.runs) {
+            w.VarU(r.count);
+            w.U8(static_cast<uint8_t>(r.code));
+            if (r.code == TerrainCode::Uniform) w.U8(r.id);
+        }
+        return w.Take();
+    }
+
+    bool Decode(std::span<const uint8_t> bytes, TerrainAck& out) {
+        ByteReader in(bytes);
+        if (!Begin(in, MessageType::TerrainAck)) return false;
+        out.windowSeq = in.U32();
+        out.asOfOpSeq = in.U32();
+        out.size = ReadSize(in);
+        if (in.Failed() || !ValidWindowSize(out.size)) return false;
+        const uint64_t box = static_cast<uint64_t>(out.size.x) * static_cast<uint64_t>(out.size.y) * static_cast<uint64_t>(out.size.z);
+        const uint64_t cells = in.VarU();
+        if (in.Failed() || cells > box) return false;
+        uint64_t total = 0;
+        out.runs.clear();
+        while (total < cells) {
+            const uint64_t count = in.VarU();
+            const uint8_t code = in.U8();
+            if (in.Failed() || count == 0 || count > cells - total || code > kMaxTerrainCode) return false;
+            TerrainRun r;
+            r.count = static_cast<uint32_t>(count);
+            r.code = static_cast<TerrainCode>(code);
+            if (r.code == TerrainCode::Uniform) r.id = in.U8();
+            if (in.Failed()) return false;
+            out.runs.push_back(r);
+            total += count;
+        }
+        return End(in);
+    }
+
+    std::vector<uint8_t> Encode(const HashCheck& m) {
+        ByteWriter w;
+        w.U8(static_cast<uint8_t>(MessageType::HashCheck));
+        w.U32(m.asOfOpSeq);
+        w.U8(static_cast<uint8_t>(m.entries.size()));
+        for (const HashCheckEntry& e : m.entries) {
+            WriteChunk(w, e.chunk);
+            w.U64(e.hash);
+            w.U8(e.pristine ? uint8_t{1} : uint8_t{0});
+        }
+        return w.Take();
+    }
+
+    bool Decode(std::span<const uint8_t> bytes, HashCheck& out) {
+        ByteReader in(bytes);
+        if (!Begin(in, MessageType::HashCheck)) return false;
+        out.asOfOpSeq = in.U32();
+        const uint32_t count = in.U8();
+        if (in.Failed() || count == 0 || count > kMaxHashCheckEntries || in.Remaining() != count * kHashCheckEntryBytes) return false;
+        out.entries.clear();
+        for (uint32_t i = 0; i < count; ++i) {
+            HashCheckEntry e;
+            e.chunk = ReadChunk(in);
+            e.hash = in.U64();
+            const uint8_t flags = in.U8();
+            if (in.Failed() || !ValidChunk(e.chunk) || (flags & ~uint8_t{1}) != 0) return false;
+            e.pristine = (flags & 1u) != 0;
+            out.entries.push_back(e);
+        }
+        return End(in);
+    }
+
+    std::vector<uint8_t> Encode(const EntityCheck& m) {
+        ByteWriter w;
+        w.U8(static_cast<uint8_t>(MessageType::EntityCheck));
+        w.U32(m.asOfOpSeq);
+        w.U32(m.count);
+        w.U32(m.idXor);
+        w.U64(m.modelXor);
+        return w.Take();
+    }
+
+    bool Decode(std::span<const uint8_t> bytes, EntityCheck& out) {
+        ByteReader in(bytes);
+        if (!Begin(in, MessageType::EntityCheck)) return false;
+        out.asOfOpSeq = in.U32();
+        out.count = in.U32();
+        out.idXor = in.U32();
+        out.modelXor = in.U64();
+        return End(in);
+    }
+
+    std::vector<uint8_t> Encode(const EntityListRequest& m) {
+        ByteWriter w;
+        w.U8(static_cast<uint8_t>(MessageType::EntityListRequest));
+        w.U32(m.asOfOpSeq);
+        return w.Take();
+    }
+
+    bool Decode(std::span<const uint8_t> bytes, EntityListRequest& out) {
+        ByteReader in(bytes);
+        if (!Begin(in, MessageType::EntityListRequest)) return false;
+        out.asOfOpSeq = in.U32();
+        return End(in);
+    }
+
+    std::vector<uint8_t> Encode(const EntityList& m) {
+        ByteWriter w;
+        w.U8(static_cast<uint8_t>(MessageType::EntityList));
+        w.U32(m.asOfOpSeq);
+        w.U32(static_cast<uint32_t>(m.entries.size()));
+        for (const EntityListEntry& e : m.entries) {
+            w.U32(e.netId);
+            w.U64(e.modelHash);
+        }
+        return w.Take();
+    }
+
+    bool Decode(std::span<const uint8_t> bytes, EntityList& out) {
+        ByteReader in(bytes);
+        if (!Begin(in, MessageType::EntityList)) return false;
+        out.asOfOpSeq = in.U32();
+        const uint32_t count = in.U32();
+        if (in.Failed() || count > kMaxEntityList || in.Remaining() != static_cast<size_t>(count) * kEntityListEntryBytes) return false;
+        out.entries.clear();
+        uint32_t previous = 0;
+        for (uint32_t i = 0; i < count; ++i) {
+            EntityListEntry e;
+            e.netId = in.U32();
+            e.modelHash = in.U64();
+            if (in.Failed() || e.netId == 0 || e.netId <= previous) return false;
+            previous = e.netId;
+            out.entries.push_back(e);
+        }
         return End(in);
     }
 }

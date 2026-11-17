@@ -7,6 +7,7 @@ module;
 #include <deque>
 #include <functional>
 #include <span>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -35,6 +36,35 @@ export namespace vortex::net {
     };
     /// @brief The overlap of two boxes (empty when they do not overlap).
     SyncBox Intersect(const SyncBox& a, const SyncBox& b);
+
+    /// @brief Every cell of window `box` enters with its update: the first window, a reset, or a new
+    /// size (stage 7a's rule, the same on both sides).
+    inline bool WindowEntersWhole(bool first, bool reset, const SyncBox& prev, const SyncBox& box) {
+        return first || reset || prev.size != box.size;
+    }
+
+    /**
+     * @brief The cells that entered with window `box` after `prev`: every cell of `box` when `all`
+     * (WindowEntersWhole) or when the rows differ, in (y, z, x) order; else the whole columns outside
+     * `prev` (the rows are fixed), in (z, x, y) order. Client (ChunkSync) and server (the TerrainAck)
+     * walk the same cells in the same order: the order is wire format since the review of stage 7b
+     * (protocol 10: a TerrainAck codes these cells only). A step of the game's window visits its
+     * entering slab (4224 cells for two chunks), not the box (101 376).
+     */
+    template <typename Fn>
+    void ForEachEnteringChunk(const SyncBox& box, const SyncBox& prev, bool all, Fn&& fn) {
+        if (all || prev.min.y != box.min.y || prev.size.y != box.size.y) {
+            for (int y = box.min.y; y < box.Max().y; ++y)
+                for (int z = box.min.z; z < box.Max().z; ++z)
+                    for (int x = box.min.x; x < box.Max().x; ++x) fn(glm::ivec3(x, y, z));
+            return;
+        }
+        for (int z = box.min.z; z < box.Max().z; ++z)
+            for (int x = box.min.x; x < box.Max().x; ++x) {
+                if (x >= prev.min.x && x < prev.Max().x && z >= prev.min.z && z < prev.Max().z) continue;
+                for (int y = box.min.y; y < box.Max().y; ++y) fn(glm::ivec3(x, y, z));
+            }
+    }
     /// @brief The server's window of a region: play bounds + sim::kServerWindowMarginChunks, the
     /// region's rows. No operation ever changes a chunk outside it (the server would fail).
     SyncBox RegionSyncBox(const sim::RegionDesc& region);
@@ -75,6 +105,11 @@ export namespace vortex::net {
         /// op)` (a batch of chunks catching up walks the ring once: recheck of stage 7a, 3).
         void Walk(uint32_t base, const std::function<bool(uint32_t, const glm::ivec3&, const glm::ivec3&)>& wants,
                   const std::function<void(uint32_t, const glm::ivec3&, const glm::ivec3&, const sim::WorldOp&)>& fn) const;
+        /// @brief Some kept operation in (after, upTo] has a chunk range that holds `chunk` or one of
+        /// its neighbours (stage 7b: an edit there may have revealed the chunk on the server), from the
+        /// ranges alone (nothing decoded). True when the ring does not cover `after` or has no
+        /// operation up to `upTo` yet (unknown: the safe answer).
+        bool TouchesNear(uint32_t after, uint32_t upTo, const glm::ivec3& chunk, uint32_t newest) const;
 
     private:
         struct Entry {
@@ -117,6 +152,51 @@ export namespace vortex::net {
         /// Ring operations decoded for replays (recheck of stage 7a, 3: once per batch of chunks
         /// catching up, not once per chunk).
         uint64_t opsDecoded = 0;
+        // Server terrain mode (stage 7b): TerrainAcks and what they said of the entering chunks.
+        uint32_t terrainAcks = 0;
+        uint32_t uniformBased = 0;        ///< uniform chunks the cell already held: based, no install
+        uint32_t uniformInstalled = 0;    ///< uniform chunks installed from the ack
+        uint32_t awaitingData = 0;        ///< chunks the acks said data follows for (codes 1 and 3)
+        uint32_t awaitingHidden = 0;      ///< ... of them held packed by the server (code 3)
+        uint32_t installedHidden = 0;     ///< terrain mode: ChunkData installed packed (InstallMode::HiddenContent in a world that packs)
+        uint32_t installedShown = 0;      ///< ... installed resident (shown; or hidden in a world that packs nothing)
+        // HashCheck (stage 7b): checks processed, their entries by outcome, repairs.
+        uint32_t hashChecks = 0;          ///< HashChecks compared (processed at their stream position)
+        uint32_t checksOutOfOrder = 0;    ///< HashChecks not at applied == asOfOpSeq: ignored (expected 0)
+        uint64_t checkEqual = 0;          ///< entries equal
+        uint64_t checkAhead = 0;          ///< ... skipped: current, but its base is above the check's opSeq
+        uint64_t checkNotCurrent = 0;     ///< ... skipped: not current (no base, awaiting, requested, unsynced, loading)
+        uint64_t checkOutside = 0;        ///< ... skipped: outside this window or the server's
+        uint32_t mismatches = 0;          ///< entries that differed: the chunk became Requested (reason Repair)
+        uint32_t repairsInstalled = 0;    ///< ChunkData installed for a chunk whose last request was a repair
+        uint32_t repeatRepairs = 0;       ///< mismatches of a chunk already repaired while in the window (a bug, logged)
+        /// Review of stage 7b: repeats not asked for again - within kRepeatRepairChecks checks of the last
+        /// repair, or after kMaxRepairsPerChunk repairs - the chunk stays current (the player is not
+        /// held) and is logged once; later mismatches of it are only counted (`stuckMismatches`).
+        uint32_t repairsRefused = 0;
+        uint32_t stuckMismatches = 0;
+        /// Review of stage 7b: entries skipped as not current because the chunk was still loading here
+        /// (NoBase, or Based and not loaded): kept with the server's hash and compared once the chunk is
+        /// current, as long as no operation of the stream touched it since (CheckDeferred).
+        uint32_t checkDeferred = 0;
+        uint32_t deferredEqual = 0;       ///< ... compared later and equal
+        uint32_t deferredMismatches = 0;  ///< ... compared later and different (also in `mismatches`)
+        uint32_t deferredDropped = 0;     ///< ... dropped: touched by an operation, left the window, data on its way, or over the bound
+    };
+
+    /// @brief What one HashCheck found (ChunkSync::OnHashCheck).
+    struct HashCheckOutcome {
+        bool compared = false;            ///< false: not at its stream position (applied != asOfOpSeq), nothing looked at
+        uint32_t equal = 0, ahead = 0, notCurrent = 0, outside = 0;
+        struct Mismatch {
+            glm::ivec3 chunk{0};
+            bool pristine = false;        ///< the server's flag: never modified there
+            bool generated = false;       ///< this client's generator made the chunk (not from a ChunkData)
+            bool repeat = false;          ///< repaired before while in the window
+            bool refused = false;         ///< a repeat not asked for again (stays current; review of stage 7b)
+            bool deferred = false;        ///< found by CheckDeferred (an entry kept while the chunk loaded)
+        };
+        std::vector<Mismatch> mismatches;
     };
 
     /// @brief How many chunks of the window are in each state (what Synced() waits for).
@@ -165,9 +245,56 @@ export namespace vortex::net {
         void OnChunkData(voxel::World& world, std::span<const ChunkData> data, uint32_t applied);
         /// @brief World::TakeLoadedChunks: a Based chunk that loaded catches up with the ring.
         void OnLoaded(voxel::World& world, std::span<const glm::ivec3> chunks, uint32_t applied);
+        /**
+         * @brief A HashCheck in stream order (stage 7b): compared only when `applied` equals its
+         * asOfOpSeq C, and then only for chunks that are current with a base at or below C - such a
+         * chunk holds its base content plus every operation in (base, C] that touches it, which is
+         * the server's chunk after operation C. Chunks whose data is ahead (base > C), that are not
+         * current, or outside this window or the server's are skipped. A chunk that differs becomes
+         * Requested and is owed a ChunkRequest with reason Repair (TakeRepairs): from there it is
+         * 7a's path (no event reaches it, its ChunkData installs and replays, or is requested again).
+         */
+        HashCheckOutcome OnHashCheck(const voxel::World& world, const HashCheck& check, uint32_t applied);
+        /**
+         * @brief Entries a HashCheck skipped because their chunk was still loading here (NoBase, or Based
+         * and not loaded), compared now (review of stage 7b: the server's planner counts a pick as
+         * checked whether or not this client could compare it, so such a chunk may not be picked again
+         * before the player reaches it). An entry is compared once its chunk is current with a base at
+         * or below `applied`; every stream operation whose chunk range holds the chunk drops it (Apply),
+         * so the server's hash at the check's opSeq is still its hash now. A mismatch is OnHashCheck's.
+         */
+        HashCheckOutcome CheckDeferred(const voxel::World& world, uint32_t applied);
+        bool HasDeferredChecks() const { return !m_Deferred.empty(); }
+        /// Most entries kept by CheckDeferred's rule (the oldest goes first).
+        static constexpr size_t kMaxDeferredChecks = 256;
+        /// A chunk that mismatches again within this many HashChecks of its last repair, or that was
+        /// repaired kMaxRepairsPerChunk times since it entered the window, is not asked for again.
+        static constexpr uint32_t kRepeatRepairChecks = 5;
+        static constexpr uint8_t kMaxRepairsPerChunk = 3;
+        /**
+         * @brief Server terrain mode (stage 7b): the answer to a terrain-mode WindowUpdate, in stream
+         * order (applied == its asOf A). For each record that entered with that update and has no
+         * base: a uniform chunk (code 2) is based at A - installed first unless the cell already holds
+         * exactly that content; data (codes 1, 3) makes it Awaiting (code 3: the server holds it
+         * packed, so its ChunkData is installed packed only if no operation over it or a face
+         * neighbour came between the ack and the stream's position - max(asOf, applied) - and no face
+         * neighbour is an edit here; a later operation this world skips next to it shows it again,
+         * World::ShowServerHiddenNeighbours); outside the server's window (code 0) it is based at A as in 7a. Every
+         * chunk it bases counts as from data (the server vouched for it). False (malformed): no such
+         * update sent, another size, or code 0 for an entering chunk inside the server's window.
+         */
+        bool OnTerrainAck(voxel::World& world, const TerrainAck& ack, uint32_t applied);
+        /// @brief Terrain mode: ChunkData installs as content by the server's packing (InstallMode::
+        /// Content / HiddenContent), never as 7a's edits. Sticky for the session (the client's choice 12).
+        void SetTerrainMode(bool on) { m_TerrainMode = on; }
+        bool TerrainMode() const { return m_TerrainMode; }
+        /// @brief Coordinates owed a ChunkRequest with reason Repair (at most `max`), of chunks still
+        /// waiting for that repair.
+        std::vector<glm::ivec3> TakeRepairs(size_t max);
         /// @brief Coordinates to put in a ChunkRequest now (at most `max`): chunks the ring no longer
         /// covered, and Unsynced chunks nearest `nearChunk` while the store has more than `reserve`
-        /// free slots (as many as are free beyond it). They become Requested.
+        /// free slots beyond those the content still to come may take (NoBase, Awaiting and Requested
+        /// records; stage 7b M-b), as many as are spare beyond it. They become Requested.
         std::vector<glm::ivec3> TakeRequests(uint32_t freeSlots, uint32_t reserve, const glm::ivec3& nearChunk, size_t max);
 
         ChunkSyncState StateOf(const glm::ivec3& chunk) const;
@@ -199,6 +326,14 @@ export namespace vortex::net {
             bool ready = false;           ///< loaded and caught up to the stream
             bool neverEdited = false;     ///< outside the server's window
             bool fromData = false;        ///< installed from a ChunkData
+            bool repair = false;          ///< its last request is a repair (stage 7b)
+            bool repaired = false;        ///< a repair was installed since it entered the window
+            bool hidden = false;          ///< terrain mode: Awaiting data the server holds packed (code 3)
+            bool incoming = false;        ///< counted in m_Incoming (its content may take a store slot when it comes)
+            bool stuck = false;           ///< a repeat repair was refused: mismatches only counted (review of stage 7b)
+            uint8_t repairs = 0;          ///< repairs installed since it entered the window
+            uint32_t repairedAtCheck = 0; ///< m_Stats.hashChecks when its last repair was installed
+            uint32_t ackedAt = 0;         ///< terrain mode: the asOf of the TerrainAck that made it Awaiting
             uint32_t base = 0;
             uint32_t entered = 0;         ///< the WindowUpdate seq it entered with
             uint32_t appliedOps = 0, skippedOps = 0;
@@ -217,6 +352,12 @@ export namespace vortex::net {
         /// Every state change goes through here (the count of Unsynced records: TakeRequests looks
         /// for them only when there are any; review of stage 7a).
         void SetState(Record& r, ChunkSyncState state);
+        /// Keeps m_Incoming: a record whose content is still to come and may take a slot (NoBase,
+        /// Requested, Awaiting unless it is hidden data in a world that packs it). After every change
+        /// of state or `hidden`.
+        void Recount(Record& r);
+        /// A record whose content differs from the server's (OnHashCheck, CheckDeferred).
+        void Mismatch(Record& r, const glm::ivec3& chunk, bool pristine, bool deferred, HashCheckOutcome& out);
         /// The cells of `box` that entered with a window: all of them, or those outside `prev`.
         template <typename Fn>
         void ForEachEntering(const SyncBox& box, const SyncBox& prev, bool all, Fn&& fn) const;
@@ -226,16 +367,91 @@ export namespace vortex::net {
         /// stage 7a, 3). Sorts `records` and drops repeats.
         void CatchUp(voxel::World& world, std::vector<Record*>& records, uint32_t applied);
         /// Installs one ChunkData; the record to catch up goes to `installed`.
-        DataOutcome Install(voxel::World& world, const ChunkData& data, std::vector<Record*>& installed);
+        DataOutcome Install(voxel::World& world, const ChunkData& data, uint32_t applied, std::vector<Record*>& installed);
 
         OpRing m_Ring;
         SyncBox m_Window, m_ServerWindow;
         std::vector<Record> m_Records;
         std::deque<SentWindow> m_Sent;
         std::vector<glm::ivec3> m_Owed;   ///< not covered: to request
+        std::vector<glm::ivec3> m_Repairs;   ///< HashCheck mismatches: to request with reason Repair
         uint32_t m_Unsynced = 0;          ///< records in the Unsynced state
+        /// Records whose content is still to come and may take a store slot when it comes (NoBase: its
+        /// ack, then data or a load; Awaiting, Requested: data; not hidden data a packing world installs
+        /// packed - review of stage 7b), so TakeRequests does not count those slots as free (stage 7b M-b).
+        uint32_t m_Incoming = 0;
+        bool m_PacksHidden = false;       ///< the world packs HiddenContent installs (seen at each TerrainAck)
+        struct DeferredCheck {
+            glm::ivec3 chunk{0};
+            uint64_t hash = 0;
+            uint32_t entered = 0;         ///< the record's WindowUpdate seq when it was kept
+            bool pristine = false;
+        };
+        std::vector<DeferredCheck> m_Deferred;
         uint32_t m_Applied = 0;
+        bool m_TerrainMode = false;
         ChunkSyncStats m_Stats;
+    };
+
+    // --- HashCheck planning (stage 7b, server side) -------------------------------------------------
+
+    struct HashCheckSettings {
+        uint32_t recent = 4;              ///< chunks of the last operations, newest first
+        uint32_t modified = 8;            ///< modified chunks, least recently checked first
+        uint32_t pristine = 12;           ///< pristine chunks near the player and along its way (amendment 5, as built)
+        uint32_t feetSlots = 2;           ///< ... of them for the chunks around the feet
+        float pristineMetres = 12.0f;     ///< pristine candidates within this of the feet or the way ahead
+        float lookAheadSeconds = 4.0f;    ///< the way ahead: feet + horizontal velocity x this
+        /// A chunk whose box lies within this of the way (sideways) is on the path: the player's reach
+        /// box (bounds + 1 m, sim::PlayerReach) will touch it. On-path chunks go first, by arrival.
+        float pathMetres = 1.5f;
+    };
+
+    enum class HashCheckKind : uint8_t { Recent, Modified, Pristine };
+    struct HashCheckPick {
+        glm::ivec3 chunk{0};
+        HashCheckKind kind = HashCheckKind::Recent;
+    };
+
+    using ModifiedMap = std::unordered_map<glm::ivec3, uint32_t, ChunkCoordHash>;
+
+    /// @brief What the planner reads about one peer at one check.
+    struct HashCheckInput {
+        SyncBox box;                      ///< the peer's window inside the server's
+        const ModifiedMap* modified = nullptr;   ///< the server's modified map (chunk -> last opSeq)
+        /// The chunks changed by the server's last operations, oldest first (a ring, `(opSeq, chunk)`).
+        std::span<const std::pair<uint32_t, glm::ivec3>> recent;
+        std::function<bool(const glm::ivec3&)> dense;   ///< the server holds the chunk Dense or Packed
+        std::function<bool(const glm::ivec3&)> skip;    ///< queued for the peer (its data is on the way)
+        glm::dvec3 feet{0.0};
+        glm::dvec3 velocity{0.0};
+        double chunkMetres = 4.0;
+        uint32_t tick = 0;
+    };
+
+    /**
+     * @brief Picks the chunks of one peer's HashCheck (networking.md "Stage 7b plan", "HashCheck:
+     * server", amendments 4 and 5): the chunks of the last operations (newest first), then modified
+     * chunks least recently checked first (ties nearest the feet), then pristine chunks - one around
+     * the feet, the others within `pristineMetres` of the way ahead (the segment from the feet to feet
+     * + velocity x `lookAheadSeconds`) and not behind the feet, server-dense first, never checked
+     * first, then the chunks on the path (their box within `pathMetres` of the way) by arrival, then
+     * the others by distance to the way in whole chunks. Only chunks of the peer's box, none skipped, none
+     * twice. One planner per peer: it keeps when it last checked each chunk (entries outside the box
+     * are dropped at every check).
+     */
+    class HashCheckPlanner {
+    public:
+        explicit HashCheckPlanner(HashCheckSettings settings = {}) : m_Settings(settings) {}
+        std::vector<HashCheckPick> Plan(const HashCheckInput& in);
+        const HashCheckSettings& Settings() const { return m_Settings; }
+        /// @brief The tick a chunk was last checked for this peer (false: never, or it left the box).
+        bool LastChecked(const glm::ivec3& chunk, uint32_t& tick) const;
+        size_t Tracked() const { return m_Checked.size(); }
+
+    private:
+        HashCheckSettings m_Settings;
+        std::unordered_map<glm::ivec3, uint32_t, ChunkCoordHash> m_Checked;
     };
 
     /// @brief The server's bulk pacing per peer (the plan's amendments 1-3).

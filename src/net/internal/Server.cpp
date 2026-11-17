@@ -99,6 +99,7 @@ namespace vortex::net {
             enum class Kind : uint8_t { Chunk, Entity } kind = Kind::Chunk;
             glm::ivec3 chunk{0};
             uint32_t netId = 0;
+            bool repair = false;          ///< the answer to a ChunkRequest with reason Repair (stage 7b)
         };
 
         /// What a join cost (the `Join:` log line; stage 7a).
@@ -138,6 +139,9 @@ namespace vortex::net {
             std::vector<glm::ivec3> chunks;   ///< queued chunks, farthest first (the nearest is at the back)
             std::unordered_set<glm::ivec3, ChunkCoordHash> queued;   ///< in `chunks` or in `front`
             glm::ivec3 sortedFor{0};      ///< the player's chunk when `chunks` was sorted
+            /// The entries at the back of `chunks` that are the nearest, sorted (review of stage 7b: only
+            /// they are kept in order, the rest is selected again when they run out). 0: select now.
+            size_t sortedTail = 0;
             std::deque<uint32_t> baseline;    ///< NetIds of the join's baseline, nearest first
             bool baselineOpen = false;    ///< BaselineEnd not sent yet
             uint32_t baselineSent = 0;
@@ -149,6 +153,33 @@ namespace vortex::net {
             size_t eventBytesSince = 0;   ///< reliable non-bulk bytes sent to it since its last PumpBulk (the pacer's drain)
             double bulkCredit = 0.0;      ///< maxBulkBytesPerSecond
             JoinRecord join;
+            // The checks (stage 7b).
+            HashCheckPlanner planner;     ///< which chunks its HashChecks pick (when each was last checked)
+            bool listOwed = false;        ///< an EntityListRequest came: the list goes with the next Flush
+            // Server terrain mode (stage 7b M-b): sticky once a WindowUpdate carried kTerrainMode.
+            bool terrainMode = false;
+            uint32_t terrainFirstSeq = 0;
+            /// Chunks a TerrainAck queued, by the update that queued them (their bytes are counted to
+            /// that update when they are sent: the join's and each step's cost).
+            std::unordered_map<glm::ivec3, uint32_t, ChunkCoordHash> terrainQueuedBy;
+            /// The updates whose chunks are still queued: bytes so far (ack + data sent) and chunks left.
+            /// An update leaves the map once nothing it queued is left (sent, or pruned with its chunk):
+            /// bounded by the queue, which is bounded by the window (review of stage 7b).
+            struct TerrainStep {
+                uint64_t bytes = 0;
+                uint32_t pending = 0;
+            };
+            std::unordered_map<uint32_t, TerrainStep> terrainSteps;
+            uint32_t terrainStepCount = 0;            ///< finished steps (updates after the first)
+            uint64_t terrainStepBytes = 0, terrainMaxStepBytes = 0;
+            uint64_t terrainJoinAckBytes = 0, terrainJoinDataBytes = 0;
+            uint32_t terrainJoinChunks = 0, terrainJoinUniform = 0;
+            uint32_t maxQueued = 0;               ///< the most chunks queued after a window update
+            std::array<uint32_t, 3> ackSteps{};   ///< later TerrainAcks by direction: x only, z only, both
+            std::array<uint64_t, 3> ackStepBytes{}, maxAckStepBytes{};
+            uint32_t lastListTick = 0;            ///< when its last EntityList went
+            bool listSent = false;
+            bool listDelayed = false;             ///< the owed list was counted in entityListsDelayed
         };
 
         /// A replicated object's rest state as the clients were told it (EntityRest), and the rest's
@@ -174,6 +205,9 @@ namespace vortex::net {
             uint32_t inputTick = 0;       ///< the input the cast edge came in (ray)
             uint8_t loadout = 0;          ///< 0 = the tuning's cast (one loadout in M1)
         };
+
+        /// A terrain-mode peer's bulk goes nearest its eyes first: this far above the feet.
+        constexpr double kEyeMetres = 1.6;
 
         /// Margins further off than this (17 s) are not reported: no clock is, a forged tick is.
         constexpr int64_t kMaxReportedMargin = 1024;
@@ -234,6 +268,22 @@ namespace vortex::net {
         std::unordered_map<uint32_t, BodyTrack> tracks;   // NetId -> rest state the clients know
         std::shared_ptr<voxel::VoxelModel> crateModel;
         std::function<void(uint8_t)> onClientLeft;
+        // The checks (stage 7b): the chunks the last operations changed, oldest first (at most 64), and
+        // the replicated objects' check values as of `entityValuesAt` (computed once per opSeq).
+        std::vector<std::pair<uint32_t, glm::ivec3>> recentChanged;
+        bool entityValuesValid = false;
+        uint32_t entityValuesAt = 0;
+        EntityCheck entityValues;
+        std::vector<EntityListEntry> entityList;
+        /// VolumeHash per NetId with the model it was taken of (a model is never changed in place:
+        /// ObjectModel / ReplaceModel put a new one; the weak pointer cannot be fooled by a new model at
+        /// a freed one's address). Spares hashing every model at every opSeq (stage 7b: up to 5 ms in
+        /// one tick on the arena).
+        struct ModelHash {
+            std::weak_ptr<const voxel::VoxelModel> model;
+            uint64_t hash = 0;
+        };
+        std::unordered_map<uint32_t, ModelHash> modelHashes;
 
         /// networking.md "Entity replication": every destruction of a replicated entity, by any path,
         /// becomes an EntityDespawn (emitted in order by DrainDespawns).
@@ -518,7 +568,13 @@ namespace vortex::net {
         /// generator's output where it did before).
         uint32_t EmitOp(const sim::WorldOp& op, const sim::OpResult& result) {
             const uint32_t seq = Emit(op);
-            for (const glm::ivec3& c : result.report.changed) modified[c] = seq;
+            for (const glm::ivec3& c : result.report.changed) {
+                modified[c] = seq;
+                recentChanged.emplace_back(seq, c);
+            }
+            constexpr size_t kRecentChanged = 64;
+            if (recentChanged.size() > kRecentChanged)
+                recentChanged.erase(recentChanged.begin(), recentChanged.begin() + static_cast<std::ptrdiff_t>(recentChanged.size() - kRecentChanged));
             return seq;
         }
 
@@ -934,6 +990,7 @@ namespace vortex::net {
             p.slot = slot;
             p.sentUpTo = LastOpSeq();
             p.pacer = std::make_unique<BulkPacer>(settings.bulkPacer);
+            p.planner = HashCheckPlanner(settings.hashCheck);
             p.join = JoinRecord{};
             p.join.joinTick = Tick();
             QueueBaseline(p, glm::dvec3(tmpl.spawn));
@@ -1019,32 +1076,127 @@ namespace vortex::net {
         bool QueueChunk(Peer& p, const glm::ivec3& c) {
             if (!p.queued.insert(c).second) return false;
             p.chunks.push_back(c);
+            p.sortedTail = 0;             // the back is no longer the nearest: selected again before use
             return true;
         }
 
-        /// Horizontal distance (metres) from a chunk's centre to the peer's player.
+        /// Horizontal distance (metres) from a chunk's centre to the peer's player; for a peer in
+        /// server terrain mode the 3D distance from its eyes (stage 7b choice 6: the surface it sees
+        /// before the buried rock under it).
         double ChunkDistance(const Peer& p, const glm::ivec3& c) const {
             const double size = static_cast<double>(voxel::kChunkSize) * static_cast<double>(simulation->World().VoxelSize());
             const glm::dvec3 player = p.player ? glm::dvec3(p.player->state.position) : glm::dvec3(tmpl.spawn);
+            if (p.terrainMode) {
+                return glm::length((glm::dvec3(c) + glm::dvec3(0.5)) * size - (player + glm::dvec3(0.0, kEyeMetres, 0.0)));
+            }
             const glm::dvec2 centre = (glm::dvec2(c.x, c.z) + glm::dvec2(0.5)) * size;
             return glm::length(centre - glm::dvec2(player.x, player.z));
         }
 
-        /// Keeps `chunks` sorted farthest first (pop_back = nearest), re-sorted when the player's
-        /// chunk changed or something was added at the end.
+        /// The queue's nearest `kSortedTail` entries, selected and sorted at its back (pop_back = nearest),
+        /// again when the player's chunk changed, something was added or the sorted tail ran out (review
+        /// of stage 7b: a terrain-mode queue holds about 20 000 chunks; selecting is O(n), a full sort per
+        /// chunk crossing cost 2-4 ms there). The key is the squared distance (ChunkDistance's order
+        /// without a square root), ties in (y, z, x): the order is the same on every run.
+        static constexpr size_t kSortedTail = 1024;
         void SortChunks(Peer& p, bool force) {
             const glm::ivec3 at = p.player ? voxel::VoxelToChunk(simulation->World().WorldToVoxel(glm::dvec3(p.player->state.position)))
                                            : glm::ivec3(0);
-            if (!force && at == p.sortedFor) return;
+            if (!force && at == p.sortedFor && (p.sortedTail > 0 || p.chunks.empty())) return;
             p.sortedFor = at;
+            if (p.chunks.empty()) {
+                p.sortedTail = 0;
+                return;
+            }
+            const auto start = std::chrono::steady_clock::now();
+            const double size = static_cast<double>(voxel::kChunkSize) * static_cast<double>(simulation->World().VoxelSize());
+            const glm::dvec3 player = p.player ? glm::dvec3(p.player->state.position) : glm::dvec3(tmpl.spawn);
+            const glm::dvec3 eye = player + glm::dvec3(0.0, kEyeMetres, 0.0);
+            const auto key = [&](const glm::ivec3& c) {
+                if (p.terrainMode) {
+                    const glm::dvec3 d = (glm::dvec3(c) + glm::dvec3(0.5)) * size - eye;
+                    return glm::dot(d, d);
+                }
+                const glm::dvec2 d = (glm::dvec2(c.x, c.z) + glm::dvec2(0.5)) * size - glm::dvec2(player.x, player.z);
+                return glm::dot(d, d);
+            };
             std::vector<std::pair<double, glm::ivec3>> keyed;
             keyed.reserve(p.chunks.size());
-            for (const glm::ivec3& c : p.chunks) keyed.emplace_back(ChunkDistance(p, c), c);
-            std::stable_sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) {
+            for (const glm::ivec3& c : p.chunks) keyed.emplace_back(key(c), c);
+            const auto farther = [](const auto& a, const auto& b) {
                 if (a.first != b.first) return a.first > b.first;
                 return std::tie(a.second.y, a.second.z, a.second.x) > std::tie(b.second.y, b.second.z, b.second.x);
-            });
+            };
+            if (keyed.size() > kSortedTail) {
+                const auto tail = keyed.end() - static_cast<std::ptrdiff_t>(kSortedTail);
+                std::nth_element(keyed.begin(), tail, keyed.end(), farther);
+                std::sort(tail, keyed.end(), farther);
+                p.sortedTail = kSortedTail;
+            } else {
+                std::sort(keyed.begin(), keyed.end(), farther);
+                p.sortedTail = keyed.size();
+            }
             for (size_t i = 0; i < keyed.size(); ++i) p.chunks[i] = keyed[i].second;
+            const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+            stats.queueSortSeconds += seconds;
+            stats.maxQueueSortSeconds = std::max(stats.maxQueueSortSeconds, seconds);
+        }
+
+        /// The nearest queued chunk is at the back (the sorted tail selected again when it ran out).
+        void PopChunk(Peer& p) {
+            p.chunks.pop_back();
+            if (p.sortedTail > 0) --p.sortedTail;
+        }
+
+        /// Queued chunks that left the peer's new window go now (review of stage 7b: on a slow link a
+        /// walker's left-behind slabs stayed queued, at the far end of the queue, for the session).
+        /// Request answers in `front` are left to the dequeue. Keeps the queue's order.
+        void PruneQueue(Peer& p, const SyncBox& box) {
+            const size_t before = p.chunks.size();
+            std::erase_if(p.chunks, [&](const glm::ivec3& c) {
+                if (box.Contains(c)) return false;
+                p.queued.erase(c);
+                if (p.terrainMode) TerrainChunkGone(p, c, 0);
+                return true;
+            });
+            stats.queuePruned += before - p.chunks.size();
+            if (p.chunks.size() != before) p.sortedTail = 0;     // selected again before the next use
+        }
+
+        /// A terrain-mode chunk queued by update `seq` (its bytes count to that update when it goes).
+        void TerrainQueued(Peer& p, const glm::ivec3& c, uint32_t seq) {
+            if (const auto it = p.terrainQueuedBy.find(c); it != p.terrainQueuedBy.end()) {
+                if (it->second == seq) return;
+                TerrainChunkGone(p, c, 0);
+            }
+            p.terrainQueuedBy[c] = seq;
+            ++p.terrainSteps[seq].pending;
+        }
+
+        /// A terrain-mode chunk left the queue: sent (`bytes`), pruned or dropped (0). Its update is
+        /// finished once nothing it queued is left.
+        void TerrainChunkGone(Peer& p, const glm::ivec3& c, uint64_t bytes) {
+            const auto it = p.terrainQueuedBy.find(c);
+            if (it == p.terrainQueuedBy.end()) return;
+            const uint32_t seq = it->second;
+            p.terrainQueuedBy.erase(it);
+            if (seq == p.terrainFirstSeq) p.terrainJoinDataBytes += bytes;
+            const auto step = p.terrainSteps.find(seq);
+            if (step == p.terrainSteps.end()) return;
+            step->second.bytes += bytes;
+            if (step->second.pending > 0) --step->second.pending;
+            if (step->second.pending == 0) FinishTerrainStep(p, seq);
+        }
+
+        void FinishTerrainStep(Peer& p, uint32_t seq) {
+            const auto step = p.terrainSteps.find(seq);
+            if (step == p.terrainSteps.end()) return;
+            if (seq != p.terrainFirstSeq) {
+                ++p.terrainStepCount;
+                p.terrainStepBytes += step->second.bytes;
+                p.terrainMaxStepBytes = std::max(p.terrainMaxStepBytes, step->second.bytes);
+            }
+            p.terrainSteps.erase(step);
         }
 
         /// WindowUpdate: entering chunks (all of them with reset or for the first) the modified map
@@ -1053,21 +1205,28 @@ namespace vortex::net {
         bool OnWindowUpdate(PeerId id, Peer& p, std::span<const uint8_t> bytes) {
             WindowUpdate u;
             if (!Decode(bytes, u) || u.windowSeq != p.windowSeq + 1) return false;
+            // Server terrain mode is sticky (stage 7b choice 12): a peer that asked for it once and
+            // then clears the flag would disagree with the server about what the answer means.
+            const bool terrain = (u.flags & WindowUpdate::kTerrainMode) != 0;
+            if (p.terrainMode && !terrain) return false;
             const glm::ivec2 rows = sim::RegionRows(region);
             if (u.minChunk.y != rows.x || u.size.y != rows.y - rows.x) return false;
             ++stats.windowUpdates;
             const SyncBox box{u.minChunk, u.size};
-            const bool all = !p.hasWindow || (u.flags & WindowUpdate::kReset) != 0;
+            const bool all = WindowEntersWhole(!p.hasWindow, (u.flags & WindowUpdate::kReset) != 0, p.window, box);
+            if (terrain) return OnTerrainWindow(id, p, u, box, all);
+            if (p.hasWindow) PruneQueue(p, box);
             WindowAck ack;
             ack.windowSeq = u.windowSeq;
             ack.modified = voxel::VoxelMask(u.size);
             uint32_t marked = 0;
             const SyncBox server = RegionSyncBox(region);
             const SyncBox inside = Intersect(box, server);
+            size_t fresh = 0;
             auto mark = [&](const glm::ivec3& c) {
                 ack.modified.Set(c - box.min, true);
                 ++marked;
-                QueueChunk(p, c);
+                fresh += QueueChunk(p, c) ? 1u : 0u;
             };
             const size_t cells = static_cast<size_t>(inside.size.x) * static_cast<size_t>(inside.size.y) * static_cast<size_t>(inside.size.z);
             if (inside.Empty()) {
@@ -1089,7 +1248,8 @@ namespace vortex::net {
             p.hasWindow = true;
             p.window = box;
             p.windowSeq = u.windowSeq;
-            if (marked > 0) SortChunks(p, true);
+            if (fresh > 0) SortChunks(p, true);
+            p.maxQueued = std::max(p.maxQueued, static_cast<uint32_t>(p.chunks.size()));
             // The events made so far go first: a client takes the ack with them applied.
             Pump(id, p);
             ack.asOfOpSeq = LastOpSeq();
@@ -1103,12 +1263,115 @@ namespace vortex::net {
             return true;
         }
 
+        /// A terrain-mode WindowUpdate (stage 7b M-b, server terrain mode): every entering chunk inside
+        /// the server's window is described as the server holds it now - uniform ones in the ack, the
+        /// others queued as ChunkData (code 1 Dense, code 3 Packed: the client packs those as the
+        /// server does) - modified or not. The ack goes at once after the events made so far, like a
+        /// WindowAck, so the client takes it with every event up to its asOf applied.
+        bool OnTerrainWindow(PeerId id, Peer& p, const WindowUpdate& u, const SyncBox& box, bool all) {
+            const auto start = std::chrono::steady_clock::now();
+            if (p.hasWindow) PruneQueue(p, box);
+            const bool step = p.terrainMode && !all;
+            const size_t direction = box.min.x != p.window.min.x ? (box.min.z != p.window.min.z ? 2u : 0u) : 1u;
+            if (!p.terrainMode) {
+                p.terrainMode = true;
+                p.terrainFirstSeq = u.windowSeq;
+                ++stats.terrainModePeers;
+                Log::Info("Server: client {} asks for server terrain mode at window update {}: the whole window comes from here", id,
+                          u.windowSeq);
+            }
+            const voxel::World& world = simulation->World();
+            const SyncBox server = RegionSyncBox(region);
+            TerrainAck ack;
+            ack.windowSeq = u.windowSeq;
+            ack.size = u.size;
+            uint32_t queuedNow = 0, uniform = 0;
+            const auto add = [&ack](TerrainCode code, uint8_t id) {
+                if (!ack.runs.empty() && ack.runs.back().code == code && ack.runs.back().id == id) {
+                    ++ack.runs.back().count;
+                    return;
+                }
+                ack.runs.push_back({1, code, id});
+            };
+            // One code per entering cell in ForEachEnteringChunk order (protocol 10, review of stage 7b):
+            // a step visits and codes its entering slab only, never the whole box.
+            ForEachEnteringChunk(box, p.window, all, [&](const glm::ivec3& c) {
+                if (!server.Contains(c)) {
+                    add(TerrainCode::NotInAck, 0);
+                    return;
+                }
+                switch (world.StateOf(c)) {
+                    case voxel::CellState::Empty:
+                        add(TerrainCode::Uniform, 0);
+                        ++uniform;
+                        return;
+                    case voxel::CellState::Uniform: {
+                        uint8_t id = 0;
+                        (void)world.GetChunk(c, &id);
+                        add(TerrainCode::Uniform, id);
+                        ++uniform;
+                        return;
+                    }
+                    case voxel::CellState::Packed:
+                        add(TerrainCode::HiddenData, 0);
+                        ++stats.terrainHidden;
+                        break;
+                    default:          // Dense (the server's window is always loaded)
+                        add(TerrainCode::Data, 0);
+                        ++stats.terrainData;
+                        break;
+                }
+                if (QueueChunk(p, c)) ++queuedNow;
+                TerrainQueued(p, c, u.windowSeq);
+            });
+            stats.terrainUniform += uniform;
+            p.hasWindow = true;
+            p.window = box;
+            p.windowSeq = u.windowSeq;
+            if (queuedNow > 0) SortChunks(p, true);
+            p.maxQueued = std::max(p.maxQueued, static_cast<uint32_t>(p.chunks.size()));
+            Pump(id, p);
+            ack.asOfOpSeq = LastOpSeq();
+            const std::vector<uint8_t> bytes = Encode(ack);
+            Send(id, Channel::Events, bytes);
+            ++stats.windowAcks;
+            ++stats.terrainAcks;
+            stats.terrainAckBytes += bytes.size();
+            p.terrainSteps[u.windowSeq].bytes += bytes.size();
+            if (step) {
+                ++p.ackSteps[direction];
+                p.ackStepBytes[direction] += bytes.size();
+                p.maxAckStepBytes[direction] = std::max<uint64_t>(p.maxAckStepBytes[direction], bytes.size());
+            }
+            if (p.terrainSteps[u.windowSeq].pending == 0) FinishTerrainStep(p, u.windowSeq);
+            if (u.windowSeq == p.terrainFirstSeq) {
+                p.terrainJoinAckBytes = bytes.size();
+                p.terrainJoinChunks = queuedNow;
+                p.terrainJoinUniform = uniform;
+            }
+            if (u.windowSeq == 1) {
+                p.join.windowChunks = static_cast<uint32_t>(box.size.x * box.size.y * box.size.z);
+                p.join.modifiedChunks = queuedNow;
+            }
+            const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+            stats.terrainAckSeconds += seconds;
+            stats.maxTerrainAckSeconds = std::max(stats.maxTerrainAckSeconds, seconds);
+            if (step) {
+                ++stats.terrainStepAcks;
+                stats.terrainStepAckSeconds += seconds;
+                stats.maxTerrainStepAckSeconds = std::max(stats.maxTerrainStepAckSeconds, seconds);
+            }
+            return true;
+        }
+
         bool OnChunkRequest(Peer& p, std::span<const uint8_t> bytes) {
             ChunkRequest r;
             if (!Decode(bytes, r)) return false;
             const SyncBox server = RegionSyncBox(region);
+            const bool repair = r.reason == ChunkRequestReason::Repair;
             for (const glm::ivec3& c : r.chunks) {
                 ++stats.chunkRequests;
+                stats.repairsRequested += repair ? 1u : 0u;
                 ++p.join.requests;
                 if (settings.countChunkRequests) ++requestCounts[c];
                 if (!p.hasWindow || !p.window.Contains(c) || !server.Contains(c)) {
@@ -1119,13 +1382,134 @@ namespace vortex::net {
                 if (p.queued.contains(c)) {
                     const auto it = std::find(p.chunks.begin(), p.chunks.end(), c);
                     if (it == p.chunks.end()) continue;      // already in the front
+                    if (static_cast<size_t>(p.chunks.end() - it) <= p.sortedTail) --p.sortedTail;
                     p.chunks.erase(it);
                 }
                 p.queued.insert(c);
-                p.front.push_back({BulkItem::Kind::Chunk, c, 0});
+                p.front.push_back({BulkItem::Kind::Chunk, c, 0, repair});
                 if (p.front.size() > settings.maxQueuedAnswers) return false;
             }
             return true;
+        }
+
+        /// EntityListRequest (stage 7b): the list goes right after the peer's events of the next Flush,
+        /// one per peer at a time (repeats merged).
+        bool OnEntityListRequest(Peer& p, std::span<const uint8_t> bytes) {
+            EntityListRequest r;
+            if (!Decode(bytes, r)) return false;
+            if (p.listOwed) ++stats.entityListsMerged;
+            else ++stats.entityListRequests;
+            p.listOwed = true;
+            return true;
+        }
+
+        // --- the checks (stage 7b) ---------------------------------------------------------------
+
+        /// The replicated objects' check values and list at the last opSeq (objects with a body and a
+        /// model, as Entities(); lights are not counted). Every change of the set or of a model is an
+        /// event, so they are computed once per opSeq.
+        void EntityValues() {
+            if (entityValuesValid && entityValuesAt == LastOpSeq()) return;
+            entityValuesValid = true;
+            entityValuesAt = LastOpSeq();
+            entityValues = EntityCheck{};
+            entityList.clear();
+            const entt::registry& registry = simulation->Scene().Registry();
+            std::unordered_map<uint32_t, ModelHash> seen;
+            seen.reserve(modelHashes.size());
+            for (const auto [entity, id, voxels, body] : registry.view<const scene::NetId, const scene::VoxelBody, const scene::RigidBody>().each()) {
+                if (!voxels.model) continue;
+                ModelHash cached;
+                if (const auto it = modelHashes.find(id.value); it != modelHashes.end() && it->second.model.lock() == voxels.model) {
+                    cached = it->second;
+                } else {
+                    cached.model = voxels.model;
+                    cached.hash = VolumeHash(voxels.model->Volume());
+                }
+                entityList.push_back({id.value, cached.hash});
+                seen.emplace(id.value, std::move(cached));
+            }
+            modelHashes = std::move(seen);      // gone objects are forgotten
+            std::sort(entityList.begin(), entityList.end(), [](const EntityListEntry& a, const EntityListEntry& b) { return a.netId < b.netId; });
+            for (const EntityListEntry& e : entityList) {
+                ++entityValues.count;
+                entityValues.idXor ^= e.netId;
+                entityValues.modelXor ^= EntityModelTerm(e.netId, e.modelHash);
+            }
+        }
+
+        /// A peer's HashCheck: the planner's chunks and the server's hashes of them after the last event.
+        void SendHashCheck(PeerId id, Peer& p) {
+            voxel::World& world = simulation->World();
+            HashCheckInput in;
+            in.box = Intersect(p.window, RegionSyncBox(region));
+            in.modified = &modified;
+            in.recent = recentChanged;
+            in.dense = [&world](const glm::ivec3& c) {
+                const voxel::CellState state = world.StateOf(c);
+                return state == voxel::CellState::Dense || state == voxel::CellState::Packed;
+            };
+            in.skip = [&p](const glm::ivec3& c) { return p.queued.contains(c); };
+            in.feet = p.player ? glm::dvec3(p.player->state.position) : glm::dvec3(tmpl.spawn);
+            in.velocity = p.player ? glm::dvec3(p.player->state.velocity) : glm::dvec3(0.0);
+            in.chunkMetres = static_cast<double>(voxel::kChunkSize) * static_cast<double>(world.VoxelSize());
+            in.tick = steppedTick;
+            HashCheck check;
+            check.asOfOpSeq = LastOpSeq();
+            for (const HashCheckPick& pick : p.planner.Plan(in)) {
+                HashCheckEntry e;
+                e.chunk = pick.chunk;
+                if (!voxel::ChunkHashAt(world, pick.chunk, e.hash)) continue;    // never in the server's window
+                e.pristine = !modified.contains(pick.chunk);
+                check.entries.push_back(e);
+                ++stats.hashCheckEntries[static_cast<size_t>(pick.kind)];
+                if (check.entries.size() >= kMaxHashCheckEntries) break;
+            }
+            if (check.entries.empty()) return;
+            Send(id, Channel::Events, Encode(check));
+            ++stats.hashChecksSent;
+        }
+
+        /// The checks and the entity list of one peer, right after its events (Pump): a client processes
+        /// them with every event up to LastOpSeq applied and none after (networking.md "Stage 7b plan").
+        void SendChecks(PeerId id, Peer& p) {
+            if (p.sentUpTo != LastOpSeq()) return;     // events held (a test's maxEventBytesInFlight): later
+            const auto start = std::chrono::steady_clock::now();
+            // At most one list per peer per half check period (review of stage 7b): a client that asks
+            // every tick gets one now and the rest merged into the next.
+            const uint32_t listGap = settings.entityCheckTicks / 2;
+            const bool listDue = !p.listSent || steppedTick - p.lastListTick >= listGap;
+            if (p.listOwed && !listDue && !p.listDelayed) {
+                p.listDelayed = true;     // once per delayed list, not per tick it waits (recheck of stage 7b)
+                ++stats.entityListsDelayed;
+            }
+            if (p.listOwed && listDue) {
+                p.listOwed = false;
+                p.listDelayed = false;
+                p.listSent = true;
+                p.lastListTick = steppedTick;
+                EntityValues();
+                EntityList list;
+                list.asOfOpSeq = LastOpSeq();
+                list.entries = entityList;
+                const std::vector<uint8_t> bytes = Encode(list);
+                Send(id, Channel::Events, bytes);
+                ++stats.entityListsSent;
+                stats.entityListBytes += bytes.size();
+            }
+            const uint32_t tick = steppedTick;
+            const uint32_t stagger = 17u * p.slot;
+            if (const uint32_t n = settings.hashCheckTicks; n > 0 && p.hasWindow && tick % n == stagger % n) SendHashCheck(id, p);
+            if (const uint32_t n = settings.entityCheckTicks; n > 0 && p.hasWindow && !p.baselineOpen && tick % n == (stagger + n / 2) % n) {
+                EntityValues();
+                EntityCheck check = entityValues;
+                check.asOfOpSeq = LastOpSeq();
+                Send(id, Channel::Events, Encode(check));
+                ++stats.entityChecksSent;
+            }
+            const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+            stats.checkSeconds += seconds;
+            stats.maxCheckSeconds = std::max(stats.maxCheckSeconds, seconds);
         }
 
         bool OnModelRequest(Peer& p, std::span<const uint8_t> bytes) {
@@ -1156,13 +1540,14 @@ namespace vortex::net {
             any = true;
             BulkItem item;
             bool end = false;
+            SortChunks(p, false);         // the sorted tail may have run out
             if (!p.front.empty()) {
                 item = p.front.front();
                 p.front.pop_front();
                 if (item.kind == BulkItem::Kind::Entity) p.modelsQueued.erase(item.netId);
             } else if (!p.chunks.empty() && ChunkDistance(p, p.chunks.back()) <= static_cast<double>(settings.bulkNearMetres)) {
                 item = {BulkItem::Kind::Chunk, p.chunks.back(), 0};
-                p.chunks.pop_back();
+                PopChunk(p);
             } else if (p.baselineOpen && !p.nearSent && p.nearLeft == 0) {
                 // The entities near the spawn are out: the joiner's start gate may open (the far
                 // ones follow; their events are held meanwhile).
@@ -1178,7 +1563,7 @@ namespace vortex::net {
                 end = true;
             } else if (!p.chunks.empty()) {
                 item = {BulkItem::Kind::Chunk, p.chunks.back(), 0};
-                p.chunks.pop_back();
+                PopChunk(p);
             } else {
                 any = false;
                 return {};
@@ -1194,10 +1579,17 @@ namespace vortex::net {
                 data.asOfOpSeq = LastOpSeq();
                 if (!p.window.Contains(item.chunk) || !simulation->World().EncodeChunkAt(item.chunk, data.rle)) {
                     ++stats.chunksDropped;
+                    if (p.terrainMode) TerrainChunkGone(p, item.chunk, 0);
                     return {};
                 }
                 std::vector<uint8_t> bytes = Encode(data);
+                if (p.terrainMode) {
+                    ++stats.terrainChunkData;
+                    stats.terrainChunkBytes += bytes.size();
+                    TerrainChunkGone(p, item.chunk, bytes.size());
+                }
                 ++stats.chunkData;
+                stats.repairsSent += item.repair ? 1u : 0u;
                 stats.chunkDataBytes += bytes.size();
                 ++p.join.chunkData;
                 p.join.chunkBytes += bytes.size();
@@ -1337,6 +1729,7 @@ namespace vortex::net {
                             if (type == MessageType::WindowUpdate) ok = OnWindowUpdate(e.peer, it->second, e.data);
                             else if (type == MessageType::ChunkRequest) ok = OnChunkRequest(it->second, e.data);
                             else if (type == MessageType::ModelRequest) ok = OnModelRequest(it->second, e.data);
+                            else if (type == MessageType::EntityListRequest) ok = OnEntityListRequest(it->second, e.data);
                             if (!ok) {
                                 ++stats.malformedRequests;
                                 Log::Warn("Server: client {} sent a malformed or out-of-order sync message: disconnected", e.peer);
@@ -1496,6 +1889,7 @@ namespace vortex::net {
                     continue;
                 }
                 Pump(id, p);
+                if (!failed) SendChecks(id, p);
                 PumpBulk(id, p);
             }
             for (const PeerId id : slow) {
@@ -1607,6 +2001,7 @@ namespace vortex::net {
         Impl& s = *m_Impl;
         if (!s.started) return;
         if (s.failed) return s.ReceiveFailed();
+        const auto start = std::chrono::steady_clock::now();
         s.Receive();
         const std::vector<glm::dvec3> focus = s.PlayerFocus();
         s.simulation->UpdateStreaming(focus);
@@ -1624,6 +2019,12 @@ namespace vortex::net {
         // World::Stats walks every cell (about 0.3 ms for a 250 m region): twice a second is enough,
         // an edit that found no slot is caught at once by CheckOp.
         if (tick % 30 == 0) s.CheckStore();
+        const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+        s.stats.tickSeconds += seconds;
+        s.stats.maxTickSeconds = std::max(s.stats.maxTickSeconds, seconds);
+        ++s.stats.ticksTimed;
+        s.stats.ticksOverBudget += seconds > 1.0 / 60.0 ? 1u : 0u;
+        ++s.stats.tickHistogram[std::min<size_t>(static_cast<size_t>(seconds / 0.00025), s.stats.tickHistogram.size() - 1)];
     }
 
     uint32_t Server::Advance(double seconds) {
@@ -1759,10 +2160,48 @@ namespace vortex::net {
     size_t Server::BacklogBytes() const { return m_Impl->backlogBytes; }
     voxel::WorldHashResult Server::Hash(const SyncBox& box) const { return voxel::WorldHash(m_Impl->simulation->World(), box.min, box.Max()); }
     size_t Server::ModifiedChunks() const { return m_Impl->modified.size(); }
+    bool Server::IsModified(const glm::ivec3& chunk) const { return m_Impl->modified.contains(chunk); }
+    std::vector<std::pair<uint32_t, glm::ivec3>> Server::RecentChanged() const { return m_Impl->recentChanged; }
     std::vector<std::pair<glm::ivec3, uint32_t>> Server::ChunkRequestCounts() const {
         return {m_Impl->requestCounts.begin(), m_Impl->requestCounts.end()};
     }
     void Server::SetMaxBulkBytesPerSecond(double bytesPerSecond) { m_Impl->settings.maxBulkBytesPerSecond = std::max(0.0, bytesPerSecond); }
+
+    TerrainPeerCost Server::TerrainCost(uint8_t slot) const {
+        const Impl& s = *m_Impl;
+        TerrainPeerCost out;
+        for (const auto& [id, p] : s.peers) {
+            if (!p.joined || p.slot != slot || !p.terrainMode) continue;
+            out.terrainMode = true;
+            out.firstSeq = p.terrainFirstSeq;
+            out.joinAckBytes = p.terrainJoinAckBytes;
+            out.joinDataBytes = p.terrainJoinDataBytes;
+            out.joinChunks = p.terrainJoinChunks;
+            out.joinUniform = p.terrainJoinUniform;
+            out.steps = p.terrainStepCount;
+            out.stepBytes = p.terrainStepBytes;
+            out.maxStepBytes = p.terrainMaxStepBytes;
+            for (const auto& [seq, step] : p.terrainSteps) {      // updates still sending
+                if (seq == p.terrainFirstSeq) continue;
+                ++out.steps;
+                out.stepBytes += step.bytes;
+                out.maxStepBytes = std::max(out.maxStepBytes, step.bytes);
+            }
+            out.queuedChunks = static_cast<uint32_t>(p.queued.size());
+            for (const glm::ivec3& c : p.chunks) out.queuedOutsideWindow += p.window.Contains(c) ? 0u : 1u;
+            out.maxQueuedChunks = p.maxQueued;
+            out.ackSteps = p.ackSteps;
+            out.ackStepBytes = p.ackStepBytes;
+            out.maxAckStepBytes = p.maxAckStepBytes;
+        }
+        return out;
+    }
+
+    bool Server::LastHashChecked(uint8_t slot, const glm::ivec3& chunk, uint32_t& tick) const {
+        for (const auto& [id, p] : m_Impl->peers)
+            if (p.joined && p.slot == slot) return p.planner.LastChecked(chunk, tick);
+        return false;
+    }
 
     SyncBox Server::ClientSyncBox(uint8_t slot) const {
         const Impl& s = *m_Impl;

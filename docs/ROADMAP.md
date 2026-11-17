@@ -23,7 +23,7 @@ What exists today, and what was designed for but is not built yet. See
 | Editor | `vortex.editor`: in-game editor toggled with F1 - fly camera, entity selection with a translate / rotate gizmo, inspector, terrain brush, primitive spawning, `.vox` / glTF import, environment / render / profiler / world panels. Tool logic is separate from the widgets and unit tested. |
 | Simulation | `vortex.sim`: `sim::Simulation` owns world, physics, terrain colliders and scene and steps them on a numbered fixed tick; `sim::WorldOp` / `ApplyOp` replay terrain changes exactly; `sim::Blast`. Library `Vortex::Sim` links no renderer or window. `Engine` owns one and draws it. |
 | Sessions | `vortex.net` (`Vortex::Net`, GPU-free): the M1 protocol over ENet (UDP, `EnetTransport`) and in-process loopback transports (`ImpairedTransport`: seeded loss, delay, jitter, duplicates, reordering, rate limit, outages), `net::Server` (fixed region window, template as operations 1..k, event stream with a byte budget, cast queue with a work budget, join by chunk sync since stage 7a (modified chunks as paced bulk, the entity baseline), one player per client moved by its inputs, snapshots at 30 Hz) and `net::Client` (handshake with token and build hash, region from `Welcome`, operations applied in `opSeq` order above each chunk's base, a window that follows its player on regions wider than 48 chunks (stage 7a), the own player predicted with `sim::StepPlayer` and reconciled with the snapshots on a clock kept ahead of the server, other players interpolated); `vortex_server` runs a session file headless, listens on UDP (`--listen`, ENet) and runs in-process bot players over loopback or UDP. The game joins a session with `Shredborne --connect HOST[:PORT] --token HEX` (stage 5): its engine is built from the server's region and ticks on the client clock, its player is predicted, other players are voxel figures, every hole is the server's (one round trip after the click). Since stage 6 crates (the plaza's and E), terrain pieces of 0.512 m^3 or more and object pieces are server bodies with a NetId (at most 2 new per tick, 64 awake, 256 live), sent as entity events and in the snapshots; clients hold kinematic copies drawn in the past and put exactly at their rest poses, players collide with them at rest on both sides, smaller pieces are each client's own rubble. Tested on one machine (server + two headless game clients on localhost: equal world hashes and entity lists); the two-machine run is the owner's. |
-| Tests | 674 unit tests (six disabled measurements), none needing a GPU (the ENet ones use UDP sockets on 127.0.0.1). |
+| Tests | 710 unit tests (six disabled measurements), none needing a GPU (the ENet ones use UDP sockets on 127.0.0.1). |
 
 ## Performance (Intel UHD 620, 1280x720 output, 768x432 internal)
 
@@ -271,7 +271,7 @@ State (stages are those of [design/networking.md](design/networking.md)):
   (152 voxels) breaks at its first hit; fun and few bugs come before synced rubble; crush damage (M2). Choices:
   `design/networking.md`, "Stage 6 as built", "Review of stage 6".
 - **Stage 7a (chunk sync: joins and a moving client window) - milestones M-a and M-b built, integrated, accepted,
-  reviewed and rechecked (2026-11-17), not committed.** A joiner no longer receives the event log: it starts at its join point; the server's modified map (fed
+  reviewed and rechecked (2026-11-17), committed (engine `62f28b4`, game `92e3902`).** A joiner no longer receives the event log: it starts at its join point; the server's modified map (fed
   from the chunks each operation changed) says which chunks of its window come as `ChunkData` (encoded at dequeue,
   paced bulk: a delay-based window per peer), the rest it generates; the entity baseline brings every live replicated
   body (resting ones at their exact rest pose). The client applies an operation to a chunk only above its base (live or
@@ -315,7 +315,84 @@ State (stages are those of [design/networking.md](design/networking.md)):
   chunks against their pristine version (join bytes), a client cache of the slab last left (the rest of the re-sends);
   windowed play on the arena is the owner's. Choices: `design/networking.md`, "Stage 7a plan" (with its amendments),
   "Stage 7a as built", "Review of stage 7a", "Recheck of stage 7a".
-- Stages 7b-9: not started. Before stage 3: shred.md stage 1 changed the search result (face flood), the server
+- **Stage 7b, milestone M-a (`HashCheck` repair, the wire `EntityCheck` and the entity list) - built and verified
+  (2026-11-17), not reviewed, not committed.** The plan was amended after a critic (12 findings, all taken, three in
+  part): the entity list carries ids and models and the client asks for missing or wrong bodies instead of re-making
+  copies; entity checks are skipped when bulk entity data is ahead and compare count and ids while models are asked for;
+  checks start at the first window ack; the pristine look-ahead follows the player's path. Protocol 9: `HashCheck`
+  (every 2 s per client: the last operations' chunks, 8 modified chunks least recently checked, 12 pristine chunks
+  near the feet and on the path ahead), `EntityCheck` (count, xor of NetIds, xor of id-mixed model hashes), both sent
+  right after the events and compared at exactly their opSeq; a mismatching chunk is requested again (`ChunkRequest`
+  reason Repair) through 7a's path; `EntityListRequest` / `EntityList`; tombstones a FIFO of 4096; the `TerrainAck`
+  codec for M-b. 15 new tests (**689 in all, six disabled**), among them the first rows of the test table on a 250 m
+  flat region with the game's window and store: the fight (0 false mismatches over 15 checks per bot), a broken chunk
+  on a walker's way repaired 0.4-3.8 s before the walker reaches it at walk and run speed, a corrupted chunk and a lost
+  copy repaired, entity faults re-sent by the list. `vortex_server` logs `Checks:` lines, fails on a false mismatch and
+  shows a repair end to end with `--bot-broken-chunk`; the game logs its checks and `tools/session-check.sh` fails on a
+  mismatch. Measured: checks cost the server at most 4.2 ms in one tick for one peer on the arena walk (24 chunk hashes
+  and the entity values), a bot at most 2.4 ms per check; 510 B per HashCheck. **Not done:** M-b (server terrain mode,
+  its rows of the 250 m table, the Windows-build fixes), the review of M-a. Choices: `design/networking.md`, "Stage 7b
+  plan" with "Amendments after the critic", "Stage 7b as built".
+- **Stage 7b, milestone M-b (server terrain mode, the whole test table on 250 m, the Windows-build fixes) - built and
+  verified (2026-11-17), not reviewed, not committed.** M-a's diff was read again first (one fault fixed: a NetId asked
+  for that the entity list does not hold was waited for for ever). A client whose probes differ at the `Welcome`, or
+  whose checks find three pristine chunks it generated differently, switches to server terrain mode for the session:
+  its generator stops making the server's terrain, every `WindowUpdate` carries the flag, the server answers with a
+  `TerrainAck` (uniform chunks inline, the others as `ChunkData` nearest first in 3D) and the client installs them by
+  the server's packing (`voxel::InstallMode`: buried chunks stay packed without a store slot, whatever the client's own
+  classes say). Requests for Unsynced chunks leave the slots of the content still to come (a terrain-mode window step
+  otherwise looped requests against a full store). No wire byte changed (protocol 9). 13 new tests (**702 in all, six
+  disabled**): the rest of the networking test table on the 250 m flat region (a generator broken everywhere joins in
+  terrain mode with equal hashes; three broken pristine chunks switch to it; a late join during 10 casts/s with a
+  terrain-mode joiner, p99 8 ticks for all at 128 kB/s per peer; walk in from outside; chunks that load late replay
+  from the ring while the window moves; a small store in terrain mode; the border blast while the window steps; the
+  collapse outside one window; a blast at the region edge and ceiling beside a straddling window), a noise-terrain
+  terrain-mode test with packing, the World install modes and the client's `TerrainAck`. `vortex_server
+  --bot-broken-generator N` shows terrain mode end to end (`Terrain:` lines); the game logs it and its HUD says
+  `TERRAIN FROM SERVER`; `Enet.cpp` defines `NOMINMAX` / `WIN32_LEAN_AND_MEAN` on Windows. Measured: a terrain-mode
+  join of the playground is **16.2 MiB** (7997 ChunkData; the design said 3-10 MB), the game's whole window on the arena
+  **40 MiB** (est. 8-25 MB) and 0.8 MiB per two-chunk window step while walking there; the terrain-mode walker was
+  never held and its store peaked at 5513 slots; a headless game client in terrain mode (`--other-terrain`, a test
+  switch) ends with the server's hash on the playground and the arena. **Not done:** the review of 7b (M-a and M-b), splitting large bulk messages, a larger bulk ceiling for a
+  terrain-mode peer on a quiet link, windowed play, the Windows build itself and the two-machine run (the owner's).
+- **Stage 7b integrated and accepted (2026-11-17), not reviewed, not committed.** The whole 7b diff was read against
+  the plan; nothing broken, three things half done and fixed: a server check cost up to 5 ms for one peer in one tick
+  on the arena (`ChunkHash` now skips runs eight voxels at a time - same hashes - and the server caches each object's
+  model hash; now at most 1.35 ms, 213 ms over the arena walk instead of 407 - one run; across runs 0.41-3.87 ms per
+  peer and tick, see networking.md "Review of stage 7b" finding 4), the `Join:` lines' "synced after" could
+  read 0 s, a misplaced doc comment. One new test (**703 in all, six disabled**). Accepted on one machine with 0 check
+  mismatches everywhere: the drill (also with 3 clients and over UDP), `tools/session-check.sh`, the arena walk, a
+  broken chunk repaired, terrain mode with `vortex_server --bot-broken-generator` on the playground (16.3 MiB join) and
+  on the arena walk (0 ticks held, also at a 100 ms round trip; store at most 5513 slots), and headless game clients
+  with `--other-terrain` on the playground (16.3 MiB, every chunk in 15 s on localhost) and the arena (the game's whole
+  window 40 MiB, 28 s), equal hashes and entity lists, `TERRAIN FROM SERVER` on the HUD. Numbers: `design/networking.md`
+  "Stage 7b as built", "Integration and acceptance". **Not done:** ~~the review of 7b~~ (below) and the commits, the
+  Windows build and the two-machine run, windowed play in terrain mode (the owner's), splitting large bulk messages, a
+  larger bulk ceiling for a terrain-mode peer.
+- **Stage 7b reviewed (2026-11-17), not committed.** Three reviewers, 12 findings: 11 real and fixed (one in part), one
+  part rejected (a flat-ground packing row tests no packing); each bug fix has a test that fails on the old behaviour
+  (`design/networking.md` "Review of stage 7b"). **Protocol 10**: a `TerrainAck` codes the window step's entering cells
+  only (`net::ForEachEnteringChunk` order), 0.67 KiB per step instead of about 6.8 (all acks of the arena walk 46 KiB
+  instead of 409). Server: a terrain-mode step costs 1.2-1.3 ms on average (was up to 13 ms: the whole box walked, the
+  whole queue stable-sorted), window updates prune queued chunks that left the window (the queue grew without bound on
+  a slow link), only the nearest 1024 queued chunks are kept sorted, at most one `EntityList` per client per second, a
+  tick-time histogram in the logs (the terrain-mode arena walk: 0.5 ms average, p99 under 3.5 ms). Client: a check
+  entry skipped while its chunk loaded is compared once the chunk is current (a broken chunk first picked while loading
+  was never checked again before the player stood on it), a chunk that keeps differing after its repair is logged, not
+  re-asked every 2 s, hidden data that installs packed no longer keeps free slots from Unsynced chunks, and a
+  server-hidden chunk is shown when an edit next to it or an operation this client skipped would show it on the server.
+  Check costs recorded: game client 2.0-3.7 ms at most per check in three-process runs (about 0.3 ms of hashing),
+  server 0.4-3.9 ms per peer and tick. 7 new tests (**710 in all, six disabled**); the whole acceptance re-run green.
+  **Not done:** the commits; the Windows build and the two-machine run, windowed play in terrain mode (the owner's);
+  splitting large bulk messages, a larger bulk ceiling for a terrain-mode peer (stage 8 measures first).
+- **Stage 7b rechecked (2026-11-17), not committed.** 3 findings, all real: `ServerStats::entityListsDelayed` counted
+  ticks of waiting instead of delayed lists (now once per list; the hostile-messages test expects exactly 1 and the old
+  code gave 57), and three doc fixes (the server-hidden install rule as the review left it, `TerrainCode::Data` is a
+  `Content` install, the 1.35 ms server check figure marked as one run). No wire change (protocol 10); **710 tests,
+  six disabled**; the whole acceptance re-run green. New open point: `Session.ALateJoinsBulkIsPacedAndLiveEventsKeepFlowing`
+  can fail under `ctest -j8` (its joiner's world loads on worker threads): make it wait in ticks for B's window or
+  run it serially (`design/networking.md` "Recheck of stage 7b").
+- Stages 8-9: not started. Before stage 3: shred.md stage 1 changed the search result (face flood), the server
   window margin (3 chunks, flood box) and the cast budget (a work budget); shred.md stage 4 (built, the owner's answer
   to its question 4) moved the island search onto the cell graph - same results except where a work budget runs out,
   node visits and chunk graphs used (at a cold price; never graphs built, which depend on the cache) to count in stage
@@ -346,6 +423,10 @@ State (stages are those of [design/networking.md](design/networking.md)):
   from their template when no player is near.
 
 ### M4 - Region generator
+- Design: [design/worldgen.md](design/worldgen.md) (2026-11-17): the server plans an integer `RegionPlan` and every
+  side stamps it into chunk generation (pristine towns, no join bytes). It covers building kits drawn from real-world
+  traditions, standing proven by construction rules, and stages W1-W6. The setting and story are in the game's
+  `docs/world/setting.md`.
 - Prefab library with baked data (support graph, colliders, palette), rule-driven placement,
   region types (arena about 250 m, zone about 1 km) with player caps, spawn points and
   bedrock layers. Editor work is aimed at prefabs and rules, not at painting whole maps.
@@ -532,7 +613,7 @@ State (stages are those of [design/networking.md](design/networking.md)):
 - **Game UI**: the HUD layer exists (ARCHITECTURE.md section 11). Still missing: input action mapping and
   key rebinding, a settings menu (mouse sensitivity is a constant), gamepad navigation, Unicode / TTF text,
   textured widgets, in-game chat (M1).
-- **Networking**: server-authoritative simulation (M1, stages 2-9; 7b, 8, 9 left). `Vortex::Core`, `Vortex::Physics` and
+- **Networking**: server-authoritative simulation (M1, stages 2-9; 8, 9 left; 7b built, accepted, reviewed and rechecked, not committed). `Vortex::Core`, `Vortex::Physics` and
   `Vortex::Sim` build without GPU or window, the simulation runs on a numbered fixed tick and the world is stored
   as chunk deltas.
 - **Double-precision physics** for worlds far from the origin (rendering is already origin-relative).

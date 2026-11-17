@@ -2,9 +2,10 @@
 
 Read `CLAUDE.md`, `docs/ARCHITECTURE.md` 7.5 and `docs/design/networking.md` ("Stage 3 as built", "Stage 4 as
 built", "Stage 5 as built", "Stage 6 as built", "Review of stage 6", "Stage 7a plan" with its amendments, "Stage 7a as
-built") first; nothing from them is repeated here. Paths
-are relative to `engine/`. Written at networking stage 3, extended at stages 4, 5 and 6 and the reviews of stages 5
-and 6. The game's session
+built", "Stage 7b plan" with its amendments, "Stage 7b as built") first; nothing from them is repeated here. Paths
+are relative to `engine/`. Written at networking stage 3, extended at stages 4, 5, 6, 7a and 7b (M-a, M-b) and the reviews of
+stage 7b (protocol 10) and of
+stages 5, 6 and 7a. The game's session
 mode is `../src/Session.cpp`.
 
 ## 1. Map
@@ -31,9 +32,13 @@ mode is `../src/Session.cpp`.
   players drawn in the past) and `RemoteBodies` (stage 6: replicated bodies drawn in the past, the rest rule).
 - `src/net/Sync.cppm`, `internal/Sync.cpp` - stage 7a's chunk sync pieces: `SyncBox`, `RegionSyncBox` (the server
   window), `ChunkCoordHash`, `OpRing` (the client's ring of applied terrain ops as wire bytes), `ChunkSync` (the
-  client's per-chunk states and bases, the base rule, replay, requests), `BulkPacer` (the server's per-peer bulk window).
+  client's per-chunk states and bases, the base rule, replay, requests; stage 7b: `OnHashCheck`, `TakeRepairs`; review
+  of 7b: `CheckDeferred`), `ForEachEnteringChunk` (the cells a window update enters with: client and server, wire order),
+  `BulkPacer` (the server's per-peer bulk window), `HashCheckPlanner` (stage 7b: which chunks a peer's HashCheck holds).
 - `src/net/Session.cppm`, `internal/Session.cpp` - `SessionConfig`, `ParseSession` / `LoadSessionFile` /
-  `FormatSession`, tokens, `BuildHash`, `ProbeChunks` / `CheckProbes`, `RegionHash`.
+  `FormatSession`, tokens, `BuildHash`, `ProbeChunks` / `CheckProbes`, `RegionHash`, `BreakChunks` (stage 7b: a
+  generator that makes some chunks differently, for tests and `--bot-broken-chunk`), `SessionGenerator` (stage 7b M-b:
+  the client's generator, Empty inside the server's window once server terrain mode is on).
 - `src/net/Server.cppm`, `internal/Server.cpp` - `ServerSettings`, `CastRecord`, `ServerStats`, `net::Server`
   (event backlog, peers with send cursors, the modified map, per-peer bulk queues and pacers, the entity baseline, cast
   queue and the credits).
@@ -62,7 +67,10 @@ mode is `../src/Session.cpp`.
   `SessionTests.cpp` (`ChunkSync.LateJoinDuring10CastsPerSecondConverges`), the FakeServer join helpers (`Join`, `Ack`,
   `SendChunk`, `ReadRequests`) in `ClientTests.cpp`. `ClientWindowTests.cpp` (stage 7a M-b: the `Field` fixture, a
   flat region 40 chunks wide and a 12-chunk client window; walk-in, leave-and-return, teleport, reset, hash box, held
-  player, a full store while walking, a piece that breaks off outside the window). Trap for store tests on the flat
+  player, a full store while walking, a piece that breaks off outside the window); its `Field` harness lives in
+  `FieldHarness.h` since stage 7b (a header included after the imports that includes nothing itself: a standard header
+  after an import can clash with a module's copy). `Region250Tests.cpp` (stage 7b: the test table on `Plain250`, a flat
+  256 m region with the game's window and store). Trap for store tests on the flat
   region: its surface row is Dense when pristine (grass over dirt), so the window holds a constant number of slots
   as it moves and crater chunks overwrite slots they already have; a chunk that needs a slot of its own is one that is
   Empty when pristine (a box in the air).
@@ -108,7 +116,73 @@ mode is `../src/Session.cpp`.
   `ObjectModel`, 36 `EntityWake`; `EntityKind::Light` = 1, `Object` = 2; `scene::DespawnReason` (1 Destroyed, 2
   ToRubble, 3 Broken), `PlayerButton_Crate` = 8, `RegionGenerator`, `RegionTemplateId`, `MessageType`, `RefuseReason`
   values are wire format. Change any byte -> bump `kProtocolVersion` (8 since stage 7a: `MessageType` 8-15,
-  `Welcome::joinOpSeq`, `RefuseReason` 6 retired; 15 `BaselineNear` came with the review, before 8 was committed).
+  `Welcome::joinOpSeq`, `RefuseReason` 6 retired; 15 `BaselineNear` came with the review, before 8 was committed; 9
+  since stage 7b M-a: `MessageType` 16 `TerrainAck`, 17 `HashCheck`, 18 `EntityCheck`, 19 `EntityListRequest`, 20
+  `EntityList`, `ChunkRequestReason`, `TerrainCode` and the accepted `WindowUpdate::kTerrainMode` are wire format; 10
+  since the review of 7b: a `TerrainAck` carries the count of cells it codes and codes the update's entering cells only,
+  in `net::ForEachEnteringChunk` order - that walk's order is wire format, shared by the server and `ChunkSync`).
+- **A check is compared at its stream position (stage 7b).** HashCheck, EntityCheck and EntityList ride the events
+  channel and are built in `Flush` right after the peer's `Pump` (`SendChecks`; nothing while a test hook holds its
+  events), so the client processes them with `applied` equal to their opSeq (else counted `checksOutOfOrder`, never
+  compared). A HashCheck compares only chunks that are current with a base at or below its opSeq: a chunk whose data is
+  ahead (base > C) holds events the check does not, a chunk not current is not trusted anyway. A mismatch is 7a's
+  Requested state plus a `ChunkRequest{Repair}`: never a second path around the base rule or the ring.
+- **The entity check compares only a settled set.** Skipped while the baseline is open, while a list is out, or when
+  entity data ahead of it came from bulk (`entityAsOf`: the newest asOf of a `BaselineEntity`, `BaselineNear` or
+  `BaselineEnd` processed); while models are asked for only the count and the ids (asked NetIds count as present). The
+  list is ids and models (`EntityList` at Q): a copy not listed with base <= Q is dropped and tombstoned, a listed id
+  without a copy or with another model is asked for (7a's `ModelRequest`, which brings the exact rest state), a copy
+  newer than Q is left alone. Never re-make a copy from a list entry: its rest / wake events already applied would be
+  lost (the critic's finding 2).
+- **Server terrain mode is the client's decision and sticky (stage 7b M-b).** The client switches (probes differ at
+  the `Welcome`, or `pristineFailuresForTerrainMode` distinct pristine chunks it generated differently) and from then
+  on every `WindowUpdate` carries `kTerrainMode`; the server only follows the flag and ends a peer that clears it. A
+  terrain-mode update is answered by a `TerrainAck` in the ack's place (after `Pump`, processed at its opSeq): every
+  entering chunk of the server's window coded by the server's cell state (uniform inline, Dense data, Packed data); the
+  data is 7a's ChunkData path, modified or not. The `SessionGenerator` answers Empty inside the server's window, so
+  nothing this client generates there is ever trusted (every chunk it bases counts as from data: no pristine check can
+  fail it again). Outside the server's window it generates as before (never edited, never sent).
+- **Packing follows the server's state in terrain mode.** A ChunkData is installed by `InstallMode`: `Content` for
+  data the server holds Dense (shown, never packed, not an edit - an `Edit` would reveal every buried neighbour),
+  `HiddenContent` for data it holds Packed (packed at once, no slot, made resident near the focus and packed again by
+  the server's bit, never by this world's column classes, which come from the generator that differs) - only if no
+  operation over the chunk or a face neighbour came between its ack and the stream's position, no face neighbour is an
+  edit here, and no skipped operation later shows it (below: "A server-hidden chunk is shown whenever the server may
+  show it"), otherwise `Content`. Repairs and re-requests are `Content`; 7a clients keep `Edit`. Packing is never a content change: modes differ in slots and
+  drawing, never in hashes.
+- **Slots for Unsynced requests are what is left after the content still to come** (NoBase, Awaiting, Requested
+  records: `ChunkSync`'s incoming count). A window step frees the leaving slab's slots before the entering slab's data
+  arrives; asking for Unsynced chunks with them made a request / StoreFull loop in terrain mode. Hidden data a packing
+  world installs packed takes no slot and is not counted (review of 7b; `Record::incoming`, `ChunkSync::Recount`: every
+  change of a record's state or `hidden` bit goes through `SetState` / `Recount`).
+- **A check entry skipped while its chunk loads is compared later (review of 7b).** The server counts a pick as checked
+  whether or not the client could compare it; an entry whose chunk is NoBase or Based and not loaded keeps the server's
+  hash (`ChunkSync::CheckDeferred`, at most 256) and is compared once the chunk is current with a base at or below
+  `applied`. It is exact only because **every stream operation whose chunk range holds the chunk drops the entry**
+  (`ChunkSync::Apply`, before anything else): never compare a kept entry after an operation that may have changed the
+  chunk, and never keep one for a chunk whose data is on its way (Awaiting, Requested, Unsynced: the server's anyway).
+- **A repair is never looped on (review of 7b, the plan's choice 17).** A chunk that differs again within
+  `kRepeatRepairChecks` (5) HashChecks of its repair, or after `kMaxRepairsPerChunk` (3) repairs, stays current (the
+  player is not held over it every 2 s), is logged once as an error and counted (`repairsRefused`, then
+  `stuckMismatches`). It is still a mismatch for every exit rule.
+- **A server-hidden chunk is shown whenever the server may show it (review of 7b).** Installed `Content` instead of
+  packed when a face neighbour is an edit here (`World::SetChunkEncoded`) or an operation near it came between its ack
+  and the stream's position (`OpRing::TouchesNear` up to `max(asOf, applied)`); and in terrain mode an operation that
+  skips a chunk (not current, or its data ahead) shows that chunk's server-hidden face neighbours for good
+  (`World::ShowServerHiddenNeighbours`): the neighbour's later data is a `Content` install, never an edit, so nothing
+  else would. `vortex_server` fails a run where a terrain-mode bot holds packed a chunk the server shows.
+- **One `EntityList` per peer per `entityCheckTicks / 2` (review of 7b).** Requests in between are merged into the owed
+  list (`entityListsMerged`); a list held by the gap counts once in `entityListsDelayed` (`Peer::listDelayed`, recheck
+  of 7b) - `SendChecks` runs for every peer after every `Pump`, so a counter bumped there counts ticks, not lists,
+  unless it is latched per event.
+- **A bulk queue holds only its window (review of 7b).** Every `WindowUpdate` prunes the queued chunks that left the
+  new window (`PruneQueue`); only the nearest 1024 entries are kept sorted at the queue's back and selected again when
+  they run out or the player crosses a chunk (`SortChunks`, O(n)): a terrain-mode queue holds about 20 000 chunks.
+  Anything that pops or erases from `Peer::chunks` must keep `sortedTail` (`PopChunk`, the request path).
+- **One `EntityList` per peer per half check period (review of 7b).** Requests in between merge into the next.
+- **Tombstones are bounded** (`ClientSettings::maxTombstones`, a FIFO): an evicted one can only let a stale answer
+  re-create a dead copy, which the next EntityCheck and the list remove. The check is the tombstones' backstop: do not
+  turn entity checks off in a session.
 - **Every NetId destruction is an event.** The server connects `on_destroy<scene::NetId>` at `Start`; whatever
   destroys a replicated entity (Damage, `DestroyBelow`, eviction, `ClearBodies`, a player's crate limit) queues an
   `EntityDespawn` with `NetId::despawn` as its reason (set it before destroying: `sim::Despawn`), emitted by
@@ -284,8 +358,38 @@ mode is `../src/Session.cpp`.
   `SessionTests.cpp` does that; `Arena` and `Match` do not).
 - A client's copy removed by its own scene (`DestroyBelow`: drawn in the past it can fall out first) is dropped and
   counted (`ClientStats::copiesLost`); the entity check shows it missing until the server's despawn comes.
-- Tombstones of despawned NetIds grow for the session (4 bytes each); since stage 7a a joiner starts with none (dead
+- Tombstones of despawned NetIds are a FIFO of `maxTombstones` (4096) since stage 7b; a joiner starts with none (dead
   NetIds never reach it).
+- The HashCheck planner (stage 7b) puts pristine chunks on the player's path first: a chunk whose box lies within
+  `pathMetres` (1.5 m) of the way ahead. A walker on a chunk-row border has two rows on its path, so the way-ahead
+  slots cover half the distance: 12 pristine slots (10 for the way) keep a 7 m/s runner checked ahead
+  (`Region250.AChunkBrokenOnTheWayIsRepairedBeforeThePlayerReachesIt`, 0.40 s of margin in its worst phase). Fewer slots
+  or a ranking that lets chunks behind the feet "arrive first" let a broken chunk pass unchecked (the test failed so).
+- A terrain-mode join is large and paced: 16.3 MiB for the playground's fixed 30 x 44 x 30 window (about 7950
+  ChunkData; the design's estimate was 3-10 MB), 40 MiB for the game's 48 x 44 x 48 window on the arena and 0.8 MiB per
+  two-chunk window step there (1.9 MiB at most), through the pacer's 32 KiB window (at most one hand-over per tick:
+  about 1.9 MiB/s on a LAN, 0.3 MB/s at a 100 ms round trip; the game on localhost starts 6-7 s and has every chunk
+  15-28 s after its `Welcome`). The start gate waits only for the 3D-nearest data; `Synced()` and every drain wait for
+  all of it (`vortex_server`'s drain waits up to 3 min for a terrain-mode bot). The `Join:` lines' "synced after" is
+  noted every 16th Poll and whenever `Client::Synced()` is asked (a log value only). Since the review of 7b a window
+  step's `TerrainAck` is 0.67 KiB on average (1.03 at most) on the events channel and costs the server 1.2-1.3 ms on
+  average (4-5 ms at most, wall clock with the bots in the process): prune the queue, code the entering slab, select the
+  nearest 1024; the join's ack (the whole box) 9-13 ms once.
+- What a server check costs (stage 7b integration, the arena walk): the planner 0.2-0.6 ms, 20-24 chunk hashes, the
+  entity values; 1.35-3.9 ms at most per peer and tick depending on the run (wall clock: in `vortex_server` the bots'
+  worker threads share the cores; the review of 7b measured `ChunkHash` of a dense terrain chunk at 10.9 us, so 24
+  entries are about 0.3 ms of compute). The game client: 2.0-3.7 ms at most per check, 0.5-1.3 ms on average, in runs
+  of three processes on the laptop; windowed play is the owner's to judge. Two things keep it there: `voxel::ChunkHash` skips runs eight
+  voxels at a time, and the server keeps each object's model hash with a weak pointer to its model (`modelHashes`;
+  models are never changed in place - if one ever is, that cache returns a stale hash and every client mismatches).
+  Checks are staggered (17 ticks per slot, entity checks half a period later), so the cost is per tick, not per
+  player count up to 60 peers.
+- A terrain-mode client's own column classes still place the sky and rock rows of the server's window (they are cheap
+  and the ack overrides them): a `TerrainAck` code 2 over a cell that holds another uniform content installs it
+  (`uniformInstalled`); a column job finishing after an install is discarded (the install bumps the cell's generation).
+- A pristine chunk that is never checked stays as this client generated it: a standing player's checks reach 12 m
+  around it, a walker's its way ahead. `vortex_server --bot-broken-chunk` therefore breaks a chunk within 12 m of the
+  spawn and makes that bot stand.
 - The bulk channel is not ordered against the events channel: a `BaselineEnd` can arrive before the `Welcome`. The
   client keeps bulk from `Joining` on (stage 7a: a Match-fixture join hung on a dropped `BaselineEnd`).
 - `ImpairedTransport` draws every peer's losses from one random stream unless `Impairment::rngPerPeer`: two runs that
@@ -381,7 +485,19 @@ mode is `../src/Session.cpp`.
   say "hashes equal" and 67/67, 67/67, 66/66.
 - With the game: `tools/session-check.sh` in the game repository (about 30 s): vortex_server on 127.0.0.1 with a
   fresh token and two headless game clients; it exits 0 only when all three exit 0 and both clients' drained hashes
-  equal the server's at the same opSeq (logs and screenshots in `build/session-check/`).
+  equal the server's at the same opSeq, and (stage 7b) both clients' `Checks:` lines report HashChecks compared, 0 hash
+  and entity mismatches and 0 checks out of order (logs and screenshots in `build/session-check/`).
+- Stage 7b: every `vortex_server` run logs `Checks: bot N: ...` (`net::DescribeChecks`) and `Checks: server: ...` and
+  fails on a mismatch where no fault was injected; `--bot-broken-chunk 1` (on the playground: `--drill 30 --clients 2`)
+  shows one repair end to end. `-R "Region250|TerrainMode|HashCheck|ChunkSync|Client|Session"` runs the check and
+  terrain-mode tests (`Region250.*` about 70 s in all). Server terrain mode end to end: `vortex_server
+  --session=engine/tools/server/sessions/playground.session --drill 30 --clients 2 --bot-broken-generator 1 --loss 0.05
+  --delay-ms 40 --jitter-ms 30` must exit 0 with `hashes equal` and bot 1's `Checks:` line ending `its broken generator
+  put it in server terrain mode`; its `Terrain: bot 1:` line gives the join's bytes. The arena walk with
+  `--bot-broken-generator 0` measures a terrain-mode walker (bytes per step, held ticks, store; since the review of 7b
+  also the step acks by direction, the queue's largest size and chunks outside the window, and a `Terrain: bot N
+  packing:` line that fails the run when a chunk the server shows is packed there). Every run logs `Ticks: server: N
+  ticks, ... ms on average, p99 under ... ms, ... at most` (wall clock; `ServerStats::tickHistogram`).
 - `VortexNetTests --gtest_also_run_disabled_tests --gtest_filter=Movement.DISABLED_FlatGroundCorrectionRateOverSeeds`
   (20 s) prints the flat-ground correction rate over 10 seeds (stage 4: 1 in 32 326 comparisons; after the review 1 in
   32 318).

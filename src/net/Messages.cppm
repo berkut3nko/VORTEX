@@ -25,8 +25,10 @@ export namespace vortex::net {
     /// PlayerButton_Crate). 7: review of stage 6 (EntityWake). 8: stage 7a (chunk sync: WindowUpdate,
     /// WindowAck, ChunkData, ChunkRequest, ModelRequest, BaselineEntity, BaselineEnd; joins start at
     /// Welcome::joinOpSeq; RefuseReason 6 retired; BaselineNear 15 added by the review of 7a before
-    /// protocol 8 was ever committed).
-    inline constexpr uint16_t kProtocolVersion = 8;
+    /// protocol 8 was ever committed). 9: stage 7b (HashCheck, EntityCheck, EntityListRequest,
+    /// EntityList, TerrainAck; ChunkRequest::reason; WindowUpdate::kTerrainMode accepted). 10: review
+    /// of stage 7b (a TerrainAck codes the entering cells only, in ForEachEnteringChunk order).
+    inline constexpr uint16_t kProtocolVersion = 10;
 
     /// @brief First byte of every message. Wire format.
     enum class MessageType : uint8_t {
@@ -46,6 +48,12 @@ export namespace vortex::net {
         BaselineEntity = 13,///< server -> client, bulk channel: one replicated entity as of asOfOpSeq
         BaselineEnd = 14,   ///< server -> client, bulk channel: the join's baseline is complete
         BaselineNear = 15,  ///< server -> client, bulk channel: the baseline's entities near the spawn are out (review of 7a)
+        // Stage 7b (networking.md "Stage 7b plan" with its amendments).
+        TerrainAck = 16,    ///< server -> client, events channel: a terrain-mode window's entering chunks (server terrain mode)
+        HashCheck = 17,     ///< server -> client, events channel: chunk hashes at asOfOpSeq, compared in stream order
+        EntityCheck = 18,   ///< server -> client, events channel: the replicated objects' count and hashes at asOfOpSeq
+        EntityListRequest = 19, ///< client -> server, events channel: an EntityCheck at asOfOpSeq did not match
+        EntityList = 20,    ///< server -> client, events channel: every replicated object's NetId and model hash at asOfOpSeq
     };
 
     using Token = std::array<uint8_t, 16>;
@@ -220,7 +228,10 @@ export namespace vortex::net {
         glm::ivec3 minChunk{0};
         glm::ivec3 size{0};
         static constexpr uint8_t kReset = 1;          ///< every chunk of this window counts as entering
-        static constexpr uint8_t kTerrainMode = 2;    ///< reserved for 7b's server terrain mode (refused in 7a)
+        /// Server terrain mode (stage 7b): this client does not generate the server's terrain; every
+        /// entering chunk is described by a TerrainAck (uniform inline, the others as ChunkData).
+        /// Sticky: a peer that sent it once must send it on every later update.
+        static constexpr uint8_t kTerrainMode = 2;
     };
     inline constexpr size_t kWindowUpdateBytes = 24;
 
@@ -243,8 +254,16 @@ export namespace vortex::net {
     };
     inline constexpr size_t kChunkDataHeaderBytes = 17;
 
+    /// @brief Why chunks are asked for (stage 7b). Wire format.
+    enum class ChunkRequestReason : uint8_t {
+        Sync = 0,       ///< the ring no longer covered the chunk's base, or a slot freed for an Unsynced one (7a)
+        Repair = 1,     ///< a HashCheck found the chunk different from the server's (7b)
+    };
+    inline constexpr uint8_t kMaxChunkRequestReason = 1;
+
     struct ChunkRequest {
         std::vector<glm::ivec3> chunks;     ///< 1..kMaxChunkRequest
+        ChunkRequestReason reason = ChunkRequestReason::Sync;
     };
     struct ModelRequest {
         std::vector<uint32_t> netIds;       ///< 1..kMaxModelRequest, none 0
@@ -273,6 +292,107 @@ export namespace vortex::net {
         uint32_t count = 0;
     };
 
+    // --- checks and server terrain mode (stage 7b) ------------------------------------------------
+
+    /// @brief What a TerrainAck says about one cell of the window (wire format).
+    enum class TerrainCode : uint8_t {
+        NotInAck = 0,     ///< not entering with this update, or outside the server's window (never edited: generated here)
+        Data = 1,         ///< the server holds it Dense (visible or modified): ChunkData follows on bulk, installed as content (InstallMode::Content: shown, not an edit)
+        Uniform = 2,      ///< every voxel has the run's id (0 = air) as of asOfOpSeq
+        HiddenData = 3,   ///< the server holds it Packed (hidden, unmodified): ChunkData follows, installed packed (amendment 1)
+    };
+    inline constexpr uint8_t kMaxTerrainCode = 3;
+    /// @brief `count` consecutive entering cells (ForEachEnteringChunk order) with one code.
+    struct TerrainRun {
+        uint32_t count = 0;               ///< at least 1
+        TerrainCode code = TerrainCode::NotInAck;
+        uint8_t id = 0;                   ///< Uniform only
+        friend bool operator==(const TerrainRun&, const TerrainRun&) = default;
+    };
+    /// @brief The answer to a terrain-mode WindowUpdate (stage 7b, server terrain mode): one code per
+    /// cell that entered with the update (all of its box for the first update, a reset or a new size;
+    /// else the cells outside the previous window), in ForEachEnteringChunk order, as runs. On the wire
+    /// the runs follow their total (LEB128, at most the box's cells): review of stage 7b, protocol 10 -
+    /// a window step's ack is about its 4224 entering cells, not the 101 376 of the box.
+    struct TerrainAck {
+        uint32_t windowSeq = 0;
+        uint32_t asOfOpSeq = 0;
+        glm::ivec3 size{0};
+        std::vector<TerrainRun> runs;
+    };
+
+    /// Most entries a HashCheck holds.
+    inline constexpr uint32_t kMaxHashCheckEntries = 32;
+    /// @brief One chunk of a HashCheck: the server's ChunkHash of it after event asOfOpSeq.
+    struct HashCheckEntry {
+        glm::ivec3 chunk{0};
+        uint64_t hash = 0;
+        bool pristine = false;            ///< not in the server's modified map: the client's generator made it
+        friend bool operator==(const HashCheckEntry&, const HashCheckEntry&) = default;
+    };
+    /// @brief Chunk hashes after event `asOfOpSeq` (C), sent right after the events up to C: the
+    /// client compares them in stream order (applied == C) for its current chunks whose base is at
+    /// or below C, and asks for the ones that differ (ChunkRequest reason Repair).
+    struct HashCheck {
+        uint32_t asOfOpSeq = 0;
+        std::vector<HashCheckEntry> entries;   ///< 1..kMaxHashCheckEntries
+    };
+    inline constexpr size_t kHashCheckHeaderBytes = 6;
+    inline constexpr size_t kHashCheckEntryBytes = 21;
+
+    /// @brief The replicated objects after event `asOfOpSeq` (C), in stream order like HashCheck:
+    /// how many, the xor of their NetIds and the xor of HashMix64(netId, VolumeHash(model)) (a plain
+    /// xor of model hashes would cancel for any two crates). Lights are not counted.
+    struct EntityCheck {
+        uint32_t asOfOpSeq = 0;
+        uint32_t count = 0;
+        uint32_t idXor = 0;
+        uint64_t modelXor = 0;
+        friend bool operator==(const EntityCheck&, const EntityCheck&) = default;
+    };
+    inline constexpr size_t kEntityCheckBytes = 21;
+    /// @brief One object's term of EntityCheck::modelXor.
+    uint64_t EntityModelTerm(uint32_t netId, uint64_t modelHash);
+
+    /// @brief A client's EntityCheck at `asOfOpSeq` did not match: send the list (merged while one is owed).
+    struct EntityListRequest {
+        uint32_t asOfOpSeq = 0;
+    };
+    inline constexpr size_t kEntityListRequestBytes = 5;
+
+    /// Most entries an EntityList holds.
+    inline constexpr uint32_t kMaxEntityList = 16384;
+    struct EntityListEntry {
+        uint32_t netId = 0;
+        uint64_t modelHash = 0;           ///< VolumeHash of its model
+        friend bool operator==(const EntityListEntry&, const EntityListEntry&) = default;
+    };
+    /// @brief Every replicated object after event `asOfOpSeq` (Q), NetId order, sent right after the
+    /// events up to Q (amendment 2: ids and models, not bodies; the client asks for the bodies it
+    /// lacks or holds with another model, and drops the ones the list does not have).
+    struct EntityList {
+        uint32_t asOfOpSeq = 0;
+        std::vector<EntityListEntry> entries;
+    };
+    inline constexpr size_t kEntityListHeaderBytes = 9;
+    inline constexpr size_t kEntityListEntryBytes = 12;
+
+    std::vector<uint8_t> Encode(const TerrainAck& m);
+    std::vector<uint8_t> Encode(const HashCheck& m);
+    std::vector<uint8_t> Encode(const EntityCheck& m);
+    std::vector<uint8_t> Encode(const EntityListRequest& m);
+    std::vector<uint8_t> Encode(const EntityList& m);
+    /// @brief Refuses a size outside 1..kMaxClientWindowChunks, a run of 0, an unknown code, runs that
+    /// do not add up to the box exactly (short or long).
+    bool Decode(std::span<const uint8_t> bytes, TerrainAck& out);
+    /// @brief Refuses a count of 0 or over kMaxHashCheckEntries, unknown flag bits, coordinates
+    /// beyond kMaxSyncChunkCoordinate.
+    bool Decode(std::span<const uint8_t> bytes, HashCheck& out);
+    bool Decode(std::span<const uint8_t> bytes, EntityCheck& out);
+    bool Decode(std::span<const uint8_t> bytes, EntityListRequest& out);
+    /// @brief Refuses more than kMaxEntityList entries, a NetId of 0, NetIds not strictly ascending.
+    bool Decode(std::span<const uint8_t> bytes, EntityList& out);
+
     /// @brief True if `bytes` is a valid EncodeChunk stream (kind, uniform id, runs adding up).
     bool IsValidChunkStream(std::span<const uint8_t> bytes);
 
@@ -285,7 +405,7 @@ export namespace vortex::net {
     std::vector<uint8_t> Encode(const BaselineEnd& m);
     std::vector<uint8_t> Encode(const BaselineNear& m);
     /// @brief Refuses a size of 0 or over kMaxClientWindowChunks, coordinates beyond
-    /// kMaxSyncChunkCoordinate, flags other than kReset.
+    /// kMaxSyncChunkCoordinate, flags other than kReset and kTerrainMode.
     bool Decode(std::span<const uint8_t> bytes, WindowUpdate& out);
     /// @brief Refuses runs that do not add up to the box.
     bool Decode(std::span<const uint8_t> bytes, WindowAck& out);

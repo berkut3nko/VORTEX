@@ -252,7 +252,9 @@ TEST(Movement, NoCorrectionAbove2cmOnFlatGround) {
     m.PrintServer();
     for (const Match::Bot* bot : {&a, &b}) {
         const net::PredictionStats& p = bot->client->Prediction();
-        EXPECT_GT(p.compared, 800u);
+        // About 900 snapshots, 5 % lost; how many are compared depends on the link's seeded draws, which
+        // every reliable message shares: stage 7b's checks moved B from 821 to 789 (A 809 both times).
+        EXPECT_GT(p.compared, 750u);
         EXPECT_EQ(p.corrections, 0u);
         EXPECT_EQ(p.snaps, 0u);
         EXPECT_LT(p.maxError, 0.02f);

@@ -7,6 +7,7 @@
 //                 [--stand] [--no-jumps] [--bot-casts N] [--bot-crates N] [--realtime] [--hash-out <file>]
 //                 [--drill-after N] [--drill-delay S] [--drill-sites K] [--drill-every T]
 //                 [--client-window N] [--walk-across] [--precasts N] [--memory] [--max-join-p99-ticks N]
+//                 [--bot-broken-chunk N[:X,Y,Z]] [--bot-broken-generator N]
 //
 // Starts the server from a session file (token, region, template; see sessions/*.session), loads its
 // whole window and applies the template.
@@ -62,6 +63,19 @@
 // made while some bot was joining (connected until its join data was in) and for all events;
 // --max-join-p99-ticks N makes a p99 of N ticks or more during the joins fail the run: it must be under N, as in the
 // unit test (review of stage 7a; recheck 6: 15 = 250 ms).
+// Stage 7b: every bot's HashChecks and EntityChecks are counted (`Checks: bot N:` lines, the server's
+// `Checks: server:` line), and a bot that reports a hash or entity mismatch or a check out of its stream
+// position fails the run (no fault was injected: the checks' false positives). --bot-broken-chunk N
+// gives bot N a generator that makes one pristine chunk differently (by default the server-Dense
+// pristine chunk nearest the spawn that is not a probe; N:X,Y,Z names one, refused unless it is
+// pristine, server-Dense, not a probe and within 12 m of the spawn); that bot stands, and the run fails
+// unless a HashCheck found the chunk and its repair was installed.
+// --bot-broken-generator N (stage 7b M-b) gives bot N another build's terrain everywhere (the region's
+// generator with the terrain seed + 1, or a flat region's ground 1.5 m higher): its probe chunks
+// differ at the Welcome, so it plays in server terrain mode (the server sends its whole window); the
+// run fails unless it did and still ends with the server's world and objects. Every bot in terrain
+// mode logs a `Terrain: bot N:` line (why and since when, the acks, the data, held ticks) with the
+// server's bytes for its join and per window step.
 // A server that fails (networking.md: a broken server world ends the session) stops at once and
 // reports. Exit code 0 when every bot's hash equals the server's, every entity check agrees and
 // nothing failed; 1 otherwise; 2 on a bad command line, session file or port.
@@ -134,6 +148,8 @@ namespace {
         std::unique_ptr<sim::Simulation> simulation;
         std::unique_ptr<net::BotPilot> pilot;
         bool connected = false;
+        bool broken = false;              ///< --bot-broken-chunk: its generator makes one pristine chunk differently; it stands
+        bool brokenGenerator = false;     ///< --bot-broken-generator: another build's terrain everywhere (server terrain mode)
         uint32_t joinStep = 0;
         uint32_t casts = 0;               ///< casts its prediction showed
         float minX = 1e30f, maxX = -1e30f;   ///< how far its player went (x, metres)
@@ -170,7 +186,8 @@ int main(int argc, char** argv) {
                              "[--delay-ms D] [--jitter-ms J] "
                              "[--outage-ms A,B] [--threads T] [--stand] [--no-jumps] [--bot-casts N] [--bot-crates N] [--realtime] "
                              "[--hash-out <file>] [--drill-after N] [--drill-delay S] [--drill-sites K] [--drill-every T] "
-                             "[--client-window N] [--walk-across] [--precasts N] [--memory] [--max-join-p99-ticks N]\n");
+                             "[--client-window N] [--walk-across] [--precasts N] [--memory] [--max-join-p99-ticks N] "
+                             "[--bot-broken-chunk N[:X,Y,Z]] [--bot-broken-generator N]\n");
         return 2;
     }
     net::SessionConfig session;
@@ -320,6 +337,91 @@ int main(int argc, char** argv) {
         }
         bot.pilot = std::make_unique<net::BotPilot>(server.Region(), 0xb07u + i, ps);
     }
+    // --bot-broken-chunk N[:X,Y,Z] (stage 7b): one bot's generator makes one pristine chunk differently.
+    glm::ivec3 brokenChunk{0};
+    if (const std::optional<std::string> spec = args.Get("--bot-broken-chunk")) {
+        int n = -1, x = 0, y = 0, z = 0;
+        const int fields = std::sscanf(spec->c_str(), "%d:%d,%d,%d", &n, &x, &y, &z);
+        if ((fields != 1 && fields != 4) || n < 0 || static_cast<uint32_t>(n) >= clientCount) {
+            Log::Error("--bot-broken-chunk expects N or N:X,Y,Z with N a bot (0..{})", clientCount == 0 ? 0 : clientCount - 1);
+            return 2;
+        }
+        const voxel::World& w = server.Simulation().World();
+        const glm::dvec3 spawn = server.Template().spawn;
+        const double chunkMetres = static_cast<double>(voxel::kChunkSize) * static_cast<double>(w.VoxelSize());
+        const double reach = static_cast<double>(net::HashCheckSettings{}.pristineMetres);
+        auto distance = [&](const glm::ivec3& c) { return glm::distance((glm::dvec3(c) + glm::dvec3(0.5)) * chunkMetres, spawn); };
+        auto usable = [&](const glm::ivec3& c, std::string* why) {
+            const char* reason = nullptr;
+            if (w.StateOf(c) != voxel::CellState::Dense) reason = "not Dense on the server";
+            else if (server.IsModified(c)) reason = "modified (it would come as data, never generated)";
+            else if (distance(c) > reach) reason = "farther than 12 m from the spawn (a standing bot's checks would never reach it)";
+            for (const net::ProbeHash& p : server.Probes())
+                if (p.chunk == c) reason = "a probe chunk";
+            if (reason && why) *why = reason;
+            return reason == nullptr;
+        };
+        if (fields == 4) {
+            brokenChunk = glm::ivec3(x, y, z);
+            std::string why;
+            if (!usable(brokenChunk, &why)) {
+                Log::Error("--bot-broken-chunk: chunk ({}, {}, {}) is {}", x, y, z, why);
+                return 2;
+            }
+        } else {
+            const glm::ivec3 at = voxel::VoxelToChunk(w.WorldToVoxel(spawn));
+            const int r = static_cast<int>(std::ceil(reach / chunkMetres)) + 1;
+            double best = 1e30;
+            bool found = false;
+            for (int dy = -r; dy <= r; ++dy)
+                for (int dz = -r; dz <= r; ++dz)
+                    for (int dx = -r; dx <= r; ++dx) {
+                        const glm::ivec3 c = at + glm::ivec3(dx, dy, dz);
+                        if (!usable(c, nullptr) || distance(c) >= best) continue;
+                        best = distance(c);
+                        brokenChunk = c;
+                        found = true;
+                    }
+            if (!found) {
+                Log::Error("--bot-broken-chunk: no pristine server-Dense chunk within 12 m of the spawn that is not a probe");
+                return 2;
+            }
+        }
+        BotClient& bot = bots[static_cast<size_t>(n)];
+        bot.broken = true;
+        const uint8_t stone = server.Simulation().WorldMaterialIds().stone;
+        bot.settings.wrapGenerator = [brokenChunk, stone](std::shared_ptr<voxel::IWorldGenerator> g) {
+            return net::BreakChunks(std::move(g), {brokenChunk}, stone);
+        };
+        Log::Info("Broken chunk: bot {}'s generator makes chunk ({}, {}, {}) differently ({:.1f} m from the spawn); it stands", n, brokenChunk.x,
+                  brokenChunk.y, brokenChunk.z, distance(brokenChunk));
+    }
+
+    // --bot-broken-generator N (stage 7b M-b): one bot's build makes other terrain everywhere.
+    if (const std::optional<std::string> spec = args.Get("--bot-broken-generator")) {
+        int n = -1;
+        if (std::sscanf(spec->c_str(), "%d", &n) != 1 || n < 0 || static_cast<uint32_t>(n) >= clientCount) {
+            Log::Error("--bot-broken-generator expects N, a bot (0..{})", clientCount == 0 ? 0 : clientCount - 1);
+            return 2;
+        }
+        BotClient& bot = bots[static_cast<size_t>(n)];
+        if (bot.broken) {
+            Log::Error("--bot-broken-generator: bot {} already has --bot-broken-chunk", n);
+            return 2;
+        }
+        bot.brokenGenerator = true;
+        const sim::RegionDesc region = server.Region();
+        const voxel::WorldMaterials ids = server.Simulation().WorldMaterialIds();
+        bot.settings.wrapGenerator = [region, ids](std::shared_ptr<voxel::IWorldGenerator>) {
+            sim::RegionDesc other = region;
+            other.terrain.seed += 1;
+            other.flatGroundVoxels += 12;
+            return sim::MakeRegionGenerator(other, ids);
+        };
+        Log::Info("Broken generator: bot {} makes other terrain everywhere ({}); it must play in server terrain mode", n,
+                  region.generator == sim::RegionGenerator::Flat ? "its flat ground 12 voxels higher" : "terrain seed + 1");
+    }
+
     // --precasts: N server casts along the walker's line (x across the play bounds, the middle z) at
     // the ground, before anyone joins: the walker meets chunks that were modified before it came.
     uint32_t precastsRun = 0;                    // server casts before the drill's (its report skips them)
@@ -440,7 +542,7 @@ int main(int argc, char** argv) {
             const uint32_t due = bot.client->TicksDue(passSeconds);
             for (uint32_t k = 0; k < due; ++k) {
                 const sim::PlayerInput controls =
-                    bot.client->Predicting() && !stand && !draining ? bot.pilot->Next(bot.client->Player()) : sim::PlayerInput{};
+                    bot.client->Predicting() && !stand && !draining && !bot.broken ? bot.pilot->Next(bot.client->Player()) : sim::PlayerInput{};
                 const sim::PlayerStepResult r = bot.client->RunTick(controls);
                 bot.casts += r.cast ? 1u : 0u;
                 if (bot.client->Predicting()) {
@@ -622,9 +724,18 @@ int main(int argc, char** argv) {
     // A moving client window (--client-window) may still be generating its far (cave) chunks when the
     // walk ends (a bot's workers, not its ticks, decide how long): its drain goes on while a bot's
     // world has chunks to load, up to two minutes of wall clock.
+    // A bot in server terrain mode (stage 7b M-b) receives its whole window as bulk (megabytes, paced):
+    // its drain goes on while it is not synced, up to three minutes of wall clock and 30 simulated.
     bool loadingLeft = clientWindow > 0;
+    bool terrainLeft = true;
     auto drainMore = [&] {
         if (server.TickNumber() - drainStart < 600) return true;
+        if ((server.TickNumber() - drainStart) % 60 == 0) {
+            terrainLeft = false;
+            for (const BotClient& bot : bots)
+                if (bot.simulation && bot.client->TerrainMode() && !bot.client->Synced()) terrainLeft = true;
+        }
+        if (terrainLeft && wallNow() - drainWall <= 180.0 && server.TickNumber() - drainStart < 108000) return true;
         if (!loadingLeft || wallNow() - drainWall > 120.0) return false;
         if ((server.TickNumber() - drainStart) % 60 == 0) {
             loadingLeft = false;
@@ -723,6 +834,27 @@ int main(int argc, char** argv) {
                   st.cratesRefused, st.castsAtBodies, static_cast<double>(st.entityEventBytes) / 1024.0, st.maxSnapshotBytes,
                   st.maxSnapshotBodies, st.bodySamples, st.bodiesLeftOut);
     }
+    Log::Info("Checks: server: {} hash checks ({} recent, {} modified, {} pristine entries), {} repairs requested / {} sent; {} entity "
+              "checks, {} list requests ({} merged, {} lists delayed), {} lists / {:.1f} KiB; checks {:.2f} ms max per peer and tick, {:.1f} "
+              "ms in all",
+              st.hashChecksSent, st.hashCheckEntries[0], st.hashCheckEntries[1], st.hashCheckEntries[2], st.repairsRequested, st.repairsSent,
+              st.entityChecksSent, st.entityListRequests, st.entityListsMerged, st.entityListsDelayed, st.entityListsSent,
+              static_cast<double>(st.entityListBytes) / 1024.0, st.maxCheckSeconds * 1000.0, st.checkSeconds * 1000.0);
+    if (st.terrainModePeers > 0)
+        Log::Info("Terrain: server: {} peer(s) in server terrain mode, {} acks / {:.1f} KiB (entering chunks: {} uniform, {} data, {} packed "
+                  "data), {} ChunkData / {:.2f} MiB to them; acks built in {:.2f} ms at most, {:.1f} ms in all (the {} step acks: {:.2f} ms "
+                  "at most, {:.3f} ms on average); bulk queues sorted in {:.2f} ms at most, {:.1f} ms in all, {} queued chunks pruned (left "
+                  "their window)",
+                  st.terrainModePeers, st.terrainAcks, static_cast<double>(st.terrainAckBytes) / 1024.0, st.terrainUniform, st.terrainData,
+                  st.terrainHidden, st.terrainChunkData, static_cast<double>(st.terrainChunkBytes) / (1024.0 * 1024.0),
+                  st.maxTerrainAckSeconds * 1000.0, st.terrainAckSeconds * 1000.0, st.terrainStepAcks, st.maxTerrainStepAckSeconds * 1000.0,
+                  st.terrainStepAcks > 0 ? st.terrainStepAckSeconds * 1000.0 / st.terrainStepAcks : 0.0, st.maxQueueSortSeconds * 1000.0,
+                  st.queueSortSeconds * 1000.0,
+                  st.queuePruned);
+    Log::Info("Ticks: server: {} ticks, {:.2f} ms on average, p99 under {:.2f} ms, {:.2f} ms at most, {} over 16.7 ms (wall clock; in-process "
+              "bots share its cores)",
+              st.ticksTimed, st.ticksTimed > 0 ? st.tickSeconds * 1000.0 / st.ticksTimed : 0.0, st.TickPercentile(0.99) * 1000.0,
+              st.maxTickSeconds * 1000.0, st.ticksOverBudget);
     if (memory) logMemory();
     const voxel::WorldStats ws = server.Simulation().World().Stats();
     Log::Info("Server: world {} dense / {} packed chunks, {:.1f} MiB RLE, store {} / {} slots, search errors {}, incomplete ops {}, "
@@ -764,7 +896,9 @@ int main(int argc, char** argv) {
         const voxel::WorldHashResult sb = server.Hash(bot.client->SyncWindow());
         const bool equal = bot.simulation && bot.client->Synced() && ch.Complete() && sb.Complete() && ch.hash == sb.hash &&
                            bot.client->AppliedOpSeq() == server.LastOpSeq();
-        ok = ok && equal && cs.skippedChunks == 0 && cs.probeMismatches == 0;
+        // Probe mismatches are the trigger of server terrain mode (stage 7b): a bot that switched plays
+        // on the server's terrain; one that did not must have none.
+        ok = ok && equal && cs.skippedChunks == 0 && (cs.probeMismatches == 0 || bot.client->TerrainMode());
         Log::Info("Client {}: {} at opSeq {} / {}, joined at opSeq {}, {} events / {:.1f} KiB, {} duplicates, {} probe mismatches, {} skipped / "
                   "{} unsynced chunks, hash {:016x} {}",
                   i, bot.simulation ? "attached" : "not attached", bot.client->AppliedOpSeq(), server.LastOpSeq(), bot.client->JoinOpSeq(),
@@ -808,6 +942,69 @@ int main(int argc, char** argv) {
                       i, joins, P99(joinLat), P99(joinLat) * tickSeconds * 1000.0, maxOf(joinLat), joinLat.size(), P99(allLat),
                       P99(allLat) * tickSeconds * 1000.0, maxOf(allLat), allLat.size(),
                       latencyOk ? std::string() : std::format(" - NOT UNDER --max-join-p99-ticks {}", maxJoinP99));
+        }
+        {
+            // Stage 7b: the checks. No fault was injected (but the broken bot's chunk): any mismatch or a
+            // check out of its stream position is a false positive and fails the run; the broken bot
+            // must have found and repaired its chunk.
+            const net::ClientStats& c = bot.client->Stats();
+            const net::ChunkSyncStats& ss = bot.client->Sync().Stats();
+            bool checksOk = c.checksOutOfOrder == 0;
+            std::string verdict;
+            if (bot.broken) {
+                const bool repaired = c.mismatchesPristine >= 1 && ss.repairsInstalled >= 1 && c.mismatchesModified == 0 && c.entityMismatches == 0 &&
+                                      bot.client->Sync().FromData(brokenChunk);
+                checksOk = checksOk && repaired;
+                verdict = repaired ? std::format(" - its broken chunk ({}, {}, {}) was found and repaired", brokenChunk.x, brokenChunk.y, brokenChunk.z)
+                                   : std::format(" - ITS BROKEN CHUNK ({}, {}, {}) WAS NOT REPAIRED", brokenChunk.x, brokenChunk.y, brokenChunk.z);
+            } else {
+                checksOk = checksOk && ss.mismatches == 0 && c.entityMismatches == 0;
+                if (!checksOk) verdict = " - A CHECK FOUND A DIFFERENCE NO FAULT MADE";
+            }
+            if (bot.brokenGenerator) {
+                const bool terrain = bot.client->TerrainMode();
+                checksOk = checksOk && terrain;
+                verdict += terrain ? " - its broken generator put it in server terrain mode" : " - ITS BROKEN GENERATOR DID NOT PUT IT IN SERVER TERRAIN MODE";
+            }
+            ok = ok && checksOk;
+            Log::Info("Checks: bot {}: {}{}", i, net::DescribeChecks(*bot.client), verdict);
+            if (bot.client->TerrainMode()) {
+                // Packing follows the server's (review of stage 7b): over the bot's sync box, a chunk the
+                // server shows (Dense) must never be packed here (it would be drawn as a solid block);
+                // resident here while packed there is the conservative side (near the player, or shown
+                // after an operation near it).
+                uint32_t packedShown = 0, residentHidden = 0;
+                if (bot.simulation) {
+                    const voxel::World& sw = server.Simulation().World();
+                    const voxel::World& cw = bot.simulation->World();
+                    const net::SyncBox sb = bot.client->SyncWindow();
+                    for (int z = sb.min.z; z < sb.Max().z; ++z)
+                        for (int y = sb.min.y; y < sb.Max().y; ++y)
+                            for (int x = sb.min.x; x < sb.Max().x; ++x) {
+                                const voxel::CellState there = sw.StateOf({x, y, z}), here = cw.StateOf({x, y, z});
+                                packedShown += there == voxel::CellState::Dense && here == voxel::CellState::Packed ? 1u : 0u;
+                                residentHidden += there == voxel::CellState::Packed && here == voxel::CellState::Dense ? 1u : 0u;
+                            }
+                }
+                if (packedShown > 0) ok = false;
+                Log::Info("Terrain: bot {} packing: {} chunk(s) the server shows packed here{}, {} resident here that the server packs", i,
+                          packedShown, packedShown > 0 ? " - DRAWN AS SOLID BLOCKS" : "", residentHidden);
+                const net::TerrainPeerCost t = server.TerrainCost(bot.client->Slot());
+                const double perStep = t.steps > 0 ? static_cast<double>(t.stepBytes) / static_cast<double>(t.steps) / 1024.0 : 0.0;
+                const auto avgKiB = [&t](size_t k) {
+                    return t.ackSteps[k] > 0 ? static_cast<double>(t.ackStepBytes[k]) / static_cast<double>(t.ackSteps[k]) / 1024.0 : 0.0;
+                };
+                Log::Info("Terrain: bot {}: {}; server: join ack {:.1f} KiB + {} ChunkData / {:.2f} MiB ({} uniform chunks in the ack), {} "
+                          "window steps, ack + data {:.1f} KiB per step on average, {:.1f} KiB at most, {} chunks still queued ({} at most, {} "
+                          "outside its window); step acks (events channel) along x {} / {:.2f} KiB on average / {:.2f} KiB at most, along z {} "
+                          "/ {:.2f} / {:.2f}, both {} / {:.2f} / {:.2f}; store at most {} slots",
+                          i, net::DescribeTerrainMode(*bot.client), static_cast<double>(t.joinAckBytes) / 1024.0, t.joinChunks,
+                          static_cast<double>(t.joinDataBytes) / (1024.0 * 1024.0), t.joinUniform, t.steps, perStep,
+                          static_cast<double>(t.maxStepBytes) / 1024.0, t.queuedChunks, t.maxQueuedChunks, t.queuedOutsideWindow,
+                          t.ackSteps[0], avgKiB(0), static_cast<double>(t.maxAckStepBytes[0]) / 1024.0, t.ackSteps[1], avgKiB(1),
+                          static_cast<double>(t.maxAckStepBytes[1]) / 1024.0, t.ackSteps[2], avgKiB(2),
+                          static_cast<double>(t.maxAckStepBytes[2]) / 1024.0, bot.client->Stats().maxStoreUsed);
+            }
         }
         if (bot.simulation) {
             // The client's window and store (stage 7a M-b): a bot with the game's window must never

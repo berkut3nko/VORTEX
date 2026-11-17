@@ -180,6 +180,28 @@ export namespace vortex::voxel {
         StoreFull,       ///< a Dense chunk needed a store slot and there was none: nothing changed
     };
 
+    /**
+     * @brief How World::SetChunkEncoded installs a chunk (networking stage 7b, server terrain mode).
+     * Packing is never a content change: the three modes give the same voxels and hashes; they differ
+     * in whether the cell counts as an edit and whether it may be packed.
+     */
+    enum class InstallMode : uint8_t {
+        /// Stage 7a: a content change of a client that generates its own terrain. The cell counts as
+        /// modified (an edit: visible, its face neighbours too) and is never packed.
+        Edit,
+        /// Server terrain mode, data the server holds Dense: shown (never packed) but not an edit -
+        /// the cell keeps its modified bit (false for a fresh install), so its buried neighbours stay
+        /// packed as on the server.
+        Content,
+        /// Server terrain mode, data the server holds Packed (hidden, unedited): installed Packed with
+        /// the message's own bytes, no store slot (the decision is made before any allocation; with
+        /// WorldConfig::packHidden off, or over a modified cell, it is a Content install). From then on
+        /// the server's bit decides whether it is visible - only an edited face neighbour reveals it
+        /// (as on the server), never this world's column classes (a terrain-mode client's generator
+        /// is the one that differs).
+        HiddenContent,
+    };
+
     /// @brief A chunk whose solid content changed, as World::TakeChunkChanges reports it.
     struct ChunkChange {
         glm::ivec3 coord{0};
@@ -438,9 +460,24 @@ export namespace vortex::voxel {
          * marked dirty. A cell that was Unloaded / Loading is loaded from here on: a job result for
          * it is discarded and its column's loading counters are settled (LoadBlocking and IsFilled
          * still finish). Never reported by TakeLoadedChunks. On StoreFull / Malformed /
-         * OutsideWindow the cell is left exactly as it was.
+         * OutsideWindow the cell is left exactly as it was. `mode` (stage 7b): InstallMode; the
+         * default is 7a's.
          */
-        SetChunkResult SetChunkEncoded(const glm::ivec3& chunk, std::span<const uint8_t> rle);
+        SetChunkResult SetChunkEncoded(const glm::ivec3& chunk, std::span<const uint8_t> rle, InstallMode mode = InstallMode::Edit);
+        /// @brief The cell holds content whose visibility the server decided (InstallMode::Content /
+        /// HiddenContent; tests): 0 none (this world's own rule), 1 shown, 2 hidden.
+        uint8_t ServerVisibility(const glm::ivec3& chunk) const;
+        /**
+         * @brief Server terrain mode (review of stage 7b): an operation may have changed `chunk` on the
+         * server without changing it here (the client skipped it: not current, or its data is ahead), and
+         * the server then shows the chunk's face neighbours. Every face neighbour the server's bit hides
+         * becomes shown for good (a Packed one is queued for its decode), as an edit there would have
+         * made it on the server. Conservative: at worst a few chunks resident that the server packs.
+         */
+        void ShowServerHiddenNeighbours(const glm::ivec3& chunk);
+        /// @brief Buried chunks are packed (WorldConfig::packHidden with a full-height window): an
+        /// InstallMode::HiddenContent install takes no store slot here.
+        bool PacksHidden() const { return m_Pack; }
         /**
          * @brief With WorldConfig::reportLoads: every cell that became loaded by streaming since the
          * last call (job results and the column pass's sky / rock cells), once per load, in load
@@ -470,6 +507,10 @@ export namespace vortex::voxel {
             uint32_t changeIndex = 0;
             bool assigned = false;          // coord is valid
             bool fromSave = false;          // loaded from the RegionStore (an edit of an earlier visit)
+            /// Server terrain mode (networking stage 7b, InstallMode): kServerShown = never packed;
+            /// kServerHidden = packed unless an edited face neighbour reveals it (the column classes
+            /// of this world are not asked); 0 = this world's own rule. Reset when the cell is re-targeted.
+            uint8_t serverVisibility = 0;
             uint64_t revision = 0;          // ChunkRevision: bumped by every content or state change (BumpRevision)
         };
         /// One column of cells (fixed chunk x, z): classification and loading state.
@@ -557,6 +598,7 @@ export namespace vortex::voxel {
         template <typename Fn, typename Touches, typename Rows = AnyRow>
         uint32_t EditRegion(const glm::ivec3& min, const glm::ivec3& max, Fn&& decide, Touches&& touches,
                             std::vector<VoxelEdit>* edits, EditReport* report, const ChunkClip* clip = nullptr, Rows rows = {});
+        static constexpr uint8_t kServerShown = 1, kServerHidden = 2;
         /// A loading cell gives up its place in its column's bookkeeping (SetChunkEncoded).
         void SettleLoading(uint32_t index);
 

@@ -12,7 +12,7 @@ Line numbers are as of engine commit `ec073a8`; if a number no longer matches, s
 | `Chunk.cppm` (header-only) | `Chunk`, `ChunkOccupancy`, index maths, `VoxelToChunk/Local`, `ChunkToVoxel`. |
 | `Store.cppm`, `internal/Store.cpp` | `ChunkStore`: slot pool, LIFO free list, dirty list, high-water mark. |
 | `World.cppm`, `internal/World.cpp` | Window, cells, grid encoding, load jobs, edits, raycast, change list. Quantised edits (M1 stage 2): `SphereQ`, `QuantizeSphere`, `QuantizePower`, `InSphereQ`, `SphereVoxelBounds`, `EditReport`, `CarveSphereQ`/`FillSphereQ`/`SwapSphereQ`/`ClearMask`. |
-| `Hash.cppm`, `internal/Hash.cpp` | `ChunkHash`, `UniformChunkHash`, `kAirChunkHash`, `WorldHashTerm`, `WorldHash`: content hashes for terrain agreement. Since networking stage 3 also `HashMix64`, `MaterialTableHash` (what replicated decisions read of the world palette) and `kGeneratorGoldenHash` (a hash of the golden tables in `tests/core/HashTests.cpp`; both in `Hello::buildHash`). |
+| `Hash.cppm`, `internal/Hash.cpp` | `ChunkHash`, `UniformChunkHash`, `kAirChunkHash`, `WorldHashTerm`, `WorldHash`, `ChunkHashAt` (networking stage 7b: one chunk of a world in any cell state, the per-cell part of `WorldHash`; what a HashCheck compares): content hashes for terrain agreement. Since networking stage 3 also `HashMix64`, `MaterialTableHash` (what replicated decisions read of the world palette) and `kGeneratorGoldenHash` (a hash of the golden tables in `tests/core/HashTests.cpp`; both in `Hello::buildHash`). |
 | `Region.cppm`, `internal/Region.cpp` | Chunk RLE codec (`EncodeChunk`/`DecodeChunk`), `RegionStore` (`r.x.y.z.vxr`). |
 | `Generator.cppm`, `internal/Generator.cpp` | `IWorldGenerator`, `TerrainGenerator` (height tiles, caves, trees), `FlatGenerator`. |
 | `Volume.cppm`, `internal/Volume.cpp` | `VoxelVolume`: dense x/y/z array, the authoring form of objects. `VoxelMask`: one bit per voxel of a box, packed 8 per byte in `VoxelVolume::Index` order (the `Detach` / `ClearMask` mask); `AnyInRange` tests a run of bits, `SetRange` sets one (the wire decoder). |
@@ -194,6 +194,13 @@ do not bounds-check (0..31 only); `GetSafe` does. A `Chunk` is 36 KB: keep it on
   with a splitmix64 step. It reads `ids` bytes only: not the pyramid, not slots, pointers, padding or host byte order.
   Empty cell == Uniform 0 == cleared Dense == `kAirChunkHash`; Uniform `id` == Dense filled with `id` ==
   `UniformChunkHash(id)`. The storage kind is therefore never part of what two machines compare.
+- `ChunkHash` skips eight voxels at a time while a run goes on (stage 7b integration: a HashCheck hashes up to 24
+  chunks): the runs, and so the hash, are those of the voxel-by-voxel loop (`ChunkHash.EqualsTheVoxelByVoxelRunHash`,
+  the goldens, the pinned hash). Any other speed-up must keep the maximal-run definition: the value is wire-relevant.
+- `ChunkHashAt` hashes a Packed cell from its runs without decoding (runs of one id are merged, so any split of the
+  runs gives the maximal-run hash): a server holding a buried chunk Packed and a client holding the same voxels Dense
+  agree (`World.ChunkHashAtEqualsChunkHashInEveryCellState`). It returns false for a chunk that is not loaded; never
+  count such a chunk as equal.
 - `WorldHash(world, min, max)` is the wrapping sum of `WorldHashTerm(coord, hash)` over the box `[min, max)` in chunk
   coordinates. An air chunk's term is 0, so the box may hold any amount of sky; the sum is order independent and
   additive over disjoint boxes. Chunks that are `Unloaded`/`Loading` add nothing and are counted in `notLoaded`: compare
@@ -261,6 +268,21 @@ the `VX_*` accessor macros defined there and, with the same names, in the shader
   moves only once the focus chunk is more than that many chunks from its centre chunk (`FollowMinFor`, used by `Update`
   and `LoadBlocking`), so `WindowMinFor(focus)` is where a move puts it, not where every focus does. `ViewRadius`
   subtracts the slack (the focus may be that many chunks off the centre): (half - 1 - slack) chunks.
+
+**Install modes (networking stage 7b M-b).** `SetChunkEncoded(chunk, rle, mode)`: `Edit` (the default, 7a) marks the
+cell modified - an edit, visible, revealing its face neighbours, never packed; `Content` keeps the cell's modified bit
+and marks it server-shown (never packed, but not an edit: buried neighbours stay packed); `HiddenContent` installs a
+Dense chunk Packed with the given bytes and marks it server-hidden (no slot; decided before any `Alloc`; downgraded to
+`Content` when the world packs nothing, the cell is an edit, or - review of stage 7b - a face neighbour is an edit:
+the server shows such a chunk, and an edit that ran before the install had nothing to unpack). `PacksHidden()` says
+whether this world packs (a `HiddenContent` install then takes no slot). `ShowServerHiddenNeighbours(chunk)` (review of
+7b; `ChunkSync` calls it in terrain mode for a chunk an operation skipped) makes the server-hidden face neighbours
+server-shown for good and queues a packed one for its decode (`m_Reveal`, processed by `Update`). `Cell::serverVisibility` answers `Visible()` before
+the column rule (hidden: only an edited face neighbour reveals it), so a terrain-mode client never packs by its own
+generator's classes. It is reset whenever the cell is re-targeted or unloaded and by job results; an `Edit` clears it.
+A packed install sets `m_NearPromotePending` (near the focus it is made resident like a loaded chunk, and `Repack`
+packs it again). Hashes never depend on the mode (`World.ContentInstallsPackHiddenChunksLikeLoads`,
+`World.AHiddenInstallNextToAnEditIsShown`).
 
 ## 3. Traps
 

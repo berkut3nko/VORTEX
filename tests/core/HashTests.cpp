@@ -291,6 +291,61 @@ TEST(ChunkHash, DependsOnlyOnMaterialIds) {
     EXPECT_EQ(UniformChunkHash(7), 0xb42494b7c8415429ull) << "actual 0x" << std::hex << UniformChunkHash(7);
 }
 
+// ChunkHash skips eight voxels at a time while a run goes on (stage 7b: HashChecks hash up to 24
+// chunks per check): it must give the byte-by-byte maximal-run hash for runs of every length at every
+// offset, ending at the chunk's end or not. The reference below is the plain algorithm.
+TEST(ChunkHash, EqualsTheVoxelByVoxelRunHash) {
+    const auto mix = [](uint64_t x) {
+        x ^= x >> 30;
+        x *= 0xbf58476d1ce4e5b9ull;
+        x ^= x >> 27;
+        x *= 0x94d049bb133111ebull;
+        x ^= x >> 31;
+        return x;
+    };
+    const auto reference = [&](const Chunk& c) {
+        uint64_t h = 0x564f52544558ull;
+        uint8_t id = c.ids[0];
+        uint64_t length = 1;
+        const auto add = [&](uint8_t i, uint64_t n) { h = mix(h + 0x9e3779b97f4a7c15ull + (n << 8 | i)); };
+        for (int i = 1; i < kChunkVolume; ++i) {
+            if (c.ids[i] == id) {
+                ++length;
+                continue;
+            }
+            add(id, length);
+            id = c.ids[i];
+            length = 1;
+        }
+        add(id, length);
+        return mix(h ^ 0xd6e8feb86659fd93ull);
+    };
+    auto chunk = std::make_unique<Chunk>();
+    uint32_t state = 12345u;
+    const auto next = [&state] {
+        state = state * 1664525u + 1013904223u;
+        return state >> 8;
+    };
+    for (int round = 0; round < 64; ++round) {
+        // Runs of 1..(round + 2) voxels of a few ids (repeats allowed: adjacent equal runs merge).
+        int at = 0;
+        while (at < kChunkVolume) {
+            const int run = 1 + static_cast<int>(next() % static_cast<uint32_t>(round + 2));
+            const uint8_t id = static_cast<uint8_t>(next() % 3);
+            for (int k = 0; k < run && at < kChunkVolume; ++k) chunk->ids[at++] = id;
+        }
+        ASSERT_EQ(ChunkHash(*chunk), reference(*chunk)) << "round " << round;
+    }
+    chunk->Fill(5);
+    EXPECT_EQ(ChunkHash(*chunk), reference(*chunk));
+    EXPECT_EQ(ChunkHash(*chunk), UniformChunkHash(5));
+    chunk->ids[kChunkVolume - 1] = 6;
+    EXPECT_EQ(ChunkHash(*chunk), reference(*chunk));
+    chunk->ids[kChunkVolume - 1] = 5;
+    chunk->ids[0] = 6;
+    EXPECT_EQ(ChunkHash(*chunk), reference(*chunk));
+}
+
 TEST(ChunkHash, ASingleVoxelChangesTheHash) {
     auto chunk = std::make_unique<Chunk>();
     for (int z = 0; z < kChunkSize; ++z)

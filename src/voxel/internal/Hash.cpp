@@ -4,6 +4,7 @@ module;
 
 #include <bit>
 #include <cstdint>
+#include <cstring>
 #include <span>
 
 module vortex.voxel;
@@ -42,6 +43,15 @@ namespace vortex::voxel {
         uint8_t id = chunk.ids[0];
         uint32_t length = 1;
         for (int i = 1; i < kChunkVolume; ++i) {
+            // Eight voxels at a time while the run goes on (the same runs, so the same hash: a run of
+            // air or rock is most of a chunk; stage 7b's HashChecks hash up to 24 chunks per check).
+            uint64_t word = 0;
+            const uint64_t same = 0x0101010101010101ull * id;
+            while (i + 8 <= kChunkVolume && (std::memcpy(&word, &chunk.ids[i], 8), word == same)) {
+                length += 8;
+                i += 8;
+            }
+            if (i >= kChunkVolume) break;
             const uint8_t next = chunk.ids[i];
             if (next == id) {
                 ++length;
@@ -96,6 +106,30 @@ namespace vortex::voxel {
         return Mix(h ^ chunkHash);
     }
 
+    bool ChunkHashAt(const World& world, const glm::ivec3& coord, uint64_t& out) {
+        switch (world.StateOf(coord)) {
+            case CellState::Unloaded:
+            case CellState::Loading: return false;
+            case CellState::Empty: out = kAirChunkHash; return true;
+            case CellState::Uniform: {
+                uint8_t id = 0;
+                world.GetChunk(coord, &id);
+                out = UniformHash(id);
+                return true;
+            }
+            case CellState::Dense: {
+                const Chunk* chunk = world.GetChunk(coord);
+                out = chunk ? ChunkHash(*chunk) : kAirChunkHash;
+                return true;
+            }
+            case CellState::Packed:
+                // Hashed from its runs: packing is not a content change.
+                out = EncodedChunkHash(world.PackedData(coord));
+                return true;
+        }
+        return false;
+    }
+
     WorldHashResult WorldHash(const World& world, const glm::ivec3& minChunk, const glm::ivec3& maxChunk) {
         WorldHashResult result;
         for (int z = minChunk.z; z < maxChunk.z; ++z)
@@ -103,23 +137,9 @@ namespace vortex::voxel {
                 for (int x = minChunk.x; x < maxChunk.x; ++x) {
                     const glm::ivec3 coord(x, y, z);
                     uint64_t hash = kAirChunkHash;
-                    switch (world.StateOf(coord)) {
-                        case CellState::Unloaded:
-                        case CellState::Loading: ++result.notLoaded; continue;
-                        case CellState::Empty: break;
-                        case CellState::Uniform: {
-                            uint8_t id = 0;
-                            world.GetChunk(coord, &id);
-                            hash = UniformHash(id);
-                            break;
-                        }
-                        case CellState::Dense:
-                            if (const Chunk* chunk = world.GetChunk(coord)) hash = ChunkHash(*chunk);
-                            break;
-                        case CellState::Packed:
-                            // Hashed from its runs: packing is not a content change.
-                            hash = EncodedChunkHash(world.PackedData(coord));
-                            break;
+                    if (!ChunkHashAt(world, coord, hash)) {
+                        ++result.notLoaded;
+                        continue;
                     }
                     if (hash == kAirChunkHash) continue;
                     result.hash += WorldHashTerm(coord, hash);

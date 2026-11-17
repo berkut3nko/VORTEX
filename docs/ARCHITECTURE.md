@@ -829,7 +829,7 @@ network client will predict with (`docs/design/networking.md`).
 
 `vortex.net` (library `Vortex::Net`, GPU-free) is the M1 protocol of `docs/design/networking.md`; it runs over ENet
 (UDP) between `vortex_server` and the game (`Shredborne --connect`) and in one process over loopback transports for
-the tests ("Stage 3 as built" to "Stage 7a as built" there have every choice).
+the tests ("Stage 3 as built" to "Stage 7b as built" there have every choice).
 
 * **Region.** `sim::RegionDesc` (`vortex.sim:region`) = template id, seed, play bounds (whole chunks), height
   range, generator and `TerrainSettings` (the session's voxel size included). `sim::RegionWorldConfig` turns it into
@@ -863,6 +863,29 @@ the tests ("Stage 3 as built" to "Stage 7a as built" there have every choice).
   region window, checks that the store held it and that the probe chunks are its generator's, and applies the events
   after its join point in `opSeq` order through `net::ChunkSync` (duplicates ignored; a gap is a failure, and a failed
   client disconnects). Terrain is never predicted; no operation is ever sent.
+* **Checks (stage 7b).** Every 2 s per client the server sends a `HashCheck` (the server's `ChunkHash`
+  at opSeq C of the last operations' chunks, 8 modified chunks least recently checked and 12 pristine chunks near the
+  player and on its path ahead, `net::HashCheckPlanner`) and an `EntityCheck` (count, xor of NetIds, xor of id-mixed
+  model hashes), each right after the events up to C, so the client compares them at exactly C: only chunks current
+  with a base at or below C; a chunk that differs becomes `Requested` and is asked for with `ChunkRequest{Repair}`
+  (chunk sync's own path below). An entity mismatch asks for the `EntityList` (ids and model hashes at Q): copies the
+  server does not have are dropped, missing or wrong ones asked for as `ModelRequest`s. Tombstones are a FIFO. Since
+  the review of 7b an entry skipped because its chunk was still loading is kept and compared once the chunk is current
+  (dropped by any operation over it), a chunk that differs again soon after its repair is logged instead of looped on,
+  and the server sends at most one `EntityList` per client per second.
+* **Server terrain mode (stage 7b, milestone M-b).** A client whose probe chunks differ at the `Welcome`, or whose
+  checks found three pristine chunks it generated differently, stops generating the server's terrain (its
+  `net::SessionGenerator` answers Empty inside the server's window) and flags every `WindowUpdate` with `kTerrainMode`
+  (sticky; the server ends a peer that clears it). The server answers each with a `TerrainAck` instead of a
+  `WindowAck`: every entering chunk of its window coded by its own cell state - uniform ones inline, Dense and Packed
+  ones queued as `ChunkData` (nearest the player's eyes in 3D first). Protocol 10 (review of 7b): the ack codes only the
+  entering cells, in `net::ForEachEnteringChunk` order (both sides walk the same cells), 0.7 KiB per window step; a
+  window update prunes the queued chunks that left the window. The client installs them by the server's packing
+  (`voxel::InstallMode::Content` / `HiddenContent`: a chunk the server packs is packed here, with no store slot, and
+  stays packed by the server's bit, not by this client's column classes; shown whenever the server may show it: an
+  edited face neighbour, or an operation near it that this client skipped). From then on it is chunk sync as below.
+  The price is the join: 16 MiB on the playground's 30 x 44 x 30 window, 40 MiB for the game's 48 x 44 x 48 window on
+  the 250 m arena and 0.8 MiB per two-chunk window step there (measured, "Stage 7b as built"), paced by the bulk window.
 * **Chunk sync (stage 7a).** A joiner gets no history as events: its `WindowUpdate` (sent on `Welcome`) is answered by
   a `WindowAck{asOfOpSeq, modified bits}` on the events channel; the server keeps a sparse modified map (chunk ->
   last opSeq, fed from the chunks each operation changed, never cleared) and sends the modified chunks of the window as
@@ -929,7 +952,7 @@ the tests ("Stage 3 as built" to "Stage 7a as built" there have every choice).
   A player's cast hits the replicated body in front of the terrain.
   Clients make their own rubble (shred.md stage 1e lifetimes and caps) from `netId`-0 pieces and fragments and from
   copies evicted `ToRubble`. `net::CompareEntities` / `EntityListHash` are the entity check (`vortex_server`,
-  `tools/session-check.sh`); the wire `EntityCheck` is stage 7b.
+  `tools/session-check.sh`); the wire `EntityCheck` is stage 7b's.
 * **Agreement.** `net::RegionHash` is `voxel::WorldHash` over the region window; probe chunks in `Welcome` compare
   the generators; `buildHash` covers the generator's golden values (`voxel::kGeneratorGoldenHash`) and the material
   table (`voxel::MaterialTableHash`).

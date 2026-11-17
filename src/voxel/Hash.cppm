@@ -57,6 +57,14 @@ export namespace vortex::voxel {
      */
     WorldHashResult WorldHash(const World& world, const glm::ivec3& minChunk, const glm::ivec3& maxChunk);
 
+    /**
+     * @brief ChunkHash of one chunk of a world, whatever its cell state (Empty, Uniform, Dense, or
+     * Packed hashed from its runs without decoding): the per-cell part of WorldHash (networking
+     * stage 7b's HashCheck compares it between server and client). False (and `out` untouched) when
+     * the chunk is not loaded (outside the window, Unloaded or Loading). Main thread only.
+     */
+    bool ChunkHashAt(const World& world, const glm::ivec3& chunk, uint64_t& out);
+
     /// @brief Absorbs `value` into the running hash `h` (splitmix64 finaliser; not commutative):
     /// for hashes that must be equal on every machine, such as `Hello::buildHash`.
     uint64_t HashMix64(uint64_t h, uint64_t value);

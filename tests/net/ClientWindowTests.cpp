@@ -26,208 +26,7 @@ import vortex.net;
 
 using namespace vortex;
 
-namespace {
-    constexpr int kGround = 96;                    // flat ground: voxels y < 96 (12 m at 0.125 m)
-    constexpr float kGroundMetres = kGround * 0.125f;
-    constexpr int32_t kWindow = 12;                // the client's window, chunks (48 m)
-
-    net::Token TestToken() {
-        net::Token t{};
-        for (size_t i = 0; i < t.size(); ++i) t[i] = static_cast<uint8_t>(0x63 + i * 5);
-        return t;
-    }
-
-    voxel::WorldMaterials DefaultIds() {
-        voxel::MaterialLibrary scratch;
-        return voxel::RegisterDefaultWorldMaterials(scratch);
-    }
-
-    /// 40 x 40 chunks of play (160 m), 46 x 8 x 46 chunks of server window, flat ground at 12 m.
-    sim::RegionDesc WideRegion() {
-        sim::RegionDesc r;
-        r.templateId = sim::RegionTemplateId::Empty;
-        r.seed = 707;
-        r.playMinChunk = {-20, -20};
-        r.playMaxChunk = {20, 20};
-        r.heightRange = {0.0f, 32.0f};
-        r.generator = sim::RegionGenerator::Flat;
-        r.flatGroundVoxels = kGround;
-        r.terrain.voxelSize = 0.125f;
-        r.terrain.materials = DefaultIds();
-        return r;
-    }
-
-    /// 7 x 7 chunks of play: fits any window of 13 chunks or more.
-    sim::RegionDesc SmallRegion() {
-        sim::RegionDesc r = WideRegion();
-        r.playMinChunk = {-4, -4};
-        r.playMaxChunk = {3, 3};
-        return r;
-    }
-
-    net::ServerSettings Settings(const sim::RegionDesc& region = WideRegion()) {
-        net::ServerSettings s;
-        s.session.token = TestToken();
-        s.session.region = region;
-        s.session.packHidden = false;
-        s.simulation.jobThreads = 2;
-        s.simulation.physics.threads = 1;
-        s.simulation.physics.maxBodies = 2048;
-        s.simulation.physics.maxBodyPairs = 4096;
-        s.simulation.physics.maxContactConstraints = 4096;
-        return s;
-    }
-
-    net::Impairment Lossy() {
-        net::Impairment im;
-        im.loss = 0.05;
-        im.delaySeconds = 0.04;
-        im.jitterSeconds = 0.03;
-        im.duplicate = 0.01;
-        im.reorder = 0.02;
-        return im;
-    }
-
-    /// A server and walking bots on one manual clock (the Match fixture of the movement tests, with
-    /// the client window): one pass = one server tick, then each bot's due ticks (RunTick: streaming
-    /// around its player, Poll, the predicted step).
-    struct Field {
-        struct Bot {
-            net::LoopbackTransport loop;
-            std::unique_ptr<net::ImpairedTransport> link;
-            std::unique_ptr<net::Client> client;
-            std::unique_ptr<sim::Simulation> simulation;
-            std::function<sim::PlayerInput(Bot&)> controls;
-            bool manual = false;          ///< the test drives it (Poll, its world) instead of RunTick
-        };
-
-        explicit Field(net::ServerSettings settings = Settings(), net::Impairment impairment = {})
-            : impairment(std::move(impairment)), serverLink(serverLoop, this->impairment, 11, [this] { return clock; }),
-              server(std::move(settings), serverLink) {
-            started = server.Start();
-        }
-
-        Bot& AddBot(std::function<sim::PlayerInput(Bot&)> controls, net::ClientSettings cs = {}) {
-            auto bot = std::make_unique<Bot>();
-            bot->link = std::make_unique<net::ImpairedTransport>(bot->loop, impairment, 900 + bots.size(), [this] { return clock; });
-            cs.token = TestToken();
-            if (cs.windowChunks == 0) cs.windowChunks = kWindow;
-            bot->client = std::make_unique<net::Client>(cs, *bot->link);
-            bot->controls = std::move(controls);
-            net::LoopbackTransport::Connect(serverLoop, bot->loop);
-            bots.push_back(std::move(bot));
-            return *bots.back();
-        }
-
-        void ClientPass(Bot& bot) {
-            if (bot.client->State() == net::ClientState::Welcomed && !bot.simulation) {
-                sim::SimulationConfig base;
-                base.jobThreads = 2;
-                base.maxParticles = 0;
-                base.physics.threads = 1;
-                base.physics.maxBodies = 2048;
-                base.physics.maxBodyPairs = 4096;
-                base.physics.maxContactConstraints = 4096;
-                bot.simulation = std::make_unique<sim::Simulation>(bot.client->MakeSimulationConfig(base, storeLimit));
-                ASSERT_TRUE(bot.simulation->Initialize(bot.client->MakeGenerator()));
-                ASSERT_TRUE(bot.client->Attach(*bot.simulation));
-            }
-            if (bot.manual) {
-                bot.client->Poll();
-                return;
-            }
-            const uint32_t n = bot.client->TicksDue(dt);
-            for (uint32_t i = 0; i < n; ++i) {
-                const sim::PlayerInput in = bot.client->Predicting() ? bot.controls(bot) : sim::PlayerInput{};
-                bot.client->RunTick(in);
-                // Reproducible runs (stage 6 rule): collider cooks and loads finish inside the tick.
-                if (bot.simulation) bot.simulation->Jobs().WaitIdle();
-            }
-        }
-
-        void Pass() {
-            clock += dt;
-            server.Advance(dt);
-            server.Simulation().Jobs().WaitIdle();
-            for (const std::unique_ptr<Bot>& bot : bots) ClientPass(*bot);
-        }
-
-        void Passes(int count) {
-            for (int i = 0; i < count; ++i) Pass();
-        }
-
-        /// Passes until every bot predicts its player.
-        bool Join(int maxPasses = 900) {
-            for (int i = 0; i < maxPasses; ++i) {
-                bool all = true;
-                for (const std::unique_ptr<Bot>& bot : bots) all = all && (bot->manual || bot->client->Predicting());
-                if (all) return true;
-                Pass();
-            }
-            return false;
-        }
-
-        /// Passes until the cast queue is empty and every bot has applied the server's last event and
-        /// is synced (its window current, no request out, its baseline in).
-        bool Drain(int maxPasses = 1800) {
-            for (int i = 0; i < maxPasses; ++i) {
-                bool done = server.QueuedCasts() == 0;
-                for (const std::unique_ptr<Bot>& bot : bots)
-                    done = done && bot->simulation && bot->client->AppliedOpSeq() == server.LastOpSeq() && bot->client->Synced();
-                if (done) return true;
-                Pass();
-            }
-            return false;
-        }
-
-        /// The bot's hash over its sync box and the server's over the same box, at the same opSeq.
-        void ExpectSameWorld(const Bot& bot) const {
-            const net::SyncBox box = bot.client->SyncWindow();
-            EXPECT_FALSE(box.Empty());
-            EXPECT_EQ(bot.client->AppliedOpSeq(), server.LastOpSeq());
-            const voxel::WorldHashResult c = bot.client->Hash(), s = server.Hash(box);
-            EXPECT_TRUE(c.Complete()) << c.notLoaded << " chunks of the sync box not current";
-            EXPECT_TRUE(s.Complete());
-            EXPECT_EQ(c.hash, s.hash);
-            EXPECT_EQ(c.solidChunks, s.solidChunks);
-            const net::EntityComparison e = net::CompareEntities(server.Entities(), bot.client->Entities());
-            EXPECT_TRUE(e.Agree(0.05f)) << e.Describe();
-        }
-
-        /// A crater on the flat ground at (x, z) metres.
-        bool Crater(double x, double z, float radius = 1.5f) {
-            return server.QueueCast(sim::BlastDesc{glm::dvec3(x, kGroundMetres, z), radius, 6.0f});
-        }
-
-        double clock = 0.0;
-        double dt = 1.0 / 60.0;
-        uint32_t storeLimit = 0;
-        net::Impairment impairment;
-        net::LoopbackTransport serverLoop;
-        net::ImpairedTransport serverLink;
-        net::Server server;
-        bool started = false;
-        std::vector<std::unique_ptr<Bot>> bots;
-    };
-
-    /// Controls that run the player to `points` (metres, x / z) in order, then stand.
-    std::function<sim::PlayerInput(Field::Bot&)> Walk(const sim::RegionDesc& region, std::vector<glm::vec2> points,
-                                                       std::shared_ptr<net::BotPilot>* out = nullptr) {
-        net::PilotSettings ps;
-        ps.waypoints = std::move(points);
-        ps.jumps = false;
-        ps.stuckTicks = 600;
-        auto pilot = std::make_shared<net::BotPilot>(region, 77, ps);
-        if (out) *out = pilot;
-        return [pilot](Field::Bot& bot) { return pilot->Next(bot.client->Player()); };
-    }
-
-    sim::PlayerInput Stand(Field::Bot&) { return {}; }
-
-    glm::ivec3 ChunkAt(double x, double y, double z) {
-        return voxel::VoxelToChunk(glm::ivec3(glm::floor(glm::dvec3(x, y, z) / 0.125)));
-    }
-}
+#include "FieldHarness.h"
 
 // --- the window ------------------------------------------------------------------------------------
 
@@ -382,6 +181,8 @@ TEST(ClientWindow, AChunkThatLeavesAndComesBackAfterEditsIsSentAgain) {
     f.ExpectSameWorld(bot);
 }
 
+// A window that jumps away while most of its bulk queue waits: the queued chunks that left are never
+// sent (pruned when the update comes, review of stage 7b), and the new window syncs without a reset.
 TEST(ClientWindow, QueuedChunksThatLeaveTheWindowAreDropped) {
     Field f(Settings(), Lossy());
     ASSERT_TRUE(f.started);
@@ -413,10 +214,13 @@ TEST(ClientWindow, QueuedChunksThatLeaveTheWindowAreDropped) {
         synced = bot.client->Synced() && bot.client->AppliedOpSeq() == f.server.LastOpSeq();
     }
     ASSERT_TRUE(synced);
-    std::printf("teleport: %llu ChunkData sent before, %llu in all, %u dropped at dequeue; client: %u stale, %u installed\n",
+    std::printf("teleport: %llu ChunkData sent before, %llu in all, %llu pruned at the window update, %u dropped at dequeue; client: %u "
+                "stale, %u installed\n",
                 static_cast<unsigned long long>(sentBefore), static_cast<unsigned long long>(f.server.Stats().chunkData),
-                f.server.Stats().chunksDropped, bot.client->Sync().Stats().staleChunkData, bot.client->Sync().Stats().chunksInstalled);
-    EXPECT_GT(f.server.Stats().chunksDropped, 20u);
+                static_cast<unsigned long long>(f.server.Stats().queuePruned), f.server.Stats().chunksDropped,
+                bot.client->Sync().Stats().staleChunkData, bot.client->Sync().Stats().chunksInstalled);
+    // Since the review of stage 7b the window update prunes them (7a dropped them at dequeue).
+    EXPECT_GT(f.server.Stats().queuePruned, 20u);
     EXPECT_EQ(bot.client->Stats().windowResets, 0u);
     EXPECT_EQ(bot.client->Window().min, sim::ClientWindowMinChunk(f.server.Region(), kWindow, east));
     f.ExpectSameWorld(bot);

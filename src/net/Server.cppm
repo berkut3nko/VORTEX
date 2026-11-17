@@ -105,6 +105,33 @@ export namespace vortex::net {
         /// distance from the client's player (1 + distance / bodyPriorityMetres).
         size_t snapshotBytes = kSnapshotBudgetBytes;
         float bodyPriorityMetres = 16.0f;
+        /// The checks (stage 7b): a HashCheck per joined peer every `hashCheckTicks` (once its first
+        /// window ack went out) with the chunks `hashCheck` picks, and an EntityCheck every
+        /// `entityCheckTicks` (once its baseline ended), half a period after its HashCheck; both
+        /// staggered by slot and sent right after the peer's events (0 turns one off: tests).
+        uint32_t hashCheckTicks = 120;
+        uint32_t entityCheckTicks = 120;
+        HashCheckSettings hashCheck;
+    };
+
+    /// @brief What server terrain mode cost one peer (stage 7b M-b; vortex_server's `Terrain:` lines):
+    /// the bytes of its first terrain-mode update (the join, or the reset of a switch) and of each later
+    /// window step - the TerrainAck and the ChunkData queued by it, counted as they are sent (a chunk
+    /// dropped at dequeue counts nothing).
+    struct TerrainPeerCost {
+        bool terrainMode = false;
+        uint32_t firstSeq = 0;            ///< the WindowUpdate it started with
+        uint64_t joinAckBytes = 0, joinDataBytes = 0;
+        uint32_t joinChunks = 0, joinUniform = 0;
+        uint32_t steps = 0;
+        uint64_t stepBytes = 0, maxStepBytes = 0;   ///< ack + data of the later updates: sum, and the largest one
+        uint32_t queuedChunks = 0;        ///< chunks still queued for it
+        uint32_t queuedOutsideWindow = 0; ///< ... of them outside its window (0 since the review of stage 7b: pruned)
+        /// The TerrainAcks of the later updates alone (events channel), by the step's direction: along x
+        /// only, along z only, both (review of stage 7b: protocol 10 codes the entering slab only).
+        std::array<uint32_t, 3> ackSteps{};
+        std::array<uint64_t, 3> ackStepBytes{}, maxAckStepBytes{};
+        uint32_t maxQueuedChunks = 0;     ///< the most queued for it after a window update
     };
 
     /// @brief One cast as the server ran it (for logs, tests and the stage-8 delay histogram).
@@ -133,6 +160,23 @@ export namespace vortex::net {
 
     struct ServerStats {
         double preloadSeconds = 0.0;      ///< LoadBlocking of the whole window at start.
+        /// Wall clock of whole Ticks (receive to snapshots; logged only, review of stage 7b): the sum, the
+        /// largest, and how many took longer than one tick (1/60 s). In a tool whose bots share the
+        /// process and its cores, an upper bound.
+        double tickSeconds = 0.0, maxTickSeconds = 0.0;
+        uint32_t ticksTimed = 0, ticksOverBudget = 0;
+        /// Ticks by wall clock in 0.25 ms buckets, the last one for 50 ms and more (TickPercentile).
+        std::array<uint32_t, 201> tickHistogram{};
+        /// @brief The tick time (seconds) under which `fraction` of the timed ticks stayed (bucket bound).
+        double TickPercentile(double fraction) const {
+            const double want = fraction * static_cast<double>(ticksTimed);
+            double seen = 0.0;
+            for (size_t i = 0; i < tickHistogram.size(); ++i) {
+                seen += static_cast<double>(tickHistogram[i]);
+                if (seen >= want && tickHistogram[i] > 0) return static_cast<double>(i + 1) * 0.00025;
+            }
+            return maxTickSeconds;
+        }
         uint32_t templateOps = 0;         ///< Operations 1..k of the template.
         uint32_t castsQueued = 0, castsRun = 0, castsRejected = 0, castsOverdue = 0;
         /// Ticks a cast waited in the queue: [0..6] and 7 or more.
@@ -179,6 +223,42 @@ export namespace vortex::net {
         uint32_t bulkOverWindow = 0;
         uint32_t modelRequestRepeats = 0; ///< ModelRequest NetIds already queued for that peer (ignored)
         uint32_t baselineNear = 0;        ///< BaselineNear markers sent
+
+        // Checks (stage 7b).
+        uint32_t hashChecksSent = 0;
+        std::array<uint64_t, 3> hashCheckEntries{};   ///< by net::HashCheckKind: recent, modified, pristine
+        uint32_t repairsRequested = 0;    ///< ChunkRequest coordinates with reason Repair (the clients' mismatches)
+        uint32_t repairsSent = 0;         ///< ChunkData answers of such requests
+        uint32_t entityChecksSent = 0;
+        uint32_t entityListRequests = 0;  ///< EntityListRequests taken (one list per peer at a time)
+        uint32_t entityListsMerged = 0;   ///< ... that came while that peer's list was still owed
+        uint32_t entityListsSent = 0;
+        /// Lists that waited for their peer's last list to be entityCheckTicks / 2 old (review of stage
+        /// 7b: one list per peer per half check period, whatever a client asks). Each delayed list counts
+        /// once, however many ticks it waited (recheck of stage 7b).
+        uint32_t entityListsDelayed = 0;
+        uint64_t entityListBytes = 0;
+        double checkSeconds = 0.0, maxCheckSeconds = 0.0;   ///< wall clock of building the checks (logged only)
+        // Server terrain mode (stage 7b M-b).
+        uint32_t terrainModePeers = 0;    ///< peers that asked for it (kTerrainMode)
+        uint32_t terrainAcks = 0;
+        uint64_t terrainAckBytes = 0;
+        uint64_t terrainUniform = 0;      ///< entering chunks the acks coded uniform (no data)
+        uint64_t terrainData = 0;         ///< ... coded data the server holds Dense (code 1)
+        uint64_t terrainHidden = 0;       ///< ... coded data the server holds Packed (code 3)
+        uint32_t terrainChunkData = 0;    ///< ChunkData sent to terrain-mode peers
+        uint64_t terrainChunkBytes = 0;
+        double terrainAckSeconds = 0.0, maxTerrainAckSeconds = 0.0;   ///< wall clock of building the acks (logged only)
+        /// ... of the acks of window steps alone (not a join or a reset, which describe the whole box).
+        double maxTerrainStepAckSeconds = 0.0;
+        uint32_t terrainStepAcks = 0;
+        double terrainStepAckSeconds = 0.0;
+        /// Wall clock of sorting the peers' bulk queues (the forced sorts of window updates, which the
+        /// ack time includes, and the re-sorts when a player crosses a chunk border; logged only).
+        double queueSortSeconds = 0.0, maxQueueSortSeconds = 0.0;
+        /// Queued chunks taken out because they left their peer's window (review of stage 7b: a window
+        /// update prunes the queue instead of leaving them to the dequeue).
+        uint64_t queuePruned = 0;
         /// Wall clock of the bulk encodes (EncodeChunkAt, baseline entities) per tick: sum and the
         /// largest tick (logged only; review of stage 7a).
         double encodeSeconds = 0.0, maxEncodeSecondsPerTick = 0.0;
@@ -317,13 +397,24 @@ export namespace vortex::net {
         voxel::WorldHashResult Hash(const SyncBox& box) const;
         /// @brief Chunks the modified map holds (every chunk an event changed, never cleared).
         size_t ModifiedChunks() const;
+        /// @brief The modified map holds `chunk` (an event changed it): not pristine.
+        bool IsModified(const glm::ivec3& chunk) const;
+        /// @brief The chunks the last operations changed, oldest first, as `(opSeq, chunk)` (at most 64;
+        /// what a HashCheck's "recent" entries come from, stage 7b).
+        std::vector<std::pair<uint32_t, glm::ivec3>> RecentChanged() const;
         /// @brief How many times each chunk coordinate came in a ChunkRequest (any peer, as received;
         /// tests: no chunk is requested twice). Empty unless ServerSettings::countChunkRequests.
         std::vector<std::pair<glm::ivec3, uint32_t>> ChunkRequestCounts() const;
         /// @brief The sync box of the joined client in `slot`: its last WindowUpdate's window inside
         /// the server's (what its Client::Hash covers); empty when there is no such client or it sent
         /// no window yet. Valid inside the SetOnClientLeft callback.
+        /// @brief The server tick at which the HashCheck planner of the peer in `slot` last picked
+        /// `chunk` (tests); false: never picked, or it left that peer's box since.
+        bool LastHashChecked(uint8_t slot, const glm::ivec3& chunk, uint32_t& tick) const;
         SyncBox ClientSyncBox(uint8_t slot) const;
+        /// @brief Server terrain mode's cost for the joined client in `slot` (terrainMode false when it
+        /// never asked for it, or there is no such client).
+        TerrainPeerCost TerrainCost(uint8_t slot) const;
         /// @brief Changes ServerSettings::maxBulkBytesPerSecond from the next tick on (0 = no cap; an
         /// admin's knob, and tests that hold a chunk's data back).
         void SetMaxBulkBytesPerSecond(double bytesPerSecond);

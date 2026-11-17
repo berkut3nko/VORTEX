@@ -1356,4 +1356,171 @@ TEST(Session, HostileOrOutOfOrderSyncMessagesAreIgnoredOrEndThePeer) {
     }
     EXPECT_EQ(s.server.Stats().malformedRequests, 2u);
     EXPECT_TRUE(rows.disconnected);
+
+    // Stage 7b. A peer that joined: 50 EntityListRequests in one tick give one list (49 merged), sent
+    // right after its events; a ChunkRequest with an unknown reason ends it.
+    auto join = [&](RawPeer& peer) {
+        net::LoopbackTransport::Connect(s.serverLoop, peer.loop);
+        peer.Poll();
+        peer.Send(net::Encode(net::Hello{net::kProtocolVersion, s.server.BuildHashValue(), TestToken()}));
+        for (int i = 0; i < 2; ++i) {
+            s.Tick();
+            peer.Poll();
+        }
+        peer.Send(net::Encode(net::WindowUpdate{1, 0, region.min, region.size}));
+        for (int i = 0; i < 2; ++i) {
+            s.Tick();
+            peer.Poll();
+        }
+    };
+    RawPeer lists;
+    join(lists);
+    const uint32_t listsBefore = s.server.Stats().entityListsSent;
+    for (int i = 0; i < 50; ++i) lists.Send(net::Encode(net::EntityListRequest{s.server.LastOpSeq()}));
+    for (int i = 0; i < 3; ++i) {
+        s.Tick();
+        lists.Poll();
+    }
+    EXPECT_EQ(s.server.Stats().entityListsSent, listsBefore + 1);
+    EXPECT_EQ(s.server.Stats().entityListsMerged, 49u);
+    const std::vector<net::EntityList> sent = lists.Take<net::EntityList>(net::MessageType::EntityList);
+    ASSERT_EQ(sent.size(), 1u);
+    EXPECT_EQ(sent[0].asOfOpSeq, s.server.LastOpSeq());
+    EXPECT_FALSE(lists.disconnected);
+    // Review of stage 7b: a client that asks every tick (a broken back-off) gets at most one list per
+    // half check period (60 ticks here): none more during 50 ticks of requests, then one for all of them.
+    for (int i = 0; i < 50; ++i) {
+        lists.Send(net::Encode(net::EntityListRequest{s.server.LastOpSeq()}));
+        s.Tick();
+        lists.Poll();
+    }
+    EXPECT_EQ(s.server.Stats().entityListsSent, listsBefore + 1) << "a list per request";
+    EXPECT_GT(s.server.Stats().entityListsDelayed, 0u);
+    for (int i = 0; i < 20; ++i) {
+        s.Tick();
+        lists.Poll();
+    }
+    EXPECT_EQ(s.server.Stats().entityListsSent, listsBefore + 2);
+    // Recheck of stage 7b: the delayed list is counted once, not once per tick it waited.
+    EXPECT_EQ(s.server.Stats().entityListsDelayed, 1u) << "delayed lists, not ticks of waiting";
+    EXPECT_EQ(lists.Take<net::EntityList>(net::MessageType::EntityList).size(), 1u);
+    EXPECT_FALSE(lists.disconnected);
+    std::vector<uint8_t> unknown = net::Encode(net::ChunkRequest{{region.min}, net::ChunkRequestReason::Repair});
+    unknown[1] = 7;
+    lists.Send(unknown);
+    for (int i = 0; i < 3; ++i) {
+        s.Tick();
+        lists.Poll();
+    }
+    EXPECT_EQ(s.server.Stats().malformedRequests, 3u);
+    EXPECT_TRUE(lists.disconnected);
+    // Server terrain mode (stage 7b M-b): a terrain-mode WindowUpdate is answered with a TerrainAck
+    // that describes every chunk of the server's window inside it (none left at code 0; the first
+    // update's whole box enters) and queues the non-uniform ones; the flag is sticky - an update
+    // without it ends the peer (choice 12).
+    RawPeer terrain;
+    net::LoopbackTransport::Connect(s.serverLoop, terrain.loop);
+    terrain.Poll();
+    terrain.Send(net::Encode(net::Hello{net::kProtocolVersion, s.server.BuildHashValue(), TestToken()}));
+    for (int i = 0; i < 2; ++i) {
+        s.Tick();
+        terrain.Poll();
+    }
+    terrain.Send(net::Encode(net::WindowUpdate{1, net::WindowUpdate::kTerrainMode, region.min, region.size}));
+    for (int i = 0; i < 3; ++i) {
+        s.Tick();
+        terrain.Poll();
+    }
+    EXPECT_EQ(s.server.Stats().malformedRequests, 3u);
+    EXPECT_FALSE(terrain.disconnected);
+    EXPECT_TRUE(terrain.Take<net::WindowAck>(net::MessageType::WindowAck).empty());
+    const std::vector<net::TerrainAck> tacks = terrain.Take<net::TerrainAck>(net::MessageType::TerrainAck);
+    ASSERT_EQ(tacks.size(), 1u);
+    EXPECT_EQ(tacks[0].size, region.size);
+    uint64_t described = 0, data = 0;
+    for (const net::TerrainRun& r : tacks[0].runs) {
+        described += r.code != net::TerrainCode::NotInAck ? r.count : 0u;
+        data += r.code == net::TerrainCode::Data || r.code == net::TerrainCode::HiddenData ? r.count : 0u;
+    }
+    EXPECT_EQ(described, static_cast<uint64_t>(region.size.x) * region.size.y * region.size.z) << "the region's window is the server's";
+    EXPECT_GT(data, 3u) << "pristine non-uniform chunks are data too";
+    EXPECT_EQ(s.server.Stats().terrainModePeers, 1u);
+    terrain.Send(net::Encode(net::WindowUpdate{2, 0, region.min, region.size}));
+    for (int i = 0; i < 3; ++i) {
+        s.Tick();
+        terrain.Poll();
+    }
+    EXPECT_EQ(s.server.Stats().malformedRequests, 4u);
+    EXPECT_TRUE(terrain.disconnected);
+}
+
+// Stage 7b (networking.md "HashCheck: server", "Wire EntityCheck"): every joined peer gets a HashCheck
+// every 120 ticks once its first window ack went out, and an EntityCheck every 120 ticks once its
+// baseline ended, each sent right after the peer's events: every check a client processes is at its
+// stream position (applied == its opSeq), over the drill's 3000 ticks with a late joiner, 5 % loss and
+// reordering. With events held in the server by maxEventBytesInFlight (a test hook) the checks wait
+// with them and still come in order. No check finds anything (no fault was injected).
+TEST(Session, ChecksAreSentEvery2sAfterTheJoinAndAtTheStreamPosition) {
+    for (const uint32_t held : {0u, 1500u}) {
+        SCOPED_TRACE(held == 0 ? "events never held" : "events held by maxEventBytesInFlight");
+        net::ServerSettings settings = Settings(DrillRegion());
+        settings.maxEventBytesInFlight = held;
+        Session s(settings, Lossy());
+        ASSERT_TRUE(s.started);
+        net::ClientSettings presenting;
+        presenting.presentation = true;
+        Session::Bot& a = s.AddClient(presenting);
+        Session::Bot& b = s.AddClient({}, false);
+        const net::BlastDrill drill(s.server.Region(), DefaultIds(), kGround);
+        const uint32_t ticks = held == 0 ? 3000 : 1200;
+        uint32_t joinTick = 0;
+        for (uint32_t step = 0; step * kStepTicks < ticks; ++step) {
+            if (step == ticks / 3 / kStepTicks) {
+                s.Connect(b);
+                joinTick = s.server.TickNumber();
+            }
+            ASSERT_TRUE(net::RunDrillStep(s.server, drill.Step(step)));
+            for (uint32_t t = 0; t < kStepTicks; ++t) s.Tick();
+            ASSERT_FALSE(s.server.Failed());
+        }
+        ASSERT_TRUE(s.Drain());
+        const net::ServerStats& st = s.server.Stats();
+        uint32_t hashChecks = 0, entityChecks = 0;
+        for (Session::Bot* bot : {&a, &b}) {
+            const net::ClientStats& c = bot->client->Stats();
+            EXPECT_EQ(c.checksOutOfOrder, 0u);
+            EXPECT_EQ(bot->client->Sync().Stats().checksOutOfOrder, 0u);
+            EXPECT_EQ(bot->client->Sync().Stats().mismatches, 0u);
+            EXPECT_EQ(c.entityMismatches, 0u);
+            hashChecks += c.hashChecks;
+            entityChecks += c.entityChecks + c.entityChecksPartial + c.entityChecksSkipped + c.entityChecksAhead;
+            std::printf("[ checks ] %s: %u hash checks (%llu entries equal, %llu ahead, %llu not current), %u entity checks (%u partial, %u "
+                        "skipped, %u ahead), %u out of order\n",
+                        bot == &a ? "A" : "B", c.hashChecks, static_cast<unsigned long long>(bot->client->Sync().Stats().checkEqual),
+                        static_cast<unsigned long long>(bot->client->Sync().Stats().checkAhead),
+                        static_cast<unsigned long long>(bot->client->Sync().Stats().checkNotCurrent), c.entityChecks, c.entityChecksPartial,
+                        c.entityChecksSkipped, c.entityChecksAhead, c.checksOutOfOrder);
+        }
+        // Every check sent was processed, at its position (the last one of each client may still be in flight).
+        EXPECT_LE(hashChecks, st.hashChecksSent);
+        EXPECT_GE(hashChecks + 2, st.hashChecksSent);
+        EXPECT_LE(entityChecks, st.entityChecksSent);
+        EXPECT_GE(entityChecks + 2, st.entityChecksSent);
+        std::printf("[ checks ] server: %u hash checks, %u entity checks over %u ticks; %u batches held\n", st.hashChecksSent, st.entityChecksSent,
+                    s.server.TickNumber(), st.sendsHeld);
+        if (held == 0) {
+            // One of each kind per 120 ticks per peer, from its join on (B joined a third of the way in).
+            const uint32_t total = s.server.TickNumber();
+            EXPECT_GE(a.client->Stats().hashChecks + 2, total / 120);
+            EXPECT_LE(a.client->Stats().hashChecks, total / 120 + 1);
+            EXPECT_GE(b.client->Stats().hashChecks + 3, (total - joinTick) / 120);
+            EXPECT_LE(b.client->Stats().hashChecks, (total - joinTick) / 120 + 1);
+            EXPECT_GE(a.client->Stats().entityChecks + a.client->Stats().entityChecksPartial + 3, total / 120);
+        } else {
+            EXPECT_GT(st.sendsHeld, 0u) << "the hook held nothing";
+            EXPECT_GT(st.hashChecksSent, 0u);
+        }
+        const voxel::WorldHashResult server = s.server.Hash();
+        for (Session::Bot* bot : {&a, &b}) EXPECT_EQ(bot->client->Hash().hash, server.hash);
+    }
 }

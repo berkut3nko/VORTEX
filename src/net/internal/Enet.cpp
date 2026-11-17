@@ -1,5 +1,16 @@
 module;
 
+// Windows (docs/two-pc-test-windows.md 4.9): <enet/enet.h> includes <winsock2.h> / <windows.h>, whose
+// min / max macros break std::min / std::max below and whose full set of headers is not needed.
+// Nothing on other platforms.
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#endif
 #include <enet/enet.h>
 
 #include <algorithm>

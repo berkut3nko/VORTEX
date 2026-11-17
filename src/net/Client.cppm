@@ -6,6 +6,8 @@ module;
 #include <array>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
 export module vortex.net:client;
@@ -14,6 +16,7 @@ import vortex.voxel;
 import vortex.scene;
 import vortex.sim;
 import :transport;
+import :wire;
 import :messages;
 import :prediction;
 import :session;
@@ -72,6 +75,37 @@ export namespace vortex::net {
         /// rest wait for the next Poll (review of stage 7a: after the game's 3 s Attach hundreds arrive
         /// at once). A count, not a time: runs stay reproducible. 0 = no limit.
         uint32_t maxBulkPerPoll = 64;
+
+        // Stage 7b: the checks.
+        /// Despawned NetIds kept (a FIFO; review: stage 6's set grew for the session). An evicted one
+        /// can only let a stale answer re-create a dead copy, which the next EntityCheck finds and the
+        /// list removes (networking.md "Stage 7b plan", choice 11).
+        size_t maxTombstones = 4096;
+        /// After this many entity lists asked for in a row without a matching check in between, the
+        /// next request waits `entityListBackoffTicks`, then three times that (server ticks): a client
+        /// that cannot make a copy (bodies full) does not ask every 2 s.
+        uint32_t entityListsBeforeBackoff = 3;
+        uint32_t entityListBackoffTicks = 600;
+        /// Wraps the region's generator (MakeGenerator, and the probe hashes at the Welcome): tests and
+        /// vortex_server's broken bots (--bot-broken-chunk) give a client another generator. Empty = none.
+        std::function<std::shared_ptr<voxel::IWorldGenerator>(std::shared_ptr<voxel::IWorldGenerator>)> wrapGenerator;
+        /// Tests: a live entity event (EntitySpawn of a NetId, EntityDespawn, EntityRest, ObjectModel,
+        /// EntityWake) for which this returns true is dropped as if it never came (an EntityCheck
+        /// mismatch to repair). Empty = none.
+        std::function<bool(uint32_t seq, const Event& event)> testDropEntityEvent;
+        /// Server terrain mode (stage 7b M-b): a client whose probe chunks differ from the server's at
+        /// the Welcome (with this on), or whose HashChecks found this many distinct pristine chunks its
+        /// generator made differently, stops generating the server's terrain and receives its whole
+        /// window from the server (TerrainAck, ChunkData), for the rest of the session.
+        bool terrainModeOnProbeMismatch = true;
+        uint32_t pristineFailuresForTerrainMode = 3;
+    };
+
+    /// @brief Why a client is in server terrain mode (stage 7b).
+    enum class TerrainModeReason : uint8_t {
+        None,             ///< it generates the server's terrain itself
+        Probes,           ///< probe chunks differed at the Welcome: from the first WindowUpdate on
+        PristineChecks,   ///< HashChecks found ClientSettings::pristineFailuresForTerrainMode pristine chunks it made differently
     };
 
     enum class ClientState : uint8_t {
@@ -152,6 +186,35 @@ export namespace vortex::net {
         double bulkSeconds = 0.0, maxBulkSeconds = 0.0;
         uint64_t polls = 0;
         uint32_t maxBulkInPoll = 0;       ///< bulk messages processed in one Poll at most
+
+        // Checks (stage 7b). The HashCheck entry counts are ChunkSync::Stats() (checkEqual, checkAhead, ...).
+        uint32_t hashChecks = 0;          ///< HashChecks compared at their stream position
+        uint32_t checksOutOfOrder = 0;    ///< HashChecks / EntityChecks / EntityLists not at applied == their opSeq (expected 0)
+        uint32_t mismatchesModified = 0;  ///< HashCheck entries that differed, of chunks the server modified
+        uint32_t mismatchesPristine = 0;  ///< ... of chunks the server never modified
+        uint32_t pristineFailures = 0;    ///< distinct pristine chunks this client's generator made differently (terrain mode's trigger, M-b)
+        uint32_t repairsRequested = 0;    ///< coordinates sent in ChunkRequests with reason Repair
+        uint32_t entityChecks = 0;        ///< EntityChecks compared in full (count, ids, models)
+        uint32_t entityChecksPartial = 0; ///< ... compared on count and ids only (model requests out: amendment 8)
+        uint32_t entityChecksSkipped = 0; ///< ... skipped: the baseline open or a list asked for
+        uint32_t entityChecksAhead = 0;   ///< ... skipped: entity data ahead of the check was processed (amendment 3)
+        uint32_t entityMismatches = 0;    ///< EntityChecks that did not match
+        uint32_t entityListRequests = 0;  ///< EntityListRequests sent
+        uint32_t entityListsBackedOff = 0;   ///< mismatches that sent no request (the back-off)
+        uint32_t entityLists = 0;         ///< EntityLists applied
+        uint32_t copiesRestored = 0;      ///< listed NetIds without a copy: asked for (ModelRequest)
+        uint32_t copiesReplaced = 0;      ///< copies with another model than the list's: removed and asked for
+        uint32_t copiesDropped = 0;       ///< copies the list does not have (as old as the list): removed and tombstoned
+        uint32_t tombstonesEvicted = 0;   ///< despawned NetIds forgotten (maxTombstones)
+        uint32_t testDroppedEvents = 0;   ///< entity events dropped by ClientSettings::testDropEntityEvent
+        double checkSeconds = 0.0, maxCheckSeconds = 0.0;   ///< wall clock of the checks (logged only)
+
+        // Server terrain mode (stage 7b M-b); the acks' outcomes are ChunkSync::Stats().
+        uint32_t terrainModeTick = 0;     ///< server tick (newest snapshot) terrain mode started at; 0 = at the Welcome or never
+        uint32_t terrainAcks = 0;
+        uint64_t terrainAckBytes = 0;
+        uint32_t terrainChunkData = 0;    ///< ChunkData received while in terrain mode
+        uint64_t terrainChunkBytes = 0;
     };
 
     /// @brief How the own player's prediction went (networking.md stage 4: "correction rate logged").
@@ -278,8 +341,17 @@ export namespace vortex::net {
         /// buffer mirrors the store): the store is then min(region cells, limit), and the region fits
         /// only if its loaded window leaves ClientSettings::minFreeStoreSlots free (Attach checks).
         sim::SimulationConfig MakeSimulationConfig(sim::SimulationConfig base = {}, uint32_t storeLimit = 0) const;
-        /// @brief The region's generator with the default world material ids.
+        /// @brief The session's generator for this client's world (from Welcomed on): a SessionGenerator
+        /// around the region's generator (ClientSettings::wrapGenerator applied), which stops
+        /// generating the server's terrain once server terrain mode starts (stage 7b). Every call
+        /// returns the same generator.
         std::shared_ptr<voxel::IWorldGenerator> MakeGenerator() const;
+        /// @brief Server terrain mode (stage 7b): this client receives its whole window from the
+        /// server instead of generating it (sticky for the session).
+        bool TerrainMode() const;
+        TerrainModeReason TerrainModeWhy() const;
+        /// @brief The generator MakeGenerator hands out (null before the Welcome).
+        std::shared_ptr<const SessionGenerator> ClientGenerator() const;
         /**
          * @brief Takes the simulation the events are applied to: refused (false, logged; the state
          * stays Welcomed) when it is not initialised, has a save directory (a session world is
@@ -329,9 +401,22 @@ export namespace vortex::net {
         /// @brief WorldHash over SyncWindow(); every chunk there that is not current counts in
         /// `notLoaded` (incomplete: not comparable).
         voxel::WorldHashResult Hash() const;
+        /// @brief Despawned NetIds remembered now (at most ClientSettings::maxTombstones).
+        size_t Tombstones() const;
+        /// @brief Tests: this client loses its copy of `netId` (as a copy its own scene removed:
+        /// counted in copiesLost); false without such a copy. The next EntityCheck sees it missing.
+        bool TestDestroyCopy(uint32_t netId);
 
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;
     };
+
+    /// @brief The client's check counters as one line of text (stage 7b; vortex_server's and the game's
+    /// `Checks:` lines, which tools/session-check.sh reads: "N hash mismatches", "N entity
+    /// mismatches", "N out of order").
+    std::string DescribeChecks(const Client& client);
+    /// @brief One line on server terrain mode (stage 7b): "no", or why and since when, the acks, the
+    /// data received and the ticks the player was held (vortex_server's and the game's `Terrain:` lines).
+    std::string DescribeTerrainMode(const Client& client);
 }

@@ -500,14 +500,21 @@ TEST(Wire, ForgedBytesNeverCrashADecoder) {
                                                      net::Encode(net::WindowUpdate{1, 0, {1, 2, 3}, {4, 5, 6}}), net::Encode(ack),
                                                      net::Encode(chunk), net::Encode(net::ChunkRequest{{{1, 2, 3}, {4, 5, 6}}}),
                                                      net::Encode(net::ModelRequest{{7, 8}}), net::Encode(baseline),
-                                                     net::Encode(net::BaselineEnd{3, 4}), net::Encode(net::BaselineNear{5, 6})};
+                                                     net::Encode(net::BaselineEnd{3, 4}), net::Encode(net::BaselineNear{5, 6}),
+                                                     // Stage 7b's messages.
+                                                     net::Encode(net::TerrainAck{2, 9, {4, 2, 3}, {{5, net::TerrainCode::Uniform, 3}, {7, net::TerrainCode::Data, 0},
+                                                                                                   {12, net::TerrainCode::NotInAck, 0}}}),
+                                                     net::Encode(net::HashCheck{4, {{{1, 2, 3}, 77, true}, {{-1, 0, 5}, 78, false}}}),
+                                                     net::Encode(net::EntityCheck{5, 3, 7, 9}), net::Encode(net::EntityListRequest{6}),
+                                                     net::Encode(net::EntityList{7, {{3, 11}, {9, 12}}}),
+                                                     net::Encode(net::ChunkRequest{{{1, 2, 3}}, net::ChunkRequestReason::Repair})};
     uint32_t decoded = 0;
     for (int i = 0; i < 4000; ++i) {
         std::vector<uint8_t> bytes;
         if (i % 2 == 0) {
             bytes.resize(rng.NextBounded(200));
             for (uint8_t& b : bytes) b = static_cast<uint8_t>(rng.NextU32());
-            if (!bytes.empty()) bytes[0] = static_cast<uint8_t>(1 + rng.NextBounded(15));
+            if (!bytes.empty()) bytes[0] = static_cast<uint8_t>(1 + rng.NextBounded(20));
         } else {
             bytes = valid[rng.NextBounded(static_cast<uint32_t>(valid.size()))];
             for (int k = 0; k < 3; ++k) bytes[rng.NextBounded(static_cast<uint32_t>(bytes.size()))] = static_cast<uint8_t>(rng.NextU32());
@@ -530,6 +537,19 @@ TEST(Wire, ForgedBytesNeverCrashADecoder) {
         net::BaselineNear bnear;
         decoded += net::Decode(bytes, wu) + net::Decode(bytes, wa) + net::Decode(bytes, cd) + net::Decode(bytes, cr) + net::Decode(bytes, mr) +
                    net::Decode(bytes, be) + net::Decode(bytes, bn) + net::Decode(bytes, bnear);
+        net::TerrainAck ta;
+        net::HashCheck hc;
+        net::EntityCheck ec;
+        net::EntityListRequest elr;
+        net::EntityList el;
+        decoded += net::Decode(bytes, ta) + net::Decode(bytes, hc) + net::Decode(bytes, ec) + net::Decode(bytes, elr) + net::Decode(bytes, el);
+        // A TerrainAck that decodes never codes more cells than its box (protocol 10: it codes the
+        // entering cells, at most the whole box; the client checks they are exactly its entering ones).
+        if (net::Decode(bytes, ta)) {
+            uint64_t cells = 0;
+            for (const net::TerrainRun& r : ta.runs) cells += r.count;
+            EXPECT_LE(cells, static_cast<uint64_t>(ta.size.x) * static_cast<uint64_t>(ta.size.y) * static_cast<uint64_t>(ta.size.z));
+        }
     }
     SUCCEED() << decoded << " forged messages happened to decode";
 }
@@ -581,7 +601,7 @@ TEST(Wire, ChunkSyncMessagesRoundTripAtTheirSizes) {
     EXPECT_EQ(u2.minChunk, u.minChunk);
     EXPECT_EQ(u2.size, u.size);
     EXPECT_TRUE(refusedCut(ub, net::WindowUpdate{}));
-    for (const net::WindowUpdate& bad : {net::WindowUpdate{1, net::WindowUpdate::kTerrainMode, {0, 0, 0}, {4, 4, 4}},
+    for (const net::WindowUpdate& bad : {net::WindowUpdate{1, 4, {0, 0, 0}, {4, 4, 4}},
                                          net::WindowUpdate{1, 0, {0, 0, 0}, {0, 4, 4}}, net::WindowUpdate{1, 0, {0, 0, 0}, {129, 4, 4}},
                                          net::WindowUpdate{1, 0, {1 << 25, 0, 0}, {4, 4, 4}}})
         EXPECT_FALSE(net::Decode(net::Encode(bad), u2));
@@ -619,10 +639,11 @@ TEST(Wire, ChunkSyncMessagesRoundTripAtTheirSizes) {
 
     const net::ChunkRequest cr{{{1, 2, 3}, {-4, 5, -6}}};
     const std::vector<uint8_t> crb = net::Encode(cr);
-    EXPECT_EQ(crb.size(), 3u + 12u * 2u);
+    EXPECT_EQ(crb.size(), 4u + 12u * 2u);      // protocol 9: the reason byte
     net::ChunkRequest cr2;
     ASSERT_TRUE(net::Decode(crb, cr2));
     EXPECT_EQ(cr2.chunks, cr.chunks);
+    EXPECT_EQ(cr2.reason, net::ChunkRequestReason::Sync);
     EXPECT_TRUE(refusedCut(crb, net::ChunkRequest{}));
     EXPECT_FALSE(net::Decode(net::Encode(net::ChunkRequest{}), cr2));
     EXPECT_FALSE(net::Decode(net::Encode(net::ChunkRequest{std::vector<glm::ivec3>(net::kMaxChunkRequest + 1)}), cr2));
@@ -677,4 +698,140 @@ TEST(Wire, ChunkSyncMessagesRoundTripAtTheirSizes) {
     EXPECT_EQ(n2.count, 78u);
     EXPECT_TRUE(refusedCut(nb, net::BaselineNear{}));
     EXPECT_FALSE(net::Decode(eb, n2)) << "a BaselineEnd is not a BaselineNear";
+}
+
+// Stage 7b (protocol 9, 10 since its review; networking.md "Stage 7b plan" and its amendments): the
+// check and terrain-mode messages round-trip at their sizes and are refused when truncated, with
+// trailing bytes, or when they break their rules - a check count of 0 or 33, unknown flag or reason
+// bits, TerrainAck runs past the box or not adding up to their count (short or long), a run of 0,
+// code 4, code 2 without its id, list NetIds not ascending. A decoder that took a short run would
+// install chunks outside the box.
+TEST(Wire, CheckAndTerrainMessagesRoundTripAtTheirSizes) {
+    auto refusedCut = [](const std::vector<uint8_t>& bytes, auto decoded) {
+        std::vector<uint8_t> shorter(bytes.begin(), bytes.end() - 1), longer = bytes;
+        longer.push_back(0);
+        return !net::Decode(shorter, decoded) && !net::Decode(longer, decoded);
+    };
+    EXPECT_EQ(net::kProtocolVersion, 10u);
+
+    // WindowUpdate accepts the terrain-mode bit (the server decides what it means).
+    net::WindowUpdate u;
+    ASSERT_TRUE(net::Decode(net::Encode(net::WindowUpdate{4, net::WindowUpdate::kReset | net::WindowUpdate::kTerrainMode, {0, 0, 0}, {4, 4, 4}}), u));
+    EXPECT_EQ(u.flags, net::WindowUpdate::kReset | net::WindowUpdate::kTerrainMode);
+
+    // ChunkRequest with its reason; an unknown reason is refused.
+    const net::ChunkRequest cr{{{1, 2, 3}}, net::ChunkRequestReason::Repair};
+    std::vector<uint8_t> crb = net::Encode(cr);
+    EXPECT_EQ(crb.size(), 4u + 12u);
+    net::ChunkRequest cr2;
+    ASSERT_TRUE(net::Decode(crb, cr2));
+    EXPECT_EQ(cr2.reason, net::ChunkRequestReason::Repair);
+    crb[1] = 2;
+    EXPECT_FALSE(net::Decode(crb, cr2));
+    crb[1] = 7;
+    EXPECT_FALSE(net::Decode(crb, cr2));
+
+    // HashCheck: 6 + 21 n bytes, 1..32 entries, flag bit 0 only.
+    net::HashCheck h;
+    h.asOfOpSeq = 1234;
+    for (int i = 0; i < 16; ++i) h.entries.push_back({{i, -i, 2 * i}, 0x0123456789abcdefull + static_cast<uint64_t>(i), i % 3 == 0});
+    const std::vector<uint8_t> hb = net::Encode(h);
+    EXPECT_EQ(hb.size(), net::kHashCheckHeaderBytes + 16u * net::kHashCheckEntryBytes);
+    EXPECT_EQ(hb.size(), 342u);
+    net::HashCheck h2;
+    ASSERT_TRUE(net::Decode(hb, h2));
+    EXPECT_EQ(h2.asOfOpSeq, 1234u);
+    EXPECT_EQ(h2.entries, h.entries);
+    EXPECT_TRUE(refusedCut(hb, net::HashCheck{}));
+    EXPECT_FALSE(net::Decode(net::Encode(net::HashCheck{1, {}}), h2)) << "a check of 0 entries";
+    EXPECT_FALSE(net::Decode(net::Encode(net::HashCheck{1, std::vector<net::HashCheckEntry>(33)}), h2)) << "33 entries";
+    EXPECT_TRUE(net::Decode(net::Encode(net::HashCheck{1, std::vector<net::HashCheckEntry>(32)}), h2));
+    std::vector<uint8_t> flagged = net::Encode(net::HashCheck{1, {{{1, 1, 1}, 5, true}}});
+    flagged.back() = 2;
+    EXPECT_FALSE(net::Decode(flagged, h2)) << "an unknown flag bit";
+    EXPECT_FALSE(net::Decode(net::Encode(net::HashCheck{1, {{{1 << 25, 0, 0}, 5, false}}}), h2)) << "a coordinate out of range";
+
+    // EntityCheck 21 bytes, EntityListRequest 5.
+    const net::EntityCheck ec{77, 300, 0xdeadbeef, 0x1122334455667788ull};
+    const std::vector<uint8_t> eb = net::Encode(ec);
+    EXPECT_EQ(eb.size(), net::kEntityCheckBytes);
+    net::EntityCheck ec2;
+    ASSERT_TRUE(net::Decode(eb, ec2));
+    EXPECT_EQ(ec2, ec);
+    EXPECT_TRUE(refusedCut(eb, net::EntityCheck{}));
+    const std::vector<uint8_t> lrb = net::Encode(net::EntityListRequest{88});
+    EXPECT_EQ(lrb.size(), net::kEntityListRequestBytes);
+    net::EntityListRequest lr2;
+    ASSERT_TRUE(net::Decode(lrb, lr2));
+    EXPECT_EQ(lr2.asOfOpSeq, 88u);
+    EXPECT_TRUE(refusedCut(lrb, net::EntityListRequest{}));
+
+    // EntityList: 9 + 12 n bytes, NetIds ascending and not 0.
+    net::EntityList list;
+    list.asOfOpSeq = 99;
+    for (uint32_t i = 1; i <= 300; ++i) list.entries.push_back({i * 3, 0xabcdull * i});
+    const std::vector<uint8_t> lb = net::Encode(list);
+    EXPECT_EQ(lb.size(), net::kEntityListHeaderBytes + 300u * net::kEntityListEntryBytes);
+    net::EntityList list2;
+    ASSERT_TRUE(net::Decode(lb, list2));
+    EXPECT_EQ(list2.asOfOpSeq, 99u);
+    EXPECT_EQ(list2.entries, list.entries);
+    EXPECT_TRUE(refusedCut(lb, net::EntityList{}));
+    EXPECT_TRUE(net::Decode(net::Encode(net::EntityList{5, {}}), list2)) << "an empty list (no objects) is valid";
+    EXPECT_FALSE(net::Decode(net::Encode(net::EntityList{5, {{0, 1}}}), list2));
+    EXPECT_FALSE(net::Decode(net::Encode(net::EntityList{5, {{4, 1}, {4, 2}}}), list2));
+    EXPECT_FALSE(net::Decode(net::Encode(net::EntityList{5, {{4, 1}, {3, 2}}}), list2));
+    std::printf("[ wire ] HashCheck of 16 entries %zu B, EntityCheck %zu B, EntityList of 300 objects %zu B\n", hb.size(), eb.size(), lb.size());
+
+    // TerrainAck (protocol 10): 15 + the cells it codes (LEB128) + runs; a run is LEB128 count, code,
+    // and the id for code 2.
+    net::TerrainAck ta;
+    ta.windowSeq = 3;
+    ta.asOfOpSeq = 40;
+    ta.size = {4, 3, 2};    // 24 cells
+    ta.runs = {{10, net::TerrainCode::Uniform, 0}, {200 - 190, net::TerrainCode::Data, 0}, {1, net::TerrainCode::HiddenData, 0},
+               {2, net::TerrainCode::Uniform, 7}, {1, net::TerrainCode::NotInAck, 0}};
+    const std::vector<uint8_t> tb = net::Encode(ta);
+    EXPECT_EQ(tb.size(), 15u + 1u + 3u + 2u + 2u + 3u + 2u);
+    net::TerrainAck ta2;
+    ASSERT_TRUE(net::Decode(tb, ta2));
+    EXPECT_EQ(ta2.windowSeq, 3u);
+    EXPECT_EQ(ta2.asOfOpSeq, 40u);
+    EXPECT_EQ(ta2.size, ta.size);
+    EXPECT_EQ(ta2.runs, ta.runs);
+    EXPECT_TRUE(refusedCut(tb, net::TerrainAck{}));
+    // A run of more than 127 cells (two LEB128 bytes), over the game's whole window.
+    net::TerrainAck big{1, 1, {48, 44, 48}, {{48u * 44u * 48u - 1u, net::TerrainCode::Uniform, 0}, {1, net::TerrainCode::Data, 0}}};
+    EXPECT_EQ(net::Encode(big).size(), 15u + 3u + 3u + 2u + 2u);
+    ASSERT_TRUE(net::Decode(net::Encode(big), ta2));
+    EXPECT_EQ(ta2.runs, big.runs);
+    auto refused = [&](std::vector<net::TerrainRun> runs) {
+        net::TerrainAck bad = ta;
+        bad.runs = std::move(runs);
+        net::TerrainAck out;
+        return !net::Decode(net::Encode(bad), out);
+    };
+    EXPECT_FALSE(refused({{23, net::TerrainCode::Uniform, 0}})) << "a step codes fewer cells than its box";
+    EXPECT_FALSE(refused({})) << "an update that nothing entered with";
+    EXPECT_TRUE(refused({{25, net::TerrainCode::Uniform, 0}})) << "runs past the box";
+    // Runs that do not add up to the count they follow (byte 15 is the count, 24 here).
+    std::vector<uint8_t> over = tb;
+    ASSERT_EQ(over[15], 24u);
+    over[15] = 23;
+    EXPECT_FALSE(net::Decode(over, ta2)) << "the runs past their count";
+    over[15] = 25;
+    EXPECT_FALSE(net::Decode(over, ta2)) << "the runs short of their count";
+    EXPECT_TRUE(refused({{20, net::TerrainCode::Uniform, 0}, {5, net::TerrainCode::Data, 0}})) << "the last run past the box";
+    EXPECT_TRUE(refused({{0, net::TerrainCode::Data, 0}, {24, net::TerrainCode::Data, 0}})) << "a run of 0";
+    EXPECT_TRUE(refused({{24, static_cast<net::TerrainCode>(4), 0}})) << "code 4";
+    // Code 2 without its id: the id byte is missing at the end.
+    std::vector<uint8_t> noId = net::Encode(net::TerrainAck{1, 1, {4, 3, 2}, {{24, net::TerrainCode::Uniform, 5}}});
+    noId.pop_back();
+    EXPECT_FALSE(net::Decode(noId, ta2));
+    EXPECT_FALSE(net::Decode(net::Encode(net::TerrainAck{1, 1, {0, 3, 2}, {}}), ta2)) << "an empty box";
+    EXPECT_FALSE(net::Decode(net::Encode(net::TerrainAck{1, 1, {129, 3, 2}, {{129u * 6u, net::TerrainCode::Data, 0}}}), ta2));
+
+    // The model term of EntityCheck: two crates (one model) do not cancel.
+    EXPECT_NE(net::EntityModelTerm(3, 42) ^ net::EntityModelTerm(4, 42), 0u);
+    EXPECT_NE(net::EntityModelTerm(3, 42), net::EntityModelTerm(3, 43));
 }

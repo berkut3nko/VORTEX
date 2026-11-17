@@ -8,6 +8,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -125,8 +126,15 @@ namespace {
                 if (e.type != net::TransportEvent::Type::Received || e.channel != net::Channel::Events) continue;
                 net::ChunkRequest cr;
                 net::ModelRequest mr;
-                if (net::Decode(e.data, cr)) chunkRequests.insert(chunkRequests.end(), cr.chunks.begin(), cr.chunks.end());
+                net::EntityListRequest lr;
+                net::WindowUpdate wu;
+                if (net::Decode(e.data, cr)) {
+                    chunkRequests.insert(chunkRequests.end(), cr.chunks.begin(), cr.chunks.end());
+                    if (cr.reason == net::ChunkRequestReason::Repair) repairRequests.insert(repairRequests.end(), cr.chunks.begin(), cr.chunks.end());
+                }
                 if (net::Decode(e.data, mr)) modelRequests.insert(modelRequests.end(), mr.netIds.begin(), mr.netIds.end());
+                if (net::Decode(e.data, lr)) listRequests.push_back(lr.asOfOpSeq);
+                if (net::Decode(e.data, wu)) windowUpdates.push_back(wu);
             }
         }
 
@@ -161,7 +169,10 @@ namespace {
         std::unique_ptr<sim::Simulation> simulation;
         bool left = false;
         std::vector<glm::ivec3> chunkRequests;
+        std::vector<glm::ivec3> repairRequests;       // ChunkRequests with reason Repair (stage 7b)
         std::vector<uint32_t> modelRequests;
+        std::vector<uint32_t> listRequests;           // EntityListRequests (stage 7b)
+        std::vector<net::WindowUpdate> windowUpdates;
     };
 
     /// A world with events 1..count applied once each (a server's, for chunk data).
@@ -171,6 +182,38 @@ namespace {
         EXPECT_TRUE(ref->Attach());
         for (uint32_t i = 1; i <= count; ++i) sim::ApplyOp(ref->simulation->World(), make(i));
         return ref;
+    }
+
+    /// The TerrainAck a server holding `world` would send for `update` (stage 7b): every entering
+    /// chunk coded by its state there, in ForEachEnteringChunk order (protocol 10; these tests send
+    /// only first updates and resets, whose whole box enters); `data` gets the chunks to send.
+    net::TerrainAck TerrainAckOf(const voxel::World& world, const net::WindowUpdate& update, uint32_t asOf, std::vector<glm::ivec3>& data) {
+        const net::SyncBox server = net::RegionSyncBox(SmallRegion());
+        net::TerrainAck ack;
+        ack.windowSeq = update.windowSeq;
+        ack.asOfOpSeq = asOf;
+        ack.size = update.size;
+        data.clear();
+        net::ForEachEnteringChunk(net::SyncBox{update.minChunk, update.size}, net::SyncBox{}, true, [&](const glm::ivec3& c) {
+            net::TerrainRun run{1, net::TerrainCode::NotInAck, 0};
+            if (server.Contains(c)) {
+                switch (world.StateOf(c)) {
+                    case voxel::CellState::Empty: run = {1, net::TerrainCode::Uniform, 0}; break;
+                    case voxel::CellState::Uniform: {
+                        uint8_t id = 0;
+                        (void)world.GetChunk(c, &id);
+                        run = {1, net::TerrainCode::Uniform, id};
+                        break;
+                    }
+                    case voxel::CellState::Packed: run = {1, net::TerrainCode::HiddenData, 0}; break;
+                    default: run = {1, net::TerrainCode::Data, 0}; break;
+                }
+                if (run.code == net::TerrainCode::Data || run.code == net::TerrainCode::HiddenData) data.push_back(c);
+            }
+            if (!ack.runs.empty() && ack.runs.back().code == run.code && ack.runs.back().id == run.id) ++ack.runs.back().count;
+            else ack.runs.push_back(run);
+        });
+        return ack;
     }
 
     /// The hash of the region after events 1..count applied once each, on a fresh world.
@@ -970,4 +1013,454 @@ TEST(Client, BulkInstallsAreBoundedPerPoll) {
     EXPECT_EQ(s.client->Stats().maxBulkInPoll, 4u);
     EXPECT_GE(polls, 3u);
     EXPECT_EQ(s.client->Sync().Stats().chunksInstalled, static_cast<uint32_t>(chunks.size()));
+}
+
+// --- stage 7b: the checks against a hand-written server ---------------------------------------------
+
+namespace {
+    /// The server's EntityCheck over `objects` (NetId, model) at `asOf`.
+    net::EntityCheck CheckOf(uint32_t asOf, const std::vector<std::pair<uint32_t, const voxel::VoxelVolume*>>& objects) {
+        net::EntityCheck c;
+        c.asOfOpSeq = asOf;
+        for (const auto& [id, volume] : objects) {
+            ++c.count;
+            c.idXor ^= id;
+            c.modelXor ^= net::EntityModelTerm(id, net::VolumeHash(*volume));
+        }
+        return c;
+    }
+
+    net::BaselineEntity Answer(uint32_t netId, uint32_t asOf, const voxel::VoxelVolume& volume, const glm::vec3& at, bool resting = false) {
+        net::BaselineEntity b;
+        b.asOfOpSeq = asOf;
+        b.tick = 10;
+        b.restTick = resting ? 9 : net::BaselineEntity::kAwake;
+        b.spawn.netId = netId;
+        b.spawn.kind = net::EntityKind::Object;
+        b.spawn.object.position = at;
+        b.spawn.object.volume = volume;
+        b.spawn.object.flags = resting ? net::kObjectResting : uint8_t{0};
+        return b;
+    }
+
+    voxel::VoxelVolume Cube(int size) {
+        voxel::VoxelVolume v{glm::ivec3(size)};
+        v.FillBox(glm::ivec3(0), glm::ivec3(size), Ids().planks);
+        return v;
+    }
+
+    /// The server's hashes of `chunks` in `world`, as HashCheck entries.
+    net::HashCheck HashCheckOf(const voxel::World& world, uint32_t asOf, const std::vector<glm::ivec3>& chunks, bool pristine) {
+        net::HashCheck h;
+        h.asOfOpSeq = asOf;
+        for (const glm::ivec3& c : chunks) {
+            net::HashCheckEntry e{c, 0, pristine};
+            EXPECT_TRUE(voxel::ChunkHashAt(world, c, e.hash));
+            h.entries.push_back(e);
+        }
+        return h;
+    }
+}
+
+// Stage 7b (the two-swaps case of 7a, "Bulk delivered ahead of events"): data as of 2 arrives before
+// the batch 1..2; a HashCheck at 1 carrying the server's hashes at 1 is processed after event 1 - the
+// chunks' data holds event 2 too, so they are skipped as ahead (a check that compared regardless of the
+// base would request chunks that are right); a check at 2 compares them equal.
+TEST(Client, AHashCheckSkipsAChunkWhoseDataIsAheadOfIt) {
+    std::unique_ptr<FakeServer> at1 = ReferenceWorld(1, SwapPair), at2 = ReferenceWorld(2, SwapPair);
+    std::vector<glm::ivec3> chunks;
+    for (const glm::ivec3& c : RangeOf(SwapPair(1)))
+        if (sim::OpTouchesChunk(SwapPair(1), c)) chunks.push_back(c);
+    ASSERT_FALSE(chunks.empty());
+    FakeServer s;
+    s.Join(s.MakeWelcome());
+    ASSERT_TRUE(s.Attach());
+    for (const glm::ivec3& c : chunks) s.SendChunk(at2->simulation->World(), c, 2);
+    s.client->Poll();
+    net::EventBatch one;
+    one.firstOpSeq = 1;
+    one.events = {SwapPair(1)};
+    s.Send(net::Encode(one));
+    s.Send(net::Encode(HashCheckOf(at1->simulation->World(), 1, chunks, false)));
+    s.client->Poll();
+    s.ReadRequests();
+    const net::ChunkSyncStats& ss = s.client->Sync().Stats();
+    EXPECT_EQ(s.client->Stats().hashChecks, 1u);
+    EXPECT_EQ(ss.checkAhead, chunks.size());
+    EXPECT_EQ(ss.mismatches, 0u);
+    EXPECT_TRUE(s.chunkRequests.empty()) << "a chunk whose data is ahead was asked for";
+    net::EventBatch two;
+    two.firstOpSeq = 2;
+    two.events = {SwapPair(2)};
+    s.Send(net::Encode(two));
+    s.Send(net::Encode(HashCheckOf(at2->simulation->World(), 2, chunks, false)));
+    s.client->Poll();
+    s.ReadRequests();
+    EXPECT_EQ(ss.checkEqual, chunks.size());
+    EXPECT_EQ(ss.mismatches, 0u);
+    EXPECT_EQ(s.client->Stats().checksOutOfOrder, 0u);
+    EXPECT_TRUE(s.chunkRequests.empty());
+    EXPECT_TRUE(s.client->Synced());
+}
+
+// Stage 7b: a pristine chunk this client's generator makes differently is found by a HashCheck,
+// asked for once with reason Repair although it is checked three times before the answer comes, and
+// counted once as a pristine failure; two distinct chunks do not switch to server terrain mode, the
+// third does (M-b): a WindowUpdate {kReset | kTerrainMode} over the same window, answered by a
+// TerrainAck and the data, after which the client holds the server's world.
+TEST(Client, APristineMismatchIsRepairedAndCountedOncePerChunk) {
+    const sim::RegionDesc region = SmallRegion();
+    const std::vector<net::ProbeHash> probes = net::ProbeChunks(region, *sim::MakeRegionGenerator(region, Ids()));
+    // Surface chunks (row 2: grass over dirt) that are not probes.
+    std::vector<glm::ivec3> broken;
+    for (int x = -4; x < 4 && broken.size() < 3; ++x)
+        for (int z = -4; z < 4 && broken.size() < 3; ++z) {
+            const glm::ivec3 c(x, 2, z);
+            if (std::none_of(probes.begin(), probes.end(), [&](const net::ProbeHash& p) { return p.chunk == c; })) broken.push_back(c);
+        }
+    ASSERT_EQ(broken.size(), 3u);
+    net::ClientSettings settings;
+    settings.wrapGenerator = [broken](std::shared_ptr<voxel::IWorldGenerator> g) { return net::BreakChunks(std::move(g), broken, Ids().stone); };
+    FakeServer s(settings);
+    s.Join(s.MakeWelcome());
+    ASSERT_TRUE(s.Attach());
+    std::unique_ptr<FakeServer> ref = ReferenceWorld(0);
+    const voxel::World& server = ref->simulation->World();
+    ASSERT_NE(s.client->Hash().hash, net::RegionHash(server, region).hash);
+    // The first chunk, checked three times before its answer comes.
+    for (int i = 0; i < 3; ++i) {
+        s.Send(net::Encode(HashCheckOf(server, 0, {broken[0]}, true)));
+        s.client->Poll();
+    }
+    s.ReadRequests();
+    EXPECT_EQ(s.client->Stats().hashChecks, 3u);
+    EXPECT_EQ(s.client->Stats().mismatchesPristine, 1u);
+    EXPECT_EQ(s.client->Stats().pristineFailures, 1u);
+    EXPECT_EQ(s.client->Sync().Stats().checkNotCurrent, 2u) << "the re-checks saw it waiting for its repair";
+    ASSERT_EQ(s.repairRequests.size(), 1u) << "asked for once";
+    EXPECT_EQ(s.repairRequests[0], broken[0]);
+    EXPECT_EQ(s.client->Stats().repairsRequested, 1u);
+    EXPECT_FALSE(s.client->Synced());
+    s.SendChunk(server, broken[0], 0);
+    s.client->Poll();
+    EXPECT_EQ(s.client->Sync().Stats().repairsInstalled, 1u);
+    EXPECT_TRUE(s.client->Sync().FromData(broken[0]));
+    s.Send(net::Encode(HashCheckOf(server, 0, {broken[0]}, true)));
+    s.client->Poll();
+    EXPECT_EQ(s.client->Stats().pristineFailures, 1u);
+    // The second: two distinct pristine failures, no switch.
+    s.Send(net::Encode(HashCheckOf(server, 0, {broken[1]}, true)));
+    s.client->Poll();
+    s.ReadRequests();
+    EXPECT_EQ(s.client->Stats().pristineFailures, 2u);
+    EXPECT_EQ(s.repairRequests.size(), 2u);
+    EXPECT_FALSE(s.client->TerrainMode());
+    for (const net::WindowUpdate& u : s.windowUpdates) EXPECT_EQ(u.flags & net::WindowUpdate::kTerrainMode, 0);
+    s.SendChunk(server, broken[1], 0);
+    s.client->Poll();
+    // The third: server terrain mode, the whole window again (a reset).
+    const size_t updatesBefore = s.windowUpdates.size();
+    s.Send(net::Encode(HashCheckOf(server, 0, {broken[2]}, true)));
+    s.client->Poll();
+    s.ReadRequests();
+    EXPECT_EQ(s.client->Stats().pristineFailures, 3u);
+    EXPECT_TRUE(s.client->TerrainMode());
+    EXPECT_EQ(s.client->TerrainModeWhy(), net::TerrainModeReason::PristineChecks);
+    ASSERT_EQ(s.windowUpdates.size(), updatesBefore + 1);
+    const net::WindowUpdate u = s.windowUpdates.back();
+    EXPECT_EQ(u.flags, net::WindowUpdate::kReset | net::WindowUpdate::kTerrainMode);
+    EXPECT_EQ(u.size, net::RegionSyncBox(region).size);
+    EXPECT_FALSE(s.client->Synced());
+    std::vector<glm::ivec3> data;
+    s.Send(net::Encode(TerrainAckOf(server, u, 0, data)));
+    for (const glm::ivec3& c : data) s.SendChunk(server, c, 0);
+    for (int i = 0; i < 20 && !s.client->Synced(); ++i) s.client->Poll();
+    EXPECT_TRUE(s.client->Synced());
+    EXPECT_EQ(s.client->Hash().hash, net::RegionHash(server, region).hash);
+    EXPECT_EQ(s.client->Stats().checksOutOfOrder, 0u);
+    EXPECT_EQ(s.client->State(), net::ClientState::Playing);
+    // Every chunk now comes from the server: a pristine check finds nothing, counts nothing.
+    s.Send(net::Encode(HashCheckOf(server, 0, broken, true)));
+    s.client->Poll();
+    EXPECT_EQ(s.client->Stats().pristineFailures, 3u);
+    EXPECT_EQ(s.client->Sync().Stats().mismatches, 3u);
+}
+
+// Stage 7b M-b (server terrain mode, amendment 10): a client whose probe chunks differ asks for
+// terrain mode in its first WindowUpdate; the TerrainAck bases the uniform chunks - only based where
+// the cell already holds that content (the SessionGenerator's air), installed where it does not (the
+// rock below the other build's ground) - and leaves the data chunks Awaiting until their ChunkData.
+// An ack that leaves an entering chunk of the server's window at code 0 fails the client.
+TEST(Client, TerrainAckInstallsUniformChunksAndAwaitsTheOthers) {
+    const sim::RegionDesc region = SmallRegion();
+    net::ClientSettings settings;
+    settings.wrapGenerator = [region](std::shared_ptr<voxel::IWorldGenerator>) {
+        sim::RegionDesc other = region;
+        other.flatGroundVoxels = region.flatGroundVoxels + 40;      // into the next row: the probes differ
+        return sim::MakeRegionGenerator(other, Ids());
+    };
+    FakeServer s(settings);
+    s.Send(net::Encode(s.MakeWelcome()));
+    s.client->Poll();
+    s.ReadRequests();
+    ASSERT_EQ(s.client->State(), net::ClientState::Welcomed);
+    EXPECT_TRUE(s.client->TerrainMode());
+    EXPECT_EQ(s.client->TerrainModeWhy(), net::TerrainModeReason::Probes);
+    ASSERT_EQ(s.windowUpdates.size(), 1u);
+    EXPECT_EQ(s.windowUpdates[0].flags, net::WindowUpdate::kTerrainMode);
+    std::unique_ptr<FakeServer> ref = ReferenceWorld(0);
+    const voxel::World& server = ref->simulation->World();
+    std::vector<glm::ivec3> data;
+    const net::TerrainAck ack = TerrainAckOf(server, s.windowUpdates[0], 0, data);
+    s.Send(net::Encode(ack));
+    s.SendBulk(net::Encode(net::BaselineEnd{0, 0}));
+    ASSERT_TRUE(s.Attach());
+    const net::ChunkSyncStats& ss = s.client->Sync().Stats();
+    EXPECT_EQ(ss.terrainAcks, 1u);
+    EXPECT_GT(ss.uniformBased, 0u) << "the generator's air where the server has air";
+    EXPECT_GT(ss.uniformInstalled, 0u) << "air here where the server has a uniform chunk";
+    EXPECT_EQ(ss.awaitingData, data.size());
+    ASSERT_FALSE(data.empty());
+    for (const glm::ivec3& c : data) EXPECT_EQ(s.client->Sync().StateOf(c), net::ChunkSyncState::Awaiting);
+    EXPECT_FALSE(s.client->Synced());
+    for (const glm::ivec3& c : data) s.SendChunk(server, c, 0);
+    for (int i = 0; i < 20 && !s.client->Synced(); ++i) s.client->Poll();
+    EXPECT_TRUE(s.client->Synced());
+    EXPECT_EQ(s.client->Hash().hash, net::RegionHash(server, region).hash);
+    EXPECT_EQ(s.client->ClientGenerator()->DenseInsideInTerrainMode(), 0u);
+    EXPECT_GT(s.client->ClientGenerator()->Skipped(), 0u);
+
+    // An ack that does not describe an entering chunk of the server's window: the client fails.
+    FakeServer bad(settings);
+    bad.Send(net::Encode(bad.MakeWelcome()));
+    bad.client->Poll();
+    bad.ReadRequests();
+    ASSERT_EQ(bad.windowUpdates.size(), 1u);
+    net::TerrainAck hole = TerrainAckOf(server, bad.windowUpdates[0], 0, data);
+    hole.runs = {{static_cast<uint32_t>(hole.size.x * hole.size.y * hole.size.z), net::TerrainCode::NotInAck, 0}};
+    bad.Send(net::Encode(hole));
+    bad.Attach();
+    bad.client->Poll();
+    EXPECT_EQ(bad.client->State(), net::ClientState::Failed);
+
+    // Protocol 10 (review of stage 7b): the runs code the entering cells exactly; one cell short fails.
+    FakeServer shortAck(settings);
+    shortAck.Send(net::Encode(shortAck.MakeWelcome()));
+    shortAck.client->Poll();
+    shortAck.ReadRequests();
+    ASSERT_EQ(shortAck.windowUpdates.size(), 1u);
+    net::TerrainAck cut = TerrainAckOf(server, shortAck.windowUpdates[0], 0, data);
+    if (--cut.runs.back().count == 0) cut.runs.pop_back();
+    shortAck.Send(net::Encode(cut));
+    shortAck.Attach();
+    shortAck.client->Poll();
+    EXPECT_EQ(shortAck.client->State(), net::ClientState::Failed);
+}
+
+// Stage 7b (choice 10, amendments 3 and 8): an EntityCheck is not compared while the join's baseline
+// is open, nor when entity data ahead of it was processed (a baseline ended at 2, processed before the
+// stream reached 2, with a despawn in between: the check at 0 counts an object the client never got);
+// while a model is asked for only the count and ids are compared (the asked NetId counted); once
+// settled a wrong check sends exactly one EntityListRequest, and no second while it is open.
+TEST(Client, EntityChecksWaitWhileTheBaselineIsOpenOrEventsAreHeld) {
+    const voxel::VoxelVolume crate = Cube(4);
+    FakeServer s;
+    const glm::ivec3 chunk(0, 2, 0);
+    s.Join(s.MakeWelcome(), false, {chunk});         // the baseline stays open; the chunk waits for its data
+    ASSERT_TRUE(s.Attach());
+    // Baseline open: skipped.
+    s.Send(net::Encode(CheckOf(0, {{5, &crate}, {6, &crate}})));
+    s.client->Poll();
+    EXPECT_EQ(s.client->Stats().entityChecksSkipped, 1u);
+    // The baseline (crate 5) and its end at 2 arrive ahead of the stream: crate 6 died at 1.
+    s.SendBulk(net::Encode(Answer(5, 2, crate, glm::vec3(1.0f, 13.0f, 1.0f))));
+    s.SendBulk(net::Encode(net::BaselineEnd{2, 1}));
+    s.client->Poll();
+    s.Send(net::Encode(CheckOf(0, {{5, &crate}, {6, &crate}})));
+    s.client->Poll();
+    EXPECT_EQ(s.client->Stats().entityChecksAhead, 1u);
+    net::EventBatch batch;
+    batch.firstOpSeq = 1;
+    batch.events = {net::EntityDespawn{6, scene::DespawnReason::Destroyed}, net::EntityWake{5, 20}};
+    s.Send(net::Encode(batch));
+    s.Send(net::Encode(CheckOf(2, {{5, &crate}})));
+    s.client->Poll();
+    EXPECT_EQ(s.client->Stats().entityChecks, 1u);
+    // A replicated Detach over the chunk without its data: piece 9 is asked for.
+    batch.firstOpSeq = 3;
+    batch.events = {DetachEvent(2)};
+    s.Send(net::Encode(batch));
+    voxel::VoxelVolume piece(DetachEvent(2).mask.Size());
+    piece.FillBox(glm::ivec3(0), piece.Size(), Ids().stone);
+    s.Send(net::Encode(CheckOf(3, {{5, &crate}, {9, &piece}})));
+    s.client->Poll();
+    s.ReadRequests();
+    EXPECT_EQ(s.modelRequests, std::vector<uint32_t>{9});
+    EXPECT_EQ(s.client->Stats().entityChecksPartial, 1u);
+    EXPECT_EQ(s.client->Stats().entityMismatches, 0u);
+    EXPECT_TRUE(s.listRequests.empty()) << "a list asked for while a model was on its way";
+    // The answer and the chunk: settled. A wrong check asks once; another while the list is out does not.
+    s.SendBulk(net::Encode(Answer(9, 3, piece, glm::vec3(0.5f, 11.25f, 0.5f))));
+    std::unique_ptr<FakeServer> ref = ReferenceWorld(0);
+    sim::ApplyOp(ref->simulation->World(), DetachEvent(2));
+    s.SendChunk(ref->simulation->World(), chunk, 3);
+    s.client->Poll();
+    s.Send(net::Encode(CheckOf(3, {{5, &crate}})));
+    s.Send(net::Encode(CheckOf(3, {{5, &crate}})));
+    s.client->Poll();
+    s.client->Poll();
+    s.ReadRequests();
+    EXPECT_EQ(s.client->Stats().entityMismatches, 1u);
+    EXPECT_EQ(s.listRequests, std::vector<uint32_t>{3});
+    EXPECT_EQ(s.client->Stats().entityChecksSkipped, 2u);
+    EXPECT_FALSE(s.client->Synced()) << "synced with a list open";
+    EXPECT_EQ(s.client->Stats().checksOutOfOrder, 0u);
+}
+
+// Stage 7b (amendment 2): the list at Q replaces, restores and drops. The client holds 5 with an old
+// model and 7, which died; the server holds 5 (new model) and 6, which the client lost; 8 came to the
+// client from an answer made after Q. The list drops 7 (tombstoned), asks for 5 and 6 (their bodies
+// come with their rest state; an event of 6 after Q is held and applied after its answer), keeps 8; the
+// next check agrees. 7a's rule (a baseline entity for an existing copy is discarded) would keep the old
+// model and the dead copy.
+TEST(Client, AnEntityListResendReplacesRestoresAndDrops) {
+    const voxel::VoxelVolume cube = Cube(4), smaller = Cube(3);
+    FakeServer s;
+    s.Join(s.MakeWelcome(), false);
+    ASSERT_TRUE(s.Attach());
+    s.SendBulk(net::Encode(Answer(5, 0, cube, glm::vec3(1.0f, 13.0f, 1.0f))));
+    s.SendBulk(net::Encode(Answer(7, 0, cube, glm::vec3(3.0f, 13.0f, 1.0f))));
+    s.SendBulk(net::Encode(net::BaselineEnd{0, 2}));
+    s.client->Poll();
+    ASSERT_EQ(s.client->Entities().size(), 2u);
+    s.Send(net::Encode(CheckOf(0, {{5, &smaller}, {6, &cube}})));
+    s.client->Poll();
+    s.ReadRequests();
+    EXPECT_EQ(s.listRequests, std::vector<uint32_t>{0});
+    // A copy made after the list's opSeq (an answer encoded at 3) arrives before the list.
+    s.SendBulk(net::Encode(Answer(8, 3, cube, glm::vec3(5.0f, 13.0f, 1.0f))));
+    s.client->Poll();
+    net::EntityList list;
+    list.asOfOpSeq = 0;
+    list.entries = {{5, net::VolumeHash(smaller)}, {6, net::VolumeHash(cube)}};
+    s.Send(net::Encode(list));
+    const net::EntityRest rest6{6, 30, glm::vec3(2.0f, 12.0f, 4.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f)};
+    net::EventBatch batch;
+    batch.firstOpSeq = 1;
+    batch.events = {rest6};
+    s.Send(net::Encode(batch));
+    s.client->Poll();
+    s.ReadRequests();
+    const net::ClientStats& cs = s.client->Stats();
+    EXPECT_EQ(cs.entityLists, 1u);
+    EXPECT_EQ(cs.copiesDropped, 1u);
+    EXPECT_EQ(cs.copiesReplaced, 1u);
+    EXPECT_EQ(cs.copiesRestored, 1u);
+    std::vector<uint32_t> asked = s.modelRequests;
+    std::sort(asked.begin(), asked.end());
+    EXPECT_EQ(asked, (std::vector<uint32_t>{5, 6}));
+    EXPECT_EQ(s.client->Tombstones(), 1u);
+    // The answers (encoded after the request, at 0): 6's held rest is applied after its copy.
+    s.SendBulk(net::Encode(Answer(5, 0, smaller, glm::vec3(1.0f, 13.0f, 1.0f), true)));
+    s.SendBulk(net::Encode(Answer(6, 0, cube, glm::vec3(2.0f, 13.0f, 4.0f))));
+    s.client->Poll();
+    std::vector<net::EntityInfo> copies = s.client->Entities();
+    ASSERT_EQ(copies.size(), 3u);
+    EXPECT_EQ(copies[0].netId, 5u);
+    EXPECT_EQ(copies[0].modelHash, net::VolumeHash(smaller));
+    EXPECT_TRUE(copies[0].resting) << "the answer's rest state";
+    EXPECT_EQ(copies[1].netId, 6u);
+    EXPECT_TRUE(copies[1].resting) << "the event held for the restored copy";
+    EXPECT_EQ(copies[1].position, rest6.position);
+    EXPECT_EQ(copies[2].netId, 8u);
+    // A late spawn of the dropped 7 is refused (tombstoned).
+    batch.firstOpSeq = 2;
+    batch.events = {CrateSpawn(glm::vec3(3.0f, 13.0f, 1.0f), 7), net::EntityRest{8, 31, glm::vec3(5.0f, 12.0f, 1.0f), glm::quat(1, 0, 0, 0)},
+                    net::EntityRest{5, 32, glm::vec3(1.0f, 12.0f, 1.0f), glm::quat(1, 0, 0, 0)}};
+    s.Send(net::Encode(batch));
+    s.Send(net::Encode(CheckOf(4, {{5, &smaller}, {6, &cube}, {8, &cube}})));
+    s.client->Poll();
+    s.ReadRequests();
+    EXPECT_EQ(s.client->Entities().size(), 3u);
+    EXPECT_EQ(cs.entityMismatches, 1u) << "the check after the list agrees";
+    EXPECT_EQ(s.listRequests.size(), 1u);
+    EXPECT_TRUE(s.client->Synced());
+}
+
+// Review of 7b M-a (fixed in M-b): a NetId the client asked for that a later EntityList does not hold
+// died at or before the list's opSeq (its despawn was lost); the server answers nothing for it, so
+// waiting would keep Synced() false for ever. The list forgets it and tombstones it.
+TEST(Client, AnAskedNetIdTheListDoesNotHoldIsForgotten) {
+    const voxel::VoxelVolume cube = Cube(4);
+    FakeServer s;
+    s.Join(s.MakeWelcome());
+    ASSERT_TRUE(s.Attach());
+    // The server says one object (9) exists; the list names it; the client asks for its body.
+    s.Send(net::Encode(CheckOf(0, {{9, &cube}})));
+    s.client->Poll();
+    net::EntityList list;
+    list.asOfOpSeq = 0;
+    list.entries = {{9, net::VolumeHash(cube)}};
+    s.Send(net::Encode(list));
+    s.client->Poll();
+    s.ReadRequests();
+    EXPECT_EQ(s.modelRequests, std::vector<uint32_t>{9});
+    EXPECT_FALSE(s.client->Synced()) << "a body asked for";
+    // 9 dies and its despawn is lost: the next check (partial: 9 asked counts as present) mismatches,
+    // and the list without 9 makes the client forget it.
+    s.Send(net::Encode(CheckOf(0, {})));
+    s.client->Poll();
+    s.ReadRequests();
+    EXPECT_EQ(s.listRequests.size(), 2u);
+    list.entries.clear();
+    s.Send(net::Encode(list));
+    s.client->Poll();
+    EXPECT_TRUE(s.client->Synced());
+    EXPECT_EQ(s.client->Tombstones(), 1u);
+    EXPECT_EQ(s.client->Stats().copiesDropped, 1u);
+    // A stale answer for it is refused (tombstoned).
+    s.SendBulk(net::Encode(Answer(9, 0, cube, glm::vec3(1.0f, 13.0f, 1.0f))));
+    s.client->Poll();
+    EXPECT_TRUE(s.client->Entities().empty());
+}
+
+// Stage 7b (choice 11): tombstones are a FIFO of maxTombstones; with 4 and 10 despawns 6 are evicted.
+// A stale answer for an evicted NetId re-creates a dead copy; the next EntityCheck finds it and the
+// list drops it.
+TEST(Client, TombstonesAreBoundedAndTheCheckRemovesAResurrectedCopy) {
+    net::ClientSettings settings;
+    settings.maxTombstones = 4;
+    FakeServer s(settings);
+    s.Join(s.MakeWelcome());
+    ASSERT_TRUE(s.Attach());
+    net::EventBatch batch;
+    batch.firstOpSeq = 1;
+    for (uint32_t id = 1; id <= 10; ++id) batch.events.push_back(CrateSpawn(glm::vec3(static_cast<float>(id), 13.0f, 1.0f), id));
+    for (uint32_t id = 1; id <= 10; ++id) batch.events.push_back(net::EntityDespawn{id, scene::DespawnReason::Destroyed});
+    s.Send(net::Encode(batch));
+    s.client->Poll();
+    EXPECT_TRUE(s.client->Entities().empty());
+    EXPECT_EQ(s.client->Tombstones(), 4u);
+    EXPECT_EQ(s.client->Stats().tombstonesEvicted, 6u);
+    // An answer encoded at 5 (before 1 died at 11) for evicted 1: a dead copy comes back.
+    s.SendBulk(net::Encode(Answer(1, 5, Cube(4), glm::vec3(1.0f, 13.0f, 1.0f))));
+    s.client->Poll();
+    ASSERT_EQ(s.client->Entities().size(), 1u);
+    // And a stale one for a tombstoned NetId (10) is still refused.
+    s.SendBulk(net::Encode(Answer(10, 5, Cube(4), glm::vec3(1.0f, 13.0f, 1.0f))));
+    s.client->Poll();
+    EXPECT_EQ(s.client->Entities().size(), 1u);
+    s.Send(net::Encode(CheckOf(20, {})));
+    s.client->Poll();
+    s.ReadRequests();
+    EXPECT_EQ(s.listRequests, std::vector<uint32_t>{20});
+    s.Send(net::Encode(net::EntityList{20, {}}));
+    s.Send(net::Encode(CheckOf(20, {})));
+    s.client->Poll();
+    EXPECT_TRUE(s.client->Entities().empty());
+    EXPECT_EQ(s.client->Stats().copiesDropped, 1u);
+    EXPECT_EQ(s.client->Stats().entityMismatches, 1u);
+    EXPECT_EQ(s.client->Stats().entityChecks, 2u);
+    EXPECT_LE(s.client->Tombstones(), 4u);
+    EXPECT_TRUE(s.client->Synced());
 }

@@ -274,4 +274,48 @@ namespace vortex::net {
         const glm::ivec3 size = sim::RegionWindowSize(region);
         return voxel::WorldHash(world, min, min + glm::ivec3(size.x, rows.y - rows.x, size.z));
     }
+
+    namespace {
+        class BrokenChunkGenerator final : public voxel::IWorldGenerator {
+        public:
+            BrokenChunkGenerator(std::shared_ptr<voxel::IWorldGenerator> inner, std::vector<glm::ivec3> chunks, uint8_t stone)
+                : m_Inner(std::move(inner)), m_Chunks(std::move(chunks)), m_Stone(stone) {}
+
+            voxel::ChunkContent Generate(const glm::ivec3& coord, voxel::Chunk& chunk) const override {
+                voxel::ChunkContent content = m_Inner->Generate(coord, chunk);
+                if (std::find(m_Chunks.begin(), m_Chunks.end(), coord) == m_Chunks.end()) return content;
+                if (content.kind != voxel::ChunkKind::Dense) {
+                    std::fill(std::begin(chunk.ids), std::end(chunk.ids), content.kind == voxel::ChunkKind::Uniform ? content.uniformId : uint8_t{0});
+                    content.kind = voxel::ChunkKind::Dense;
+                }
+                // 64 voxels, every 512th of the chunk's indices (spread over its blocks).
+                for (int i = 0; i < voxel::kChunkVolume; i += voxel::kChunkVolume / 64) chunk.ids[i] = chunk.ids[i] == 0 ? m_Stone : uint8_t{0};
+                return content;
+            }
+            voxel::HeightBounds VerticalBounds() const override { return m_Inner->VerticalBounds(); }
+            voxel::ColumnClass ClassifyColumn(int cx, int cz) const override { return m_Inner->ClassifyColumn(cx, cz); }
+
+        private:
+            std::shared_ptr<voxel::IWorldGenerator> m_Inner;
+            std::vector<glm::ivec3> m_Chunks;
+            uint8_t m_Stone = 1;
+        };
+    }
+
+    std::shared_ptr<voxel::IWorldGenerator> BreakChunks(std::shared_ptr<voxel::IWorldGenerator> inner, std::vector<glm::ivec3> chunks,
+                                                        uint8_t stoneId) {
+        return std::make_shared<BrokenChunkGenerator>(std::move(inner), std::move(chunks), stoneId);
+    }
+
+    voxel::ChunkContent SessionGenerator::Generate(const glm::ivec3& coord, voxel::Chunk& chunk) const {
+        const bool inside = coord.x >= m_Min.x && coord.y >= m_Min.y && coord.z >= m_Min.z && coord.x < m_Max.x && coord.y < m_Max.y &&
+                            coord.z < m_Max.z;
+        if (inside && m_TerrainMode.load()) {
+            m_Skipped.fetch_add(1, std::memory_order_relaxed);
+            return {};          // Empty: the server's TerrainAck and ChunkData give this chunk
+        }
+        const voxel::ChunkContent content = m_Inner->Generate(coord, chunk);
+        if (inside && content.kind == voxel::ChunkKind::Dense && m_TerrainMode.load()) m_DenseInside.fetch_add(1, std::memory_order_relaxed);
+        return content;
+    }
 }
