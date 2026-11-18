@@ -97,6 +97,8 @@ export namespace vortex::net {
         std::vector<glm::vec2> waypoints;
         float reachMetres = 2.0f;
         uint32_t stuckTicks = 300;
+        /// Stage 8: after the last waypoint start again from the first (never Done).
+        bool loopWaypoints = false;
     };
 
     /**
@@ -118,6 +120,8 @@ export namespace vortex::net {
         bool Done() const { return !m_Settings.waypoints.empty() && m_Waypoint >= m_Settings.waypoints.size(); }
         uint32_t WaypointsReached() const { return m_Reached; }
         uint32_t WaypointsGivenUp() const { return m_GivenUp; }
+        /// @brief Rounds begun again from the first waypoint (PilotSettings::loopWaypoints).
+        uint32_t Laps() const { return m_Laps; }
 
     private:
         PilotSettings m_Settings;
@@ -134,5 +138,6 @@ export namespace vortex::net {
         float m_BestDistance = 0.0f;
         uint32_t m_SinceProgress = 0;
         uint32_t m_Reached = 0, m_GivenUp = 0;
+        uint32_t m_Laps = 0;
     };
 }

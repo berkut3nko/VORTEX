@@ -75,6 +75,15 @@ namespace vortex::net {
         m_Ops.clear();
         m_Bytes = 0;
         m_Floor = seq;
+        m_DroppedTouch.clear();
+        m_DroppedUnknown = seq;
+    }
+
+    bool OpRing::CoversChunk(uint32_t base, const glm::ivec3& chunk) const {
+        if (Covers(base)) return true;
+        if (m_DroppedUnknown > base) return false;
+        const auto it = m_DroppedTouch.find(chunk);
+        return it == m_DroppedTouch.end() || it->second <= base;
     }
 
     void OpRing::Push(uint32_t seq, const sim::WorldOp& op) {
@@ -96,6 +105,20 @@ namespace vortex::net {
         m_Bytes += e.bytes.size();
         m_Ops.push_back(std::move(e));
         while (!m_Ops.empty() && (m_Ops.size() > m_MaxOps || m_Bytes > m_MaxBytes)) {
+            // What the dropped operation touched (CoversChunk): its chunks, or "unknown" past 4096 of them.
+            const Entry& f = m_Ops.front();
+            const glm::ivec3 extent = f.hi - f.lo + glm::ivec3(1);
+            if (f.hi.x < f.lo.x || f.hi.y < f.lo.y || f.hi.z < f.lo.z ||
+                static_cast<int64_t>(extent.x) * extent.y * extent.z > 4096) {
+                m_DroppedUnknown = std::max(m_DroppedUnknown, f.seq);
+            } else {
+                for (int z = f.lo.z; z <= f.hi.z; ++z)
+                    for (int y = f.lo.y; y <= f.hi.y; ++y)
+                        for (int x = f.lo.x; x <= f.hi.x; ++x) {
+                            uint32_t& t = m_DroppedTouch[glm::ivec3(x, y, z)];
+                            t = std::max(t, f.seq);
+                        }
+            }
             m_Floor = m_Ops.front().seq;
             m_Bytes -= m_Ops.front().bytes.size();
             m_Ops.pop_front();
@@ -128,7 +151,19 @@ namespace vortex::net {
     }
 
     bool OpRing::TouchesNear(uint32_t after, uint32_t upTo, const glm::ivec3& chunk, uint32_t newest) const {
-        if (upTo > newest || !Covers(after)) return true;
+        if (upTo > newest) return true;
+        if (!Covers(after)) {
+            // Stage 8: the dropped operations after `after` are known by the chunks their ranges held
+            // (CoversChunk's record): near one of them, or one too large to list, is "touched"; else the
+            // kept ones decide (the arena soak: every terrain-mode install was shown once the ring wrapped).
+            if (m_DroppedUnknown > after) return true;
+            for (int z = -1; z <= 1; ++z)
+                for (int y = -1; y <= 1; ++y)
+                    for (int x = -1; x <= 1; ++x) {
+                        const auto it = m_DroppedTouch.find(chunk + glm::ivec3(x, y, z));
+                        if (it != m_DroppedTouch.end() && it->second > after) return true;
+                    }
+        }
         const auto first = std::partition_point(m_Ops.begin(), m_Ops.end(), [after](const Entry& e) { return e.seq <= after; });
         for (auto it = first; it != m_Ops.end() && it->seq <= upTo; ++it) {
             if (it->hi.x < it->lo.x) return true;     // no chunk range known: assume it does
@@ -235,7 +270,7 @@ namespace vortex::net {
                 r->ready = true;
                 continue;
             }
-            if (!m_Ring.Covers(r->base)) {
+            if (!m_Ring.CoversChunk(r->base, r->coord)) {
                 // Never a partial replay: the whole chunk again.
                 SetState(*r, ChunkSyncState::Requested);
                 m_Owed.push_back(r->coord);
@@ -925,6 +960,19 @@ namespace vortex::net {
         }
         if (m_LastInFlight > 0 && dt > 0.0) {
             const size_t drained = m_LastInFlight > inFlight ? m_LastInFlight - inFlight : 0;
+            // Stage 8: the delivery rate per interval (WindowRate). An interval that ended with nothing in
+            // flight was limited by what there was to send, not by the link: its rate is no evidence and
+            // is not kept.
+            m_IntervalBytes += static_cast<double>(drained);
+            m_IntervalTime += dt;
+            if (m_IntervalTime >= m_Settings.deliveryInterval) {
+                if (inFlight > 0) {
+                    m_Deliveries.push_back(m_IntervalBytes / m_IntervalTime);
+                    while (m_Deliveries.size() > std::max<size_t>(1, m_Settings.deliveryWindows)) m_Deliveries.pop_front();
+                }
+                m_IntervalBytes = 0.0;
+                m_IntervalTime = 0.0;
+            }
             double sample = static_cast<double>(drained) / dt;
             // Everything went: the link may be faster than that.
             if (inFlight == 0) sample = std::max(sample, m_Rate);
@@ -946,7 +994,13 @@ namespace vortex::net {
             }
             return;
         }
-        const double w = m_Rate * (base + m_Settings.targetDelay);
+        const double w = WindowRate() * (base + m_Settings.targetDelay);
         m_Window = std::clamp(static_cast<size_t>(w), m_Settings.floorBytes, m_Settings.ceilingBytes);
+    }
+
+    double BulkPacer::WindowRate() const {
+        double rate = m_Rate;
+        for (const double d : m_Deliveries) rate = std::max(rate, d);
+        return rate;
     }
 }

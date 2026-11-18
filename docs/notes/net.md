@@ -3,7 +3,7 @@
 Read `CLAUDE.md`, `docs/ARCHITECTURE.md` 7.5 and `docs/design/networking.md` ("Stage 3 as built", "Stage 4 as
 built", "Stage 5 as built", "Stage 6 as built", "Review of stage 6", "Stage 7a plan" with its amendments, "Stage 7a as
 built", "Stage 7b plan" with its amendments, "Stage 7b as built") first; nothing from them is repeated here. Paths
-are relative to `engine/`. Written at networking stage 3, extended at stages 4, 5, 6, 7a and 7b (M-a, M-b) and the reviews of
+are relative to `engine/`. Written at networking stage 3, extended at stages 4, 5, 6, 7a, 7b (M-a, M-b) and 8, and the reviews of
 stage 7b (protocol 10) and of
 stages 5, 6 and 7a. The game's session
 mode is `../src/Session.cpp`.
@@ -15,8 +15,22 @@ mode is `../src/Session.cpp`.
   `LoopbackTransport` (shared inboxes, `Connect(a, b)`), `Impairment` / `ImpairedTransport` (send-side queue sorted by
   due time; reliable packets keep per peer-and-channel order through `m_LastDue`).
 - `src/net/Enet.cppm`, `internal/Enet.cpp` - `EnetTransport` (stage 5: UDP through ENet; the only file that
-  includes `<enet/enet.h>`), `EnetSettings` (timeouts, test receive loss), `EnetStats`, `ParseEndpoint`,
-  `kDefaultPort`.
+  includes `<enet/enet.h>`), `EnetSettings` (timeouts, test receive loss), `EnetStats` (stage 8: bytes per channel),
+  `ParseEndpoint`, `kDefaultPort`; stage 8: `UdpRelay` (a UDP relay on 127.0.0.1 with loss, delay + jitter, outages and
+  a drop-tail bottleneck per direction, on a thread of its own, ENet's socket calls only: `vortex_bot`'s impairment
+  below ENet; `Seconds()` / `AddOutage` since the review of stage 8, the `onAdmit` test hook since its recheck).
+- `src/net/Bot.cppm`, `internal/Bot.cpp` (stage 8) - `Bot` (a client, its simulation built at the Welcome with the
+  game's store and packing when it has a window, a `BotPilot`, the per-pass ticks, applied times; an injected broken
+  chunk makes it stand until repaired; `PassOnClock` for a wall clock; `WantedTicks` / `ActedTicks`), `DrainWatch`
+  (the game's and `vortex_bot`'s drain rule), `JudgeBot` / `BotGates` / `BotVerdict` (a bot's own verdict, with the
+  review's gates that it played as told), `ClientCheckFailures` (what a client's own checks say against it: the
+  game's headless exit and `JudgeBot`), the exit lines (`SessionHashLine` and `vortex_server`'s `ServerLeaveLine`,
+  both with the client's join point since the recheck of stage 8, `SessionEntitiesLine`,
+  `ServerEntitiesLine` with `EntityRestHash`, `SessionAwakeLine` / `ServerAwakeLine` / `AwakeEntitiesText`,
+  `DescribeBotMovement / Objects / Join / Window`),
+  `BrokenChunkCandidate` (buried 3 m), `PercentilesOf`, `DurationHistogram` (fixed buckets: `vortex_server`'s pass
+  times), `ResidentMiB`, the server timeline (`ParseTimeline`,
+  `LatencyFromTimeline`). `vortex_server`'s in-process bots, `vortex_bot` and the game's `Session.cpp` share it.
 - `src/net/Wire.cppm`, `internal/Wire.cpp` - `ByteWriter` / `ByteReader`, mask runs, `Event` = `variant<WorldOp,
   EntitySpawn, EntityDespawn, EntityRest, ObjectModel, EntityWake>` (stage 6: `ObjectSpawn`, model runs `WriteVolumeRuns` /
   `ReadVolumeRuns`, `VolumeHash`), `WriteEvent` / `ReadEvent`, `WriteRegion` / `ReadRegion`, `QuantizeVelocity`.
@@ -246,7 +260,10 @@ mode is `../src/Session.cpp`.
   window's corner, a store that never filled, and the probe chunks of the loaded world against its own generator).
 - **Live events are never held; bulk is paced.** Every Flush hands each joined peer all its events (one batch = one
   tick's events, <= `maxBatchBytes`, <= `kMaxMaskVoxels` of masks), then its bulk while its reliable bytes in flight are
-  under its `BulkPacer` window (delay-based: rate x (base RTT + 2 ticks), halved at most once per round trip while the
+  under its `BulkPacer` window (delay-based: rate x (base RTT + 2 ticks), the rate the highest delivery rate of the last
+  eight half-second intervals since stage 8 (a lost datagram keeps its bytes in flight for a resend timeout, so a rate
+  sampled per tick fell under loss and the window with it: 73 kB/s against 161 through a fixed window at 5 % loss),
+  halved at most once per round trip while the
   RTT is more than that above its base; the base is the lowest RTT of the last 12 x 10 s, so a lasting rise of the path
   becomes the new base) - a message larger than what is left going alone once none of its bulk is in flight, still only
   while the total is under the window. The drain rate counts every
@@ -296,6 +313,36 @@ mode is `../src/Session.cpp`.
   snapshot at or past it (`behind`), which moves it forward.
 
 ## 3. Traps
+
+- Review of stage 8: a wall-clock owner of a `Bot` (or a `Client`) must give `TicksDue` the time from one pass's
+  **start** to the next (`Bot::PassOnClock`): taking the time after the pass leaves its work out, the client's clock
+  runs slow and jumps forward every second (`vortex_bot` did: 1-4 jumps a second and inflated corrections in the
+  soak; `Bot.PassOnClockCountsTheWorkInsidePasses`). Only the pass that loaded the region counts from its end.
+- Review of stage 8: a gate that only makes a run *easier* when it fails is still a gate. `JudgeBot`'s
+  `BotGates` (acted share, casts, crates, the walk) and the soak's drill / joins / repairs checks exist because a bot
+  that stopped predicting or a drill report that counted the wrong casts (the cast record held only `drillSteps`
+  records: players' casts and precasts pushed the oldest drill casts out) passed silently.
+- Recheck of stage 8: a slot is reused once its client left, so a slot does not name a client. The exit line
+  (`SessionHashLine`) and the server's leave line (`ServerLeaveLine`) both end `joined at opSeq J, tick T`
+  (`Client::JoinOpSeq` / `JoinTick`, `Server::ClientJoinPoint`); a script matches a client to its leave line by slot
+  **and** join point (`tools/soak.sh` matched by slot alone and compared a bot that left early with the late joiner's
+  line). A script that checks a log line's value checks the value the code prints (`DescribeTerrainMode` says exactly
+  `no`; the soak looked for words that line never holds), and awk's `NR == FNR` is true for the second file when the
+  first is empty (use `FILENAME == ARGV[1]`).
+- Recheck of stage 8: a test of the relay's outage judges by the relay's own clock (`RelaySettings::onAdmit`: the time
+  the relay read each datagram and whether it dropped it), never by when another thread stamped, sent or read it.
+- Recheck of stage 8: a long-running server keeps no per-pass or per-tick vector (`DurationHistogram`, fixed buckets).
+- Review of stage 8: `EntityRestHash` is not a tolerance: it relies on stage 6's bit-identical rest poses (an ulp
+  across a rounding boundary changes it). Objects that are not resting are compared by the scripts from the awake
+  lines with 5 cm of tolerance.
+- Stage 8: never call `Terrain().Flush()` (a global barrier: every pending re-cook of the window) in a server tick for
+  one peer. A join relies on the spawn being a permanent collider focus (`Server::Impl::ColliderFocus`, cooked in
+  `Start`) and on `StepPlayers`' `FlushBox(PlayerReach)`; the 126 ms join pass of the owner's run was that flush.
+- Stage 8: `Server::Hash` caches each chunk's hash by `World::ChunkRevision`; a path that changes a chunk without
+  bumping its revision (the world's rule since shred.md stage 4) would now also leave a stale hash in the leave lines.
+  Changed chunks are re-hashed 32 per tick (`RefreshHashes`), so a leave costs lookups.
+- Stage 8: `OpRing::CoversChunk` trusts `sim::OpChunkRange`: an operation whose range missed a chunk it changes would
+  let a loading chunk replay without it. Ranges over 4096 chunks are not listed (every older base is uncovered).
 
 - `voxel::kGeneratorGoldenHash` must be updated whenever `Terrain.GoldenChunkHashes` (or the noise / height goldens)
   are regenerated; `Terrain.GeneratorGoldenHashNamesTheGoldenTables` prints the new value.
@@ -453,6 +500,26 @@ mode is `../src/Session.cpp`.
 - `TicksDue` may return 0 (bleed, hold) or several ticks (catch-up, jump): a harness that polls only inside client
   ticks must still be fine without a poll for a pass.
 
+- `BulkPacerSettings::deliveryInterval` is half a second on purpose: a client that stalls and then drains its inbox
+  (a loopback test's joiner loading) makes one short interval look faster than the link; at a quarter second
+  `Session.ALateJoinsBulkIsPacedAndLiveEventsKeepFlowing`'s worst live latency rose from 22 to 25 ticks (bound 24).
+  The pacer's RTT is `EnetTransport::RoundTripSeconds`, the least of ENet's smoothed RTT and its 5 s epoch minima:
+  a queue shows only once it has lasted an epoch, so do not size the window by the RTT signal alone (an additive
+  increase would fill a slow link's queue before seeing it).
+- Never let an `OpRing` that no longer covers a base answer "everything": under 10 casts/s (about 110 operations a
+  second with the drill's rebuilds) the 1024-operation ring wraps in about 9 s, and both fallbacks that did so broke the
+  arena soak (every loading chunk requested whole; every terrain-mode install shown, a full store). `CoversChunk` and
+  `TouchesNear` consult the record of what the dropped operations touched (`m_DroppedTouch`, one entry per chunk ever
+  touched by a dropped operation: bounded by the region's chunks; an operation over 4096 chunks makes everything
+  older unknown).
+- `net::DrainWatch` accepts a copy that is not resting if it stands within 1 mm for the hold time: a server body
+  frozen while it moved (over terrain that cannot get a collider: below the window's bottom row) stays awake for good
+  and never sends an `EntityRest`. `vortex_server` lists such bodies after each leave (`not resting: ... frozen`).
+- `ClientStats::chunkDataRepeats` counts every `ChunkData` for a coordinate received before (changed chunks too);
+  `chunkDataUnchanged` only those whose RLE bytes equal the last ones received (the waste of re-sending; O3).
+  `vortex_server --bulk-window-floor KIB` fixes the window (floor = ceiling) and `--pacer-delivery-interval 0`
+  restores the 7a pacer, for measurements, never for play.
+
 ## 4. Recipes
 
 - New cast kind / loadout: the loadout id is in `QueuedCast` only (0 = the tuning's cast); a second one needs a wire
@@ -477,6 +544,16 @@ mode is `../src/Session.cpp`.
   comment; aim at about 1 ms per 10 000 units and record the numbers in networking.md.
 
 ## 5. Verifying a change here
+
+- Stage 8, the soak (game repository): `PORT=27043 tools/soak.sh --short` (about 4 minutes: playground and arena, 60
+  s each) must print `PASS` for both; the 10-minute run is `tools/soak.sh` (about 30 minutes: run it in the
+  background). `SOAK_SELFTEST=1 tools/soak.sh --short` checks that the script's normal verdict names an undeclared
+  fault, a killed bot, a bot that leaves early without draining and exits 0 (`vortex_bot --test-skip-drain`) and a
+  missing server line. Never PORT=27015 (the scripts refuse it; `vortex_bot` needs an explicit port and an end). Each bot is a `vortex_bot` process behind its
+  own `UdpRelay`; its `Latency:` line needs the server's `--timeline` file (one host). `Bot.*` and `Relay.*` (the relay:
+  wall clock, RUN_SERIAL) are the unit tests. `GAME_CLIENT=1` adds a headless game client that joins once the bots are
+  ready to leave (compared like a bot; look at `build/soak*/<scenario>/game.png`); the 10-minute arena run adds a
+  standing terrain-mode bot (`TERRAIN=1`).
 
 - `ctest --test-dir build -R "Wire|Transport|Client|Session|CastBudget|Clock|RemotePlayers|Movement|Enet"` (all of
   `VortexNetTests`, about 26 s alone, 11 s of it the wall-clock ENet tests) and `-R Player` (`VortexSimTests`).

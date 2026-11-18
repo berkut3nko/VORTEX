@@ -23,7 +23,7 @@ What exists today, and what was designed for but is not built yet. See
 | Editor | `vortex.editor`: in-game editor toggled with F1 - fly camera, entity selection with a translate / rotate gizmo, inspector, terrain brush, primitive spawning, `.vox` / glTF import, environment / render / profiler / world panels. Tool logic is separate from the widgets and unit tested. |
 | Simulation | `vortex.sim`: `sim::Simulation` owns world, physics, terrain colliders and scene and steps them on a numbered fixed tick; `sim::WorldOp` / `ApplyOp` replay terrain changes exactly; `sim::Blast`. Library `Vortex::Sim` links no renderer or window. `Engine` owns one and draws it. |
 | Sessions | `vortex.net` (`Vortex::Net`, GPU-free): the M1 protocol over ENet (UDP, `EnetTransport`) and in-process loopback transports (`ImpairedTransport`: seeded loss, delay, jitter, duplicates, reordering, rate limit, outages), `net::Server` (fixed region window, template as operations 1..k, event stream with a byte budget, cast queue with a work budget, join by chunk sync since stage 7a (modified chunks as paced bulk, the entity baseline), one player per client moved by its inputs, snapshots at 30 Hz) and `net::Client` (handshake with token and build hash, region from `Welcome`, operations applied in `opSeq` order above each chunk's base, a window that follows its player on regions wider than 48 chunks (stage 7a), the own player predicted with `sim::StepPlayer` and reconciled with the snapshots on a clock kept ahead of the server, other players interpolated); `vortex_server` runs a session file headless, listens on UDP (`--listen`, ENet) and runs in-process bot players over loopback or UDP. The game joins a session with `Shredborne --connect HOST[:PORT] --token HEX` (stage 5): its engine is built from the server's region and ticks on the client clock, its player is predicted, other players are voxel figures, every hole is the server's (one round trip after the click). Since stage 6 crates (the plaza's and E), terrain pieces of 0.512 m^3 or more and object pieces are server bodies with a NetId (at most 2 new per tick, 64 awake, 256 live), sent as entity events and in the snapshots; clients hold kinematic copies drawn in the past and put exactly at their rest poses, players collide with them at rest on both sides, smaller pieces are each client's own rubble. Tested on one machine (server + two headless game clients on localhost: equal world hashes and entity lists), and by the owner on two machines over a LAN on 2026-11-17 (stage 7b's commits): "seamless", 24 ms ping, 43 fps windowed on the UHD 620. |
-| Tests | 710 unit tests (six disabled measurements), none needing a GPU (the ENet ones use UDP sockets on 127.0.0.1). |
+| Tests | 722 unit tests (six disabled measurements), none needing a GPU (the ENet and relay ones use UDP sockets on 127.0.0.1). Stage 8's soak (`tools/soak.sh`: `vortex_server` and `vortex_bot` processes over real UDP with loss, jitter, an outage and a slow downlink) runs for 1 or 10 minutes, with a headless game client joining at the end (`GAME_CLIENT=1`). |
 
 ## Performance (Intel UHD 620, 1280x720 output, 768x432 internal)
 
@@ -392,7 +392,50 @@ State (stages are those of [design/networking.md](design/networking.md)):
   six disabled**; the whole acceptance re-run green. New open point: `Session.ALateJoinsBulkIsPacedAndLiveEventsKeepFlowing`
   can fail under `ctest -j8` (its joiner's world loads on worker threads): make it wait in ticks for B's window or
   run it serially (`design/networking.md` "Recheck of stage 7b").
-- Stages 8-9: not started. Before stage 3: shred.md stage 1 changed the search result (face flood), the server
+- **Stage 8 built and verified on one machine (2026-11-17/18), not committed.** The soak: `vortex_bot` (one bot player
+  per process over real UDP; its impairment a `net::UdpRelay` below ENet: loss, delay and jitter, an outage, a slow
+  downlink) and `tools/soak.sh` (the server and 4 bots on the playground and the 250 m arena, 10 casts a second, a late
+  joiner behind 100 kB/s, an injected broken chunk, a broken generator (server terrain mode) on both regions, and with
+  `GAME_CLIENT=1` a headless game client that joins the world the fight left; 60 s or 10 minutes; a self-test that
+  must catch four faults). The bot code is shared (`vortex.net:bot`: `vortex_server`'s bots and the game's drain and
+  exit lines use it). The plan was amended after a critic (16 findings; design/networking.md "Stage 8 plan"). Fixed on
+  the way: the owner's 126 ms join stall (the spawn's colliders are built at start; the join no longer flushes every
+  collider) and 207 ms leave stall (cached chunk hashes), the flaky late-join test (deterministic now), two
+  ring-wrap bugs the soak found under 10 casts/s (a client asked for every chunk still loading - 21 000 requests a
+  minute on the arena - and a terrain-mode client showed every chunk the server keeps packed - a full store on the
+  arena; now only chunks near a dropped operation count), the bulk pacer under loss (its window collapsed: terrain-mode
+  joins 1.6-1.7x faster now), and a drain that waited for a body that never rests. **Reviewed (2026-11-18, "Review of
+  stage 8": 20 findings, all taken, one in part):** `vortex_bot`'s clock left the time inside each pass out (it ran
+  slow and jumped forward every second: the "presenting bot's 278 corrections a minute" was this, now 35), the soak
+  did not judge the game client's own checks, a missing broken-chunk candidate, the drill (whose report counted the
+  wrong casts on long runs), joins, repairs, a bot that stopped playing, a repaired chunk that differed again, or the
+  positions of objects not resting; the rates were averaged over each bot's whole life; the 1 %-loss latency target
+  was claimed where it is missed. All fixed or restated, and the 10-minute soak rerun on both regions passes.
+  **Rechecked (2026-11-18, "Recheck of stage 8": 8 findings, all taken, one in part):** the latency text did not
+  match run 4's logs (the arena walker's quiet p99 is 1.49 s, not "did not recur"), the soak's terrain-mode check on
+  the game client could never fire, leave lines were matched by slot alone (a reused slot compared the wrong client),
+  the relay test still judged its outage by thread timing, the walk gate's span was 20 % too long on small regions
+  (a walker that reached every waypoint failed a share over 0.8), the server kept every pass time, and the soak's game
+  client ran unbounded. All fixed; the short soak, its self-test and every other check pass again.
+  Measured ("Stage 8 measurements", restated from that rerun): at 5 % loss and 40 + 0-30 ms each way event latency
+  p50 0.09-0.11 s and quiet p99 0.58-0.79 s for the plain-link players that stand or wander, but **1.49 s for the
+  player crossing the arena** (the one with the most bulk; not explained, the open walker A/B), 0.85-1.29 s behind a
+  100 kB/s link (on one playground bot the joins added about a tick - one bot, not a general result; at 1 % loss
+  0.26-0.31 s, over the 250 ms target on real ENet), **30-32 kB/s down per player in play** at 10 casts/s on both regions (events 23-24.5;
+  plus up to 45 kB/s of bulk for a player crossing the arena), no cast ever delayed, server tick p50 under 1.25 ms and
+  p99 under 14 ms on this laptop with everything on it (join ticks at most 8 ms, 0 colliders), the arena server 583
+  MiB, client stores at most 5813 slots (7498 in terrain mode), corrections 0-38 a minute of play, every hash, entity
+  and awake list equal after both 10-minute runs. 12 new tests (**722 in all, six disabled**). No wire change
+  (protocol 10). **What M1 still
+  lacks before acceptance:** the owner's LAN run on stage 8's commits with the real game clients
+  (docs/two-pc-test-windows.md 6.5, the short soak as its pre-check). Open points left for later milestones: the pacer
+  on a slow, lossy, jittery link (a 100 kB/s joiner's chunks come at 21-27 kB/s whatever the bulk window: M6),
+  re-sent chunks and model answers for a player crossing a large region (half a walker's bulk, 22 KiB/s; the memory
+  milestone), bodies frozen awake where no collider can be (they count against the awake cap), and the 10-minute walker
+  A/B (R10: the walker's 1.49 s quiet p99; recommended before M6's pacer work, not an M1 blocker). Also fixed: a
+  player joining where another stands saw a black frame (the camera inside the other's figure; spawn points per slot
+  belong to M2).
+- Stage 9: not started (on-demand server world; behind M2 by the owner's decision). Before stage 3: shred.md stage 1 changed the search result (face flood), the server
   window margin (3 chunks, flood box) and the cast budget (a work budget); shred.md stage 4 (built, the owner's answer
   to its question 4) moved the island search onto the cell graph - same results except where a work budget runs out,
   node visits and chunk graphs used (at a cold price; never graphs built, which depend on the cache) to count in stage
@@ -615,7 +658,7 @@ State (stages are those of [design/networking.md](design/networking.md)):
 - **Game UI**: the HUD layer exists (ARCHITECTURE.md section 11). Still missing: input action mapping and
   key rebinding, a settings menu (mouse sensitivity is a constant), gamepad navigation, Unicode / TTF text,
   textured widgets, in-game chat (M1).
-- **Networking**: server-authoritative simulation (M1, stages 2-9; 8, 9 left; 7b built, accepted, reviewed and rechecked, not committed). `Vortex::Core`, `Vortex::Physics` and
+- **Networking**: server-authoritative simulation (M1, stages 2-9; 9 left (behind M2); 8 built, verified on one machine, not committed; M1's acceptance is the owner's LAN run). `Vortex::Core`, `Vortex::Physics` and
   `Vortex::Sim` build without GPU or window, the simulation runs on a numbered fixed tick and the world is stored
   as chunk deltas.
 - **Double-precision physics** for worlds far from the origin (rendering is already origin-relative).

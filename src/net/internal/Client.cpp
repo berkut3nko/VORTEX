@@ -145,6 +145,8 @@ namespace vortex::net {
         bool listToSend = false;
         uint32_t listCheckSeq = 0;        // the check the request is about
         std::unordered_set<glm::ivec3, ChunkCoordHash> pristineFailures;   // distinct chunks this client generated differently
+        std::unordered_set<glm::ivec3, ChunkCoordHash> mismatched;         // distinct chunks a HashCheck found different (stage 8: the soak's verdict)
+        std::unordered_map<glm::ivec3, uint64_t, ChunkCoordHash> chunkDataSeen;  // coordinate -> FNV-1a of the last ChunkData's RLE (stage 8, O3)
         // Server terrain mode (stage 7b M-b).
         std::shared_ptr<SessionGenerator> sessionGenerator;   // what MakeGenerator hands out (from the Welcome)
         bool terrainMode = false;
@@ -1102,6 +1104,21 @@ namespace vortex::net {
                     ChunkData d;
                     if (!Decode(bytes, d)) return Fail("malformed ChunkData");
                     ++stats.chunkData;
+                    {
+                        // Stage 8 (O3): sent before, and sent again unchanged (the same RLE bytes).
+                        uint64_t h = 0xcbf29ce484222325ull;
+                        for (const uint8_t b : d.rle) h = (h ^ b) * 0x100000001b3ull;
+                        const auto [seen, fresh] = chunkDataSeen.try_emplace(d.chunk, h);
+                        if (!fresh) {
+                            ++stats.chunkDataRepeats;
+                            stats.chunkDataRepeatBytes += bytes.size();
+                            if (seen->second == h) {
+                                ++stats.chunkDataUnchanged;
+                                stats.chunkDataUnchangedBytes += bytes.size();
+                            }
+                            seen->second = h;
+                        }
+                    }
                     if (terrainMode) {
                         ++stats.terrainChunkData;
                         stats.terrainChunkBytes += bytes.size();
@@ -1258,6 +1275,7 @@ namespace vortex::net {
         /// (by ChunkSync) unless a repeat was refused.
         void OnMismatches(const HashCheckOutcome& o, uint32_t opSeq) {
             for (const HashCheckOutcome::Mismatch& m : o.mismatches) {
+                mismatched.insert(m.chunk);
                 if (m.pristine) ++stats.mismatchesPristine;
                 else ++stats.mismatchesModified;
                 // A pristine chunk this client's generator made differently: the generator is suspect
@@ -1870,6 +1888,7 @@ namespace vortex::net {
     uint32_t Client::AppliedOpSeq() const { return m_Impl->applied; }
     uint32_t Client::ServerOpSeq() const { return m_Impl->serverLast; }
     uint32_t Client::JoinOpSeq() const { return m_Impl->welcome.joinOpSeq; }
+    uint32_t Client::JoinTick() const { return m_Impl->welcome.tick; }
     bool Client::Synced() const {
         const bool synced = m_Impl->Synced();
         if (synced) m_Impl->NoteSynced();     // the join's log time only (see NoteSynced)
@@ -1924,6 +1943,7 @@ namespace vortex::net {
     }
 
     size_t Client::Tombstones() const { return m_Impl->tombstones.size(); }
+    std::vector<glm::ivec3> Client::MismatchedChunks() const { return {m_Impl->mismatched.begin(), m_Impl->mismatched.end()}; }
 
     bool Client::TestDestroyCopy(uint32_t netId) {
         Impl& s = *m_Impl;

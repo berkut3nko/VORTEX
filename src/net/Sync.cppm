@@ -93,6 +93,11 @@ export namespace vortex::net {
         /// @brief Operation `seq` (the next of the stream).
         void Push(uint32_t seq, const sim::WorldOp& op);
         bool Covers(uint32_t base) const { return base >= m_Floor; }
+        /// @brief Every operation after `base` that touches `chunk` is still kept (stage 8): true when the
+        /// ring covers `base`, or when no operation dropped from it after `base` had a chunk range holding
+        /// `chunk` (the soak: on the arena under a drill of 10 casts a second the ring wrapped in about 17 s
+        /// and every pristine chunk still loading was asked for whole - 21 000 requests in a minute).
+        bool CoversChunk(uint32_t base, const glm::ivec3& chunk) const;
         uint32_t Floor() const { return m_Floor; }
         size_t Count() const { return m_Ops.size(); }
         size_t Bytes() const { return m_Bytes; }
@@ -107,8 +112,9 @@ export namespace vortex::net {
                   const std::function<void(uint32_t, const glm::ivec3&, const glm::ivec3&, const sim::WorldOp&)>& fn) const;
         /// @brief Some kept operation in (after, upTo] has a chunk range that holds `chunk` or one of
         /// its neighbours (stage 7b: an edit there may have revealed the chunk on the server), from the
-        /// ranges alone (nothing decoded). True when the ring does not cover `after` or has no
-        /// operation up to `upTo` yet (unknown: the safe answer).
+        /// ranges alone (nothing decoded). True when the ring has no operation up to `upTo` yet
+        /// (unknown: the safe answer); when it no longer covers `after`, the dropped operations count by
+        /// the chunks their ranges held (stage 8; one too large to list makes everything older unknown).
         bool TouchesNear(uint32_t after, uint32_t upTo, const glm::ivec3& chunk, uint32_t newest) const;
 
     private:
@@ -122,6 +128,10 @@ export namespace vortex::net {
         size_t m_Bytes = 0;
         uint32_t m_Floor = 0;
         mutable uint64_t m_Decodes = 0;
+        /// The newest dropped operation touching each chunk (its chunk range), and the newest dropped one
+        /// whose range was unknown or too large to list (stage 8: CoversChunk).
+        std::unordered_map<glm::ivec3, uint32_t, ChunkCoordHash> m_DroppedTouch;
+        uint32_t m_DroppedUnknown = 0;
     };
 
     /// @brief A client chunk's sync state (networking.md "Chunk sync"; the plan's table).
@@ -465,11 +475,21 @@ export namespace vortex::net {
         /// new base within about two minutes instead of pinning the window to its floor for good.
         double baseRttPeriod = 10.0;
         size_t baseRttWindows = 12;
+        /// Stage 8 (O2 / O5): the window's rate is the highest delivery rate of the last
+        /// `deliveryWindows` intervals of `deliveryInterval` seconds (or the smoothed drain rate when that is
+        /// higher). A lost datagram keeps its bytes in flight for a resend timeout, so the rate sampled tick
+        /// by tick falls under loss and the window followed it down (5 % loss each way: 73 kB/s against 161
+        /// through a fixed 32 KiB window); a delivery rate over half a second hardly exceeds the link's
+        /// (a client that stalls and then drains its inbox can make one interval look faster: half a second,
+        /// not a quarter, kept Session.ALateJoinsBulkIsPacedAndLiveEventsKeepFlowing's latency at 22 ticks),
+        /// so the highest one is about the link's capacity, and the RTT rule still bounds the queue.
+        double deliveryInterval = 0.5;
+        size_t deliveryWindows = 8;
     };
 
     /**
-     * @brief Delay-based bulk window: window = clamp(drain rate x (base RTT + target), floor,
-     * ceiling), with the base RTT the lowest of the last minutes (aged per period); while the RTT is
+     * @brief Delay-based bulk window: window = clamp(rate x (base RTT + target), floor,
+     * ceiling) with the rate the highest recent delivery rate (stage 8), with the base RTT the lowest of the last minutes (aged per period); while the RTT is
      * more than `targetDelay` above the base, the window halves instead, at most once per round trip
      * (the queue is its own: a window that followed the inflated RTT would grow with it). A bulk
      * message is handed over while the bytes in flight are under it.
@@ -485,6 +505,8 @@ export namespace vortex::net {
         void Sent(size_t bytes) { m_LastInFlight += bytes; }
         size_t Window() const { return m_Window; }
         double Rate() const { return m_Rate; }
+        /// @brief The rate the window is sized by: max(Rate(), the highest recent delivery rate).
+        double WindowRate() const;
         double BaseRtt() const { return m_BaseRtt; }
         uint32_t Halvings() const { return m_Halvings; }
 
@@ -499,5 +521,7 @@ export namespace vortex::net {
         double m_LastHalving = -1.0e9;
         uint32_t m_Halvings = 0;
         std::deque<std::pair<double, double>> m_RttMinima;   ///< (period start, lowest RTT in it), oldest first
+        double m_IntervalBytes = 0.0, m_IntervalTime = 0.0;  ///< delivered in the current interval, and its length
+        std::deque<double> m_Deliveries;                     ///< delivery rate of each recent interval, oldest first
     };
 }

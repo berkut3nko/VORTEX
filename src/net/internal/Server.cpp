@@ -37,6 +37,9 @@ import vortex.sim;
 namespace vortex::net {
 
     namespace {
+        /// Server::Impl::tickEvents (stage 8): ticks that did join or leave work, timed apart.
+        constexpr uint8_t kTickHello = 1, kTickFirstWindow = 2, kTickLeave = 4;
+
         struct LoggedEvent {
             uint32_t tick = 0;
             uint64_t maskVoxels = 0;      ///< Detach / ClearMask: what a client decodes (a batch holds at most kMaxMaskVoxels)
@@ -105,6 +108,7 @@ namespace vortex::net {
         /// What a join cost (the `Join:` log line; stage 7a).
         struct JoinRecord {
             uint32_t joinTick = 0;
+            uint32_t joinOpSeq = 0;       ///< the Welcome's (recheck of stage 8: Server::ClientJoinPoint)
             uint32_t windowChunks = 0, modifiedChunks = 0;
             uint32_t chunkData = 0;
             uint64_t chunkBytes = 0;
@@ -117,6 +121,9 @@ namespace vortex::net {
             uint64_t secondBytes = 0;
             uint32_t secondStart = 0;
             bool logged = false;
+            /// Stage 8: the join data is all acknowledged (queue empty and no bulk byte in flight):
+            /// the end of the join for Server::JoiningClients (latched).
+            bool done = false;
         };
 
         struct Peer {
@@ -268,6 +275,75 @@ namespace vortex::net {
         std::unordered_map<uint32_t, BodyTrack> tracks;   // NetId -> rest state the clients know
         std::shared_ptr<voxel::VoxelModel> crateModel;
         std::function<void(uint8_t)> onClientLeft;
+        // Stage 8: what the current tick did besides its routine (kTickHello / kTickFirstWindow /
+        // kTickLeave) and the colliders FlushBox cooked on this thread in it; the hash cache.
+        uint8_t tickEvents = 0;
+        uint32_t tickFlushCooks = 0;
+        struct HashEntry {
+            uint64_t revision = 0;        ///< World::ChunkRevision it was taken at (0: none)
+            uint64_t hash = 0;
+        };
+        mutable std::vector<HashEntry> hashCache;   // per cell of the server's fixed window
+        mutable uint64_t hashesComputed = 0;
+        /// Chunks operations changed since the cache was filled: re-hashed a few per tick (RefreshHashes),
+        /// so a leave's hash finds them current (stage 8: the first leave after a fight took 21 ms).
+        std::unordered_set<glm::ivec3, ChunkCoordHash> hashStale;
+
+        void RefreshHashes(size_t budget) {
+            for (auto it = hashStale.begin(); it != hashStale.end() && budget > 0; --budget) {
+                (void)CachedHash(*it, *it + glm::ivec3(1));
+                it = hashStale.erase(it);
+            }
+        }
+
+        /// WorldHash over [min, max) with each chunk's hash cached by its revision (stage 8: a leave's
+        /// hash of a quiet window costs lookups). Equal to voxel::WorldHash by construction.
+        voxel::WorldHashResult CachedHash(const glm::ivec3& min, const glm::ivec3& max) const {
+            const voxel::World& w = simulation->World();
+            const glm::ivec3 wmin = w.WindowMinChunk(), wsize = w.WindowSize();
+            if (hashCache.size() != static_cast<size_t>(wsize.x) * static_cast<size_t>(wsize.y) * static_cast<size_t>(wsize.z))
+                hashCache.assign(static_cast<size_t>(wsize.x) * static_cast<size_t>(wsize.y) * static_cast<size_t>(wsize.z), {});
+            voxel::WorldHashResult result;
+            for (int z = min.z; z < max.z; ++z)
+                for (int y = min.y; y < max.y; ++y)
+                    for (int x = min.x; x < max.x; ++x) {
+                        const glm::ivec3 c(x, y, z), local = c - wmin;
+                        uint64_t hash = voxel::kAirChunkHash;
+                        const uint64_t revision = w.ChunkRevision(c);
+                        const bool inside = glm::all(glm::greaterThanEqual(local, glm::ivec3(0))) && glm::all(glm::lessThan(local, wsize));
+                        if (revision == 0 || !inside) {
+                            if (!voxel::ChunkHashAt(w, c, hash)) {
+                                ++result.notLoaded;
+                                continue;
+                            }
+                        } else {
+                            HashEntry& e = hashCache[(static_cast<size_t>(local.z) * static_cast<size_t>(wsize.y) + static_cast<size_t>(local.y)) *
+                                                          static_cast<size_t>(wsize.x) +
+                                                      static_cast<size_t>(local.x)];
+                            if (e.revision != revision) {
+                                if (!voxel::ChunkHashAt(w, c, e.hash)) {
+                                    ++result.notLoaded;
+                                    continue;
+                                }
+                                e.revision = revision;
+                                ++hashesComputed;
+                            }
+                            hash = e.hash;
+                        }
+                        if (hash == voxel::kAirChunkHash) continue;
+                        result.hash += voxel::WorldHashTerm(c, hash);
+                        ++result.solidChunks;
+                    }
+            return result;
+        }
+
+        /// The colliders the server keeps: every player's, and the template's spawn for good (stage 8:
+        /// a join finds the ground of its spawn built; before, the join tick cooked it, 120 ms).
+        std::vector<glm::dvec3> ColliderFocus() const {
+            std::vector<glm::dvec3> focus = PlayerFocus();
+            focus.push_back(glm::dvec3(tmpl.spawn));
+            return focus;
+        }
         // The checks (stage 7b): the chunks the last operations changed, oldest first (at most 64), and
         // the replicated objects' check values as of `entityValuesAt` (computed once per opSeq).
         std::vector<std::pair<uint32_t, glm::ivec3>> recentChanged;
@@ -549,7 +625,14 @@ namespace vortex::net {
                           settings.eventBurstBytes);
             }
             if (backlog.empty()) backlogFirst = lastOpSeq + 1;
-            backlog.push_back({Tick(), MaskVoxels(event), w.Take()});
+            std::vector<uint8_t> encoded = w.Take();
+            if (!encoded.empty() && encoded[0] < stats.eventBytesByKind.size()) {
+                // Stage 8: bytes by event kind (the first byte of an event is its kind).
+                stats.eventBytesByKind[encoded[0]] += bytes;
+                ++stats.eventsByKind[encoded[0]];
+                stats.maxEventBytesByKind[encoded[0]] = std::max<uint32_t>(stats.maxEventBytesByKind[encoded[0]], static_cast<uint32_t>(bytes));
+            }
+            backlog.push_back({Tick(), MaskVoxels(event), std::move(encoded)});
             backlogBytes += bytes;
             ++lastOpSeq;
             ++stats.events;
@@ -571,6 +654,7 @@ namespace vortex::net {
             for (const glm::ivec3& c : result.report.changed) {
                 modified[c] = seq;
                 recentChanged.emplace_back(seq, c);
+                if (!hashCache.empty()) hashStale.insert(c);
             }
             constexpr size_t kRecentChanged = 64;
             if (recentChanged.size() > kRecentChanged)
@@ -827,7 +911,7 @@ namespace vortex::net {
                 pl.queue.erase(pl.queue.begin(), pl.queue.upper_bound(now));
                 input.tick = now;
                 // The colliders this step can touch hold every edit made so far (never a worker's timing).
-                simulation->Terrain().FlushBox(sim::PlayerReach(pl.state.position, settings.player));
+                tickFlushCooks += simulation->Terrain().FlushBox(sim::PlayerReach(pl.state.position, settings.player));
                 const uint8_t levels = input.buttons;
                 const bool lateJump = pl.lateJump;
                 if (lateJump) {
@@ -893,6 +977,7 @@ namespace vortex::net {
                 stats.maxSnapshotBodies = std::max(stats.maxSnapshotBodies, static_cast<uint32_t>(snap.bodies.size()));
                 const std::vector<uint8_t> bytes = Encode(snap);
                 stats.maxSnapshotBytes = std::max(stats.maxSnapshotBytes, bytes.size());
+                ++stats.snapshotHistogram[std::min<size_t>(bytes.size() / 64, stats.snapshotHistogram.size() - 1)];
                 ++stats.snapshots;
                 stats.snapshotBytes += bytes.size();
                 Send(id, Channel::State, bytes);
@@ -993,17 +1078,20 @@ namespace vortex::net {
             p.planner = HashCheckPlanner(settings.hashCheck);
             p.join = JoinRecord{};
             p.join.joinTick = Tick();
+            p.join.joinOpSeq = welcome.joinOpSeq;
             QueueBaseline(p, glm::dvec3(tmpl.spawn));
             // Its player stands at the spawn point; the ground under every player gets its collider
             // before the next step (a gate that held the player here would hold it for another
-            // number of ticks than its client's).
+            // number of ticks than its client's): the spawn is a permanent collider focus (built at
+            // Start, kept current by the background cooks) and this tick's StepPlayers cooks whatever
+            // of the player's reach is still stale (FlushBox). Stage 8: no global Terrain().Flush()
+            // here any more - it cooked every pending collider of the window in the join tick (126 ms
+            // in the owner's run, the first join after the spawn's colliders were dropped).
             p.player = std::make_unique<Player>();
             p.player->joinTick = Tick();          // Receive runs at the start of the tick that steps it first
             p.player->state.position = glm::vec3(tmpl.spawn);
             p.player->character = simulation->Physics().CreateCharacter(sim::PlayerCharacterDesc(p.player->state.position, settings.player));
-            const std::vector<glm::dvec3> focus = PlayerFocus();
-            simulation->Terrain().Update(focus, simulation->Config().colliderRadius);
-            simulation->Terrain().Flush();
+            tickEvents |= kTickHello;
             ++stats.clientsJoined;
             Log::Info("Server: client {} joined at tick {} (slot {}, join point opSeq {}, {} entities in its baseline, {} modified chunks)",
                       peer, Tick(), slot, LastOpSeq(), p.baseline.size(), modified.size());
@@ -1212,6 +1300,7 @@ namespace vortex::net {
             const glm::ivec2 rows = sim::RegionRows(region);
             if (u.minChunk.y != rows.x || u.size.y != rows.y - rows.x) return false;
             ++stats.windowUpdates;
+            if (!p.hasWindow) tickEvents |= kTickFirstWindow;
             const SyncBox box{u.minChunk, u.size};
             const bool all = WindowEntersWhole(!p.hasWindow, (u.flags & WindowUpdate::kReset) != 0, p.window, box);
             if (terrain) return OnTerrainWindow(id, p, u, box, all);
@@ -1277,6 +1366,12 @@ namespace vortex::net {
                 p.terrainMode = true;
                 p.terrainFirstSeq = u.windowSeq;
                 ++stats.terrainModePeers;
+                if (settings.terrainBulkCeilingBytes > settings.bulkPacer.ceilingBytes) {
+                    // Stage 8, O2: a larger bulk window for a peer that receives its whole window.
+                    BulkPacerSettings ts = settings.bulkPacer;
+                    ts.ceilingBytes = settings.terrainBulkCeilingBytes;
+                    p.pacer = std::make_unique<BulkPacer>(ts);
+                }
                 Log::Info("Server: client {} asks for server terrain mode at window update {}: the whole window comes from here", id,
                           u.windowSeq);
             }
@@ -1678,6 +1773,11 @@ namespace vortex::net {
             stats.encodeSeconds += encoded;
             p.join.encodeSeconds += encoded;
             const bool empty = p.heldBulk.empty() && p.front.empty() && p.chunks.empty() && !p.baselineOpen;
+            // Stage 8: the join ends when its data is acknowledged, not when it was handed over (on a
+            // slow link the last window of bulk is still in flight then).
+            const size_t bulkNow = transport.ChannelBytesInFlight(id, Channel::Bulk);
+            stats.maxBulkInFlight = std::max(stats.maxBulkInFlight, bulkNow);
+            if (empty && p.hasWindow && !p.join.done && bulkNow == 0) p.join.done = true;
             if (empty && p.hasWindow && !p.join.logged) {
                 p.join.logged = true;
                 const double seconds = static_cast<double>(Tick() - p.join.joinTick) * dt;
@@ -1707,6 +1807,7 @@ namespace vortex::net {
                             if (it->second.joined) {
                                 ++stats.clientsDisconnected;
                                 Log::Info("Server: client {} left (slot {})", e.peer, it->second.slot);
+                                tickEvents |= kTickLeave;
                                 if (onClientLeft) onClientLeft(it->second.slot);
                             }
                             DropPlayer(it->second);
@@ -1813,7 +1914,11 @@ namespace vortex::net {
             stats.searchErrors += rec.searchErrors;
             stats.castSeconds += seconds;
             stats.maxCastSeconds = std::max(stats.maxCastSeconds, seconds);
-            if (work >= 1000) stats.maxCastMsPer10k = std::max(stats.maxCastMsPer10k, seconds * 1000.0 * 10000.0 / static_cast<double>(work));
+            if (work >= 1000) {
+                const double per10k = seconds * 1000.0 * 10000.0 / static_cast<double>(work);
+                stats.maxCastMsPer10k = std::max(stats.maxCastMsPer10k, per10k);
+                ++stats.castCostHistogram[std::min<size_t>(static_cast<size_t>(per10k * 10.0), stats.castCostHistogram.size() - 1)];
+            }
             stats.islands += rec.islands;
             stats.crumbs += rec.crumbs;
             stats.inBoxIslands += rec.inBoxIslands;
@@ -1987,6 +2092,15 @@ namespace vortex::net {
         for (const scene::Entity entity : sim::CreateTemplateObjects(*s.simulation, s.tmpl))
             if (entity != scene::kNoEntity) s.EmitObjectSpawn(sim::Replicate(*s.simulation, entity, false), entity);
         s.probes = ProbeChunks(s.region, *generator);
+        // Stage 8: the spawn's colliders, built once now and kept (ColliderFocus): a join never cooks them.
+        {
+            const auto cookStart = std::chrono::steady_clock::now();
+            const uint64_t builtBefore = s.simulation->Terrain().Stats().built;
+            s.simulation->Terrain().Update(s.ColliderFocus(), s.simulation->Config().colliderRadius);
+            s.simulation->Terrain().Flush();
+            s.stats.spawnColliders = static_cast<uint32_t>(s.simulation->Terrain().Stats().built - builtBefore);
+            s.stats.spawnColliderSeconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - cookStart).count();
+        }
         s.CheckStore();
         const voxel::WorldStats ws = w.Stats();
         Log::Info("Server: region of {} x {} chunks (+{} margin), {} rows at {} m, loaded in {:.2f} s: {} dense / {} packed chunks "
@@ -2002,8 +2116,10 @@ namespace vortex::net {
         if (!s.started) return;
         if (s.failed) return s.ReceiveFailed();
         const auto start = std::chrono::steady_clock::now();
+        s.tickEvents = 0;
+        s.tickFlushCooks = 0;
         s.Receive();
-        const std::vector<glm::dvec3> focus = s.PlayerFocus();
+        const std::vector<glm::dvec3> focus = s.ColliderFocus();
         s.simulation->UpdateStreaming(focus);
         s.StepPlayers();
         s.RunCasts();
@@ -2019,12 +2135,35 @@ namespace vortex::net {
         // World::Stats walks every cell (about 0.3 ms for a 250 m region): twice a second is enough,
         // an edit that found no slot is caught at once by CheckOp.
         if (tick % 30 == 0) s.CheckStore();
+        s.RefreshHashes(32);
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
         s.stats.tickSeconds += seconds;
         s.stats.maxTickSeconds = std::max(s.stats.maxTickSeconds, seconds);
         ++s.stats.ticksTimed;
         s.stats.ticksOverBudget += seconds > 1.0 / 60.0 ? 1u : 0u;
         ++s.stats.tickHistogram[std::min<size_t>(static_cast<size_t>(seconds / 0.00025), s.stats.tickHistogram.size() - 1)];
+        // Stage 8: join and leave ticks apart (the owner's 126 ms join and 207 ms leave passes).
+        s.stats.flushBoxCooks += s.tickFlushCooks;
+        if (s.tickEvents != 0) {
+            const uint32_t t = s.Tick() - 1;
+            if (s.tickEvents & kTickHello) {
+                ++s.stats.helloTicks;
+                s.stats.maxHelloTickSeconds = std::max(s.stats.maxHelloTickSeconds, seconds);
+                s.stats.maxHelloTickCooks = std::max(s.stats.maxHelloTickCooks, s.tickFlushCooks);
+            }
+            if (s.tickEvents & kTickFirstWindow) {
+                ++s.stats.firstWindowTicks;
+                s.stats.maxFirstWindowTickSeconds = std::max(s.stats.maxFirstWindowTickSeconds, seconds);
+            }
+            if (s.tickEvents & kTickLeave) {
+                ++s.stats.leaveTicks;
+                s.stats.maxLeaveTickSeconds = std::max(s.stats.maxLeaveTickSeconds, seconds);
+            }
+            Log::Info("Ticks: tick {} ({}{}{}) took {:.2f} ms, {} collider(s) cooked on this thread", t,
+                      (s.tickEvents & kTickHello) ? "a join" : "", (s.tickEvents & kTickFirstWindow) ? ((s.tickEvents & kTickHello) ? ", a first window" : "a first window") : "",
+                      (s.tickEvents & kTickLeave) ? ((s.tickEvents & (kTickHello | kTickFirstWindow)) ? ", a leave" : "a leave") : "", seconds * 1000.0,
+                      s.tickFlushCooks);
+        }
     }
 
     uint32_t Server::Advance(double seconds) {
@@ -2154,11 +2293,20 @@ namespace vortex::net {
     const sim::RegionTemplate& Server::Template() const { return m_Impl->tmpl; }
     const std::vector<ProbeHash>& Server::Probes() const { return m_Impl->probes; }
     uint64_t Server::BuildHashValue() const { return m_Impl->buildHash; }
-    voxel::WorldHashResult Server::Hash() const { return RegionHash(m_Impl->simulation->World(), m_Impl->region); }
+    voxel::WorldHashResult Server::Hash() const {
+        const SyncBox box = RegionSyncBox(m_Impl->region);
+        return m_Impl->CachedHash(box.min, box.Max());
+    }
+    uint64_t Server::ChunkHashesComputed() const { return m_Impl->hashesComputed; }
+    size_t Server::JoiningClients() const {
+        size_t n = 0;
+        for (const auto& [id, p] : m_Impl->peers) n += p.joined && !p.join.done ? 1u : 0u;
+        return n;
+    }
     const ServerStats& Server::Stats() const { return m_Impl->stats; }
     const std::deque<CastRecord>& Server::Casts() const { return m_Impl->casts; }
     size_t Server::BacklogBytes() const { return m_Impl->backlogBytes; }
-    voxel::WorldHashResult Server::Hash(const SyncBox& box) const { return voxel::WorldHash(m_Impl->simulation->World(), box.min, box.Max()); }
+    voxel::WorldHashResult Server::Hash(const SyncBox& box) const { return m_Impl->CachedHash(box.min, box.Max()); }
     size_t Server::ModifiedChunks() const { return m_Impl->modified.size(); }
     bool Server::IsModified(const glm::ivec3& chunk) const { return m_Impl->modified.contains(chunk); }
     std::vector<std::pair<uint32_t, glm::ivec3>> Server::RecentChanged() const { return m_Impl->recentChanged; }
@@ -2200,6 +2348,16 @@ namespace vortex::net {
     bool Server::LastHashChecked(uint8_t slot, const glm::ivec3& chunk, uint32_t& tick) const {
         for (const auto& [id, p] : m_Impl->peers)
             if (p.joined && p.slot == slot) return p.planner.LastChecked(chunk, tick);
+        return false;
+    }
+
+    bool Server::ClientJoinPoint(uint8_t slot, uint32_t& opSeq, uint32_t& tick) const {
+        for (const auto& [id, p] : m_Impl->peers)
+            if (p.joined && p.slot == slot) {
+                opSeq = p.join.joinOpSeq;
+                tick = p.join.joinTick;
+                return true;
+            }
         return false;
     }
 

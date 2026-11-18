@@ -264,6 +264,58 @@ TEST(ChunkSync, RingKeeps1024OpsOr1MiB) {
     EXPECT_FALSE(small.Covers(0));
 }
 
+// Stage 8 (the soak): a chunk whose base the ring no longer covers is still covered when no dropped
+// operation after its base touched it; a chunk a dropped one touched is not (it is asked for whole).
+TEST(ChunkSync, ADroppedOperationUncoversOnlyTheChunksItTouched) {
+    net::OpRing ring(16, size_t{1} << 20);
+    ring.Reset(10);
+    // Operations 11..60 all in chunk (0, 0, 0); 51 at chunk (5, 0, 0) too.
+    for (uint32_t i = 11; i <= 60; ++i) ring.Push(i, sim::WorldOp::Box({0, 0, 0}, {1, 1, 1}, 3));
+    EXPECT_FALSE(ring.Covers(10));
+    EXPECT_FALSE(ring.CoversChunk(10, glm::ivec3(0, 0, 0)));      // touched by dropped 11..44
+    EXPECT_TRUE(ring.CoversChunk(10, glm::ivec3(1, 0, 0)));       // never touched: its base still holds
+    EXPECT_TRUE(ring.CoversChunk(44, glm::ivec3(0, 0, 0)));       // the newest dropped one touching it is 44
+    EXPECT_FALSE(ring.CoversChunk(43, glm::ivec3(0, 0, 0)));
+    ring.Push(61, sim::WorldOp::Box({160, 0, 0}, {161, 1, 1}, 3));   // chunk (5, 0, 0)
+    for (uint32_t i = 62; i <= 90; ++i) ring.Push(i, sim::WorldOp::Box({0, 0, 0}, {1, 1, 1}, 3));
+    EXPECT_FALSE(ring.CoversChunk(10, glm::ivec3(5, 0, 0)));      // 61 dropped since
+    EXPECT_TRUE(ring.CoversChunk(61, glm::ivec3(5, 0, 0)));
+    // An operation too large to list makes every older base uncovered.
+    ring.Push(91, sim::WorldOp::Box({0, 0, 0}, {32 * 20, 32, 32 * 20}, 0));    // 400 chunks: listed
+    ring.Push(92, sim::WorldOp::Box({0, 0, 0}, {32 * 80, 32 * 2, 32 * 80}, 0)); // 12 800 chunks: "unknown"
+    for (uint32_t i = 93; i <= 120; ++i) ring.Push(i, sim::WorldOp::Box({0, 0, 0}, {1, 1, 1}, 3));
+    EXPECT_FALSE(ring.CoversChunk(91, glm::ivec3(70, 1, 70)));
+    EXPECT_FALSE(ring.CoversChunk(90, glm::ivec3(19, 0, 19)));
+    EXPECT_TRUE(ring.CoversChunk(92, glm::ivec3(70, 1, 70)));
+}
+
+// Stage 8 (the arena soak): a terrain-mode bot joining under the drill's 10 casts a second installed every
+// chunk shown once its op ring had wrapped (about 9 s): TouchesNear said "unknown, touched" whenever the
+// ring no longer covered the ack, so the store filled with chunks the server keeps packed (12 288 of
+// 12 288 slots on the arena, 7888 shown of 7942 on the playground where the server shows 2500). With the
+// ring's record of what its dropped operations touched, only chunks near one of them are unknown.
+TEST(ChunkSync, TouchesNearAfterTheRingWrapsLooksAtWhatWasDropped) {
+    net::OpRing ring(16, size_t{1} << 20);
+    ring.Reset(10);
+    for (uint32_t i = 11; i <= 60; ++i) ring.Push(i, sim::WorldOp::Box({0, 0, 0}, {1, 1, 1}, 3));   // chunk (0, 0, 0)
+    ASSERT_FALSE(ring.Covers(10));
+    EXPECT_FALSE(ring.TouchesNear(10, 60, glm::ivec3(5, 0, 0), 60)) << "nothing dropped or kept came near it";
+    EXPECT_TRUE(ring.TouchesNear(10, 60, glm::ivec3(0, 0, 0), 60));
+    EXPECT_TRUE(ring.TouchesNear(10, 60, glm::ivec3(1, 0, 0), 60));    // a face neighbour of a dropped op's chunk
+    EXPECT_TRUE(ring.TouchesNear(10, 60, glm::ivec3(1, 1, -1), 60));   // ranges grow by one chunk every way
+    EXPECT_TRUE(ring.TouchesNear(10, 61, glm::ivec3(5, 0, 0), 60));    // past the newest: unknown
+    // A dropped operation too large to list: every older base is unknown, newer ones are not.
+    ring.Push(61, sim::WorldOp::Box({0, 0, 0}, {32 * 80, 32 * 2, 32 * 80}, 0));   // 12 800 chunks
+    for (uint32_t i = 62; i <= 90; ++i) ring.Push(i, sim::WorldOp::Box({0, 0, 0}, {1, 1, 1}, 3));
+    ASSERT_FALSE(ring.Covers(61));
+    EXPECT_TRUE(ring.TouchesNear(60, 90, glm::ivec3(-50, 0, -50), 90));
+    EXPECT_FALSE(ring.TouchesNear(61, 90, glm::ivec3(-50, 0, -50), 90));
+    EXPECT_TRUE(ring.TouchesNear(61, 90, glm::ivec3(-1, 0, 0), 90));   // next to the small ones after 61
+    // After a Reset nothing older is known.
+    ring.Reset(100);
+    EXPECT_TRUE(ring.TouchesNear(99, 100, glm::ivec3(-50, 0, -50), 100));
+}
+
 // Recheck of stage 7a, 3: chunks that catch up together (one ack, one load report, one Poll's
 // ChunkData) walk the ring once and decode each operation once, however many of them it touches. With a
 // per-chunk walk and a cache of the last 16 decodes, 8 chunks under 20 overlapping operations decoded
@@ -445,6 +497,93 @@ TEST(BulkPacer, ALastingRiseOfTheRttBecomesTheNewBase) {
     EXPECT_GT(lateWindow, 4u * settings.floorBytes) << "the window stayed at its floor: the base RTT never aged";
     EXPECT_LE(static_cast<double>(lateWindow), bdp * 1.5 + 1200.0);
     EXPECT_NEAR(pacer.BaseRtt(), 0.16, 0.035);
+}
+
+// Stage 8 (the soak, O2 / O5): over real ENet at 5 % loss each way and 40 + 0-30 ms each way a terrain-mode
+// join got 73 kB/s of bulk through the pacer and 161 kB/s through a fixed 32 KiB window on the same link: a
+// lost datagram keeps its bytes in flight for a resend timeout, the drain rate sampled per tick falls, and
+// the window (rate x (base RTT + target)) follows it down. A link with no bottleneck under the ceiling, 10 %
+// of the datagrams held for a resend timeout (5 % loss each way), jitter: the pacer must keep at least
+// 60 % of a fixed ceiling window's throughput (it kept 40 % before; 67 % now). And behind a 100 kB/s bottleneck with the same loss the
+// queue in front of live events must stay short.
+TEST(BulkPacer, LossDoesNotCollapseTheWindow) {
+    struct Link {
+        double rate = 0.0, baseRtt = 0.08, jitter = 0.06, loss = 0.10, rto = 0.2;
+        uint64_t rng = 0x9e3779b97f4a7c15ull;
+        double wireFree = 0.0, delivered = 0.0, inFlight = 0.0;
+        std::multiset<std::tuple<double, double, double>> pending;   // (ack time, bytes, RTT sample)
+        double smoothed = -1.0, lowest = 1e9, last = 1e9, epoch = 0.0;
+        double Uniform() {
+            rng = rng * 6364136223846793005ull + 1442695040888963407ull;
+            return static_cast<double>(rng >> 11) * (1.0 / 9007199254740992.0);
+        }
+        void Send(double now, double bytes) {
+            double departure = now;
+            if (rate > 0.0) {
+                departure = std::max(now, wireFree) + bytes / rate;
+                wireFree = departure;
+            }
+            const double sample = departure - now + baseRtt + jitter * Uniform();
+            const double ack = now + sample + (Uniform() < loss ? rto : 0.0);   // a resend: the sample is the resend's
+            pending.emplace(ack, bytes, sample);
+            inFlight += bytes;
+        }
+        void Step(double now) {
+            while (!pending.empty() && std::get<0>(*pending.begin()) <= now) {
+                const auto [at, bytes, sample] = *pending.begin();
+                pending.erase(pending.begin());
+                delivered += bytes;
+                inFlight -= bytes;
+                // ENet's RTT: smoothed by 1/8, the lowest of the 5 s throttle epoch and of the last one
+                // (EnetTransport::RoundTripSeconds hands over the least of the three).
+                smoothed = smoothed < 0.0 ? sample : smoothed + (sample - smoothed) / 8.0;
+                lowest = std::min(lowest, smoothed);
+            }
+            if (now - epoch >= 5.0) {
+                last = lowest;
+                lowest = smoothed > 0.0 ? smoothed : 1e9;
+                epoch = now;
+            }
+        }
+        double Rtt() const { return smoothed < 0.0 ? 0.0 : std::min({smoothed, lowest, last}); }
+        double QueueDelay(double now) const { return std::max(0.0, wireFree - now); }
+    };
+    const double dt = 1.0 / 60.0;
+    const net::BulkPacerSettings settings;
+    // Seconds 10-60 of a run: bytes per second delivered and the longest bottleneck queue.
+    auto run = [&](double rate, bool paced, double& throughput, double& maxQueue) {
+        Link link;
+        link.rate = rate;
+        net::BulkPacer pacer;
+        double startDelivered = 0.0;
+        maxQueue = 0.0;
+        for (int tick = 0; tick < 60 * 60; ++tick) {
+            const double now = tick * dt;
+            link.Step(now);
+            if (tick == 60 * 10) startDelivered = link.delivered;
+            double window = static_cast<double>(settings.ceilingBytes);
+            if (paced) {
+                pacer.Update(static_cast<size_t>(link.inFlight), link.Rtt(), dt);
+                window = static_cast<double>(pacer.Window());
+            }
+            while (link.inFlight < window) {
+                link.Send(now, 1200.0);
+                if (paced) pacer.Sent(1200);
+            }
+            if (tick > 60 * 10) maxQueue = std::max(maxQueue, link.QueueDelay(now));
+        }
+        throughput = (link.delivered - startDelivered) / 50.0;
+    };
+    double paced = 0.0, fixed = 0.0, queue = 0.0, slowPaced = 0.0, slowQueue = 0.0;
+    run(0.0, true, paced, queue);
+    run(0.0, false, fixed, queue);
+    run(100000.0, true, slowPaced, slowQueue);
+    std::printf("[ pacer ] 10 %% of datagrams resent, 80 + 0-60 ms: paced %.1f KiB/s, a fixed %zu B window %.1f KiB/s; behind 100 kB/s "
+                "%.1f KiB/s with a queue of %.0f ms at most\n",
+                paced / 1024.0, settings.ceilingBytes, fixed / 1024.0, slowPaced / 1024.0, slowQueue * 1000.0);
+    EXPECT_GT(paced, 0.6 * fixed) << "the window collapsed under loss";
+    EXPECT_GT(slowPaced, 0.6 * 100000.0) << "the bottleneck is kept busy";
+    EXPECT_LT(slowQueue, 0.15) << "the bulk queue in front of live events";
 }
 
 // Review of stage 7a: a step of the game's window (48 x 44 x 48 = 101 376 records) costs its entering

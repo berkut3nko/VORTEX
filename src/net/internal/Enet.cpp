@@ -15,12 +15,17 @@ module;
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <deque>
 #include <memory>
+#include <mutex>
+#include <queue>
+#include <thread>
+#include <functional>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -133,6 +138,7 @@ namespace vortex::net {
                         const auto* bytes = static_cast<const uint8_t*>(e.packet->data);
                         ++stats.messagesReceived;
                         stats.bytesReceived += e.packet->dataLength;
+                        stats.channelBytesReceived[e.channelID] += e.packet->dataLength;
                         events.push_back({TransportEvent::Type::Received, info->id, static_cast<Channel>(e.channelID),
                                           std::vector<uint8_t>(bytes, bytes + e.packet->dataLength)});
                     }
@@ -333,6 +339,7 @@ namespace vortex::net {
         }
         ++s.stats.messagesSent;
         s.stats.bytesSent += data.size();
+        s.stats.channelBytesSent[static_cast<size_t>(channel)] += data.size();
     }
 
     bool EnetTransport::Poll(TransportEvent& out) {
@@ -407,6 +414,233 @@ namespace vortex::net {
         return m_Impl->stats;
     }
     void EnetTransport::SetCloseWait(uint32_t milliseconds) { m_Impl->closeWaitMs = milliseconds; }
+
+    // --- UdpRelay (stage 8) ----------------------------------------------------------------------------
+
+    struct UdpRelay::Impl {
+        RelaySettings settings;
+        ENetSocket down = ENET_SOCKET_NULL;   // bound to 127.0.0.1: the client's side
+        ENetSocket up = ENET_SOCKET_NULL;     // talks to the server
+        ENetAddress server{};
+        ENetAddress client{};
+        bool haveClient = false;
+        uint16_t port = 0;
+        std::atomic<bool> stop{false};
+        std::thread thread;
+        mutable std::mutex statsMutex;
+        RelayStats stats[2];                  // [0] up, [1] down
+        bool acquired = false;
+
+        struct Datagram {
+            double due = 0.0;
+            uint64_t order = 0;
+            std::vector<uint8_t> bytes;
+            bool operator>(const Datagram& o) const { return due != o.due ? due > o.due : order > o.order; }
+        };
+        struct Direction {
+            RelayDirection settings;
+            Rng rng{1};
+            double lastDeparture = 0.0;
+            std::priority_queue<Datagram, std::vector<Datagram>, std::greater<Datagram>> queue;
+        };
+        Direction dirs[2];
+        uint64_t order = 0;
+        std::chrono::steady_clock::time_point start;
+
+        double Now() const { return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(); }
+        double Uniform(Direction& d) { return static_cast<double>(d.rng.NextU32()) * (1.0 / 4294967296.0); }
+
+        bool InOutage(double t) const {
+            for (const auto& [a, b] : settings.outages)
+                if (t >= a && t < b) return true;
+            return false;
+        }
+
+        /// A datagram arrives at the relay going way `k`: dropped, or queued for its due time.
+        void Admit(int k, const uint8_t* data, size_t size, double now) {
+            Direction& d = dirs[k];
+            std::lock_guard lock(statsMutex);
+            RelayStats& st = stats[k];
+            ++st.datagramsIn;
+            st.bytesIn += size;
+            const auto seen = [&](bool dropped) {
+                if (settings.onAdmit) settings.onAdmit(k, std::span<const uint8_t>(data, size), now, dropped);
+            };
+            if (InOutage(now)) {
+                ++st.outage;
+                seen(true);
+                return;
+            }
+            if (d.settings.loss > 0.0 && Uniform(d) < d.settings.loss) {
+                ++st.lost;
+                seen(true);
+                return;
+            }
+            double departure = now;
+            if (d.settings.bytesPerSecond > 0.0) {
+                const double rate = d.settings.bytesPerSecond;
+                const double cap = d.settings.queueBytes != 0 ? static_cast<double>(d.settings.queueBytes) : std::max(16384.0, 0.25 * rate);
+                departure = std::max(now, d.lastDeparture) + static_cast<double>(size) / rate;
+                if ((departure - now) * rate > cap + static_cast<double>(size)) {
+                    ++st.queueFull;
+                    seen(true);
+                    return;
+                }
+                d.lastDeparture = departure;
+                st.maxQueueSeconds = std::max(st.maxQueueSeconds, departure - now);
+            }
+            Datagram g;
+            g.due = departure + d.settings.delaySeconds + (d.settings.jitterSeconds > 0.0 ? d.settings.jitterSeconds * Uniform(d) : 0.0);
+            g.order = order++;
+            g.bytes.assign(data, data + size);
+            d.queue.push(std::move(g));
+            seen(false);
+        }
+
+        void Release(int k, double now) {
+            Direction& d = dirs[k];
+            while (!d.queue.empty() && d.queue.top().due <= now) {
+                const Datagram& g = d.queue.top();
+                const ENetSocket to = k == 0 ? up : down;
+                const ENetAddress& where = k == 0 ? server : client;
+                if (k == 0 || haveClient) {
+                    ENetBuffer buffer;
+                    buffer.data = const_cast<uint8_t*>(g.bytes.data());
+                    buffer.dataLength = g.bytes.size();
+                    if (enet_socket_send(to, &where, &buffer, 1) > 0) {
+                        std::lock_guard lock(statsMutex);
+                        ++stats[k].datagramsOut;
+                        stats[k].bytesOut += g.bytes.size();
+                    }
+                }
+                d.queue.pop();
+            }
+        }
+
+        void Drain(ENetSocket socket, bool fromClient, std::vector<uint8_t>& buffer, double now) {
+            for (;;) {
+                ENetAddress from{};
+                ENetBuffer b;
+                b.data = buffer.data();
+                b.dataLength = buffer.size();
+                const int n = enet_socket_receive(socket, &from, &b, 1);
+                if (n <= 0) return;   // nothing waiting (0) or an error (an ICMP report on Linux): next round
+                if (fromClient) {
+                    if (!haveClient) {
+                        client = from;
+                        haveClient = true;
+                    } else if (from.host != client.host || from.port != client.port) {
+                        std::lock_guard lock(statsMutex);
+                        ++stats[0].strangers;
+                        continue;
+                    }
+                    Admit(0, buffer.data(), static_cast<size_t>(n), now);
+                } else {
+                    if (from.host != server.host || from.port != server.port) {
+                        std::lock_guard lock(statsMutex);
+                        ++stats[1].strangers;
+                        continue;
+                    }
+                    Admit(1, buffer.data(), static_cast<size_t>(n), now);
+                }
+            }
+        }
+
+        void Run() {
+            std::vector<uint8_t> buffer(65536);
+            while (!stop.load(std::memory_order_relaxed)) {
+                const double now = Now();
+                Release(0, now);
+                Release(1, now);
+                ENetSocketSet set;
+                ENET_SOCKETSET_EMPTY(set);
+                ENET_SOCKETSET_ADD(set, down);
+                ENET_SOCKETSET_ADD(set, up);
+                // Wake for a datagram or within 1 ms (the next due one is at most that late).
+                const int ready = enet_socketset_select(std::max(down, up), &set, nullptr, 1);
+                if (ready <= 0) continue;
+                const double t = Now();
+                if (ENET_SOCKETSET_CHECK(set, down)) Drain(down, true, buffer, t);
+                if (ENET_SOCKETSET_CHECK(set, up)) Drain(up, false, buffer, t);
+            }
+        }
+
+        ~Impl() {
+            stop = true;
+            if (thread.joinable()) thread.join();
+            if (down != ENET_SOCKET_NULL) enet_socket_destroy(down);
+            if (up != ENET_SOCKET_NULL) enet_socket_destroy(up);
+            if (acquired) ReleaseEnet();
+        }
+    };
+
+    UdpRelay::UdpRelay(std::unique_ptr<Impl> impl) : m_Impl(std::move(impl)) {}
+    UdpRelay::~UdpRelay() = default;
+
+    std::unique_ptr<UdpRelay> UdpRelay::Start(RelaySettings settings, std::string* error) {
+        auto impl = std::make_unique<Impl>();
+        impl->settings = settings;
+        if (!AcquireEnet()) {
+            if (error) *error = "ENet could not be initialised";
+            return nullptr;
+        }
+        impl->acquired = true;
+        if (enet_address_set_host(&impl->server, settings.serverHost.c_str()) != 0) {
+            if (error) *error = "'" + settings.serverHost + "' does not resolve to an IPv4 address";
+            return nullptr;
+        }
+        impl->server.port = settings.serverPort;
+        impl->down = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
+        impl->up = enet_socket_create(ENET_SOCKET_TYPE_DATAGRAM);
+        if (impl->down == ENET_SOCKET_NULL || impl->up == ENET_SOCKET_NULL) {
+            if (error) *error = "could not open the relay's UDP sockets";
+            return nullptr;
+        }
+        ENetAddress local{};
+        enet_address_set_host_ip(&local, "127.0.0.1");
+        local.port = 0;
+        ENetAddress any{};
+        any.host = ENET_HOST_ANY;
+        any.port = 0;
+        if (enet_socket_bind(impl->down, &local) != 0 || enet_socket_bind(impl->up, &any) != 0) {
+            if (error) *error = "could not bind the relay's UDP sockets";
+            return nullptr;
+        }
+        enet_socket_set_option(impl->down, ENET_SOCKOPT_NONBLOCK, 1);
+        enet_socket_set_option(impl->up, ENET_SOCKOPT_NONBLOCK, 1);
+        // Room for a bottleneck's bursts in the kernel too (ENet's own host asks for 256 KiB).
+        enet_socket_set_option(impl->down, ENET_SOCKOPT_RCVBUF, 1 << 20);
+        enet_socket_set_option(impl->up, ENET_SOCKOPT_RCVBUF, 1 << 20);
+        ENetAddress bound{};
+        if (enet_socket_get_address(impl->down, &bound) != 0) {
+            if (error) *error = "could not read the relay's port";
+            return nullptr;
+        }
+        impl->port = bound.port;
+        impl->dirs[0].settings = settings.up;
+        impl->dirs[1].settings = settings.down;
+        impl->dirs[0].rng = Rng(settings.seed * 2 + 1);
+        impl->dirs[1].rng = Rng(settings.seed * 2 + 2);
+        impl->start = std::chrono::steady_clock::now();
+        Impl* raw = impl.get();
+        impl->thread = std::thread([raw] { raw->Run(); });
+        return std::unique_ptr<UdpRelay>(new UdpRelay(std::move(impl)));
+    }
+
+    uint16_t UdpRelay::Port() const { return m_Impl->port; }
+    RelayStats UdpRelay::Up() const {
+        std::lock_guard lock(m_Impl->statsMutex);
+        return m_Impl->stats[0];
+    }
+    RelayStats UdpRelay::Down() const {
+        std::lock_guard lock(m_Impl->statsMutex);
+        return m_Impl->stats[1];
+    }
+    double UdpRelay::Seconds() const { return m_Impl->Now(); }
+    void UdpRelay::AddOutage(double from, double to) {
+        std::lock_guard lock(m_Impl->statsMutex);   // Admit reads the outages under it
+        m_Impl->settings.outages.emplace_back(from, to);
+    }
 
     bool ParseEndpoint(const std::string& text, uint16_t defaultPort, std::string& host, uint16_t& port) {
         const size_t colon = text.rfind(':');

@@ -52,7 +52,7 @@ if(TARGET VortexSimTests)
     vortex_assert_no_network(VortexSimTests)
 endif()
 # The GPU-free stage-5 acceptance asserts prediction quality on the wall clock (networking.md).
-set(VORTEX_SERIAL_TESTS_VortexNetTests "EnetSession.*")
+set(VORTEX_SERIAL_TESTS_VortexNetTests "EnetSession.*:Relay.*")   # wall clock: ENet sessions, the UDP relay (stage 8)
 vortex_add_tests(VortexNetTests net VortexNet)
 vortex_assert_gpu_free(VortexNetTests)
 vortex_add_tests(VortexGraphicsTests graphics VortexGraphics)

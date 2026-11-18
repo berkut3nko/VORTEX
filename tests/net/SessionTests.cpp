@@ -724,6 +724,11 @@ namespace {
         net::Impairment im;
         im.delaySeconds = 0.02;
         im.bytesPerSecond = 48.0 * 1024.0;
+        // Stage 8 (the flaky test of recheck 7b (e)): reproducible bit for bit. Without these the
+        // server's collider cooks ran on worker timing, which decided which drill pieces became server
+        // bodies (TakePieceSlot reads Jolt's sleep state) and so B's model requests and bulk: under
+        // ctest -j8 B asked for 70.9 KiB instead of 44.3 and was not synced in the measured ticks.
+        im.rngPerPeer = true;
         net::ServerSettings settings = Settings(DrillRegion());
         if (!paced) settings.bulkPacer.floorBytes = settings.bulkPacer.ceilingBytes = size_t{64} << 20;   // the window unlimited
         // Stage 6: snapshots carry the drill's falling pieces; at the design's 1200 B to each of two
@@ -731,6 +736,7 @@ namespace {
         settings.snapshotBytes = 128;
         Session s(settings, im);
         EXPECT_TRUE(s.started);
+        s.waitIdle = true;
         Session::Bot& a = s.AddClient();
         Session::Bot& b = s.AddClient({}, false);
         const net::BlastDrill drill(s.server.Region(), DefaultIds(), kGround);
@@ -755,6 +761,11 @@ namespace {
                 if (joined && run.joinTicks == 0 && b.simulation && b.client->Synced()) run.joinTicks = tick - joinTick;
             }
         }
+        // Stage 8: B's join is measured in ticks to its end, not in a fixed window (at most 900 more).
+        for (uint32_t t = 0; mode != JoinMode::None && run.joinTicks == 0 && t < 900; ++t) {
+            s.Tick();
+            if (b.simulation && b.client->Synced()) run.joinTicks = s.server.TickNumber() - joinTick;
+        }
         EXPECT_TRUE(s.Drain());
         run.equal = a.client->Hash().hash == s.server.Hash().hash &&
                     (mode == JoinMode::None || (b.client->State() == net::ClientState::Playing && b.client->Hash().hash == s.server.Hash().hash));
@@ -771,6 +782,13 @@ TEST(Session, ALateJoinsBulkIsPacedAndLiveEventsKeepFlowing) {
     const JoinRun none = RunLateJoin(JoinMode::None);
     const JoinRun paced = RunLateJoin(JoinMode::Paced);
     const JoinRun unpaced = RunLateJoin(JoinMode::Unpaced);
+    // Stage 8: the run is reproducible (waitIdle, rngPerPeer): a second paced run gives the same numbers.
+    const JoinRun again = RunLateJoin(JoinMode::Paced);
+    EXPECT_EQ(again.bulkBytes, paced.bulkBytes);
+    EXPECT_EQ(again.joinTicks, paced.joinTicks);
+    EXPECT_EQ(again.maxLiveLatency, paced.maxLiveLatency);
+    EXPECT_EQ(again.stats.bulkHeld, paced.stats.bulkHeld);
+    EXPECT_EQ(again.stats.events, paced.stats.events);
     std::printf("[ pacing ] %zu modified chunks at the join, %.1f KiB of bulk; A's live latency in the 300 ticks after B connected: max %u "
                 "ticks without a join, %u paced, %u unpaced; B synced after %u / %u ticks; bulk held %llu times, window %.1f..%.1f KiB\n",
                 paced.modified, static_cast<double>(paced.bulkBytes) / 1024.0, none.maxLiveLatency, paced.maxLiveLatency, unpaced.maxLiveLatency, paced.joinTicks,
@@ -1523,4 +1541,73 @@ TEST(Session, ChecksAreSentEvery2sAfterTheJoinAndAtTheStreamPosition) {
         const voxel::WorldHashResult server = s.server.Hash();
         for (Session::Bot* bot : {&a, &b}) EXPECT_EQ(bot->client->Hash().hash, server.hash);
     }
+}
+
+// --- join and leave ticks (stage 8) -------------------------------------------------------------------
+
+// networking.md "Stage 8": the owner's server logged a 126 ms pass at a first join: OnHello cooked every
+// pending collider (Terrain().Flush()) and, with no player near the spawn, the spawn's ground. The spawn
+// is now a permanent collider focus built at Start and the join does no global flush: its tick cooks no
+// collider on its own thread, even right after a drill step left re-cooks pending elsewhere.
+TEST(Session, TheFirstJoinCooksNoColliderInItsTick) {
+    Session s(Settings(DrillRegion()));
+    ASSERT_TRUE(s.started);
+    s.waitIdle = true;
+    EXPECT_GT(s.server.Stats().spawnColliders, 0u);
+    const net::BlastDrill drill(s.server.Region(), DefaultIds(), kGround);
+    for (uint32_t t = 0; t < 600; ++t) s.Tick();
+    // A drill step at a corner site one tick before the join: chunks there wait for re-cooks.
+    ASSERT_TRUE(net::RunDrillStep(s.server, drill.Step(0)));
+    s.Tick();
+    s.AddClient();
+    uint64_t joinTickBuilt = 0;
+    for (uint32_t t = 0; t < 30 && s.server.Stats().helloTicks == 0; ++t) {
+        const uint64_t builtBefore = s.server.Simulation().Terrain().Stats().built;
+        s.Tick();                                        // the Hello tick (the player's first step too)
+        joinTickBuilt = s.server.Simulation().Terrain().Stats().built - builtBefore;
+    }
+    const net::ServerStats& st = s.server.Stats();
+    std::printf("[ join tick ] %u spawn colliders at Start (%.1f ms); the join tick: %u cooked on its thread, %llu built in all, %.2f ms\n",
+                st.spawnColliders, st.spawnColliderSeconds * 1000.0, st.maxHelloTickCooks, static_cast<unsigned long long>(joinTickBuilt),
+                st.maxHelloTickSeconds * 1000.0);
+    EXPECT_EQ(st.helloTicks, 1u);
+    EXPECT_EQ(st.maxHelloTickCooks, 0u);
+    // What the background finishes in a tick (one round of the job budget), never the spawn's ~100.
+    EXPECT_LT(joinTickBuilt, 16u);
+    for (uint32_t t = 0; t < 120; ++t) s.Tick();
+    s.AddClient();
+    for (uint32_t t = 0; t < 30 && s.server.Stats().helloTicks < 2; ++t) s.Tick();
+    EXPECT_EQ(s.server.Stats().helloTicks, 2u);
+    EXPECT_EQ(s.server.Stats().maxHelloTickCooks, 0u);
+    EXPECT_TRUE(s.Drain());
+    EXPECT_EQ(s.bots[0]->client->Hash().hash, s.server.Hash().hash);
+    EXPECT_EQ(s.bots[1]->client->Hash().hash, s.server.Hash().hash);
+}
+
+// The leave stall (207 ms in the owner's run): vortex_server hashes the window when a client leaves. The
+// server's hashes are cached per chunk by World::ChunkRevision: a quiet window is hashed by lookups, an
+// edit recomputes the chunks it changed, and the value is WorldHash's.
+TEST(Session, ServerHashesAreCachedByChunkRevision) {
+    Session s(Settings(DrillRegion()));
+    ASSERT_TRUE(s.started);
+    s.waitIdle = true;
+    const voxel::WorldHashResult first = s.server.Hash();
+    const uint64_t computed = s.server.ChunkHashesComputed();
+    EXPECT_GT(computed, 0u);
+    EXPECT_EQ(first.hash, net::RegionHash(s.server.Simulation().World(), s.server.Region()).hash);
+    for (uint32_t t = 0; t < 30; ++t) s.Tick();
+    const voxel::WorldHashResult quiet = s.server.Hash();
+    EXPECT_EQ(quiet.hash, first.hash);
+    EXPECT_EQ(s.server.ChunkHashesComputed(), computed);      // nothing changed: lookups only
+    const net::BlastDrill drill(s.server.Region(), DefaultIds(), kGround);
+    ASSERT_TRUE(net::RunDrillStep(s.server, drill.Step(0)));
+    for (uint32_t t = 0; t < 30; ++t) s.Tick();
+    const voxel::WorldHashResult edited = s.server.Hash();
+    const uint64_t recomputed = s.server.ChunkHashesComputed() - computed;
+    EXPECT_NE(edited.hash, first.hash);
+    EXPECT_EQ(edited.hash, net::RegionHash(s.server.Simulation().World(), s.server.Region()).hash);
+    EXPECT_GT(recomputed, 0u);
+    EXPECT_LT(recomputed, computed / 4);                      // the drill site's chunks, not the window
+    const net::SyncBox box = net::RegionSyncBox(s.server.Region());
+    EXPECT_EQ(s.server.Hash(box).hash, voxel::WorldHash(s.server.Simulation().World(), box.min, box.Max()).hash);
 }

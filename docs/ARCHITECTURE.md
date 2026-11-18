@@ -42,12 +42,14 @@ engine/
                                NetIds and the piece budgets of a session server (replication)
     net/      vortex.net       the session protocol: transports (loopback, impaired, ENet / UDP), wire
                                format, messages, server, client, the client clock and prediction, replicated
-                               bodies (copies, snapshots, the entity check), bot pilots
+                               bodies (copies, snapshots, the entity check), bot pilots, the shared bot
+                               (net::Bot, DrainWatch, JudgeBot, exit lines) and the UDP relay (stage 8)
     graphics/ vortex.graphics  Vulkan device, window, renderer, UI layer
     engine/   vortex.engine    application loop, render data of the scene, explosions, glue
     editor/   vortex.editor    in-game editor: tool logic (no ImGui), panels, gizmo
   tests/                 GoogleTest suites, none of which need a GPU
-  tools/                 server/: vortex_server (the session server, GPU-free) and example session files
+  tools/                 server/: vortex_server (the session server, GPU-free) and example session files;
+                         bot/: vortex_bot (one bot player in its own process over UDP, GPU-free; stage 8's soak)
 ```
 
 Libraries and what they may depend on (a lower layer never imports a higher one):
@@ -60,13 +62,14 @@ Vortex::Net       net                          -> Sim; ENet (private)        (no
 Vortex::Graphics  graphics                     -> Core, Vulkan, VMA, vk-bootstrap, GLFW, ImGui
 Vortex::Engine    engine, editor               -> all of the above, ImGuizmo
 vortex_server     tools/server                 -> Net                        (no GPU, no window)
+vortex_bot        tools/bot                    -> Net                        (no GPU, no window)
 Shredborne (game) ../src                       -> Engine (and so Net and ENet)
 ```
 
 A dedicated server or a tool links `Vortex::Net` (or less) and never sees Vulkan. This is checked
 when the build is configured: `vortex_assert_gpu_free` (`CMakeLists.txt`) walks everything that
 `VortexCore`, `VortexPhysics`, `VortexSim`, `VortexNet`, the test binaries `VortexSimTests` and
-`VortexNetTests` and the executable `vortex_server` link, directly or through their dependencies,
+`VortexNetTests` and the executables `vortex_server` and `vortex_bot` link, directly or through their dependencies,
 and stops with an error if Graphics, Engine, Vulkan, GLFW, VMA or ImGui is among it (`vortex_enet`, ENet built
 from source, is checked too). A second check, `vortex_assert_no_network`, stops the build if `VortexCore`,
 `VortexPhysics`, `VortexSim` or `VortexSimTests` link `VortexNet` or ENet: the network transport is linked privately
@@ -829,7 +832,9 @@ network client will predict with (`docs/design/networking.md`).
 
 `vortex.net` (library `Vortex::Net`, GPU-free) is the M1 protocol of `docs/design/networking.md`; it runs over ENet
 (UDP) between `vortex_server` and the game (`Shredborne --connect`) and in one process over loopback transports for
-the tests ("Stage 3 as built" to "Stage 7b as built" there have every choice).
+the tests ("Stage 3 as built" to "Stage 8 as built" there have every choice). Stage 8: `vortex_bot` (`tools/bot`)
+is one bot player per process over real UDP, its impairment a `net::UdpRelay` below ENet; `tools/soak.sh` (game
+repository) runs a server and several bots for 1 or 10 minutes and compares their hashes and objects at exit.
 
 * **Region.** `sim::RegionDesc` (`vortex.sim:region`) = template id, seed, play bounds (whole chunks), height
   range, generator and `TerrainSettings` (the session's voxel size included). `sim::RegionWorldConfig` turns it into

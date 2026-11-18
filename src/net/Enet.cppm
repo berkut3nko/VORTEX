@@ -1,10 +1,15 @@
 module;
 
+#include <array>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
+#include <utility>
+#include <vector>
 
 export module vortex.net:enet;
 
@@ -50,6 +55,9 @@ export namespace vortex::net {
         uint64_t messagesSent = 0, bytesSent = 0;
         uint64_t messagesReceived = 0, bytesReceived = 0;
         uint64_t sendFailures = 0;        ///< enet_peer_send refused a message (dropped, counted)
+        /// Stage 8: message payload bytes by channel (State, Events, Bulk); they add up to bytesSent /
+        /// bytesReceived.
+        std::array<uint64_t, kChannelCount> channelBytesSent{}, channelBytesReceived{};
     };
 
     /**
@@ -104,6 +112,77 @@ export namespace vortex::net {
 
     private:
         explicit EnetTransport(std::unique_ptr<Impl> impl);
+        std::unique_ptr<Impl> m_Impl;
+    };
+
+    /// @brief One direction of a UdpRelay (stage 8): what the datagrams going that way meet.
+    struct RelayDirection {
+        double loss = 0.0;                ///< fraction dropped (seeded)
+        double delaySeconds = 0.0;        ///< one-way delay
+        double jitterSeconds = 0.0;       ///< uniform extra delay in [0, jitter]: datagrams may overtake each other, as with netem
+        double bytesPerSecond = 0.0;      ///< a bottleneck's rate (0 = none): datagrams queue behind each other, first in first out
+        /// The bottleneck's queue (bytes); a datagram that would make it longer is dropped (drop-tail, as
+        /// a home router). 0 = max(16 KiB, 250 ms of the rate).
+        size_t queueBytes = 0;
+    };
+
+    /// @brief How a UdpRelay is set up.
+    struct RelaySettings {
+        std::string serverHost;           ///< where the datagrams of the relay's client go (a name or a dotted address)
+        uint16_t serverPort = kDefaultPort;
+        RelayDirection up;                ///< client -> server
+        RelayDirection down;              ///< server -> client
+        /// Seconds after Start during which nothing gets through, either way.
+        std::vector<std::pair<double, double>> outages;
+        uint64_t seed = 1;
+        /// Test hook (recheck of stage 8): called on the relay's thread for every datagram it admits or
+        /// drops at its arrival (`direction` 0 up, 1 down; the bytes, the relay clock's time it was read,
+        /// and whether it was dropped there: loss, outage, a full queue). A test judges an outage by
+        /// these times, the relay's own, not by when another thread sent or read a datagram.
+        std::function<void(int direction, std::span<const uint8_t> datagram, double seconds, bool dropped)> onAdmit;
+    };
+
+    /// @brief What one direction of a UdpRelay did (cumulative; datagrams and their bytes, ENet headers,
+    /// acknowledgements and resends included).
+    struct RelayStats {
+        uint64_t datagramsIn = 0, bytesIn = 0;
+        uint64_t datagramsOut = 0, bytesOut = 0;
+        uint64_t lost = 0;                ///< dropped by RelayDirection::loss
+        uint64_t outage = 0;              ///< dropped in an outage
+        uint64_t queueFull = 0;           ///< dropped at the bottleneck's full queue
+        uint64_t strangers = 0;           ///< datagrams from an address that is not this relay's client or server (dropped)
+        double maxQueueSeconds = 0.0;     ///< the longest wait at the bottleneck
+    };
+
+    /**
+     * @brief A UDP relay on 127.0.0.1 that impairs real traffic below ENet (docs/design/networking.md
+     * "Stage 8": vortex_bot's loss, delay, jitter, outages and a slow downlink). A client's ENet connects
+     * to Port(); the relay forwards each datagram to the server and back after loss, an outage, a
+     * bottleneck and delay. Being below ENet, every effect is real for both ENets: resends, round trips
+     * that include the queue, the server's bulk pacer seeing a slow link. Runs on a thread of its own
+     * (the owner's stalls never stall the network); ENet's socket calls only, so no platform code.
+     */
+    class UdpRelay {
+    public:
+        /// @brief Binds 127.0.0.1:0 for the client and starts the thread. nullptr and `error` on failure.
+        static std::unique_ptr<UdpRelay> Start(RelaySettings settings, std::string* error);
+        ~UdpRelay();
+        UdpRelay(const UdpRelay&) = delete;
+        UdpRelay& operator=(const UdpRelay&) = delete;
+        /// @brief The port on 127.0.0.1 the client connects to.
+        uint16_t Port() const;
+        RelayStats Up() const;            ///< client -> server
+        RelayStats Down() const;          ///< server -> client
+        /// @brief The relay's clock (seconds since Start; what RelaySettings::outages are measured on).
+        double Seconds() const;
+        /// @brief Adds an outage [from, to) on the relay's clock (review of stage 8: a test starts one
+        /// once its connection is up, whenever that was).
+        void AddOutage(double from, double to);
+
+        struct Impl;
+
+    private:
+        explicit UdpRelay(std::unique_ptr<Impl> impl);
         std::unique_ptr<Impl> m_Impl;
     };
 

@@ -154,6 +154,11 @@ export namespace vortex::net {
         // Chunk sync and the join (stage 7a).
         uint64_t bulkBytes = 0;           ///< bulk messages received
         uint32_t chunkData = 0;           ///< ChunkData received
+        /// Stage 8 (O3, re-sent edge chunks): ChunkData for a coordinate this client had received before
+        /// (any reason: it changed, left the window and came back, a repair), and those whose RLE bytes
+        /// equal the last ones received for it (sent again unchanged: the waste a "have" list would save).
+        uint32_t chunkDataRepeats = 0, chunkDataUnchanged = 0;
+        uint64_t chunkDataRepeatBytes = 0, chunkDataUnchangedBytes = 0;
         uint32_t baselineEntities = 0;    ///< BaselineEntity received (the join's baseline and model answers)
         uint32_t baselineDiscarded = 0;   ///< ... for a tombstoned NetId or one with a copy already
         uint32_t heldEntityEvents = 0;    ///< entity events held for a NetId whose copy did not exist yet
@@ -370,6 +375,7 @@ export namespace vortex::net {
         uint32_t AppliedOpSeq() const;    ///< The last event applied.
         uint32_t ServerOpSeq() const;     ///< The last event the server said it made (status or batch).
         uint32_t JoinOpSeq() const;       ///< The join point (Welcome): the stream started after it.
+        uint32_t JoinTick() const;        ///< The server tick of its Welcome (with the slot it names this client: Server::ClientJoinPoint).
         /// @brief Every chunk of the window current, no chunk or model request out, the entity baseline
         /// ended and no entity event held: Hash() is comparable with the server's (at the same opSeq).
         bool Synced() const;
@@ -403,6 +409,9 @@ export namespace vortex::net {
         voxel::WorldHashResult Hash() const;
         /// @brief Despawned NetIds remembered now (at most ClientSettings::maxTombstones).
         size_t Tombstones() const;
+        /// @brief The distinct chunks a HashCheck found different here (any class; stage 8: a bot with an
+        /// injected fault must have found exactly its own).
+        std::vector<glm::ivec3> MismatchedChunks() const;
         /// @brief Tests: this client loses its copy of `netId` (as a copy its own scene removed:
         /// counted in copiesLost); false without such a copy. The next EntityCheck sees it missing.
         bool TestDestroyCopy(uint32_t netId);

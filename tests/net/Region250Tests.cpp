@@ -36,6 +36,7 @@ import vortex.core;
 import vortex.math;
 import vortex.voxel;
 import vortex.scene;
+import vortex.physics;
 import vortex.sim;
 import vortex.net;
 
@@ -1199,4 +1200,55 @@ TEST(TerrainMode, ANoiseRegionPacksAsTheServerDoes) {
     EXPECT_EQ(residentFar, 0u) << "buried chunks the server packs are resident here";
     f.ExpectSameWorld(b);
     ExpectNoFalseChecks(b, 2, 2);
+}
+
+// Stage 8 (the 10-minute arena soak): every bot's drain failed and the headless game client exited 1 -
+// one server body never rested (it was awake on the server, so no EntityRest came), though it did not
+// move. The drain rule (net::DrainWatch: the game's headless exit and vortex_bot's) must settle beside a
+// copy that is not resting but stands within 1 mm for the hold time, and must not settle while a copy
+// moves. Here the server keeps a crate on flat ground awake by activating its body every tick.
+TEST(Region250, ADrainSettlesBesideAStillAwakeServerBody) {
+    Field f(Settings(Plain250()));
+    ASSERT_TRUE(f.started);
+    f.storeLimit = kGameStore;
+    Field::Bot& a = f.AddBot([](Field::Bot&) { return sim::PlayerInput{}; }, GameClient());
+    ASSERT_TRUE(f.Join());
+    const glm::dvec3 spawn = f.server.Template().spawn;
+    const uint32_t netId = f.server.SpawnCrate(spawn + glm::dvec3(4.0, 1.0, 0.0));
+    ASSERT_NE(netId, 0u);
+    ASSERT_TRUE(f.Settle());
+    physics::BodyId crate{};
+    for (const auto [entity, id, body] : f.server.Simulation().Scene().Registry().view<const scene::NetId, const scene::RigidBody>().each())
+        if (id.value == netId) crate = body.body;
+    ASSERT_TRUE(f.server.Simulation().Physics().IsValid(crate));
+    // Awake on the server from now on, still on the ground.
+    const auto pass = [&] {
+        f.server.Simulation().Physics().Activate(crate);
+        f.Pass();
+    };
+    for (int i = 0; i < 60; ++i) pass();
+    bool copyResting = true;
+    for (const net::EntityInfo& e : a.client->Entities())
+        if (e.netId == netId) copyResting = e.resting;
+    ASSERT_FALSE(copyResting) << "the copy never woke: the test shows nothing";
+    net::DrainWatch watch(1.0);
+    int settledAt = -1;
+    for (int i = 0; i < 300 && settledAt < 0; ++i) {
+        pass();
+        if (watch.Update(*a.client, f.clock)) settledAt = i;
+    }
+    std::printf("[ drain ] beside an awake crate standing still (NetId %u): settled after %d passes, %u copy not resting\n", netId, settledAt,
+                watch.NotResting());
+    EXPECT_GE(settledAt, 59) << "at least the hold time";
+    EXPECT_LT(settledAt, 150);
+    EXPECT_EQ(watch.NotResting(), 1u);
+    // A copy that moves keeps the hold from settling: the crate is thrown up and falls back.
+    f.server.Simulation().Physics().AddImpulse(crate, glm::vec3(0.0f, 400.0f, 0.0f));
+    net::DrainWatch moving(1.0);
+    int movingSettledAt = -1;
+    for (int i = 0; i < 40 && movingSettledAt < 0; ++i) {
+        pass();
+        if (moving.Update(*a.client, f.clock)) movingSettledAt = i;
+    }
+    EXPECT_LT(movingSettledAt, 0) << "settled while the copy flew";
 }

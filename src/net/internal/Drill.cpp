@@ -159,6 +159,11 @@ namespace vortex::net {
                 m_BestDistance = 0.0f;
                 m_SinceProgress = 0;
             }
+            if (Done() && m_Settings.loopWaypoints) {
+                // Stage 8 (vortex_bot --walk-across --loop): round again from the first waypoint.
+                m_Waypoint = 0;
+                ++m_Laps;
+            }
             if (Done()) return in;
             const glm::vec2 to = m_Settings.waypoints[m_Waypoint] - feet;
             in.yaw = sim::QuantizeYaw(std::atan2(-to.x, -to.y));

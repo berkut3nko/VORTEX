@@ -16,3 +16,4 @@ export import :sync;
 export import :server;
 export import :client;
 export import :drill;
+export import :bot;

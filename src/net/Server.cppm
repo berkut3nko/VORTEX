@@ -64,6 +64,10 @@ export namespace vortex::net {
         /// (BulkPacer), an optional hard cap in bytes per second per peer (0 = none; tests, admins),
         /// and the distance (metres, horizontal) within which a peer's chunks go before its baseline.
         BulkPacerSettings bulkPacer;
+        /// Stage 8 (O2): the bulk window's ceiling for a peer in server terrain mode (its whole window comes
+        /// as bulk: 16 MiB on the playground); 0 = the same ceiling as everyone's. A larger window only
+        /// fills when the peer's round trip stays near its base (the pacer's delay rule still holds).
+        size_t terrainBulkCeilingBytes = 0;
         double maxBulkBytesPerSecond = 0.0;
         float bulkNearMetres = 32.0f;
         /// The join's baseline is sent nearest the spawn first; after the entities that come within
@@ -308,6 +312,39 @@ export namespace vortex::net {
         uint32_t maxSnapshotBodies = 0;
         uint32_t maxAwakeBodies = 0;      ///< most replicated objects awake at the end of a tick
         size_t maxSnapshotBytes = 0;
+
+        // Stage 8: join and leave ticks (wall clock, logged only) and the colliders behind them.
+        uint32_t spawnColliders = 0;      ///< colliders of the spawn built at Start (a permanent collider focus)
+        double spawnColliderSeconds = 0.0;
+        uint64_t flushBoxCooks = 0;       ///< colliders cooked on the tick's thread by the player steps' FlushBox
+        uint32_t helloTicks = 0, firstWindowTicks = 0, leaveTicks = 0;   ///< ticks that took a Hello / a peer's first WindowUpdate / a leave
+        double maxHelloTickSeconds = 0.0, maxFirstWindowTickSeconds = 0.0, maxLeaveTickSeconds = 0.0;
+        uint32_t maxHelloTickCooks = 0;   ///< the most colliders FlushBox cooked in a tick that took a Hello
+        /// Snapshot sizes in 64 B buckets (the last: 4 KiB and more) and cast cost in ms per 10 000 work
+        /// units in 0.1 ms buckets (the last: 10 ms and more).
+        std::array<uint32_t, 65> snapshotHistogram{};
+        std::array<uint32_t, 101> castCostHistogram{};
+        /// Event bytes by kind (index = MessageType value of the event: 1-6 WorldOpKind, 32-36 entity events).
+        std::array<uint64_t, 40> eventBytesByKind{};
+        std::array<uint32_t, 40> eventsByKind{};
+        std::array<uint32_t, 40> maxEventBytesByKind{};
+        size_t maxBulkInFlight = 0;       ///< the most bulk bytes in flight to one peer at a tick's end
+
+        /// @brief The value under which `fraction` of a histogram's samples lie (upper bucket bound
+        /// in bucket units: multiply by the bucket width).
+        template <size_t N>
+        static uint32_t HistogramPercentile(const std::array<uint32_t, N>& h, double fraction) {
+            uint64_t total = 0;
+            for (uint32_t v : h) total += v;
+            if (total == 0) return 0;
+            const double want = fraction * static_cast<double>(total);
+            double seen = 0.0;
+            for (size_t i = 0; i < N; ++i) {
+                seen += static_cast<double>(h[i]);
+                if (seen >= want && h[i] > 0) return static_cast<uint32_t>(i + 1);
+            }
+            return static_cast<uint32_t>(N);
+        }
     };
 
     /**
@@ -405,13 +442,18 @@ export namespace vortex::net {
         /// @brief How many times each chunk coordinate came in a ChunkRequest (any peer, as received;
         /// tests: no chunk is requested twice). Empty unless ServerSettings::countChunkRequests.
         std::vector<std::pair<glm::ivec3, uint32_t>> ChunkRequestCounts() const;
-        /// @brief The sync box of the joined client in `slot`: its last WindowUpdate's window inside
-        /// the server's (what its Client::Hash covers); empty when there is no such client or it sent
-        /// no window yet. Valid inside the SetOnClientLeft callback.
         /// @brief The server tick at which the HashCheck planner of the peer in `slot` last picked
         /// `chunk` (tests); false: never picked, or it left that peer's box since.
         bool LastHashChecked(uint8_t slot, const glm::ivec3& chunk, uint32_t& tick) const;
+        /// @brief The sync box of the joined client in `slot`: its last WindowUpdate's window inside
+        /// the server's (what its Client::Hash covers); empty when there is no such client or it sent
+        /// no window yet. Valid inside the SetOnClientLeft callback.
         SyncBox ClientSyncBox(uint8_t slot) const;
+        /// @brief The join point of the joined client in `slot`: its Welcome's joinOpSeq and tick (the
+        /// client's Client::JoinOpSeq / JoinTick). A slot is reused after a leave; (slot, join tick)
+        /// names one client of a session (recheck of stage 8: the scripts match leave lines by it).
+        /// false when there is no such client. Valid inside the SetOnClientLeft callback.
+        bool ClientJoinPoint(uint8_t slot, uint32_t& opSeq, uint32_t& tick) const;
         /// @brief Server terrain mode's cost for the joined client in `slot` (terrainMode false when it
         /// never asked for it, or there is no such client).
         TerrainPeerCost TerrainCost(uint8_t slot) const;
@@ -422,6 +464,11 @@ export namespace vortex::net {
         const std::deque<CastRecord>& Casts() const;   ///< The most recent ServerSettings::castRecordLimit.
         /// @brief Events made but not yet handed to every joined peer, encoded (stage 7a: no join log).
         size_t BacklogBytes() const;
+        /// @brief Joined clients whose join data (chunks, baseline) is not all acknowledged yet (stage 8:
+        /// the timeline's "during joins").
+        size_t JoiningClients() const;
+        /// @brief Chunk hashes computed by Hash so far (the rest came from the per-revision cache; tests).
+        uint64_t ChunkHashesComputed() const;
 
     private:
         struct Impl;

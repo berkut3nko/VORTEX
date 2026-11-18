@@ -1,13 +1,14 @@
 // vortex_server: the session server of docs/design/networking.md (stages 3-6).
 //
 //   vortex_server --session <file> [--listen [PORT]] [--bind ADDR] [--token HEX | --new-token]
-//                 [--seconds S] [--exit-when-empty]
+//                 [--seconds S] [--exit-when-empty] [--parent-pid PID]
 //                 [--ticks N] [--drill N] [--clients N] [--enet] [--join-step K]
 //                 [--loss P] [--delay-ms D] [--jitter-ms J] [--outage-ms A,B] [--threads T]
 //                 [--stand] [--no-jumps] [--bot-casts N] [--bot-crates N] [--realtime] [--hash-out <file>]
 //                 [--drill-after N] [--drill-delay S] [--drill-sites K] [--drill-every T]
 //                 [--client-window N] [--walk-across] [--precasts N] [--memory] [--max-join-p99-ticks N]
-//                 [--bot-broken-chunk N[:X,Y,Z]] [--bot-broken-generator N]
+//                 [--bot-broken-chunk N[:X,Y,Z]] [--bot-broken-generator N] [--timeline FILE] [--broken-chunk-candidate]
+//                 [--terrain-bulk-ceiling KIB] [--bulk-window-floor KIB] [--pacer-delivery-interval S]
 //
 // Starts the server from a session file (token, region, template; see sessions/*.session), loads its
 // whole window and applies the template.
@@ -76,6 +77,13 @@
 // run fails unless it did and still ends with the server's world and objects. Every bot in terrain
 // mode logs a `Terrain: bot N:` line (why and since when, the acks, the data, held ticks) with the
 // server's bytes for its join and per window step.
+// Stage 8: the bots are net::Bot (shared with vortex_bot, which runs one bot per process); a broken-chunk bot
+// stands until its chunk is repaired, then plays, and every bot's verdict is net::JudgeBot's. --timeline FILE
+// writes `ops <last opSeq> <steady-clock ns> <clients joining>` after every pass that made events or changed the
+// joining count (vortex_bot --timeline reads it: event latency on one host). --broken-chunk-candidate logs `Broken
+// chunk candidate: X,Y,Z` (a pristine server-Dense chunk 3 m under the ground near the spawn) for vortex_bot
+// --broken-chunk. The server's hashes are cached per chunk revision and warmed before anyone joins (a leave costs
+// lookups); join, first-window and leave ticks are timed apart (`Ticks: tick N (...) took X ms`).
 // A server that fails (networking.md: a broken server world ends the session) stops at once and
 // reports. Exit code 0 when every bot's hash equals the server's, every entity check agrees and
 // nothing failed; 1 otherwise; 2 on a bad command line, session file or port.
@@ -100,25 +108,21 @@
 #include <thread>
 #include <vector>
 
+#if defined(__linux__)
+#include <sys/prctl.h>
+#include <unistd.h>
+#endif
+
 import vortex.core;
 import vortex.voxel;
 import vortex.scene;
+import vortex.physics;
 import vortex.sim;
 import vortex.net;
 
 using namespace vortex;
 
 namespace {
-    /// Resident memory of this process in MiB (Linux /proc; 0 elsewhere).
-    double ResidentMiB() {
-        std::ifstream status("/proc/self/status");
-        std::string line;
-        while (std::getline(status, line)) {
-            if (line.rfind("VmRSS:", 0) == 0) return std::atof(line.c_str() + 6) / 1024.0;
-        }
-        return 0.0;
-    }
-
     /// Ctrl-C / SIGTERM: the server stops, reports and exits; a second one kills it (the handler
     /// puts the default back).
     std::atomic<bool> g_Stop{false};
@@ -140,34 +144,25 @@ namespace {
 
     bool IsLoopback(const std::string& address) { return address.rfind("127.", 0) == 0; }
 
+    /// An in-process bot (stage 8: the bot itself is net::Bot, shared with vortex_bot): its transport
+    /// chain and when it joined.
     struct BotClient {
         std::unique_ptr<net::LoopbackTransport> loop;
         std::unique_ptr<net::EnetTransport> udp;   ///< --enet: the bot's own UDP socket
         std::unique_ptr<net::ImpairedTransport> link;
-        std::unique_ptr<net::Client> client;
-        std::unique_ptr<sim::Simulation> simulation;
-        std::unique_ptr<net::BotPilot> pilot;
+        std::unique_ptr<net::Bot> bot;
+        net::BotSettings settings;
         bool connected = false;
-        bool broken = false;              ///< --bot-broken-chunk: its generator makes one pristine chunk differently; it stands
-        bool brokenGenerator = false;     ///< --bot-broken-generator: another build's terrain everywhere (server terrain mode)
         uint32_t joinStep = 0;
-        uint32_t casts = 0;               ///< casts its prediction showed
-        float minX = 1e30f, maxX = -1e30f;   ///< how far its player went (x, metres)
-        net::ClientSettings settings;
-        // Event latency (stage 7a): server ticks from an event being made to this bot applying it.
-        uint32_t seen = 0;                ///< the opSeq applied up to, as last measured
-        bool counting = false;            ///< attached: its events are measured (from its join point on)
-        std::vector<std::pair<uint32_t, uint32_t>> latencies;   ///< (tick the event was made, latency in ticks)
         /// Its join: connected .. its join data in (ClientStats::joinDataTicks: the baseline ended, no
         /// chunk of its window waiting for the server; 0: not yet).
         uint32_t connectTick = 0, syncTick = 0;
     };
 
     /// The 99th percentile (nearest rank) of `v`; 0 when empty.
-    uint32_t P99(std::vector<uint32_t> v) {
-        if (v.empty()) return 0;
-        std::sort(v.begin(), v.end());
-        return v[std::min(v.size() - 1, static_cast<size_t>(std::ceil(0.99 * static_cast<double>(v.size()))) - 1)];
+    uint32_t P99(const std::vector<uint32_t>& v) {
+        std::vector<double> d(v.begin(), v.end());
+        return static_cast<uint32_t>(net::PercentilesOf(std::move(d)).p99);
     }
 
     double Number(const CommandLine& args, const char* name, double fallback) {
@@ -187,7 +182,7 @@ int main(int argc, char** argv) {
                              "[--outage-ms A,B] [--threads T] [--stand] [--no-jumps] [--bot-casts N] [--bot-crates N] [--realtime] "
                              "[--hash-out <file>] [--drill-after N] [--drill-delay S] [--drill-sites K] [--drill-every T] "
                              "[--client-window N] [--walk-across] [--precasts N] [--memory] [--max-join-p99-ticks N] "
-                             "[--bot-broken-chunk N[:X,Y,Z]] [--bot-broken-generator N]\n");
+                             "[--bot-broken-chunk N[:X,Y,Z]] [--bot-broken-generator N] [--timeline FILE] [--broken-chunk-candidate] [--terrain-bulk-ceiling KIB] [--bulk-window-floor KIB] [--pacer-delivery-interval S]\n");
         return 2;
     }
     net::SessionConfig session;
@@ -256,8 +251,6 @@ int main(int argc, char** argv) {
     // Review of stage 7a: an exit rule on the event latency during joins (networking.md "Testing":
     // p99 under 250 ms = 15 ticks while a client joins); 0 = logged only.
     const uint32_t maxJoinP99 = static_cast<uint32_t>(Number(args, "--max-join-p99-ticks", 0));
-    // The game's store: its GPU chunk buffer, 2048 slots kept free for what a session adds.
-    constexpr uint32_t kGameStoreSlots = 12288, kGameStoreHeadroom = 2048;
 
     net::Impairment impairment;
     impairment.loss = Number(args, "--loss", 0.0);
@@ -309,7 +302,26 @@ int main(int argc, char** argv) {
     net::ServerSettings settings;
     settings.session = session;
     settings.simulation.jobThreads = threads;
-    settings.castRecordLimit = std::max(settings.castRecordLimit, drillSteps);   // the drill report reads every cast
+    // The drill report reads every drill cast (review of stage 8: players' casts and the precasts share the
+    // record; a limit of the drill's steps alone dropped the oldest drill casts in a 10-minute soak and the
+    // report counted the wrong steps). Records are about 100 bytes.
+    if (drillSteps > 0) settings.castRecordLimit = std::max<uint32_t>(settings.castRecordLimit, drillSteps + precasts + 65536u);
+    // --terrain-bulk-ceiling KIB (stage 8, O2): the bulk window's ceiling for a peer in server terrain mode.
+    if (const std::optional<std::string> kib = args.Get("--terrain-bulk-ceiling"))
+        settings.terrainBulkCeilingBytes = static_cast<size_t>(std::max(0.0, std::atof(kib->c_str())) * 1024.0);
+    // --bulk-window-floor KIB (stage 8, a measurement knob): the bulk window never goes under this (the ceiling is
+    // raised to it): with the floor at the ceiling the window is fixed, which tells the pacer's share of a slow
+    // join from the link's (networking.md "Stage 8 as built", O2 / O5).
+    // --pacer-delivery-interval S (stage 8, a measurement knob): BulkPacerSettings::deliveryInterval; 0 = the 7a
+    // pacer (its window sized by the smoothed drain rate alone).
+    if (const std::optional<std::string> sec = args.Get("--pacer-delivery-interval")) {
+        const double v = std::atof(sec->c_str());
+        settings.bulkPacer.deliveryInterval = v > 0.0 ? v : 1.0e12;
+    }
+    if (const std::optional<std::string> kib = args.Get("--bulk-window-floor")) {
+        settings.bulkPacer.floorBytes = std::max<size_t>(1200, static_cast<size_t>(std::max(0.0, std::atof(kib->c_str())) * 1024.0));
+        settings.bulkPacer.ceilingBytes = std::max(settings.bulkPacer.ceilingBytes, settings.bulkPacer.floorBytes);
+    }
     net::Server server(settings, serverLink);
     if (!server.Start()) return 1;
     const double dt = static_cast<double>(server.Simulation().FixedTimeStep());
@@ -318,24 +330,19 @@ int main(int argc, char** argv) {
     for (uint32_t i = 0; i < clientCount; ++i) {
         BotClient& bot = bots[i];
         bot.loop = std::make_unique<net::LoopbackTransport>();
-        net::ClientSettings cs;
-        cs.token = session.token;
-        cs.presentation = i == 0;          // the first client also makes particles and rubble, as a game would
-        cs.windowChunks = clientWindow;
-        if (clientWindow > 0) cs.minFreeStoreSlots = kGameStoreHeadroom;
+        net::BotSettings& bs = bot.settings;
+        bs.id = i;
+        bs.client.token = session.token;
+        bs.client.presentation = i == 0;   // the first client also makes particles and rubble, as a game would
+        bs.client.windowChunks = clientWindow;
+        bs.pilot = pilotSettings;
+        bs.walkAcross = i == 0 && walkAcross;
+        bs.stand = stand;
+        // A moving window streams in play: two workers each unless --threads says otherwise.
+        bs.jobThreads = threads > 0 ? std::max(1u, threads / 2) : clientWindow > 0 ? 2u : 1u;
+        bs.chunkCapacity = session.chunkCapacity;
+        bs.packHidden = session.packHidden;
         bot.joinStep = i == 0 ? 0 : joinStep;
-        bot.settings = cs;
-        net::PilotSettings ps = pilotSettings;
-        if (i == 0 && walkAcross) {
-            // The middle z, from the -x edge to the +x edge and back to the middle (metres).
-            const sim::RegionDesc& r = server.Region();
-            const float chunk = static_cast<float>(voxel::kChunkSize) * r.terrain.voxelSize;
-            const float x0 = static_cast<float>(r.playMinChunk.x) * chunk + 4.0f, x1 = static_cast<float>(r.playMaxChunk.x) * chunk - 4.0f;
-            const float z = 0.5f * static_cast<float>(r.playMinChunk.y + r.playMaxChunk.y) * chunk;
-            ps.waypoints = {{x0, z}, {x1, z}, {0.5f * (x0 + x1), z}};
-            ps.casts = false;
-        }
-        bot.pilot = std::make_unique<net::BotPilot>(server.Region(), 0xb07u + i, ps);
     }
     // --bot-broken-chunk N[:X,Y,Z] (stage 7b): one bot's generator makes one pristine chunk differently.
     glm::ivec3 brokenChunk{0};
@@ -346,55 +353,31 @@ int main(int argc, char** argv) {
             Log::Error("--bot-broken-chunk expects N or N:X,Y,Z with N a bot (0..{})", clientCount == 0 ? 0 : clientCount - 1);
             return 2;
         }
-        const voxel::World& w = server.Simulation().World();
-        const glm::dvec3 spawn = server.Template().spawn;
-        const double chunkMetres = static_cast<double>(voxel::kChunkSize) * static_cast<double>(w.VoxelSize());
-        const double reach = static_cast<double>(net::HashCheckSettings{}.pristineMetres);
-        auto distance = [&](const glm::ivec3& c) { return glm::distance((glm::dvec3(c) + glm::dvec3(0.5)) * chunkMetres, spawn); };
-        auto usable = [&](const glm::ivec3& c, std::string* why) {
-            const char* reason = nullptr;
-            if (w.StateOf(c) != voxel::CellState::Dense) reason = "not Dense on the server";
-            else if (server.IsModified(c)) reason = "modified (it would come as data, never generated)";
-            else if (distance(c) > reach) reason = "farther than 12 m from the spawn (a standing bot's checks would never reach it)";
-            for (const net::ProbeHash& p : server.Probes())
-                if (p.chunk == c) reason = "a probe chunk";
-            if (reason && why) *why = reason;
-            return reason == nullptr;
-        };
         if (fields == 4) {
             brokenChunk = glm::ivec3(x, y, z);
             std::string why;
-            if (!usable(brokenChunk, &why)) {
+            if (!net::UsableBrokenChunk(server, brokenChunk, &why)) {
                 Log::Error("--bot-broken-chunk: chunk ({}, {}, {}) is {}", x, y, z, why);
                 return 2;
             }
         } else {
-            const glm::ivec3 at = voxel::VoxelToChunk(w.WorldToVoxel(spawn));
-            const int r = static_cast<int>(std::ceil(reach / chunkMetres)) + 1;
-            double best = 1e30;
-            bool found = false;
-            for (int dy = -r; dy <= r; ++dy)
-                for (int dz = -r; dz <= r; ++dz)
-                    for (int dx = -r; dx <= r; ++dx) {
-                        const glm::ivec3 c = at + glm::ivec3(dx, dy, dz);
-                        if (!usable(c, nullptr) || distance(c) >= best) continue;
-                        best = distance(c);
-                        brokenChunk = c;
-                        found = true;
-                    }
-            if (!found) {
-                Log::Error("--bot-broken-chunk: no pristine server-Dense chunk within 12 m of the spawn that is not a probe");
+            std::string why;
+            if (!net::BrokenChunkCandidate(server, brokenChunk, &why)) {
+                Log::Error("--bot-broken-chunk: {}", why);
                 return 2;
             }
         }
         BotClient& bot = bots[static_cast<size_t>(n)];
-        bot.broken = true;
+        bot.settings.hasBrokenChunk = true;
+        bot.settings.brokenChunk = brokenChunk;
         const uint8_t stone = server.Simulation().WorldMaterialIds().stone;
-        bot.settings.wrapGenerator = [brokenChunk, stone](std::shared_ptr<voxel::IWorldGenerator> g) {
+        bot.settings.client.wrapGenerator = [brokenChunk, stone](std::shared_ptr<voxel::IWorldGenerator> g) {
             return net::BreakChunks(std::move(g), {brokenChunk}, stone);
         };
-        Log::Info("Broken chunk: bot {}'s generator makes chunk ({}, {}, {}) differently ({:.1f} m from the spawn); it stands", n, brokenChunk.x,
-                  brokenChunk.y, brokenChunk.z, distance(brokenChunk));
+        const double chunkMetres = static_cast<double>(voxel::kChunkSize) * static_cast<double>(server.Simulation().World().VoxelSize());
+        Log::Info("Broken chunk: bot {}'s generator makes chunk ({}, {}, {}) differently ({:.1f} m from the spawn); it stands until it is "
+                  "repaired", n, brokenChunk.x, brokenChunk.y, brokenChunk.z,
+                  glm::distance((glm::dvec3(brokenChunk) + glm::dvec3(0.5)) * chunkMetres, glm::dvec3(server.Template().spawn)));
     }
 
     // --bot-broken-generator N (stage 7b M-b): one bot's build makes other terrain everywhere.
@@ -405,14 +388,14 @@ int main(int argc, char** argv) {
             return 2;
         }
         BotClient& bot = bots[static_cast<size_t>(n)];
-        if (bot.broken) {
+        if (bot.settings.hasBrokenChunk) {
             Log::Error("--bot-broken-generator: bot {} already has --bot-broken-chunk", n);
             return 2;
         }
-        bot.brokenGenerator = true;
+        bot.settings.brokenGenerator = true;
         const sim::RegionDesc region = server.Region();
         const voxel::WorldMaterials ids = server.Simulation().WorldMaterialIds();
-        bot.settings.wrapGenerator = [region, ids](std::shared_ptr<voxel::IWorldGenerator>) {
+        bot.settings.client.wrapGenerator = [region, ids](std::shared_ptr<voxel::IWorldGenerator>) {
             sim::RegionDesc other = region;
             other.terrain.seed += 1;
             other.flatGroundVoxels += 12;
@@ -467,16 +450,21 @@ int main(int argc, char** argv) {
     // Over UDP a bot that loads its region keeps the rest running (the server, the other bots): the
     // load's callback runs whole passes without it. On the loopback the clock is simulated and the
     // load stays outside it, as before.
-    const BotClient* loading = nullptr;
     std::function<void()> nestedPass;
+    auto anyLoading = [&bots] {
+        for (const BotClient& b : bots)
+            if (b.bot && b.bot->Loading()) return true;
+        return false;
+    };
     // Event latency (stage 7a: "event latency during joins"): the server tick every event went out
     // with ([opSeq - 1]); each bot measures the ticks until it applied it.
     std::vector<uint32_t> madeAt;
     auto stepClients = [&](uint32_t step) {
         while (madeAt.size() < server.LastOpSeq()) madeAt.push_back(server.TickNumber());
+        const bool loading = anyLoading();
         for (BotClient& bot : bots) {
-            if (&bot == loading) continue;
-            if (loading != nullptr && !bot.connected) continue;   // no new joins inside a load
+            if (bot.bot && bot.bot->Loading()) continue;
+            if (loading && !bot.connected) continue;   // no new joins inside a load
             if (!bot.connected && step >= bot.joinStep) {
                 const size_t i = static_cast<size_t>(&bot - bots.data());
                 net::ITransport* base = bot.loop.get();
@@ -497,72 +485,29 @@ int main(int argc, char** argv) {
                     net::LoopbackTransport::Connect(serverLoop, *bot.loop);
                 }
                 bot.link = std::make_unique<net::ImpairedTransport>(*base, impairment, 0xc1e47u + i, now);
-                bot.client = std::make_unique<net::Client>(bot.settings, *bot.link);
+                bot.bot = std::make_unique<net::Bot>(bot.settings, *bot.link);
                 bot.connected = true;
                 bot.connectTick = server.TickNumber();
             }
             if (!bot.connected) continue;
-            if (bot.client->State() == net::ClientState::Welcomed && !bot.simulation && loading == nullptr) {
-                sim::SimulationConfig base;
-                // A moving window streams in play: two workers each unless --threads says otherwise.
-                base.jobThreads = threads > 0 ? std::max(1u, threads / 2) : clientWindow > 0 ? 2u : 1u;
-                base.physics.threads = 1;
-                if (session.chunkCapacity != 0) base.chunkCapacity = session.chunkCapacity;   // else the region's (MakeSimulationConfig)
-                // --client-window: the game's world (its packing, its store and headroom; plan amendment 6).
-                if (clientWindow > 0) {
-                    base.world.packHidden = session.packHidden;
-                    base.chunkCapacity = kGameStoreSlots;
-                }
-                bot.simulation = std::make_unique<sim::Simulation>(bot.client->MakeSimulationConfig(base, clientWindow > 0 ? kGameStoreSlots : 0));
-                loading = &bot;
-                const double t0 = wallNow();
-                const bool initialized = bot.simulation->Initialize(bot.client->MakeGenerator());
-                const double t1 = wallNow();
-                const bool attached = initialized && bot.client->Attach(*bot.simulation, [&bot, &nestedPass, enet] {
-                                          bot.client->Poll();
-                                          bot.link->Flush();
-                                          if (enet) nestedPass();
-                                      });
-                // Over UDP the other participants stand still during the initialisation (one thread).
-                Log::Info("Client {}: simulation initialised in {:.3f} s, region loaded and attached in {:.3f} s",
-                          static_cast<size_t>(&bot - bots.data()), t1 - t0, wallNow() - t1);
-                // The rest of the load (after its last callback: the final checks) for everyone else
-                // too; the passes inside the load have given them the time before.
-                if (enet) {
-                    nestedPass();
-                    passSeconds = 0.0;
-                }
-                loading = nullptr;
-                if (!attached) {
-                    Log::Error("Client: could not attach a simulation");
-                    bot.simulation.reset();
-                }
+            net::Client& client = bot.bot->GetClient();
+            // One region load at a time (over UDP the others keep running inside it).
+            if (loading && client.State() == net::ClientState::Welcomed && bot.bot->GetSimulation() == nullptr) continue;
+            const bool hadSimulation = bot.bot->GetSimulation() != nullptr;
+            bot.bot->Pass(passSeconds, !draining, [&nestedPass, enet] {
+                if (enet) nestedPass();
+            });
+            // The rest of the load (after its last callback: the final checks) for everyone else too;
+            // the passes inside the load have given them the time before.
+            if (!hadSimulation && bot.bot->GetSimulation() != nullptr && enet) {
+                nestedPass();
+                passSeconds = 0.0;
             }
-            // The client's own clock (kept ahead of the server) says how many ticks it runs now.
-            const uint32_t due = bot.client->TicksDue(passSeconds);
-            for (uint32_t k = 0; k < due; ++k) {
-                const sim::PlayerInput controls =
-                    bot.client->Predicting() && !stand && !draining && !bot.broken ? bot.pilot->Next(bot.client->Player()) : sim::PlayerInput{};
-                const sim::PlayerStepResult r = bot.client->RunTick(controls);
-                bot.casts += r.cast ? 1u : 0u;
-                if (bot.client->Predicting()) {
-                    bot.minX = std::min(bot.minX, bot.client->Player().position.x);
-                    bot.maxX = std::max(bot.maxX, bot.client->Player().position.x);
-                }
-                if (bot.simulation)
-                    for (const sim::BlastResult& blast : bot.client->TakePresentations()) sim::PresentBlast(*bot.simulation, blast);
-            }
-            if (bot.simulation && bot.client->State() == net::ClientState::Playing) {
-                if (!bot.counting) {
-                    bot.counting = true;
-                    bot.seen = bot.client->JoinOpSeq();
-                }
-                const uint32_t tick = server.TickNumber();
-                for (; bot.seen < bot.client->AppliedOpSeq() && bot.seen < madeAt.size(); ++bot.seen)
-                    bot.latencies.emplace_back(madeAt[bot.seen], tick - madeAt[bot.seen]);
-                if (bot.syncTick == 0 && bot.client->Stats().joinDataTicks != 0) bot.syncTick = std::max(tick, bot.connectTick + 1);
-            }
-            bot.link->Flush();
+            const uint32_t tick = server.TickNumber();
+            bot.bot->RecordApplied(static_cast<double>(tick));
+            if (bot.bot->GetSimulation() && client.State() == net::ClientState::Playing && bot.syncTick == 0 &&
+                client.Stats().joinDataTicks != 0)
+                bot.syncTick = std::max(tick, bot.connectTick + 1);
         }
     };
 
@@ -584,25 +529,30 @@ int main(int argc, char** argv) {
     };
     // The replicated objects at this opSeq, as a game client logs its copies (tools/session-check.sh).
     auto logEntities = [&server] {
-        const std::vector<net::EntityInfo> entities = server.Entities();
-        size_t resting = 0;
-        for (const net::EntityInfo& e : entities) resting += e.resting ? 1u : 0u;
-        Log::Info("Session: entities at opSeq {}: {} object(s), {} resting, id hash {:016x}", server.LastOpSeq(), entities.size(), resting,
-                  net::EntityListHash(entities));
+        Log::Info("{}", net::ServerEntitiesLine(server));
+        // Review of stage 8: the objects that are not resting, positions to 1 mm (scripts compare them with
+        // 5 cm of tolerance: the rest hash covers resting objects only).
+        Log::Info("{}", net::ServerAwakeLine(server));
+        // Stage 8: the replicated bodies that are not resting, and why (a frozen body has no terrain
+        // collider under it; one that is awake but frozen never sends an EntityRest).
+        std::string awake;
+        uint32_t count = 0;
+        physics::PhysicsWorld& physics = server.Simulation().Physics();
+        for (const auto [entity, id, body] : server.Simulation().Scene().Registry().view<const scene::NetId, const scene::RigidBody>().each()) {
+            if (!sim::IsAwake(physics, body.body)) continue;
+            const physics::BodyState st = physics.GetState(body.body);
+            if (++count <= 4)
+                awake += std::format("{}{} at ({:.1f}, {:.1f}, {:.1f}){}{}", count > 1 ? ", " : "", id.value, st.position.x, st.position.y,
+                                     st.position.z, st.frozen ? " frozen" : "", st.active ? " active" : "");
+        }
+        if (count > 0) Log::Info("Session: {} replicated object(s) not resting: {}{}", count, awake, count > 4 ? ", ..." : "");
     };
     // Clients that left a listening server: logged with the server's opSeq and hash at that moment,
     // before its player's crates are despawned (the opSeq the client drained to).
     server.SetOnClientLeft([&server, &logEntities](uint8_t slot) {
-        const voxel::WorldHashResult h = server.Hash();
-        // Stage 7a: and the hash over that client's sync box (its window inside the server's), the
-        // box its own hash covers (the region's window for a client whose window is the region's).
-        const net::SyncBox box = server.ClientSyncBox(slot);
-        const voxel::WorldHashResult wh = server.Hash(box);
-        const glm::ivec3 max = box.Max();
-        Log::Info("Session: the client of slot {} left; server at opSeq {}, tick {}, world hash {:016x} ({} chunks); window hash {:016x} over "
-                  "[{},{},{}..{},{},{})",
-                  slot, server.LastOpSeq(), server.TickNumber(), h.hash, h.solidChunks, wh.hash, box.min.x, box.min.y, box.min.z, max.x, max.y,
-                  max.z);
+        // Its hashes at this opSeq (the per-chunk cache: stage 8) and its join point (recheck of stage 8:
+        // a slot is reused, so the scripts match a client to its leave line by slot and join point).
+        Log::Info("{}", net::ServerLeaveLine(server, slot));
         logEntities();
     });
     size_t lastClients = 0, mostClients = 0;
@@ -610,16 +560,28 @@ int main(int argc, char** argv) {
     auto watchClients = [&] {
         const size_t n = server.ClientCount();
         if (n < lastClients) {
-            const voxel::WorldHashResult h = server.Hash();
-            Log::Info("Session: {} client(s) left; server at opSeq {}, tick {}, world hash {:016x} ({} chunks)", lastClients - n,
-                      server.LastOpSeq(), server.TickNumber(), h.hash, h.solidChunks);
-            logEntities();
+            // The hashes are in the per-slot lines above (stage 8: no third hash of the window per leave).
+            Log::Info("Session: {} client(s) left; server at opSeq {}, tick {}", lastClients - n, server.LastOpSeq(), server.TickNumber());
         }
         mostClients = std::max(mostClients, n);
         lastClients = n;
     };
     std::signal(SIGINT, OnSignal);
     std::signal(SIGTERM, OnSignal);
+    // --parent-pid (review of stage 8): a script killed with SIGKILL runs no trap; its server must not keep
+    // the port and the cores (Linux: SIGTERM when the parent is gone, which ends the run as Ctrl-C does).
+    if (const std::optional<std::string> parent = args.Get("--parent-pid")) {
+#if defined(__linux__)
+        const pid_t pid = static_cast<pid_t>(std::atol(parent->c_str()));
+        prctl(PR_SET_PDEATHSIG, SIGTERM);
+        if (pid <= 0 || getppid() != pid) {
+            Log::Error("--parent-pid {}: that is not this process's parent (gone already?)", *parent);
+            return 2;
+        }
+#else
+        Log::Warn("--parent-pid is Linux only: ignored");
+#endif
+    }
 
     // --memory: the process's resident memory, the server world's chunks and each bot's store.
     uint32_t lastMemory = 0;
@@ -627,20 +589,51 @@ int main(int argc, char** argv) {
         const voxel::WorldStats ws = server.Simulation().World().Stats();
         std::string line = std::format("Memory: tick {}, RSS {:.0f} MiB (every simulation of this process); server world {} dense / {} packed "
                                        "chunks, {:.1f} MiB RLE, store {} / {}",
-                                       server.TickNumber(), ResidentMiB(), ws.denseChunks, ws.packedChunks,
+                                       server.TickNumber(), net::ResidentMiB(), ws.denseChunks, ws.packedChunks,
                                        static_cast<double>(ws.packedBytes) / (1024.0 * 1024.0), server.Simulation().Chunks().UsedCount(),
                                        server.Simulation().Chunks().Capacity());
         for (size_t i = 0; i < bots.size(); ++i)
-            if (bots[i].simulation)
-                line += std::format("; bot {} store {} / {} (max {})", i, bots[i].simulation->Chunks().UsedCount(),
-                                    bots[i].simulation->Chunks().Capacity(), bots[i].client->Stats().maxStoreUsed);
+            if (bots[i].bot && bots[i].bot->GetSimulation())
+                line += std::format("; bot {} store {} / {} (max {})", i, bots[i].bot->GetSimulation()->Chunks().UsedCount(),
+                                    bots[i].bot->GetSimulation()->Chunks().Capacity(), bots[i].bot->GetClient().Stats().maxStoreUsed);
         Log::Info("{}", line);
     };
-    double lastWall = 0.0;
+    // --timeline FILE (stage 8): the steady-clock time of each pass that made events or changed the
+    // number of joining clients, for vortex_bot's event latency on the same host (one shared clock).
+    std::ofstream timeline;
+    if (const std::optional<std::string> path = args.Get("--timeline")) {
+        timeline.open(*path, std::ios::out | std::ios::trunc);
+        if (!timeline) {
+            Log::Error("--timeline: could not write {}", *path);
+            return 2;
+        }
+        timeline << "# vortex_server timeline: ops <last opSeq> <steady-clock ns at the pass start> <clients joining>\n";
+    }
+    uint32_t timelineOps = 0;
+    size_t timelineJoining = 0;
+    auto lastTimelineFlush = std::chrono::steady_clock::now();
+    auto writeTimeline = [&](std::chrono::steady_clock::time_point passStart) {
+        if (!timeline.is_open()) return;
+        const size_t joining = server.JoiningClients();
+        if (server.LastOpSeq() != timelineOps || joining != timelineJoining) {
+            timelineOps = server.LastOpSeq();
+            timelineJoining = joining;
+            timeline << "ops " << timelineOps << ' '
+                     << std::chrono::duration_cast<std::chrono::nanoseconds>(passStart.time_since_epoch()).count() << ' ' << joining << '\n';
+        }
+        if (passStart - lastTimelineFlush >= std::chrono::seconds(1)) {
+            timeline.flush();
+            lastTimelineFlush = passStart;
+        }
+    };
+    double lastWall = wallNow();                 // stage 8: the clock starts here, not before the preload
     double maxPassSeconds = 0.0;                 // wall clock of the server's work in one pass (UDP)
+    net::DurationHistogram passBusy;             // ... every pass's, in 0.05 ms buckets (review of stage 8: its p99 beside the
+                                                 // ticks'; recheck: a fixed histogram, a listening server runs for days)
     uint32_t slowPasses = 0;                     // ... passes longer than a tick
     // One pass: the server's due ticks (one simulated tick, or what the wall clock gives), then the bots.
     auto pass = [&] {
+        const auto passStart = std::chrono::steady_clock::now();
         if (enet) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             const double t = wallNow();
@@ -655,6 +648,7 @@ int main(int argc, char** argv) {
             // tick's length is a server hitch, which clients see as a growing input margin.
             const double busy = wallNow() - t;
             maxPassSeconds = std::max(maxPassSeconds, busy);
+            if (server.TickNumber() > before) passBusy.Add(busy);
             slowPasses += busy > dt ? 1u : 0u;
             if (busy > 3.0 * dt)
                 Log::Info("Server: a pass took {:.1f} ms at tick {} ({}){}", busy * 1000.0, server.TickNumber(),
@@ -667,6 +661,7 @@ int main(int argc, char** argv) {
             passSeconds = dt;
         }
         serverLink.Flush();
+        writeTimeline(passStart);
         stepClients(step);
         if (listen) {
             watchClients();
@@ -690,6 +685,21 @@ int main(int argc, char** argv) {
     };
     nestedPass = pass;
 
+    // The per-chunk hash cache, warmed before anyone joins (a leave then hashes only what changed).
+    {
+        const auto t0 = std::chrono::steady_clock::now();
+        (void)server.Hash();
+        Log::Info("Server: window hashed in {:.1f} ms ({} chunk hashes cached)",
+                  std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() * 1000.0, server.ChunkHashesComputed());
+    }
+    // --broken-chunk-candidate (stage 8): the chunk a vortex_bot --broken-chunk may break (tools/soak.sh).
+    if (args.Has("--broken-chunk-candidate")) {
+        glm::ivec3 c{0};
+        std::string why;
+        if (net::BrokenChunkCandidate(server, c, &why)) Log::Info("Broken chunk candidate: {},{},{}", c.x, c.y, c.z);
+        else Log::Warn("Broken chunk candidate: none ({})", why);
+    }
+    lastWall = wallNow();
     if (openEnded) {
         Log::Info("Server: waiting for clients ({}); {}", fileToken ? "token in " + *sessionPath : std::string("token given at start"),
                   seconds > 0.0 ? std::format("stops after {:.0f} s", seconds)
@@ -701,7 +711,10 @@ int main(int argc, char** argv) {
         }
     } else {
         // --walk-across: the run lasts until the walker is done too (at most 20 simulated minutes).
-        auto walking = [&] { return walkAcross && !bots.empty() && !bots[0].pilot->Done() && server.TickNumber() < 72000; };
+        auto walking = [&] {
+            return walkAcross && !bots.empty() && (!bots[0].bot || !bots[0].bot->Pilot() || !bots[0].bot->Pilot()->Done()) &&
+                   server.TickNumber() < 72000;
+        };
         while ((server.TickNumber() < ticks || walking()) && !g_Stop) {
             pass();
             if (server.Failed()) break;          // the session has ended (logged); report and exit 1
@@ -716,7 +729,8 @@ int main(int argc, char** argv) {
         if (server.AwakeBodies() > 0) return false;
         // Stage 7a: and every bot is synced (its chunks current, no request out, its baseline in).
         for (const BotClient& bot : bots)
-            if (!bot.simulation || bot.client->AppliedOpSeq() != server.LastOpSeq() || !bot.client->Synced()) return false;
+            if (!bot.bot || !bot.bot->GetSimulation() || bot.bot->GetClient().AppliedOpSeq() != server.LastOpSeq() || !bot.bot->GetClient().Synced())
+                return false;
         return true;
     };
     const uint32_t drainStart = server.TickNumber();
@@ -733,14 +747,14 @@ int main(int argc, char** argv) {
         if ((server.TickNumber() - drainStart) % 60 == 0) {
             terrainLeft = false;
             for (const BotClient& bot : bots)
-                if (bot.simulation && bot.client->TerrainMode() && !bot.client->Synced()) terrainLeft = true;
+                if (bot.bot && bot.bot->GetSimulation() && bot.bot->GetClient().TerrainMode() && !bot.bot->GetClient().Synced()) terrainLeft = true;
         }
         if (terrainLeft && wallNow() - drainWall <= 180.0 && server.TickNumber() - drainStart < 108000) return true;
         if (!loadingLeft || wallNow() - drainWall > 120.0) return false;
         if ((server.TickNumber() - drainStart) % 60 == 0) {
             loadingLeft = false;
             for (const BotClient& bot : bots)
-                if (bot.simulation && bot.simulation->World().Stats().pendingChunks > 0) loadingLeft = true;
+                if (bot.bot && bot.bot->GetSimulation() && bot.bot->GetSimulation()->World().Stats().pendingChunks > 0) loadingLeft = true;
         }
         return true;
     };
@@ -757,6 +771,9 @@ int main(int argc, char** argv) {
     const net::ServerStats& st = server.Stats();
     uint32_t kinds[3] = {0, 0, 0}, freed[3] = {0, 0, 0};
     uint32_t drillCast = 0;
+    if (drill && server.Casts().size() >= settings.castRecordLimit)
+        Log::Warn("Drill: the cast record is full ({} records): the oldest casts were dropped and the drill report below is off",
+                  settings.castRecordLimit);
     for (size_t i = 0; i < server.Casts().size(); ++i) {
         const net::CastRecord& c = server.Casts()[i];
         if (c.player != 0) continue;           // a player's cast, not a drill step
@@ -802,24 +819,9 @@ int main(int argc, char** argv) {
               st.snapshots ? static_cast<double>(st.snapshotBytes) / static_cast<double>(st.snapshots) : 0.0);
     const double tickSeconds = static_cast<double>(server.Simulation().FixedTimeStep());
     for (size_t i = 0; i < bots.size(); ++i) {
-        if (!bots[i].client) continue;           // never connected (reported below)
-        const net::PredictionStats& p = bots[i].client->Prediction();
-        Log::Info("Client {} movement: {} ticks predicted ({} held), {} snapshots compared: {} within 2 cm, {} corrected ({:.2f} per minute), "
-                  "{} snapped, max error {:.3f} m; errors <1 mm {}, <2 cm {}, <5 cm {}, <20 cm {}, <1.5 m {}, more {}; replays {} ticks (max "
-                  "{}, {:.3f} ms max); waited for events {}, gave up {}; clock {} jumps / {} resyncs, margin {}..{}, target {}; {} casts "
-                  "shown ({} the server did not run), pilot cast {} / jumped {}",
-                  i, p.ticks, p.heldTicks, p.compared, p.within, p.corrections, p.CorrectionsPerMinute(tickSeconds), p.snaps, p.maxError,
-                  p.errorBuckets[0], p.errorBuckets[1], p.errorBuckets[2], p.errorBuckets[3], p.errorBuckets[4], p.errorBuckets[5],
-                  p.replayTicks, p.maxReplayTicks, p.maxReplaySeconds * 1000.0, p.waitedForEvents, p.eventTimeouts, p.clockJumps,
-                  p.hardResyncs, p.minMargin, p.maxMargin, bots[i].client->Clock().Target(), bots[i].casts, p.castsRejected, bots[i].pilot->Casts(),
-                  bots[i].pilot->Jumps());
-        const net::ClientStats& cs = bots[i].client->Stats();
-        Log::Info("Client {} objects: {} copies made ({} failed, {} lost), {} despawned ({} kept as rubble), {} rests ({} stale), {} "
-                  "wakes, {} models, {} fragments; {} body samples taken, {} ignored, largest sample gap {} ticks; {} ticks a copy carried "
-                  "the player; pilot crates {}",
-                  i, cs.copiesMade, cs.copiesFailed, cs.copiesLost, cs.despawns, cs.toRubble, cs.rests, cs.staleRests, cs.wakes, cs.models,
-                  cs.fragments, cs.bodySamples, cs.bodySamplesIgnored, bots[i].client->Bodies().MaxGap(), cs.heldUnderPlayer,
-                  bots[i].pilot->Crates());
+        if (!bots[i].bot) continue;              // never connected (reported below)
+        Log::Info("{}", net::DescribeBotMovement(*bots[i].bot, tickSeconds));
+        Log::Info("{}", net::DescribeBotObjects(*bots[i].bot));
     }
     {
         const sim::ReplicationStats& rs = server.Simulation().Replication().stats;
@@ -851,17 +853,40 @@ int main(int argc, char** argv) {
                   st.terrainStepAcks > 0 ? st.terrainStepAckSeconds * 1000.0 / st.terrainStepAcks : 0.0, st.maxQueueSortSeconds * 1000.0,
                   st.queueSortSeconds * 1000.0,
                   st.queuePruned);
-    Log::Info("Ticks: server: {} ticks, {:.2f} ms on average, p99 under {:.2f} ms, {:.2f} ms at most, {} over 16.7 ms (wall clock; in-process "
-              "bots share its cores)",
-              st.ticksTimed, st.ticksTimed > 0 ? st.tickSeconds * 1000.0 / st.ticksTimed : 0.0, st.TickPercentile(0.99) * 1000.0,
-              st.maxTickSeconds * 1000.0, st.ticksOverBudget);
+    Log::Info("Ticks: server: {} ticks, {:.2f} ms on average, p50 under {:.2f} ms, p99 under {:.2f} ms, {:.2f} ms at most, {} over 16.7 ms "
+              "(wall clock; in-process bots share its cores); {} join ticks {:.2f} ms at most ({} colliders cooked in one at most), {} "
+              "first-window ticks {:.2f} ms at most, {} leave ticks {:.2f} ms at most; spawn colliders {} built at start in {:.1f} ms",
+              st.ticksTimed, st.ticksTimed > 0 ? st.tickSeconds * 1000.0 / st.ticksTimed : 0.0, st.TickPercentile(0.50) * 1000.0,
+              st.TickPercentile(0.99) * 1000.0, st.maxTickSeconds * 1000.0, st.ticksOverBudget, st.helloTicks, st.maxHelloTickSeconds * 1000.0,
+              st.maxHelloTickCooks, st.firstWindowTicks, st.maxFirstWindowTickSeconds * 1000.0, st.leaveTicks, st.maxLeaveTickSeconds * 1000.0,
+              st.spawnColliders, st.spawnColliderSeconds * 1000.0);
+    {
+        // Stage 8: the histograms that replace the design's estimates (networking.md "Stage 8 measurements").
+        const auto pct = [](const auto& h, double f) { return net::ServerStats::HistogramPercentile(h, f); };
+        Log::Info("Server: cast cost per 10 000 work units p50 under {:.1f} ms, p99 under {:.1f} ms, {:.2f} ms at most; cast delay p50 / p99 "
+                  "from the histogram above; snapshots p50 under {} B, p99 under {} B, {} B at most, {} bodies at most; bulk in flight to one "
+                  "peer at most {:.1f} KiB, largest bulk message {:.1f} KiB",
+                  pct(st.castCostHistogram, 0.5) * 0.1, pct(st.castCostHistogram, 0.99) * 0.1, st.maxCastMsPer10k,
+                  pct(st.snapshotHistogram, 0.5) * 64, pct(st.snapshotHistogram, 0.99) * 64, st.maxSnapshotBytes, st.maxSnapshotBodies,
+                  static_cast<double>(st.maxBulkInFlight) / 1024.0, static_cast<double>(st.maxBulkMessage) / 1024.0);
+        std::string kinds;
+        static constexpr std::pair<int, const char*> kKinds[] = {{1, "CarveSphere"}, {2, "FillSphere"}, {3, "SwapSphere"}, {4, "FillBox"},
+                                                                 {5, "Detach"},    {6, "ClearMask"},    {32, "EntitySpawn"}, {33, "EntityDespawn"},
+                                                                 {34, "EntityRest"}, {35, "ObjectModel"}, {36, "EntityWake"}};
+        for (const auto& [k, name] : kKinds) {
+            if (st.eventsByKind[k] == 0) continue;
+            kinds += std::format("{}{} {} / {:.1f} B avg / {} B max", kinds.empty() ? "" : ", ", name, st.eventsByKind[k],
+                                 static_cast<double>(st.eventBytesByKind[k]) / st.eventsByKind[k], st.maxEventBytesByKind[k]);
+        }
+        Log::Info("Server: events by kind: {}", kinds);
+    }
     if (memory) logMemory();
     const voxel::WorldStats ws = server.Simulation().World().Stats();
     Log::Info("Server: world {} dense / {} packed chunks, {:.1f} MiB RLE, store {} / {} slots, search errors {}, incomplete ops {}, "
               "RSS {:.0f} MiB (all simulations of this process)",
               ws.denseChunks, ws.packedChunks, static_cast<double>(ws.packedBytes) / (1024.0 * 1024.0),
               server.Simulation().Chunks().UsedCount(), server.Simulation().Chunks().Capacity(), st.searchErrors, st.incompleteOps,
-              ResidentMiB());
+              net::ResidentMiB());
 
     const voxel::WorldHashResult sh = server.Hash();
     bool ok = !server.Failed() && sh.Complete() && !interrupted;
@@ -871,8 +896,8 @@ int main(int argc, char** argv) {
     Log::Info("Entities: server {} object(s), {} awake, id hash {:016x}", serverEntities.size(), server.AwakeBodies(),
               net::EntityListHash(serverEntities));
     for (size_t i = 0; i < bots.size(); ++i) {
-        if (!bots[i].simulation) continue;
-        const net::EntityComparison c = net::CompareEntities(serverEntities, bots[i].client->Entities());
+        if (!bots[i].bot || !bots[i].bot->GetSimulation()) continue;
+        const net::EntityComparison c = net::CompareEntities(serverEntities, bots[i].bot->GetClient().Entities());
         const bool agree = c.Agree(0.05f);
         ok = ok && agree;
         Log::Info("Entities: client {}: {} - {}", i, c.Describe(), agree ? "agree" : "DIFFERENT");
@@ -884,38 +909,27 @@ int main(int argc, char** argv) {
     std::string hashes = std::format("server {:016x} ({} chunks)", sh.hash, sh.solidChunks);
     for (size_t i = 0; i < bots.size(); ++i) {
         const BotClient& bot = bots[i];
-        if (!bot.client) {
+        if (!bot.bot) {
             Log::Error("Client {}: never connected", i);
             ok = false;
             continue;
         }
-        const voxel::WorldHashResult ch = bot.client->Hash();
-        const net::ClientStats& cs = bot.client->Stats();
+        const net::Client& client = bot.bot->GetClient();
+        sim::Simulation* simulation = bot.bot->GetSimulation();
+        const voxel::WorldHashResult ch = client.Hash();
+        const net::ClientStats& cs = client.Stats();
         // Stage 7a: compared over the bot's sync box (its window inside the server's) at the same opSeq,
         // once it is synced; for a fixed-window bot that box is the region's window.
-        const voxel::WorldHashResult sb = server.Hash(bot.client->SyncWindow());
-        const bool equal = bot.simulation && bot.client->Synced() && ch.Complete() && sb.Complete() && ch.hash == sb.hash &&
-                           bot.client->AppliedOpSeq() == server.LastOpSeq();
-        // Probe mismatches are the trigger of server terrain mode (stage 7b): a bot that switched plays
-        // on the server's terrain; one that did not must have none.
-        ok = ok && equal && cs.skippedChunks == 0 && (cs.probeMismatches == 0 || bot.client->TerrainMode());
+        const voxel::WorldHashResult sb = server.Hash(client.SyncWindow());
+        const bool equal = simulation && client.Synced() && ch.Complete() && sb.Complete() && ch.hash == sb.hash &&
+                           client.AppliedOpSeq() == server.LastOpSeq();
+        ok = ok && equal;
         Log::Info("Client {}: {} at opSeq {} / {}, joined at opSeq {}, {} events / {:.1f} KiB, {} duplicates, {} probe mismatches, {} skipped / "
                   "{} unsynced chunks, hash {:016x} {}",
-                  i, bot.simulation ? "attached" : "not attached", bot.client->AppliedOpSeq(), server.LastOpSeq(), bot.client->JoinOpSeq(),
-                  cs.eventsApplied, static_cast<double>(cs.eventBytes) / 1024.0, cs.duplicateEvents, cs.probeMismatches, cs.skippedChunks,
-                  cs.unsyncedChunks, ch.hash, equal ? "equal" : "DIFFERENT");
-        Log::Info("Join: bot {} started after {:.2f} s of server ticks ({:.2f} s wall; chunks within 32 m current, entities within 32 m of the spawn in (BaselineNear)), join "
-                  "data in after {:.2f} s ({:.2f} s wall; no chunk waiting for the server), synced after {:.2f} s ({:.2f} s wall; every "
-                  "chunk current), {:.1f} KiB bulk "
-                  "received ({} ChunkData, {} baseline entities, {} discarded), {} chunk / {} model requests, {} ops skipped for chunks "
-                  "without a base, {} replayed; CPU: sync {:.3f} ms per Poll (max {:.2f}), bulk installs {:.1f} ms in all (max {:.2f} ms, {} "
-                  "in one Poll)",
-                  i, static_cast<double>(cs.joinStartTicks) * tickSeconds, cs.joinStartSeconds, static_cast<double>(cs.joinDataTicks) * tickSeconds,
-                  cs.joinDataSeconds, static_cast<double>(cs.joinSyncTicks) * tickSeconds, cs.joinSyncSeconds,
-                  static_cast<double>(cs.bulkBytes) / 1024.0, cs.chunkData, cs.baselineEntities, cs.baselineDiscarded, cs.chunkRequests,
-                  cs.modelRequests, bot.client->Sync().Stats().chunkSkips, bot.client->Sync().Stats().replays,
-                  cs.polls > 0 ? cs.syncSeconds * 1000.0 / static_cast<double>(cs.polls) : 0.0, cs.maxSyncSeconds * 1000.0,
-                  cs.bulkSeconds * 1000.0, cs.maxBulkSeconds * 1000.0, cs.maxBulkInPoll);
+                  i, simulation ? "attached" : "not attached", client.AppliedOpSeq(), server.LastOpSeq(), client.JoinOpSeq(), cs.eventsApplied,
+                  static_cast<double>(cs.eventBytes) / 1024.0, cs.duplicateEvents, cs.probeMismatches, cs.skippedChunks, cs.unsyncedChunks, ch.hash,
+                  equal ? "equal" : "DIFFERENT");
+        Log::Info("{}", net::DescribeBotJoin(*bot.bot, tickSeconds));
         {
             // Event latency (server ticks from an event being made to this bot applying it), for the
             // events made while some bot was joining (connected, its join data not in yet) and for all.
@@ -925,7 +939,10 @@ int main(int argc, char** argv) {
                 return false;
             };
             std::vector<uint32_t> joinLat, allLat;
-            for (const auto& [made, latency] : bot.latencies) {
+            for (const auto& [opSeq, applied] : bot.bot->Applied()) {
+                if (opSeq == 0 || opSeq > madeAt.size()) continue;
+                const uint32_t made = madeAt[opSeq - 1];
+                const uint32_t latency = static_cast<uint32_t>(applied) - made;
                 allLat.push_back(latency);
                 if (duringJoin(made)) joinLat.push_back(latency);
             }
@@ -944,43 +961,28 @@ int main(int argc, char** argv) {
                       latencyOk ? std::string() : std::format(" - NOT UNDER --max-join-p99-ticks {}", maxJoinP99));
         }
         {
-            // Stage 7b: the checks. No fault was injected (but the broken bot's chunk): any mismatch or a
-            // check out of its stream position is a false positive and fails the run; the broken bot
-            // must have found and repaired its chunk.
-            const net::ClientStats& c = bot.client->Stats();
-            const net::ChunkSyncStats& ss = bot.client->Sync().Stats();
-            bool checksOk = c.checksOutOfOrder == 0;
-            std::string verdict;
-            if (bot.broken) {
-                const bool repaired = c.mismatchesPristine >= 1 && ss.repairsInstalled >= 1 && c.mismatchesModified == 0 && c.entityMismatches == 0 &&
-                                      bot.client->Sync().FromData(brokenChunk);
-                checksOk = checksOk && repaired;
-                verdict = repaired ? std::format(" - its broken chunk ({}, {}, {}) was found and repaired", brokenChunk.x, brokenChunk.y, brokenChunk.z)
-                                   : std::format(" - ITS BROKEN CHUNK ({}, {}, {}) WAS NOT REPAIRED", brokenChunk.x, brokenChunk.y, brokenChunk.z);
-            } else {
-                checksOk = checksOk && ss.mismatches == 0 && c.entityMismatches == 0;
-                if (!checksOk) verdict = " - A CHECK FOUND A DIFFERENCE NO FAULT MADE";
-            }
-            if (bot.brokenGenerator) {
-                const bool terrain = bot.client->TerrainMode();
-                checksOk = checksOk && terrain;
-                verdict += terrain ? " - its broken generator put it in server terrain mode" : " - ITS BROKEN GENERATOR DID NOT PUT IT IN SERVER TERRAIN MODE";
-            }
-            ok = ok && checksOk;
-            Log::Info("Checks: bot {}: {}{}", i, net::DescribeChecks(*bot.client), verdict);
-            if (bot.client->TerrainMode()) {
+            // Stage 7b / 8: the bot's own verdict (net::JudgeBot): no check found a difference no fault
+            // made, the injected faults were found and repaired, the store gate, the checks ran. The
+            // in-process bots join late in short runs: at least one check of each kind.
+            net::BotGates gates;
+            const net::BotVerdict v = net::JudgeBot(*bot.bot, gates);
+            ok = ok && v.ok;
+            std::string reasons;
+            for (const std::string& r : v.reasons) reasons += (reasons.empty() ? "" : "; ") + r;
+            Log::Info("Checks: bot {}: {}{}{}", i, net::DescribeChecks(client), v.checksNote, v.ok ? "" : " - FAILED: " + reasons);
+            if (client.TerrainMode()) {
                 // Packing follows the server's (review of stage 7b): over the bot's sync box, a chunk the
                 // server shows (Dense) must never be packed here (it would be drawn as a solid block);
                 // resident here while packed there is the conservative side (near the player, or shown
                 // after an operation near it).
                 uint32_t packedShown = 0, residentHidden = 0;
-                if (bot.simulation) {
+                if (simulation) {
                     const voxel::World& sw = server.Simulation().World();
-                    const voxel::World& cw = bot.simulation->World();
-                    const net::SyncBox sb = bot.client->SyncWindow();
-                    for (int z = sb.min.z; z < sb.Max().z; ++z)
-                        for (int y = sb.min.y; y < sb.Max().y; ++y)
-                            for (int x = sb.min.x; x < sb.Max().x; ++x) {
+                    const voxel::World& cw = simulation->World();
+                    const net::SyncBox sbx = client.SyncWindow();
+                    for (int z = sbx.min.z; z < sbx.Max().z; ++z)
+                        for (int y = sbx.min.y; y < sbx.Max().y; ++y)
+                            for (int x = sbx.min.x; x < sbx.Max().x; ++x) {
                                 const voxel::CellState there = sw.StateOf({x, y, z}), here = cw.StateOf({x, y, z});
                                 packedShown += there == voxel::CellState::Dense && here == voxel::CellState::Packed ? 1u : 0u;
                                 residentHidden += there == voxel::CellState::Packed && here == voxel::CellState::Dense ? 1u : 0u;
@@ -989,7 +991,7 @@ int main(int argc, char** argv) {
                 if (packedShown > 0) ok = false;
                 Log::Info("Terrain: bot {} packing: {} chunk(s) the server shows packed here{}, {} resident here that the server packs", i,
                           packedShown, packedShown > 0 ? " - DRAWN AS SOLID BLOCKS" : "", residentHidden);
-                const net::TerrainPeerCost t = server.TerrainCost(bot.client->Slot());
+                const net::TerrainPeerCost t = server.TerrainCost(client.Slot());
                 const double perStep = t.steps > 0 ? static_cast<double>(t.stepBytes) / static_cast<double>(t.steps) / 1024.0 : 0.0;
                 const auto avgKiB = [&t](size_t k) {
                     return t.ackSteps[k] > 0 ? static_cast<double>(t.ackStepBytes[k]) / static_cast<double>(t.ackSteps[k]) / 1024.0 : 0.0;
@@ -998,42 +1000,15 @@ int main(int argc, char** argv) {
                           "window steps, ack + data {:.1f} KiB per step on average, {:.1f} KiB at most, {} chunks still queued ({} at most, {} "
                           "outside its window); step acks (events channel) along x {} / {:.2f} KiB on average / {:.2f} KiB at most, along z {} "
                           "/ {:.2f} / {:.2f}, both {} / {:.2f} / {:.2f}; store at most {} slots",
-                          i, net::DescribeTerrainMode(*bot.client), static_cast<double>(t.joinAckBytes) / 1024.0, t.joinChunks,
+                          i, net::DescribeTerrainMode(client), static_cast<double>(t.joinAckBytes) / 1024.0, t.joinChunks,
                           static_cast<double>(t.joinDataBytes) / (1024.0 * 1024.0), t.joinUniform, t.steps, perStep,
                           static_cast<double>(t.maxStepBytes) / 1024.0, t.queuedChunks, t.maxQueuedChunks, t.queuedOutsideWindow,
                           t.ackSteps[0], avgKiB(0), static_cast<double>(t.maxAckStepBytes[0]) / 1024.0, t.ackSteps[1], avgKiB(1),
                           static_cast<double>(t.maxAckStepBytes[1]) / 1024.0, t.ackSteps[2], avgKiB(2),
-                          static_cast<double>(t.maxAckStepBytes[2]) / 1024.0, bot.client->Stats().maxStoreUsed);
+                          static_cast<double>(t.maxAckStepBytes[2]) / 1024.0, cs.maxStoreUsed);
             }
         }
-        if (bot.simulation) {
-            // The client's window and store (stage 7a M-b): a bot with the game's window must never
-            // fill its store, and must keep the game's headroom free.
-            const voxel::WorldStats bws = bot.simulation->World().Stats();
-            const uint32_t capacity = bot.simulation->Chunks().Capacity();
-            const bool storeOk = bws.storeFullLoads == 0 && bws.storeFullDecodes == 0 && cs.unsyncedChunks == 0 &&
-                                 (clientWindow == 0 || cs.maxStoreUsed + kGameStoreHeadroom <= capacity);
-            ok = ok && storeOk;
-            const net::SyncBox w = bot.client->Window(), sbx = bot.client->SyncWindow();
-            Log::Info("Client {} window: {} x {} x {} chunks at ({}, {}, {}){}, sync box {} x {} x {}; {} window updates ({} resets); store "
-                      "{} / {} slots, at most {} used, store full {} / {}{}; {} dense / {} packed chunks; {} ChunkData installed, {} stale",
-                      i, w.size.x, w.size.y, w.size.z, w.min.x, w.min.y, w.min.z, bot.client->WindowMoves() ? " (follows the player)" : "",
-                      sbx.size.x, sbx.size.y, sbx.size.z, cs.windowUpdates, cs.windowResets, bot.simulation->Chunks().UsedCount(), capacity,
-                      cs.maxStoreUsed, bws.storeFullLoads, bws.storeFullDecodes, storeOk ? "" : " - OVER THE GATE", bws.denseChunks,
-                      bws.packedChunks, bot.client->Sync().Stats().chunksInstalled, bot.client->Sync().Stats().staleChunkData);
-            if (!bot.client->Synced()) {
-                const net::ChunkSyncCounts n = bot.client->Sync().Counts();
-                Log::Info("Client {} is not synced: {} chunks current, {} without a base, {} awaiting data, {} based but not loaded ({} "
-                          "pending in the world), {} requested, {} unsynced",
-                          i, n.current, n.noBase, n.awaiting, n.basedNotReady, bws.pendingChunks, n.requested, n.unsynced);
-            }
-            if (i == 0 && walkAcross)
-                Log::Info("Client 0 walk: {} of {} waypoints reached, {} given up, x from {:.1f} to {:.1f} m, feet at ({:.1f}, {:.1f}, {:.1f}); {} ticks held over chunks "
-                          "without a base, {} snapshots taken as they were, {} resumes",
-                          bot.pilot->WaypointsReached(), 3, bot.pilot->WaypointsGivenUp(), bot.minX, bot.maxX, bot.client->Player().position.x,
-                          bot.client->Player().position.y, bot.client->Player().position.z, bot.client->Prediction().syncHeldTicks,
-                          bot.client->Prediction().syncTaken, bot.client->Prediction().syncResumes);
-        }
+        for (const std::string& line : net::DescribeBotWindow(*bot.bot)) Log::Info("{}", line);
         // The server's hash over the bot's sync box beside it (the region's hash for a fixed window).
         hashes += std::format(", client {} {:016x} (server {:016x} over its sync box)", i, ch.hash, sb.hash);
         if (bot.udp)
@@ -1041,9 +1016,14 @@ int main(int argc, char** argv) {
                       bot.udp->Stats().datagramsDropped, bot.udp->Stats().datagramsReceived, bot.udp->RoundTripSeconds(1) * 1000.0,
                       bot.udp->Stats().messagesSent, bot.udp->Stats().messagesReceived);
     }
-    if (serverUdp)
-        Log::Info("Server: longest pass {:.1f} ms of server work (ticks and drill edits), {} pass(es) longer than a tick", maxPassSeconds * 1000.0,
-                  slowPasses);
+    if (serverUdp) {
+        // The pass covers the server's ticks and the drill's rebuilds (net::RunDrillStep: FillBox and crates,
+        // applied between ticks); Ticks: server: covers only Server::Tick (the casts run there).
+        const net::Percentiles pp = passBusy.Summary();
+        Log::Info("Server: longest pass {:.1f} ms of server work (ticks and drill edits), {} pass(es) longer than a tick; passes that ran a "
+                  "tick: p50 {:.2f} ms, p99 {:.2f} ms over {}",
+                  maxPassSeconds * 1000.0, slowPasses, pp.p50 * 1000.0, pp.p99 * 1000.0, pp.count);
+    }
     if (serverUdp)
         Log::Info("Server UDP: {} of {} datagrams dropped on receive, {} messages sent / {} received, {:.1f} KiB sent", serverUdp->Stats().datagramsDropped,
                   serverUdp->Stats().datagramsReceived, serverUdp->Stats().messagesSent, serverUdp->Stats().messagesReceived,
