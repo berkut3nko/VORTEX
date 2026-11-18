@@ -1,17 +1,18 @@
 # Spread: fire that climbs and liquid that runs down, in lockstep, with no randomness
 
-Status: **design, reviewed by two critics (2026-11-17) and amended; nothing built or measured for it.** Owner's request
-(2026-11-17), for the magic system (ROADMAP M5, setting.md's "Kindling"): a deterministic spreading system. Fire
-spreads up and sideways, never down; a liquid spell spreads the other way, down and sideways, never up. Written
-read-only against engine `e21a84d` / game `ad0fe69` (networking stages 0-7b committed, stage 8 being built in the same
-tree, so `Server.cpp` / `Sync.cpp` line numbers may move). Numbers are marked **(m)** measured (quoted), **(c)**
-computed from sizes, or **(e)** estimate. Every (e) names the measurement that replaces it. The critics' findings and
-what was done with each are in "Review of the design" at the end.
+| | |
+|---|---|
+| Status | Designed, nothing built or measured for it. Reviewed by two critics and amended. |
+| Decided | - Owner's request (2026-11-17), for the magic system (ROADMAP M5, setting.md's "Kindling"): a deterministic spreading system. Fire spreads up and sideways, never down; a liquid spell spreads the other way, down and sideways, never up.<br>- Owner (2026-11-17), not reopened here: **lockstep** (every peer runs the same spread operation, driven by replicated events), **a simple spread operation** (one small integer rule for fire, one for liquid), **no randomness** (no RNG, no `Hash3`, no hash-based chances anywhere in the rules).<br>- Owner (2026-11-17): Claude implements it.<br>- Us (this design, 2026-11-17): the chosen design takes the best of two proposals, 52 of 60 against 49 and 43 ([proposal-scores-2026-11-17.md](../history/spread/proposal-scores-2026-11-17.md)); what it settles is items 1-8 of "Decision in brief".<br>- Us, ROADMAP placement under the owner's standing rules (the owner may veto): S1 "fire offline" has no wire change and comes after fog stage 1 (its smoke feeds fog later); S2 bumps the protocol, so S2-S6 are in ROADMAP "Later". |
+| Next | [spread-S1] fire offline, in ROADMAP "Next" after fog stage 1. |
+| Open | Questions 1-18 in "Open questions" (each with the recommended answer); 16 (the burn phase pattern) asks the owner to confirm that a fixed position pattern is not "randomness". |
+| History | [proposal-scores-2026-11-17.md](../history/spread/proposal-scores-2026-11-17.md): "Scores of the two proposals", what the chosen design takes from each<br>[design-review-2026-11-17.md](../history/spread/design-review-2026-11-17.md): "Review of the design (two critics, 2026-11-17)", the findings and what was done with each<br>[before-rewrite-2026-11-18.md](../history/spread/before-rewrite-2026-11-18.md): the original header and the sections this rewrite changed |
+| Marks | **(m)** measured (quoted), **(c)** computed from sizes, **(e)** estimate; every (e) names the measurement that replaces it. Code read at engine `e21a84d` / game `ad0fe69`, with networking stage 8 uncommitted in the same tree (it was committed as `430fde0`; `Server.cpp` / `Sync.cpp` line numbers may differ). |
 
-Relation to other designs:
+Related:
 - [shred.md](shred.md) Part 2 (R1-R7; this design adds one exception to R1 and amends R2's ChunkClip wording, see
   "Contract changes"), Part 4b (the load check), the SI plan (site checks and the structure credit).
-- [networking.md](networking.md) stages 3-8 (op stream, cast credit, chunk sync, HashCheck, terrain mode, stage 8's
+- [networking.md](networking.md) (op stream, cast credit, chunk sync, HashCheck, terrain mode; stage 8's
   `OpRing::CoversChunk`).
 - [fx-budget.md](fx-budget.md) (FxDirector, the 4 ms effects cap).
 - [fog.md](fog.md) (the dust grid that smoke feeds).
@@ -79,56 +80,6 @@ What follows settles the rest:
 8. **Scheduling is server-only and cannot desync.** Which chunks are listed, sleep, budgets, skipped slots and how a
    step is split into parts are all server decisions carried in the ops. A mistake there can only stall spread for
    everyone. It can never make two peers disagree, because a peer's result depends only on its chunk and the op.
-
-## Scores of the two proposals
-
-Two lockstep, randomness-free proposals were judged:
-- **A, "state in voxels":** about 89 ids, a monotone liquid sheet with source ids, shell corrections as absolute ids.
-- **B, "side layer":** 6 ids, plus per-chunk elapsed and hop counters and liquid levels in a `SpreadLayer` next to the
-  chunk, carried in ChunkData and HashCheck, with a conserved pair-exchange liquid and coded overrides.
-
-Scores are 1-5 (5 best).
-
-| Criterion | A | B | Chosen | Reason |
-|---|---|---|---|---|
-| Exact agreement: windowed clients, Linux / Windows | 5 | 4 | 5 | Both close the step per chunk. B adds the invariant "a layer cell iff a live id" on every write path (editor, templates, saves, terrain mode), and a hole there desyncs. Ids cannot drift from themselves. |
-| Late joiners and chunk sync | 5 | 3 | 5 | A and the chosen design need no new state. B needs a ChunkData layer section, a TerrainAck inline exception and a save format bump. (All three need the ring's kind-8 membership, below.) |
-| HashCheck while cells change | 5 | 4 | 5 | `ChunkHash` covers ids, so it covers spread. B changes the hash's meaning and adds a `LayerRevision`. |
-| Bandwidth | 4 | 4 | 4 | Both send border values only, est. 2-3 KB/s for one burning house with the compact encoding. |
-| Server CPU, 4-core laptop | 4 | 4 | 4 | Both step only listed chunks with block skipping, on the job workers. B has an explicit active list; the chosen design scans for it, est. 10 µs per chunk. |
-| Client cost, UHD 620 | 3 | 3 | 3 | A fire front changes ids every step in both designs: partial id uploads and shape-aware re-cooks are needed in both. |
-| Bounded and readable in PvP | 4 | 4 | 5 | A's liquid is a 12.5 cm sheet that never pools, and its sources need ids. B lets grass burn, which is hop-limited but sweeps fields. The chosen design: fuel by material, A's ground-cover rule, B's conserved liquid that fills craters. |
-| Fit with op stream and base rule | 5 | 5 | 5 | All are ops in the opSeq stream. |
-| Material table, buildHash, load check | 3 | 4 | 4 | A uses 89 of the 235 free ids, which collides with W4's plans. B uses 6 but keeps one strength per burning id. The chosen design uses 43, with strength falling per stage. |
-| Implementation risk and effort | 4 | 2 | 4 | B adds four contracts, each a bug class. |
-| How early a playable slice exists | 4 | 3 | 4 | Fire alone, offline, needs no net change. |
-| Simplicity of the operation (owner) | 3 | 3 | 4 | A has 5 terms per liquid cell, wet ids and sources. B has hop budgets, elapsed counters and override codes. |
-| **Total (of 60)** | **49** | **43** | **52** | |
-
-**The chosen design takes from A:**
-- state in ids only;
-- the 17-byte `IgniteSphere`;
-- overrides as absolute ids;
-- a separate integer `SpreadTable` with its own hash;
-- chunks with an identity result left out of the list;
-- membership-exact `OpTouchesChunk`;
-- admission caps;
-- ground cover that does not spread;
-- planks burning to air and wood to charred wood;
-- the build-ceiling argument;
-- most of the tests.
-
-**It takes from B:**
-- the conserved pair-exchange liquid on a fixed 4-phase order, so a pour is a finite volume that pools, with no sources;
-- one padded-box function for the isolated and the real pass;
-- one bookkeeping path for per-voxel chunk writes;
-- shape-aware re-cooks;
-- server-only sleep, where scheduling cannot desync;
-- casts passing through spell liquid;
-- the configure-time no-randomness check;
-- the whole-world reference stepper test;
-- quick dousing saving the timber;
-- burning ids kept on falling pieces.
 
 ## Why per-chunk closure (checked against the code)
 
@@ -577,7 +528,7 @@ only binds when the budgets are nearly spent.
 
 ## Determinism and replication
 
-### Wire format (`kProtocolVersion` takes the next number after stage 8's; 11 if stage 8 leaves it at 10)
+### Wire format (`kProtocolVersion` takes the next protocol number when S2 lands)
 
 | Kind | Layout | Size |
 |---|---|---|
@@ -652,7 +603,8 @@ membership** for kind 8:
 - A `SpreadStep` always takes the per-chunk path. A listed chunk that is current with base < seq steps; the others are
   skipped and counted as today.
 
-This lands in S2 on top of whatever stage 8 commits (its names may move).
+This lands in S2 on top of stage 8's ring and drop tracking as committed (engine `430fde0`: `OpRing::CoversChunk`,
+`m_DroppedTouch`, `m_DroppedUnknown`, `TouchesNear`, `ForEachAfter` in `net/Sync.cppm`).
 
 ### Boundaries, joiners, repair
 
@@ -928,33 +880,3 @@ imply the offline game and are refused in a session.
 18. **Spread byte credit.** 2 KiB per step (20 KB/s per client) with the compact encoding; the ten-fires test decides
     whether it moves. Reason: per-player downlink today is est. 7-37 kB/s plus 24 kB/s of events; more than about
     20 KB/s for fire alone is out of proportion.
-
-## Review of the design (two critics, 2026-11-17)
-
-Each finding was checked against the code (engine working tree with stage 8 in progress) and the design. All were real
-in substance; where a fix was changed or partly rejected, the reason is given.
-
-| # | Finding | Verdict | What changed |
-|---|---|---|---|
-| 1 | The step clock ran on every slot while chunks stepped round-robin: phase lock (fires that never end, one-axis levelling, sleep at a non-fixed point) | Real | `s` counts emitted logical steps; a step is all-or-nothing; over-size steps split into parts with one `s`; the "recompute with chunks moved out" path is gone; debt-model credits; `Spread.StepClockCountsLogicalSteps`. |
-| 2 | The work credit charged only taken chunks; the 26 receivers (live ones included) were stepped free, three times | Real | S = awake + neighbours with a non-empty real mask; the whole step is charged per pass from the live-block masks (R5-clean); `Spread.PlannerChargesEverySteppedChunk`. |
-| 3 | The real pass read chunks outside S as bedrock: a phantom floor for liquid | Real | Chunks inside the window but outside S keep their true ids for reads and are frozen for mass; only outside the window is wall; the reference test freezes alike; `Spread.FrozenNeighboursKeepTheirFloor`. |
-| 4 | A 3-voxel pad is too small: the liquid's downward reach is 4 | Real (derivation checked: down 4, up 3, sides 2) | 40^3 box; the per-face override band stated and asserted. |
-| 5 | `OpRing` and `ChunkSync` use the op's box: map-wide boxes cause stage 8's whole-chunk re-requests and terrain-mode installs; ring time overstated | Real (`Sync.cpp` Push / Walk / TouchesNear / Apply checked) | Kind 8 by membership everywhere; `Sync.SpreadStepMembershipInRing`; ring about 14 s (c from stage 8's 17 s). |
-| 6 | `Emit` charges every WorldOp to `eventCredit`, so fire would delay casts | Real (`Server.cpp` Emit checked) | `Emit` / `EmitOp` take an explicit credit; `Spread.FireDoesNotDelayCasts`. |
-| 7 | `shapeChanged` on `EditReport` never reaches the colliders | Real (`Terrain.cpp` `ConsumeChanges` checked) | The flag is on `voxel::ChunkChange`, with the skip in `ConsumeChanges`. |
-| 8 | Spread chunks crowd cast chunks out of HashCheck's recent picks | Real (`kRecentChanged` 64, 4 recent picks newest first) | Own `recentSpread` list, at most 1 of the 4 recent picks. |
-| 9 | i16 chunk coordinates on the wire | Real | i32 (zigzag varint) box origin, as other chunk coordinates. |
-| 10 | Work credit does not bound the work; adjacency decides which fire stalls | Real; its proposed S (live neighbours not taken read as wall) **rejected**: that is finding 3's phantom floor, and with all-or-nothing no live chunk is left out | Merged with 2. |
-| 11 | 1 KiB/step and 8 B chunk headers slow every fire 3-5x in a big fight | Real; the "drop the farthest fires" part **rejected**: dropped fires miss logical steps (finding 1's phase lock) and players would see fires freeze by their distance to others | Compact self-contained varint encoding (about 190 B for one house, not the critic's 120); credit 2 KiB/step, burst 32 KiB; global admission at 75 % of either credit; `Spread.TenFiresTwoPoursWithinCredit`. |
-| 12 | CPU estimates contradict the per-chunk numbers; single-threaded spikes; uploads 4.1 MB | Real | Parallel evaluation on the `JobSystem` on server and client; no third server pass (the round trip is checked in debug, `--check-spread` and a test); partial id uploads moved into S1; costs re-estimated in evaluated voxels; the ten-fires acceptance row in S2. |
-| 13 | Global `s % pace` and `s % 10` synchronise all burnouts and evaporation | Real; accepted for burns (`kPhase`, mirror-symmetric); for evaporation a per-voxel phase is **rejected** (it keeps every liquid chunk awake) in favour of a per-chunk phase | `kPhase`, `kChunkPhase`; `Spread.BurnoutsSpreadEvenly`; open question 16 asks the owner to confirm the pattern is not "randomness". |
-| 14 | Fire never crosses a 1-voxel gap, and worldgen's C7 gap is exactly 1 | Real (worldgen.md C7 checked) | Jump cells (±2, 0, 0) / (0, 0, ±2) with air between, planks 10, wood 12, foliage never; the old "keep 3 voxels" text corrected; `Spread.JumpsOneGapNotTwo`. |
-| 15 | Touching crowns make forest fires that hold the global Kindle cap and stall at chunk faces | Real; replacing the entry cap by the farthest-fire drop **rejected** (as in 11) | Foliage only climbs; local Kindle / Pour caps (16 chunks within 32 m) plus a global safety; the entry cap is now a last-resort hard cap at twice the work credit. |
-| 16 | The landing ignition depended on hidden piece-slot caps | Real | Decided at release by an integer column ray, scheduled by fall time, offline the same; `Spread.FallingBurningPieceLightsFloorOverSlotCaps`. |
-| 17 | Pour does little to a burning wall; the "fireproof your gate" tactic fails | Real | `DouseSphere` (kind 9) at the hit point; the gate sentence reworded; `--douse-demo` acceptance. |
-| 18 | Liquid settles as a stepped mound, drawn as a ziggurat | Real (mound computed: R ≈ 19 cells, about 18 m²) | Volume text corrected; `Spread.PourOnFlatStoneTerminalProfile`; the L/8 surface moved into S4; 16 levels left to S4's screenshot. |
-| 19 | House burn-time claims contradict the speed table; a thin band | Real (24 s to the far corner, a 1.25 m band) | Planks pace 10, dSide 3, dDiag 4 (nearly round fronts): far corner about 16 s, band about 2.6 m (c); peak burning fraction measured by `--fire-demo` against 35 %. |
-| 20 | Per-stage uniform emissive draws crisp bands | Real | Presentation flicker in S1 (shading pass, not `trace.glsl`). |
-| 21 | S1 is large, touches the wire, and the payoff waits for S3 | Real | Re-cut: S1 is offline fire with the offline collapse; S2 the wire and session; S3 only the server-side site credit. S1 is still the largest stage. |
-| 22 | "Welling" collides with the setting's spall wells and pooled spall | Real (setting.md checked) | Renamed to knit water (a Knitting), colour kept distinct from pooled spall. |

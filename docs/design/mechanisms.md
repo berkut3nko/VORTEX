@@ -1,16 +1,18 @@
 # Mechanisms, the use key and ropes
 
-Status: design decision (2026-11-17), amended the same day after two critics' review (see "Review of the design"
-at the end: 27 findings, two pairs of them the same, so 25 distinct: 24 applied, two of those with a change, and 1 rejected in part); nothing built or measured for it yet. Requested
-by the owner on 2026-11-17: "in game should be implemented rope with physics, in game action which moves objects such
-as door opening by clicking E on them or activating lever (for castle gates)". "Code" = read from the working tree on
-2026-11-17 (networking stage 7b committed, stage 8 in progress and uncommitted: line numbers in `src/net` may move a
-little); file:line references are to that tree (`PW.cpp` = `src/physics/internal/PhysicsWorld.cpp`, `Server.cpp` /
-`Client.cpp` = `src/net/internal/`). "Measured" = a number from `docs/ROADMAP.md` or a log; "est." or (e) = an
-estimate, replaced by a measurement in the stage named under "Stages". Related: `networking.md` (stage 6 entity
-replication, 7a baseline, 7b checks: this design adds to all three), `shred.md` (destruction; the structural integrity
-plan SI-1..3), `worldgen.md` (forts, gatehouses, plans), `game-ui.md` (HUD, keys, the owner's checklist), the game's
-`docs/world/setting.md` (forts, sieges, "Pass wall", "Hold the crossing", warded keeps).
+| | |
+|---|---|
+| Status | Designed, nothing built or measured for it. |
+| Decided | - Owner's request (2026-11-17): "in game should be implemented rope with physics, in game action which moves objects such as door opening by clicking E on them or activating lever (for castle gates)".<br>- Us (this design, 2026-11-17), amended the same day after two critics' review: 27 findings, two pairs of them the same, so 25 distinct: 24 applied, two of those with a change, and 1 rejected in part ("Decision in brief").<br>- Us, placement in ROADMAP under the owner's standing rules (the owner may veto): stage 1 comes after the fight measurement (review WP8), so its yard is measured inside a known fight budget, and takes the protocol number after M2a's, because it changes the E key and adds a `PlayerButton`. |
+| Next | [mech-1] door and gate (M-a offline, M-b session), in ROADMAP "Next" after WP8. [mech-2]..[mech-4] in ROADMAP "Later"; [mech-5] after M2. |
+| Open | Questions 1-15 in "Open questions" (each with the recommended answer; 1 and the fixed-or-adaptive part of 2 are settled). |
+| History | [design-review-2026-11-17.md](../history/mechanisms/design-review-2026-11-17.md): "Review of the design (2026-11-17)", the findings and where each was applied (cited in the text as "Review")<br>[before-rewrite-2026-11-18.md](../history/mechanisms/before-rewrite-2026-11-18.md): the original header and the sections this rewrite changed |
+| Marks | "Measured" = a number from `docs/ROADMAP.md` or a log; "est." or (e) = an estimate, replaced by a measurement in the stage named under "Stages". "Code" = read from the working tree of 2026-11-17 on engine `4855f85` / game `ad0fe69`, with networking stage 8 uncommitted in it (`src/net` line numbers may differ a little from `e21a84d`, which committed this design, and from `430fde0`); `file:line` references are to that tree and are not updated (`PW.cpp` = `src/physics/internal/PhysicsWorld.cpp`, `Server.cpp` / `Client.cpp` = `src/net/internal/`). |
+
+Related: [networking.md](networking.md) (stage 6 entity replication, 7a baseline, 7b checks: this design adds to all
+three), [shred.md](shred.md) (destruction; the structural integrity plan SI-1..3), [worldgen.md](worldgen.md) (forts,
+gatehouses, plans), [game-ui.md](game-ui.md) (HUD, keys), the game's `docs/owner-checks.md` (the owner's checklist)
+and `docs/world/setting.md` (forts, sieges, "Pass wall", "Hold the crossing", warded keeps).
 
 ## Decision in brief
 
@@ -56,7 +58,7 @@ server's data, or receives the result.** Mechanisms and ropes add no new kind of
 | Templates | `TemplateObject{model, position}` (`sim/Region.cppm:152-155`), made Dynamic (`Region.cpp:381-386`) | No rotation, motion, kind or links |
 | Joiners, checks | `BaselineEntity` (`Messages.cppm:275-281`; also the answer to a `ModelRequest`, Client.cpp:1026), `EntityCheck{count, idXor, modelXor}` (`:346-355`), `EntityList` of `{netId, modelHash}` 12 B entries (`:365-378`); a wrong or missing body is asked for by `ModelRequest`, never re-made from the list (Client.cpp:1373-1415) | No mechanism state in any of them |
 | Casts at thin things | `ResolveRay` (Server.cpp:770-800) hits terrain or a Dynamic / Rubble body; a ray that hits neither is `Missed` and runs nothing | A rope in front of the sky cannot be shot |
-| Drawing thin things | Instances with a full `mat4` (`voxel/Instances.cppm:20-27`); non-uniform scale traces correctly (`trace.glsl:366-369`); instances are in the shadow / AO BVH, rebuilt on the CPU every frame over all instances (`Renderer.cpp:1185-1209`) | No rope primitive; particles are billboards without shadows (`docs/notes/graphics.md:142`) |
+| Drawing thin things | Instances with a full `mat4` (`voxel/Instances.cppm:20-27`); non-uniform scale traces correctly (`trace.glsl:366-369`); instances are in the shadow / AO BVH, rebuilt on the CPU every frame over all instances (`Renderer.cpp:1185-1209`) | No rope primitive; particles are billboards without shadows (`docs/notes/graphics.md` "Traps") |
 | HUD | `HudCanvas` Text / Rect / Crosshair (`core/Hud.cppm:115-143`), the HUD costs 0.01 ms (measured) | No prompt |
 | Sound | No audio module (`engine/src`: core, editor, engine, fx, graphics, math, net, physics, scene, sim, voxel) | Feedback is pictures only |
 
@@ -70,16 +72,15 @@ server's data, or receives the result.** Mechanisms and ropes add no new kind of
   Crate [Q]`.
 - **Every place that names E for the crate changes in stage 1 M-a** (one list, so the owner's checklists match the
   build): offline key `src/main.cpp:415`, offline tool line `src/main.cpp:453`, session latch `src/Session.cpp:240-241`
-  and the scripted latch `:412`, session tool line `src/Session.cpp:471`, `docs/two-pc-test-windows.md:450` ("E drops a
-  crate 3 m ahead"), `game-ui.md` (keys, checklist) and CLAUDE.md's key list (the last two are written by whoever
-  lands stage 1, not by this design).
+  and the scripted latch `:412`, session tool line `src/Session.cpp:471`, the game's `docs/two-pc-test-windows.md`
+  (checklist 6.3: "E drops a crate 3 m ahead") and `docs/owner-checks.md` (check 14), `game-ui.md` (keys) and
+  CLAUDE.md's key list (the last four are written by whoever lands stage 1, not by this design).
 - **Why not a context rule** ("use if something is in reach, else a crate"): the client's prompt and the server's
   resolution can disagree for one frame at the edge of reach (different eye by a few mm, a door that just moved), and
   the result would be a surprise crate in a doorway. Two buttons can never be misread. The crate is a test and toy
   tool; Q next to E keeps it one finger away.
 - The input stays 7 bytes (`buttons` is one byte with 3 bits left). A new button value is wire format:
-  `kProtocolVersion` goes up by one (11 if networking stage 8 has not bumped it first; the two stages must agree on
-  the order, see "Coordination").
+  `kProtocolVersion` goes up by one: the number after M2a's (see "Coordination").
 
 ### The look ray and the target
 
@@ -175,7 +176,7 @@ Offline the game calls the same `sim::ApplyUse(sim, user eye, look, tick, lead)`
   arrive, i.e. its clock target plus jitter) and `RTT_p` the transport's smoothed round trip. Offline the lead is 2
   ticks. It is not wire format: `startTick` travels in the segment. The value is logged per use in the `Mechanisms:`
   line (min / max lead).
-- Estimates: the owner's two-PC LAN (24 ms ping, `docs/two-pc-test-windows.md:42`) gives about 2 + 3 + 2 = 7-8 ticks
+- Estimates: the owner's two-PC LAN (24 ms ping, the two-PC guide's results of 2026-11-17) gives about 2 + 3 + 2 = 7-8 ticks
   (125 ms); a 100 ms internet link with jitter about 12-14 ticks; the clamp at 20 (333 ms) covers about 230 ms RTT
   with a steady clock. Beyond that the players touching the mechanism are corrected once, as for any late event.
 - **Why not a fixed 15 ticks (the first version):** 250 ms is about twice what the owner's LAN needs and covers only
@@ -382,7 +383,7 @@ mechanism body is at the same pose (see "Review": the cast-rewind finding).
 
 ### Replication
 
-New wire values (all bump `kProtocolVersion`; `docs/notes/net.md:466-469` is the recipe):
+New wire values (all bump `kProtocolVersion`; `docs/notes/net.md` "Recipes", new event kind, is the recipe):
 
 | Value | Bytes (est.) | Content |
 |---|---|---|
@@ -780,7 +781,8 @@ Headless (the owner sees these as screenshots and log lines):
 ## Stages
 
 Each ends with green tests, the headless runs, a fresh-eyes review, ROADMAP.md updated and a commit in both repos.
-Start after networking stage 8 is committed (both bump the protocol and touch `PlayerButton`).
+Stage 1 starts after the fight measurement (ROADMAP order), so after M2a's protocol bump and `PlayerButton` bits
+(see "Coordination").
 
 | Stage | Content | Acceptance | Est. |
 |---|---|---|---|
@@ -793,20 +795,24 @@ Start after networking stage 8 is committed (both bump the protocol and touch `P
 Total for stages 1-4 without W3: est. 22-25 days (the first version said 19-21; the review's rules cost about 3-4
 days, mostly in stage 1).
 
-## Coordination with work in progress
+## Coordination with other work
 
-- **Networking stage 8** (in progress): owns the next protocol bump; this design takes the one after. `PlayerButton`
-  values, new event kinds (37, 38), `EntityKind` 3-4, `UseResult` and the owner block size are wire format: whoever
-  lands second renumbers nothing it does not have to, and bumps. If stage 8 grows the owner block, the +5 bytes go
-  after its fields.
-- **shred.md SI-1..3**: they promise no wire change; this design does change the wire, so it lands after them or in
-  a separate commit. SI-1 must keep skipping Kinematic objects (`Mechanism.NotJudgedByTheObjectLoadCheck`); SI-2 must
-  exclude kinematic bodies from impacts. The new `Scene::Damage` overload must not change ordinary objects' damage
-  (shred.md's logged numbers).
+- **Protocol order.** Networking stage 8 is committed and changed no wire value (`kProtocolVersion`, `PlayerButton`
+  and the owner block as stage 7b left them). M2a "first fight" (ROADMAP "Next", review WP7) takes the next
+  protocol number and adds generic action-slot `PlayerButton` bits (designed in WP6); this design takes the number
+  after M2a's. `PlayerButton` values, new event kinds (37, 38), `EntityKind` 3-4, `UseResult` and the owner block size
+  are wire format: whoever lands second renumbers nothing it does not have to, and bumps. If M2a grows the owner
+  block, the +5 bytes go after its fields; if its action-slot bits take the free bits of `buttons`, Use takes the next
+  free value at merge (wire values are taken at merge time, never assumed).
+- **shred.md SI-1..3**: they promise no wire change; this design does change the wire, so they are separate commits
+  (in ROADMAP order mechanisms stage 1 comes before SI-2; SI-1 and SI-3 come after W1). SI-1 must keep skipping
+  Kinematic objects (`Mechanism.NotJudgedByTheObjectLoadCheck`); SI-2 must exclude kinematic bodies from impacts.
+  The new `Scene::Damage` overload must not change ordinary objects' damage (shred.md's logged numbers).
 - **worldgen.md W3**: the gatehouse kit's sockets (stage 4) follow the authoring rule (levers behind their targets);
   "an open gate" as a per-session template op stays valid for gates that are only holes.
-- **game-ui.md, CLAUDE.md, docs/two-pc-test-windows.md:450, src/main.cpp:415 / :453, src/Session.cpp:240-241 / :412 /
-  :471**: keys (E use, Q crate), the prompt, the owner's checklist items; all changed in stage 1 M-a.
+- **Keys and checklists** (E use, Q crate, the prompt, the owner's checklist items; all changed in stage 1 M-a):
+  game-ui.md, CLAUDE.md, the game's `docs/owner-checks.md` (check 14) and `docs/two-pc-test-windows.md` (checklist
+  6.3), `src/main.cpp:415` / `:453`, `src/Session.cpp:240-241` / `:412` / `:471`.
 - **Default world:** the yard is in the default game and `playground.session` from stage 1; every scripted number in
   CLAUDE.md is confirmed or re-recorded in the same commit.
 
@@ -862,36 +868,3 @@ days, mostly in stage 1).
     change).
 15. **Rewind casts at moving mechanisms for queued casts?** -> No (see "Review", rejected in part); reconsider if
     play shows shots through a closing door that the shooter saw closed.
-
-## Review of the design (2026-11-17)
-
-Two critics read the first version. Every finding was checked against the code named in it (working tree of
-2026-11-17) and applied unless noted.
-
-| # | Finding | Verdict | Where |
-|---|---|---|---|
-| 1 | A damaged gate goes `ToRubble` when the entity budget is spent; no budget rule for `MechanismMove` / `RopeCut`; the 24 kB/s figure is the wrong budget | Confirmed (Server.cpp:427-432, :639-641, :1939, Server.cppm:46: 12 kB/s). Applied: always send, charge, skip dents only at the credit floor | Replication, "The entity byte budget" |
-| 2 | Stage-6 copy code overrides the timetable layer on both sides | Confirmed (Client.cpp:690, :851-855, :955-964, :1051-1056; Server.cpp:396, :408, :494, PW.cpp:697; Scene.cpp:66-69). Applied: client `mechanisms` map, server resting tracks, layer re-applied after Damage | Replication |
-| 3 | `ticksPerUnit16` cannot express door or lever speeds; the ease never reaches `targetPos` | Confirmed (arithmetic). Applied: `durationTicks`, `uint32` table to 65536, `k >= D` gives the target | The model |
-| 4 | After a dent the model-space pivot and boxes are in the old model space | Confirmed (Scene.cpp:586-602, Client.cpp:832-850). Applied: `modelOffset` | The pose after a dent |
-| 5 | The 15-tick lead covers less RTT than claimed; 0 corrections under loss cannot pass | Confirmed (Client.cpp:274-279, Prediction.cpp:37-40). Applied: the condition corrected, lossless drill for 0 corrections, late events counted under loss | The lead; Tests |
-| 6 | Ring of 4 too small; baseline by opSeq; winch spam | Confirmed. Applied: 8 segments with a static_assert, baseline by tick with 1..8 segments, winch once per 12 ticks with hysteresis | The model; Press and hold; Replication |
-| 7 | Repair from the `EntityList` is an unstated wire change against 7b | Confirmed (Messages.cppm:365-378, Client.cpp:1373-1415). Applied: the term in `modelHash`, repair by `ModelRequest` | Replication, Checks |
-| 8 / 26 | The lever-layer reasoning is wrong (25 voxels Debris threshold, 32-64-voxel lever is Dynamic; a Debris lever could not be shot) | Confirmed (Scene.cppm:41, Scene.cpp:66-69, Server.cpp:776-778). The two findings are one; applied: the mechanism rule overrides the size rule, the throw is justified as a picture | Collision; What the client shows |
-| 9 | `replicatedPieceVoxels` is 262, a door dies in one split | Confirmed (Simulation.cppm:127-130, Scene.cpp:556-576). Applied: the hinged piece keeps the entity, Kinematic, exempt; 3-voxel doors | The damage rule |
-| 10 | A late Use would take the current eye | Confirmed (Server.cpp:851 passes `pl.state`; casts use `StateAt`, :806-808). Applied | What the server does |
-| 11 / 17 | Non-usable mechanisms do not block the use ray: a lever reachable through a closed gate | Confirmed (design text). The two findings are one; applied: every mechanism's block box occludes, plus the authoring rule | The look ray |
-| 12 | Push-out on every tick of any overlap pushes riders and leaners | Confirmed (design text). Applied: arrival window, solid voxels deeper than padding, push axis only | Collision |
-| 13 | A rope survives its load's or mechanism's despawn | Confirmed (Replication.cpp:122-127, Blast.cpp:641-646). Applied: `on_destroy<NetId>` emits `RopeCut` first | Replication, "Despawns cut ropes" |
-| 14 | One cast destroys a door, a lever or most of a leaf | Confirmed (Blast.cpp:633-690, Scene.cpp:493-507, Player.cppm:79-80). Applied in stage 1: aimed hits only, 0.3 m, hardness, Warded; plus a rule the critics did not raise: a hit on a mechanism carves no terrain (otherwise its anchors are aired by the same cast) | The damage rule |
-| 15 | A rising portcullis is walk-through from its first tick | Confirmed. Applied: slides rising out of the passage stay Dynamic | Collision |
-| 16 | Busy 12 lets a spammer keep a door moving | Confirmed. Applied: closing wins, reopen after arrival + 20 | What the server does |
-| 18 | 350 ms to visible motion, no sound, 250 ms is 6x the LAN need | Confirmed (no audio module; smoothstep e(6/36) about 0.07). Applied with one correction: the per-use lead uses each player's **full** RTT plus its measured input margin, not RTT/2 + jitter as proposed (finding 5 shows the client's predicted tick on arrival is about T + RTT + target); ease-out; the lead cue | The lead; What the client shows |
-| 19 | Closing doors launch or tunnel crates | Confirmed (design gap). Applied: the crush rule | Collision |
-| 20 | A direct shot at a rope does not cut it; a chain's 3-hit counter is invisible | Confirmed (Server.cpp:770-800). Applied with one change: the ray cuts every rope it passes but ropes do not take the cast (the proposal placed the blast at the rope, so a rope would eat shots at enemies behind it); chains 1 hit | Cutting a rope |
-| 21 | The owner sees nothing until stage 4 | Confirmed. Applied: the yard in the default game from M-a and `playground.session` from M-b | How they are placed |
-| 22 | Stage 2's ropes change no play; decoration costliest | Applied: the chain jam moves to stage 2, decorative strands last | Stages |
-| 23 | Rope draw cost not measured at its cap; simulated cap above drawn cap | Confirmed (Renderer.cpp:1185-1209). Applied: `--rope-stress 26`, 24 simulated strands | Drawing a rope |
-| 24 | Gates give no prompt; `Missed` reads as a shooting term | Applied: `Info` targets, `NotUsable`, `Out of reach`, the 2 s line for out-of-view targets | The look ray; The prompt |
-| 25 | A cast at a moving door is tested against the server's current pose, not the shooter's | **Rejected in part.** A cast on time is queued and resolved in its input's tick (Server.cpp:2116-2117: `StepPlayers` then `RunCasts`), when the server's kinematic body is already at `pose(inputTick)` from the previous `StepMechanisms`, and the client draws the mechanism at its predicted tick, i.e. the same pose (within a frame's alpha). They differ only for a cast the queue holds (`castCredit` / `eventCredit`, Server.cpp:1940-1951) or a late input, and those are resolved against the world at dequeue for terrain and every other body alike (networking's rule). A second trace path through `trace.glsl` objects at an older pose is not worth it for a 0.6 s door; open question 15 keeps it under watch | Open questions |
-| 27 | Moving the crate to Q misses the two-PC checklist and the game's tool strings | Confirmed (`docs/two-pc-test-windows.md:450`, `src/main.cpp:415`, `:453`, `src/Session.cpp:240-241`, `:412`, `:471`). Applied | E becomes "use"; Coordination |

@@ -1,17 +1,22 @@
 # Light structural collapse ("SHRED light")
 
-Status: design decision, nothing built. All run-time costs for new code are estimates from
-operation counts (about 5 ns per voxel flood-filled, 1-2 ns per mask operation); stage 2 contains
-the benchmark that replaces them. Claims about today's code were checked against the sources.
-**Partly superseded by [shred.md](shred.md)** (2026-11-12): terrain is the first host there, the
-replication rules of networking.md apply, and its stages 0-1c are built (see "What is wrong today").
-The measured face flood costs about 50 ns per voxel visit (optimised build), not 5.
-**shred.md stage 4 built the graph on terrain** (2026-11-12, its "Stage 4 as built"): not with the 32-byte
-`SupportCell` below but with a node list per chunk - every component of a cell is a node (no merge into node 7, so the
-graph equals voxel connectivity, over-full cells included), each node with its voxel count, an integer mass and face
-masks, each link with its bond (voxel faces shared) - in `vortex.voxel:structure` (`ChunkGraph`, `TerrainGraphCache`,
-`SearchIslandsOnGraph`). Measured build: 25-33 us per Dense chunk at 0.125 m quiet (70-120 us in game, cold); Uniform chunks share one graph per id. The
-"Data" section below is collapse.md's original design; stage 5b (objects) should reuse the terrain format.
+| | |
+|---|---|
+| Status | Designed, nothing built from this document as written; partly superseded by [shred.md](shred.md), which built its terrain half another way ([shred-4], [shred-4b]). |
+| Decided | - Us, 2026-11-12 (shred.md, "What happens to collapse.md"): terrain is the first host; this document's stage 5 (terrain structures) moved first and was built as the per-chunk cell graph [shred-4] and the load check [shred-4b]; networking.md's replication rules apply.<br>- Us, 2026-11-17 (shred.md, "Structural integrity plan"): the overhang rule, the release queue and the bake-time spawn guard below are not used; objects get Part 4b's load check on tile graphs instead [si-1]; stage 1 (static objects) is not part of SI. |
+| Next | Stage 1 (the anchored remainder of a damaged static object stays static) stays at ROADMAP M3, once static content exists. This file moves to `history/collapse/` whole when [si-1] absorbs it. |
+| Open | "Open questions for the game" below, as written. Some are settled in shred.md: rubble lifetimes and caps [shred-1e], material strength (the load check, [shred-4b]), crush damage (SI plan, M2). |
+| History | [before-rewrite-2026-11-18.md](../history/collapse/before-rewrite-2026-11-18.md): the old header. |
+| Marks | (e) every run-time cost below: estimates from operation counts (about 5 ns per voxel flood-filled, 1-2 ns per mask operation), written before any of it was built. Measured since (m): the face flood about 50 ns per voxel visit; a chunk graph 25-33 us per Dense chunk at 0.125 m quiet, 70-120 us in game when cold. The body's code references are of 2026-11-12. |
+
+Related: [shred.md](shred.md) "What happens to collapse.md" (row by row: kept, moved, replaced or stale).
+
+What still applies: stage 1 (anchored remainder of a static object, ROADMAP M3); stage 4 (no whole-object work per hit,
+a later optimisation); the fracture-brick idea (SI-2's shatter cuts 2-3 slabs instead). Replaced: the "Data" section's
+32-byte `SupportCell` by the stage-4 node list per chunk (`vortex.voxel:structure`: `ChunkGraph`, `TerrainGraphCache`,
+`SearchIslandsOnGraph`; every component of a cell is a node, so the graph equals voxel connectivity, over-full cells
+included; each node with its voxel count, an integer mass and face masks, each link with its bond); stages 2, 3 and 5
+by shred.md stages 4 and 4b and SI-1. Stale: "What is wrong today" (see shred.md). The body below is unchanged.
 
 ## Decision
 

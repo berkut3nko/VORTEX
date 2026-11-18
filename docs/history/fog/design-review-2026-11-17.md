@@ -1,0 +1,27 @@
+# Fog history: the critic's review of the design (2026-11-17)
+
+Moved verbatim from `docs/design/fog.md` lines 493-513 at engine `430fde0` on 2026-11-18 (WP3 document rewrite). The
+text below is unchanged; corrections go only under "Errata" at the end.
+
+---
+
+## Review of the design (critic, 2026-11-17)
+
+A critic read the first version; every finding was checked against the code (paths relative to the engine) and all
+thirteen hold. What changed, and the parts not taken with the reason:
+
+| # | Finding | Verified | Change |
+|---|---|---|---|
+| 1 | The ground mist grows without limit below its base (0.27/m at -10 m, 5.4/m at -20 m) in dry caves (`caveMaxDepth` 30 m, `Generator.cppm:91-99`); the stated transmittances left out floor and mist | `shading.glsl:151-166` has no lower bound; the figures were 0.5 / 0.17 for the capped field only | `VxFogAmountClamped`; the cap is on the added extinction (mist + local), the style values were lowered so the stated T (0.52 / 0.17, floor included) holds; `MistBelowItsBaseIsBounded`. Of the two offered cap options the first was taken; the floor stays uncapped (today's look) and is counted in the figures instead |
+| 2 | A fixed 64 m range: valley fog unseen from high views, and past R (56 m) on the playground, reading wrapped terrain | perf.md's far view looks down 61 m at pitch -0.55 (ground about 110 m along the ray); playground window 30 chunks (`Region.cpp:97-104`), R 56 m (`World.cpp:175-181`) | Range = horizontal R with the edge fog's fade; slab clip by `fogTop`; maps and grid sized to the window, lookups outside it give nothing, S stops at the edge; acceptance view `--camera fog-slope`. **Not taken:** a playground-session screenshot from the edge of the play area - `--camera` is refused in a session and a client cannot be placed; replaced by `FogMap.OutsideTheWindowIsClear` on a 30-chunk window (the shader's code is the same `VxFogMarch`), and the session-check screenshots; placing a session camera is a stage 4 item |
+| 3 | Noise only on medium / high changes visibility; the 8-step point-sampled march is biased toward clear | Design text; Jensen's inequality on exp of a hit-or-miss sample (expected T 0.72 vs 0.55) | Noise on colour only; slab terms integrated analytically per segment; per-ray test bounds |
+| 4 | Fog code in the one `composite.frag` risks the SIMD16 schedule for every pixel and `off`; gates against `--fog off` of the same binary cannot see it; undeclared bindings draw nothing | ARCHITECTURE.md 5.7, `Renderer.cpp:1310-1326` | Composite split; SIMD16 check on both variants; fog targets not allocated when off. **Changed:** the baseline stays `--fog off` of the same build rather than a build of the previous commit, because after the split `off` is the previous commit's shader (SPIR-V compared once); this avoids rebuilding an old commit in the one build directory for every measurement |
+| 5 | Puff cost 5-10x low; stacked puffs multiply to a blind wall; a client skips puffs for incomplete operations | 53 M lane-ops (c); per-puff cap only; `Client.cpp:995` | CPU rectangles, summed cap, an 8-puff gate, puffs from every live `CarveSphere` with `present` |
+| 6 | A camera-centred toroidal grid wraps and depends on the viewer | Design text | Window-anchored grid, inflow edge, new tests replacing the mass test |
+| 7 | Farthest-depth fog pixels plus one bilinear tap outline near silhouettes; the per-fetch calibration was inconsistent | Design text; 0.25-0.43 ns x 332k px = 0.08-0.14 ms, not 0.025-0.04 ms | Checkerboard near / far depths, R16F distance on every preset, nearest-depth upsample; per-fetch cost now cited from the measured +0.3 ms for 9 taps (about 0.04 ms) |
+| 8 | "Below H = covered" puts dark cave mist under every tree | `cellMask` counts leaves (`Chunk.cppm:27-42`); trees on a 7 m grid, crowns to 7.5 m | Cover is y < G - 1 m; H for S only; `TreesAreNotCover`, `CaveIsCover`. The offered "ceiling" channel was not taken: G already exists and is enough |
+| 9 | No non-destructive change feed; the obvious ones are single-consumer | `World.cpp:659-670`, `Terrain.cpp:305-309`, `Client.cpp:1153` | `World::ColumnRevision`; test that the queues are untouched. The offered change ring with cursors was not taken: one word per column is simpler and enough for a map that rebuilds whole columns |
+| 10 | TAA cannot remove per-frame fog jitter at 1/4 resolution; float frame counter loses precision; no headless flicker check | `taa.frag:49-77` clamps to render-pixel 3x3 | Fixed 4 x 4 per-pixel offsets on every preset (no frame term, so no precision issue); `--fog-flicker` gate |
+| 11 | No buffer-to-image upload path; failed submits would leave fog rows stale | `Renderer.cpp:1064-1081, 1511, 1556-1569` | "Uploads" plan (+0.5-1 day), re-upload flag; the noise texture is dropped for a shader hash |
+| 12 | Particles ignore puffs and local fog | `particles.vert:51-58` | Stage 1: summed puff depth in particles; stage 2: particles read `u_Fog`. Open question 6 (particles) closed. The 3300-particle figure is fx-budget.md's pre-budget count (about 800 once its stage lands); the conclusion holds either way |
+| 13 | S tap counts were half the real ones; S's budget alone filled the CPU gate; the editor can move the sun | 192^2 x 64 = 2.36 M (c); `Editor.cpp:719-731` | Numbers corrected; S takes what is left of one 0.3 ms fog budget after H and the sim step (instead of the offered 0.2 ms fixed share, which would idle on frames with no step); gate p99 0.35 ms; S stores its sun and rebuilds on a change |

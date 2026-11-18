@@ -1,9 +1,16 @@
 # Effects that stay fast in fights
 
-Status: design decision, nothing built or measured for it yet. "Measured" = `docs/ROADMAP.md`
-(UHD 620, 768x432 internal, 21 ms GPU per frame). "Est." = from reading the code; stage 1
-replaces every estimate with a number. Related: `collapse.md` (object damage, debris lifetimes),
-`lod.md` (distance budgets).
+| | |
+|---|---|
+| Status | Designed, nothing built or measured for it (no `FxDirector`, no `--stress-fx`). Some defects it lists were fixed by other work: rubble lifetimes by size and caps (shred.md stage 1e: `scene::SceneConfig` `debrisLifetime`, `rubbleMediumLifetime`, `rubbleLargeLifetime`, `maxDebris`, `maxRubbleBodies`), crumbs as particles instead of entities (`scene::MinPieceVoxels`, 8 voxels at 0.125 m), the island search on cached cell graphs (shred.md stage 4). |
+| Decided | - Us (this design, 2026-11-10): a cast splits into a simulation half (queued, coalesced, bounded, never dropped) and a presentation half (same frame, scaled or dropped, never delayed); effect lights leave the ray-traced pass; particle pool 8192 with LOD and a load factor ("Decision").<br>- Us, in the project review of 2026-11-17 (section 6.2; the owner may veto): the fx caps are ours to set; stages 1-2 come with the fight measurement (review WP8). |
+| Next | [fx-1] measurement and [fx-2] cheap wins, in ROADMAP "Next" [wp-8] "fight measurement + fx-budget 1-2 + 10 clients". |
+| Open | The questions in "Open questions for the game" (unanswered; settled by the recommended reading when the stage starts). |
+| History | [before-rewrite-2026-11-18.md](../history/fx-budget/before-rewrite-2026-11-18.md): the original header and "Decision" |
+| Marks | "Measured" = ROADMAP "Performance and measured values" (UHD 620, 768x432 internal, about 21 ms GPU per frame); "Est." = from reading the code; stage 1 replaces every estimate with a number. Code names and the one `file:line` reference (`Renderer.cpp:1101`) are from engine `ec073a8` (2026-11-10): `Engine::Explode` is now `sim::Blast` + `Engine::PresentBlast` (the simulation and presentation halves this design asked for), and collapse.md's thresholds were replaced by shred.md stage 1e's. The first text assumed no multiplayer; its row on an `EffectEvent` record in "Decision" is corrected for the built sessions. |
+
+Related: [collapse.md](collapse.md) (object damage, debris lifetimes), [lod.md](lod.md) (distance budgets),
+[perf.md](perf.md) (frame-rate items X1 and U1 depend on stages 1-2 here), [shred.md](shred.md) "Budgets".
 
 ## Decision
 
@@ -26,7 +33,7 @@ Rejected, and why:
 | Stateless GPU particles (closed-form emitters, proposal B) | Removes CPU cost that is est. 1 ms at 8192 particles; the limit on this GPU is fill, which it does not touch. New binding, shared evaluator, per-emitter sort. Revisit only if stage 1 shows particle CPU > 1.5 ms after stage 2. |
 | Tiled effect-light grid (B) | With 8 merged lights a plain loop is est. < 0.5 ms; a tile buffer adds two bindings for no gain at that count. |
 | Learned-cost budget + GPU governor (B) | Static caps plus the pool load factor bound the frame; a feedback loop is hard to test headless. Caps are `EngineConfig` fields, so a governor can drive them later. |
-| `EffectEvent` network record, server-side library (B) | No multiplayer on the roadmap. The simulation/presentation split keeps the door open. |
+| `EffectEvent` network record, server-side library (B) | Not needed with multiplayer either (built since: networking M1). A session client presents the operations it applies (`net::Client::TakePresentations` -> `sim::PresentBlast`), never on the server; effects follow from the replicated operations, so nothing about effects travels. The simulation/presentation split is exactly that seam. Revisit only for effects with no operation behind them (a miss, an aura). |
 | Half-resolution particle target, async island search | Kept as conditional stage 6: only if stage 1 numbers demand them. |
 | Deferring nothing but shrinking counts (A, stage 1 only) | Does not bound the worst frame: ten casts still run ten island searches and N whole-volume splits in one frame. |
 

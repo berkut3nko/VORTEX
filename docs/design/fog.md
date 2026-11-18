@@ -1,18 +1,21 @@
 # Fog: sunlit haze, fog that lies in valleys and craters, blast dust that drifts and settles
 
-Status: **design, nothing built or measured for it; reviewed once (see "Review of the design", end of file).**
-Owner's request (2026-11-17): "add some easy volumetric simulation of fog (maybe dependent on dense maps)". Written
-read-only against engine `71dc23e` / game `ad0fe69` (networking stages 0-7b committed, stage 8 being built). Numbers
-are **(m)** measured (quoted from perf.md / view-distance.md / lod.md / notes), **(c)** computed from sizes, **(e)**
-estimate; every (e) names the measurement that replaces it. "Dense maps" in the request is read as **density maps**:
-2D maps of fog density built from the terrain.
+| | |
+|---|---|
+| Status | Designed, nothing built or measured for it. Reviewed once by a critic (13 findings, all applied or answered). |
+| Decided | - Owner's request (2026-11-17): "add some easy volumetric simulation of fog (maybe dependent on dense maps)". "Dense maps" is read as **density maps**: 2D maps of fog density built from the terrain.<br>- Us (this design, 2026-11-17): fog is presentation only; every client sees the same fog from what clients already share; in a session it cannot be switched off or thinned, presets change detail only ("Decision in brief").<br>- Us, the ROADMAP order (project review 2026-11-17, section 6.1; the owner did not object): fog stage 1 comes after SI-2 and before spread S1 and W1. This settles open question 9. |
+| Next | [fog-1] analytic extras, in ROADMAP "Next" after SI-2 (review WP10). The owner looks at it before [fog-2]. |
+| Open | Questions 1-8 in "Open questions" (each has a recommended answer, taken when its stage starts unless the owner objects); question 9 is settled by the ROADMAP order. |
+| History | [design-review-2026-11-17.md](../history/fog/design-review-2026-11-17.md): "Review of the design (critic, 2026-11-17)", the findings and what changed<br>[before-rewrite-2026-11-18.md](../history/fog/before-rewrite-2026-11-18.md): the original header |
+| Marks | **(m)** measured (quoted from perf.md, view-distance.md, lod.md and the notes), **(c)** computed from sizes, **(e)** estimate; every (e) names the measurement that replaces it. Code `file:line` references were read at engine `71dc23e` / game `ad0fe69`. |
 
-Relation to other designs: [perf.md](perf.md) (frame budget and the measuring method used here),
-[fx-budget.md](fx-budget.md) (blast presentation, dust particles, the 4 ms effects cap, its planned effect lights in
-composite), [view-distance.md](view-distance.md) (window, edge fog, `--climb` / `--fly` gates), [lod.md](lod.md)
-(fog density and the level-0 edge), [networking.md](networking.md) "Stage 6 as built" onwards (what a client already
-shares with the server), [worldgen.md](worldgen.md) (domination, sea level) and the game's `docs/world/setting.md`
-(the Brodvel Fens: "Fog limits sight").
+Related: [perf.md](perf.md) (frame budget and the measuring method used here), [fx-budget.md](fx-budget.md) (blast
+presentation, dust particles, the 4 ms effects cap, its planned effect lights in composite),
+[view-distance.md](view-distance.md) (window, edge fog, `--climb` / `--fly` gates), [lod.md](lod.md) (fog density and
+the level-0 edge), [networking.md](networking.md) (what a client already shares with the server: chunk sync, entity
+replication, checks; the as-built detail from stage 6 on is in `../history/networking/`), [worldgen.md](worldgen.md)
+(domination, sea level), [spread.md](spread.md) (smoke feeds the dust grid later) and the game's
+`docs/world/setting.md` (the Brodvel Fens: "Fog limits sight").
 
 ## Decision in brief
 
@@ -489,25 +492,3 @@ Every stage passes the standard build (warning-free), `ctest`, both headless val
 9. **Where does fog sit on the roadmap?** Recommended: its own small track after networking stage 8 closes M1 (one
    build directory; no wire change, so it never blocks or waits on networking); stage 1 first, the owner looks at it
    before stage 2.
-
-## Review of the design (critic, 2026-11-17)
-
-A critic read the first version; every finding was checked against the code (paths relative to the engine) and all
-thirteen hold. What changed, and the parts not taken with the reason:
-
-| # | Finding | Verified | Change |
-|---|---|---|---|
-| 1 | The ground mist grows without limit below its base (0.27/m at -10 m, 5.4/m at -20 m) in dry caves (`caveMaxDepth` 30 m, `Generator.cppm:91-99`); the stated transmittances left out floor and mist | `shading.glsl:151-166` has no lower bound; the figures were 0.5 / 0.17 for the capped field only | `VxFogAmountClamped`; the cap is on the added extinction (mist + local), the style values were lowered so the stated T (0.52 / 0.17, floor included) holds; `MistBelowItsBaseIsBounded`. Of the two offered cap options the first was taken; the floor stays uncapped (today's look) and is counted in the figures instead |
-| 2 | A fixed 64 m range: valley fog unseen from high views, and past R (56 m) on the playground, reading wrapped terrain | perf.md's far view looks down 61 m at pitch -0.55 (ground about 110 m along the ray); playground window 30 chunks (`Region.cpp:97-104`), R 56 m (`World.cpp:175-181`) | Range = horizontal R with the edge fog's fade; slab clip by `fogTop`; maps and grid sized to the window, lookups outside it give nothing, S stops at the edge; acceptance view `--camera fog-slope`. **Not taken:** a playground-session screenshot from the edge of the play area - `--camera` is refused in a session and a client cannot be placed; replaced by `FogMap.OutsideTheWindowIsClear` on a 30-chunk window (the shader's code is the same `VxFogMarch`), and the session-check screenshots; placing a session camera is a stage 4 item |
-| 3 | Noise only on medium / high changes visibility; the 8-step point-sampled march is biased toward clear | Design text; Jensen's inequality on exp of a hit-or-miss sample (expected T 0.72 vs 0.55) | Noise on colour only; slab terms integrated analytically per segment; per-ray test bounds |
-| 4 | Fog code in the one `composite.frag` risks the SIMD16 schedule for every pixel and `off`; gates against `--fog off` of the same binary cannot see it; undeclared bindings draw nothing | ARCHITECTURE.md 5.7, `Renderer.cpp:1310-1326` | Composite split; SIMD16 check on both variants; fog targets not allocated when off. **Changed:** the baseline stays `--fog off` of the same build rather than a build of the previous commit, because after the split `off` is the previous commit's shader (SPIR-V compared once); this avoids rebuilding an old commit in the one build directory for every measurement |
-| 5 | Puff cost 5-10x low; stacked puffs multiply to a blind wall; a client skips puffs for incomplete operations | 53 M lane-ops (c); per-puff cap only; `Client.cpp:995` | CPU rectangles, summed cap, an 8-puff gate, puffs from every live `CarveSphere` with `present` |
-| 6 | A camera-centred toroidal grid wraps and depends on the viewer | Design text | Window-anchored grid, inflow edge, new tests replacing the mass test |
-| 7 | Farthest-depth fog pixels plus one bilinear tap outline near silhouettes; the per-fetch calibration was inconsistent | Design text; 0.25-0.43 ns x 332k px = 0.08-0.14 ms, not 0.025-0.04 ms | Checkerboard near / far depths, R16F distance on every preset, nearest-depth upsample; per-fetch cost now cited from the measured +0.3 ms for 9 taps (about 0.04 ms) |
-| 8 | "Below H = covered" puts dark cave mist under every tree | `cellMask` counts leaves (`Chunk.cppm:27-42`); trees on a 7 m grid, crowns to 7.5 m | Cover is y < G - 1 m; H for S only; `TreesAreNotCover`, `CaveIsCover`. The offered "ceiling" channel was not taken: G already exists and is enough |
-| 9 | No non-destructive change feed; the obvious ones are single-consumer | `World.cpp:659-670`, `Terrain.cpp:305-309`, `Client.cpp:1153` | `World::ColumnRevision`; test that the queues are untouched. The offered change ring with cursors was not taken: one word per column is simpler and enough for a map that rebuilds whole columns |
-| 10 | TAA cannot remove per-frame fog jitter at 1/4 resolution; float frame counter loses precision; no headless flicker check | `taa.frag:49-77` clamps to render-pixel 3x3 | Fixed 4 x 4 per-pixel offsets on every preset (no frame term, so no precision issue); `--fog-flicker` gate |
-| 11 | No buffer-to-image upload path; failed submits would leave fog rows stale | `Renderer.cpp:1064-1081, 1511, 1556-1569` | "Uploads" plan (+0.5-1 day), re-upload flag; the noise texture is dropped for a shader hash |
-| 12 | Particles ignore puffs and local fog | `particles.vert:51-58` | Stage 1: summed puff depth in particles; stage 2: particles read `u_Fog`. Open question 6 (particles) closed. The 3300-particle figure is fx-budget.md's pre-budget count (about 800 once its stage lands); the conclusion holds either way |
-| 13 | S tap counts were half the real ones; S's budget alone filled the CPU gate; the editor can move the sun | 192^2 x 64 = 2.36 M (c); `Editor.cpp:719-731` | Numbers corrected; S takes what is left of one 0.3 ms fog budget after H and the sim step (instead of the offered 0.2 ms fixed share, which would idle on frames with no step); gate p99 0.35 ms; S stores its sun and rebuilds on a change |
-

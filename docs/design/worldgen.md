@@ -1,14 +1,18 @@
 # World generation: regions built from structures
 
-Status: design decision, 2026-11-17. Nothing is built or measured for it. Figures marked *(est.)* are estimates from
-operation counts or proportions and must be measured. Every stage names the measurement that confirms or kills them.
-Claims about today's code were checked against the sources (`voxel/Generator.cppm`, `sim/Region.cppm`,
-`sim/Blast.cppm`, `sim/internal/Blast.cpp`, `sim/internal/Region.cpp`, `sim/Player.cppm`, `voxel/Connectivity.cppm`,
-`voxel/Structure.cppm`, `voxel/internal/Material.cpp`, `net/Messages.cppm`) on 2026-11-17, and again after the review
-of the same day (flood box centred on the cast, release cap per cast, island-box locality, 6-connected nodes, the
-margin and the client window).
-Other agents are changing `engine/src/net` and networking.md while this is written: every wire detail below
-(enum values, the protocol number, message ids) is taken at merge time, never assumed.
+| | |
+|---|---|
+| Status | Designed, nothing built or measured for it. |
+| Decided | - Owner's request (2026-11-16): a map generator that uses structures to build a solid world with towns, forts and villages, plus a story layer that later gameplay situations can build on; the owner's priority is fun gameplay with few bugs over realism. Lore names are the owner's call.<br>- Us (this design, 2026-11-17): proposal K (kit + WFC, server planner, shipped plan) with grafts from H and S, 33 of 40 against 31 and 29 ([how-it-was-chosen-2026-11-17.md](../history/worldgen/how-it-was-chosen-2026-11-17.md)); items 1-8 of "Decision".<br>- Us, the ROADMAP order (project review 2026-11-17, section 6.1; the owner did not object): W1 is the last item of "Next", after fog stage 1 and spread S1, with the soak tier first; SI-1 and SI-3 come after W1. |
+| Next | [wg-W1] a stamped village, offline, in ROADMAP "Next" (review WP11). |
+| Open | Questions 1-11 in "Open questions (with the answer we recommend)". |
+| History | [how-it-was-chosen-2026-11-17.md](../history/worldgen/how-it-was-chosen-2026-11-17.md): the three proposals, their scores and what was grafted onto K<br>[before-rewrite-2026-11-18.md](../history/worldgen/before-rewrite-2026-11-18.md): the original header |
+| Marks | Figures marked *(est.)* are estimates from operation counts or proportions and must be measured; every stage names the measurement that confirms or kills them. Claims about code were checked against the sources (`voxel/Generator.cppm`, `sim/Region.cppm`, `sim/Blast.cppm`, `sim/internal/Blast.cpp`, `sim/internal/Region.cpp`, `sim/Player.cppm`, `voxel/Connectivity.cppm`, `voxel/Structure.cppm`, `voxel/internal/Material.cpp`, `net/Messages.cppm`) at engine `c970f16` (2026-11-17), and again after the review of the same day (flood box centred on the cast, release cap per cast, island-box locality, 6-connected nodes, the margin and the client window). Every wire detail below (enum values, the protocol number, message ids) is taken at merge time, never assumed. |
+
+Related: [shred.md](shred.md) Part 4b (the load check) and the SI plan, [networking.md](networking.md) (chunk sync,
+probes, `buildHash`), [view-distance.md](view-distance.md) and [lod.md](lod.md) (LOD level 1 later),
+[mechanisms.md](mechanisms.md) (gatehouse sockets, W3), [spread.md](spread.md) (W4's appended ids, C7's party gaps),
+[fog.md](fog.md) (domination, sea level), the game's `docs/world/setting.md`.
 
 This design answers the owner's request of 2026-11-16: a map generator that uses structures to build a solid world
 with towns, forts and villages, plus a story layer that later gameplay situations can build on. It serves ROADMAP M4
@@ -86,48 +90,6 @@ the owner's call.
    - tests for determinism, `ClassifyColumn` agreement, 0 releases under duds, and the designed neck.
    W2 puts it in a session (about 1 week *(est.)*).
 
-### How it was chosen
-
-Three proposals were judged: **H**, hierarchical (top-down planner run on both sides, primitives plus a small kit);
-**K**, kit + WFC (server planner, shipped plan, kit-cell modules, assemblers by need); **S**, history (faction
-simulation drives placement, shipped plan, parametric buildings rasterised on both sides). Scores run 1-5; higher is
-better.
-
-| Criterion | H | K | S | Notes |
-|---|---|---|---|---|
-| Fit with the engine and its contracts | 4 | 5 | 4 | K keeps the client side to records and a stamper. S's client-local lights bypass today's entity light path. |
-| Determinism across server and clients | 3 | 5 | 4 | H runs A\*, plot growth and the grammar on Windows clients, plus a hash-and-fallback path. S rasterises the grammar on clients. K copies module bytes. |
-| Cost on the target hardware | 3 | 4 | 4 | H plans on every client (0.1-0.3 s per arena, est.). K's plan-time load check would cost the server 0.2-0.6 s of preload; this design moves it to CI. |
-| Fun and readable fights and destruction | 5 | 4 | 4 | H: spine routes, worn-plan fairness, neck table. K: paired chokepoints. S: missions from history. |
-| Look at 0.125 m | 3 | 4 | 4 | H's primitives read plain at 5 m. K's modules carry near detail. S's age palettes and ruins add variety. |
-| Authoring effort | 4 | 3 | 4 | K needs 25-45 modules per kit (code first, art later). H and S lean on parametric code. |
-| Risk | 3 | 4 | 3 | H: client planner drift. S: history simulation and statistical-only load confidence. |
-| How early a playable slice exists | 4 | 4 | 4 | All about 2 weeks. This design splits offline (W1) from session (W2). |
-| **Total** | **29** | **33** | **31** | |
-
-**K wins.** Grafted onto it:
-- from **H**:
-  - the spine route and objective rules;
-  - worn-plan fairness;
-  - the construction rules C1-C8;
-  - the role-slot palette in `.vox` modules;
-  - style files as climate-driven cross-kit mixes;
-  - the neck table;
-  - salted RNG streams;
-  - the `--plan-png` debug map.
-- from **S**:
-  - columnar-decay ruins;
-  - reverse-causality history and missions from the "now" state;
-  - the empty-plan bit-identity test;
-  - the `ISurfaceModifier` hook into the terrain generator;
-  - the generated-name blocklist test;
-  - the test-only load-margin hook.
-
-K's plan-time load check on the server is dropped: the preload budget has no room for it. CI sweeps and a tool replace
-it.
-
-Rejected alternatives are listed at the end, with reasons.
-
 ## Architecture
 
 ### Libraries and layering
@@ -168,7 +130,7 @@ Rules:
 | `sim::RegionTemplateId` | `Generated = 2` | yes |
 | `sim::RegionDesc` | `recipeId` (u32), `styleId` (u16), `planHash` (u64). `IsValid` refuses: voxel size other than exactly 0.125 m (raw bits); an unknown recipe or style; a structured generator without `Generated`. | yes |
 | `sim::RegionTemplate` | spawns per team (list), objectives, plan pointer. The single `spawn` stays for old templates. | no (server side) |
-| `net` | New paced reliable message `RegionPlanPart { u32 offset; bytes }`, after `Welcome` and before any `ChunkData`. The client builds its `World` only once the plan is complete and `PlanHash(bytes) == planHash`; otherwise it refuses the session (`plan mismatch`). `buildHash` folds in `KitLibraryHash` and `kWorldGenGoldenHash`. 16 of the 64 probe chunks come from chunks the plan touches. One protocol bump: the next free number at merge (the code says 8 today). | yes |
+| `net` | New paced reliable message `RegionPlanPart { u32 offset; bytes }`, after `Welcome` and before any `ChunkData`. The client builds its `World` only once the plan is complete and `PlanHash(bytes) == planHash`; otherwise it refuses the session (`plan mismatch`). `buildHash` folds in `KitLibraryHash` and `kWorldGenGoldenHash`. 16 of the 64 probe chunks come from chunks the plan touches. One protocol bump: the next free number at merge. | yes |
 | `sim::SimulationConfig` | Test-only `loadCheckMarginNum / Den` (default 1/1): multiplies node loads in the load check. Never set by a server, never on the wire. | no |
 | `tools/server` | Session keys `generator = structured`, `template = generated`, `recipe = <name>`, `style = <name>`. Log line `Region: N buildings, M modules, plan K bytes, planned in X ms, structure chunks C`. | no |
 | Game | `--region <recipe> [--style S] --seed N` (offline). `--camera region-landmark` / `region-street`. `--region-blast` cuts the landmark's neck and logs the release. The default run stays the playground, unchanged. | no |

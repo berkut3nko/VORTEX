@@ -1,23 +1,29 @@
 # VORTEX architecture
 
 VORTEX is a voxel engine for large, fully editable worlds rendered by ray marching, in the
-spirit of Teardown's renderer, with the scale and freedom of a Minecraft-like world. This
-document is the reference for how the engine is put together and the contract its parts
-share. If code and document disagree, fix one of them.
+spirit of Teardown's renderer, with the scale and freedom of a Minecraft-like world. Its game,
+Shredborne, is a session PvP prototype on a destructible world, with an offline sandbox and an
+editor. This document is the reference for how the engine is put together and the contracts its
+parts share: it says how and why. What was decided, and when, is in the design documents; each
+module's traps are in `notes/`. The index of every document is [README.md](README.md). If code and
+document disagree, fix one of them.
 
 ## 1. Goals and non-goals
 
 | Goal | Consequence in the design |
 |---|---|
-| Huge, streaming, persistent world | Sparse chunk storage, a toroidal window that moves with the player, generation on worker threads, region files that store only what players changed. (Persistence is a feature of `voxel::World`, used by the offline game and the map editor; a networked session's world is memory only, 7.4.) |
-| Everything destructible | Voxels are the single source of truth for rendering, collision and gameplay queries; edits are local and cheap (one 37 KiB chunk re-upload). |
+| Huge, streaming world | Sparse chunk storage, a toroidal window that moves with the player, generation on worker threads. Persistence (region files that store only what players changed) is a feature of `voxel::World` used by the offline game and the map editor. A session's world is a region that resets every session: template + seed, memory only (7.4, 7.5). |
+| Everything destructible | Voxels are the single source of truth for rendering, collision and gameplay queries; edits are local and cheap (one 37 KiB chunk re-upload). Terrain that loses its support, or hangs on too weak a neck, falls (7.2). |
+| Sessions over the network | One server decides; terrain changes are integer-exact operations, the simulation runs on a numbered fixed tick, a player moves by one rule on every side, and the server builds without a GPU or a window (2, 7.4, 7.5). |
 | Teardown-style image | Geometry is ray marched (no meshing); lighting is ray traced through the same data (soft sun shadows, ambient occlusion, emissive voxels) and accumulated over time. |
 | Runs on integrated GPUs | Rendering at a fraction of the output resolution, one ray of each kind per pixel per frame, every feature can be switched off. |
 | Testable without a GPU | Everything except `graphics` builds and runs headless; the ray traversal is one source file compiled for both the GPU and the CPU, so unit tests cover the shader logic. |
 
 Not goals (yet): level of detail cascades for very long view distances, transparency /
-refraction, fluid simulation (water is a shaded surface, 5.7), skeletal animation, audio, networking. Section 10 lists what the design already
-does to keep those doors open.
+refraction, fluid simulation (water is a shaded surface, 5.7), skeletal animation, audio, and a
+persistent shared world (a session region resets; an on-demand server world for larger zones is
+networking stage 9 `[net-9]`). Section 10 lists what the design already does to keep those doors
+open.
 
 ## 2. Layout and layering
 
@@ -33,23 +39,25 @@ engine/
                                (canvas, bitmap font, menu, cursor capture: data only)
     math/     vortex.math      AABB / frustum / transform, reverse-Z projection, simplex noise
     voxel/    vortex.voxel     chunks, chunk store, world streaming, generator, regions, models,
-                               ray queries, colliders, connectivity, .vox / glTF import
+                               ray queries, colliders, connectivity, the cell graph and the load
+                               check (:structure), chunk and world hashes (:hash), .vox / glTF import
     fx/       vortex.fx        particle simulation and effect presets
     physics/  vortex.physics   Jolt behind an engine interface, terrain collider streaming
     scene/    vortex.scene     entities (EnTT): components, object lifetime, destruction
     sim/      vortex.sim       the simulation: world + physics + terrain colliders + scene on a numbered tick;
                                world operations, blasts, regions and their templates, the player step,
                                NetIds and the piece budgets of a session server (replication)
-    net/      vortex.net       the session protocol: transports (loopback, impaired, ENet / UDP), wire
-                               format, messages, server, client, the client clock and prediction, replicated
-                               bodies (copies, snapshots, the entity check), bot pilots, the shared bot
-                               (net::Bot, DrainWatch, JudgeBot, exit lines) and the UDP relay (stage 8)
+    net/      vortex.net       the session protocol: transports (loopback, impaired, ENet / UDP, and the
+                               UDP relay net::UdpRelay in :enet), wire format, messages, server, client,
+                               chunk sync and the checks, the client clock and prediction, replicated
+                               bodies (copies, snapshots, the entity check), bot pilots, and the shared
+                               bot (:bot: net::Bot, DrainWatch, JudgeBot, the exit lines)
     graphics/ vortex.graphics  Vulkan device, window, renderer, UI layer
     engine/   vortex.engine    application loop, render data of the scene, explosions, glue
     editor/   vortex.editor    in-game editor: tool logic (no ImGui), panels, gizmo
-  tests/                 GoogleTest suites, none of which need a GPU
+  tests/                 GoogleTest suites (section 9), none of which need a GPU
   tools/                 server/: vortex_server (the session server, GPU-free) and example session files;
-                         bot/: vortex_bot (one bot player in its own process over UDP, GPU-free; stage 8's soak)
+                         bot/: vortex_bot (one bot player in its own process over UDP, GPU-free; the soak)
 ```
 
 Libraries and what they may depend on (a lower layer never imports a higher one):
@@ -66,14 +74,35 @@ vortex_bot        tools/bot                    -> Net                        (no
 Shredborne (game) ../src                       -> Engine (and so Net and ENet)
 ```
 
-A dedicated server or a tool links `Vortex::Net` (or less) and never sees Vulkan. This is checked
-when the build is configured: `vortex_assert_gpu_free` (`CMakeLists.txt`) walks everything that
-`VortexCore`, `VortexPhysics`, `VortexSim`, `VortexNet`, the test binaries `VortexSimTests` and
-`VortexNetTests` and the executables `vortex_server` and `vortex_bot` link, directly or through their dependencies,
-and stops with an error if Graphics, Engine, Vulkan, GLFW, VMA or ImGui is among it (`vortex_enet`, ENet built
-from source, is checked too). A second check, `vortex_assert_no_network`, stops the build if `VortexCore`,
-`VortexPhysics`, `VortexSim` or `VortexSimTests` link `VortexNet` or ENet: the network transport is linked privately
-into `Vortex::Net` and reaches only what links that (the server, `VortexNetTests`, the engine and the game).
+The graph is not a single chain. The simulation side is `Core <- Physics <- Sim <- Net`. The
+renderer stands beside it: `Vortex::Graphics` depends on `Core` only (it imports core, math, voxel
+and fx) and knows nothing of physics, the scene, the simulation or the network. `Vortex::Engine`
+links all five. It imports everything but `vortex.net`: the engine draws a `sim::Simulation`
+whoever feeds it, and the game's session code (`src/Session.cpp`) is what imports `vortex.net`.
+
+A dedicated server or a tool links `Vortex::Net` (or less) and never sees Vulkan. Two checks run
+when the build is configured (`CMakeLists.txt`; both walk everything a target links, directly or
+through its dependencies, PRIVATE links of static libraries included):
+
+* `vortex_assert_gpu_free` stops with an error if Graphics, Engine, Vulkan, GLFW, vk-bootstrap,
+  VMA, ImGui or ImGuizmo is in the closure of `VortexCore`, `VortexPhysics`, `VortexSim`,
+  `VortexNet`, `vortex_enet` (ENet built from source), the test binaries `VortexSimTests` and
+  `VortexNetTests`, or the executables `vortex_server` and `vortex_bot`.
+* `vortex_assert_no_network` stops it if `VortexNet` or ENet is in the closure of `VortexCore`,
+  `VortexPhysics`, `VortexSim` or `VortexSimTests`. ENet is linked privately into `Vortex::Net`
+  and reaches only what links that (the server, the bot, `VortexNetTests`, the engine and the
+  game); only `src/net/internal/Enet.cpp` includes `<enet/enet.h>`.
+
+What the checks do not see:
+
+* **Order inside one library.** A library is all of its directories in one target, so the
+  direction between its modules is kept by review only: in Core, `core <- math <- voxel` and
+  `core <- fx`; in Sim, `scene <- sim`; in Engine, `engine <- editor`. An import cycle fails to
+  build; an import in the wrong direction without a cycle does not.
+* **The renderer's side.** Nothing walks `Vortex::Graphics` for Physics, Sim or Net: that it
+  depends on Core only is kept by review.
+* **Imports and includes.** The checks read link targets, not what a module imports or includes.
+* **The Core and Physics test binaries** are not walked; each links one GPU-free library.
 
 Inside `Vortex::Sim`, `scene` is the lower layer: it imports voxel, fx and physics, nothing of
 graphics and not `vortex.sim`. `sim` owns the scene together with the world, physics and the
@@ -83,6 +112,12 @@ terrain colliders (`sim::Simulation`, 7.4). In `Vortex::Engine`, `engine` owns o
 `editor` is the top layer: it imports `vortex.engine`, and nothing in `engine` or below knows it
 exists - a game that wants the editor owns an `editor::Editor` and forwards two callbacks to it
 (section 8).
+
+Module partitions worth knowing by name: `vortex.voxel:structure` (`Structure.cppm`: the cell
+graph, its cache and the load check, 7.2), `vortex.voxel:hash` (`Hash.cppm`: `voxel::ChunkHash`,
+`voxel::WorldHash`, the generator's golden hash and `voxel::MaterialTableHash`, which sessions
+compare, 7.5) and `vortex.net:bot` (`Bot.cppm`: one bot player and the shared exit lines, used by
+`vortex_server`'s in-process bots, `vortex_bot` and the game's headless session exit).
 
 ## 3. Conventions
 
@@ -96,7 +131,7 @@ exists - a game that wants the editor owns an `editor::Editor` and forwards two 
 * **Naming**: `PascalCase` types and functions, `m_PascalCase` private members, `camelCase`
   public fields and locals, `kPascalCase` constants. Namespaces `vortex`, `vortex::math`,
   `vortex::voxel`, `vortex::fx`, `vortex::physics`, `vortex::graphics`, `vortex::scene`, `vortex::sim`,
-  `vortex::editor`.
+  `vortex::net`, `vortex::editor`.
 * **Errors**: no exceptions across engine APIs. Functions that can fail return `bool` /
   `optional` / an invalid handle and log the reason (`Log::Error("... {}", x)`, std::format
   syntax). `Verify(cond, msg)` is for invariants whose violation would corrupt memory.
@@ -153,8 +188,8 @@ terrain - and follows the focus in x and z only, so climbing or flying never unl
 is the **build ceiling** (`World::BuildCeiling()`): an edit that would write a solid voxel above it is refused whole
 (`EditReport::outOfBounds`, decided from integers), `Scene::CreateVoxelObject` refuses a model reaching above it, and
 `Scene::DestroyAbove` is the kill plane for bodies thrown over it (the terrain guard treats the sky above the window
-as ready). Without known bounds (or with `fullHeight` off: tests, a session server today) the window is camera-centred
-in all three axes as before.
+as ready). A session's world is full height over its region's range (`sim::RegionWorldConfig`, 7.5). Without known
+bounds (or with `fullHeight` off: some tests) the window is centred on its focus in all three axes.
 
 **Column pass.** Every column of the window first gets one job: `IWorldGenerator::ClassifyColumn(cx, cz)` (from the
 height tile the terrain generator builds anyway) says which rows are certainly Empty (`>= emptyFrom`), certainly
@@ -193,7 +228,16 @@ Cells and columns carry generation counters so results for a chunk or column tha
 Editing (`SetVoxel`, `FillBox`, `FillSphere`, `CarveSphere` and the quantised `FillSphereQ`,
 `CarveSphereQ`, `SwapSphereQ`, `ClearMask`) materialises Empty / Uniform cells on demand, marks
 slots dirty, flags the cell as modified (it will be saved when it leaves the window or on
-`Save()`), and records the chunk in `TakeChangedChunks()` for physics.
+`Save()`), and records the chunk in `TakeChangedChunks()` for physics. Every edit goes through
+one private routine, `World::EditRegion` (a box, a per-voxel decision, the fixed visit order below).
+
+**Chunk revision.** `World::ChunkRevision(chunk)` is a number that changes whenever the content of a
+loaded chunk may have changed: an edit (wherever `EditRegion` queues a change: game, editor, `FillBox`,
+replicated operations), `SetChunkEncoded`, a load or an unload. It is 0 for a chunk that is not loaded
+and never reused within one `World`; packing and unpacking keep it. Data derived from a chunk is cached
+under it: the cell graphs of the island search (`voxel::TerrainGraphCache`, 7.2) and a session server's
+chunk hashes (7.5). A new edit path that changed voxels without going through `EditRegion` (or bumping
+the revision) would leave those caches stale.
 
 **Replicated edits are integer-exact** (`docs/design/networking.md`, "World operations"). A
 `voxel::SphereQ` has its centre and radius in q = 1/16 voxel; a voxel is inside when
@@ -682,11 +726,14 @@ ones have no `Lifetime`, an explosion flash is `Transform + PointLight + Lifetim
 
 ### 7.2 Destruction
 
-Carving the world returns the removed voxels (for particles) and is followed by a bounded
-search for terrain that lost its support (`ExtractFloatingIslands`), which becomes dynamic
-voxel objects.
+Destruction has three steps: carving (an object with `Scene::Damage`, the terrain with a quantised
+`WorldOp`), the **island search**, which finds terrain that lost every path to the ground, and the
+**load check**, which finds terrain whose path to the ground is too weak to hold it. Every terrain
+decision is integer-exact and made by whoever simulates (a session server, or the offline game); a
+session client only applies the operations it is sent. Design and judged decisions:
+`docs/design/shred.md` (Parts 1-4b, rules R1-R7; built stages `[shred-0]` to `[shred-4b]`).
 
-`Scene::Damage(entity, centre, radius)` carves a sphere out of a voxel object:
+**Objects.** `Scene::Damage(entity, centre, radius)` carves a sphere out of a voxel object:
 
 1. The sphere is applied to a private copy of the volume (voxels of indestructible materials
    stay); the shared model is not touched. Removed voxels throw debris particles.
@@ -701,22 +748,34 @@ voxel objects.
    continue through the cut.
 4. If nothing big enough is left the entity is destroyed.
 
-A blast is split into simulation and presentation:
+Pieces below `SceneConfig::replicatedPieceVoxels` (0 offline; a session server's threshold, 7.3)
+get no entity: they come back in `DamageResult::fragments` for whoever draws.
 
-* `sim::Blast(simulation, sphereQ, power)` (or `BlastDesc` in metres, quantised first): apply
-  `WorldOp::Carve`; search the box `floor(centre) +- (radius + 24)` voxels for floating terrain
-  (`ExtractFloatingIslands` without removing) and turn each island of at least
-  `scene::MinPieceVoxels(world voxel size)` (8 at 0.125 m) into a `WorldOp::Detach` (an occupancy mask, `netId = 0`, the
-  blast's push at its corner as velocity) applied with `ApplyOp` = `World::ClearMask`; all smaller
-  islands ("crumbs") together become one `WorldOp::Clear` (kind `ClearMask`: the union of their
-  voxels over the smallest box holding them), applied last; `Scene::Damage` for every body in range (a snapshot first);
-  push every body within three radii (`sim::BlastPush` x mass) and wake what is within two. No
-  particles, no light, and offline no entity for an island; on a session server
-  (`SimulationConfig::replication`) an island of the replicated size that gets a slot (`sim::TakePieceSlot`, largest
-  first) carries a NetId in its `Detach` and becomes a server body made from the voxels it removed (7.5,
-  networking.md stage 6). Returns the applied operations in order, the
-  voxels each one changed, the object fragments (below the replicated threshold, 7.3) and the
-  quantised centre / radius.
+**A blast is split into simulation and presentation.**
+
+* `sim::Blast(simulation, sphereQ, power)` (or `BlastDesc` in metres, quantised with the world's
+  voxel size first) is the simulation half, in this order:
+  1. `WorldOp::Carve` is applied (`World::CarveSphereQ`).
+  2. The island search and the load check (below), which change nothing themselves. Each island
+     and each released part of at least `scene::MinPieceVoxels(world voxel size)` (8 at 0.125 m)
+     becomes a `WorldOp::Detach` (an occupancy mask, `netId` 0, velocity = `sim::BlastPush` at its
+     minimum corner), applied at once with `ApplyOp` (= `World::ClearMask`, the call a client
+     makes): the islands inside the island box first, then the islands the floods proved across
+     its face, then the parts the load check released. All smaller ones ("crumbs", from all three)
+     become one `WorldOp::Clear` (kind `ClearMask`: the union of their voxels over the smallest
+     box holding them), applied last. No entity is made for an island offline.
+  3. `Scene::Damage` for every body whose bounds overlap the blast's box (a snapshot first, so
+     pieces made here are not hit twice).
+  4. Every rigid body within three radii gets mass x `sim::BlastPush` (6 m/s away from the centre,
+     falling linearly to 0 at three radii; straight up at the centre); bodies within two radii are
+     woken (`PhysicsWorld::ActivateInBox`), so what rested on removed ground falls.
+
+  Steps 1-2 are integer-exact (equal worlds give equal operations); steps 3-4 depend on Jolt's
+  float poses and are never hashed. No particles, no light. The `sim::BlastResult` holds the
+  applied operations in order with the voxels each changed (`AppliedOp`), the object fragments,
+  the quantised centre and radius, what the search saw (`IslandSearchStats`: every counter, budget
+  and released part) and wall-clock times (`BlastTimes`, logged only). Call it between the
+  streaming and the physics phase of a tick (7.4), never inside a registry view.
 * `sim::PresentBlast(simulation, result)` (GPU-free, so unit tested; `Engine::PresentBlast` calls
   it): debris particles for a sample of the carved voxels, local rubble for every `Detach` with
   `netId = 0` built from the voxels it removed (`sim::BuildDetachedPiece`,
@@ -726,6 +785,124 @@ A blast is split into simulation and presentation:
 
 `Engine::Explode` is `PresentBlast(sim::Blast(...))`. A server runs only the first half and sends
 the operations; a client applies them with `ApplyOp` and runs the second half.
+
+**Two boxes.** The *island box* is `floor(centre) +- (radius + kIslandSearchMargin)` voxels (24) and
+the *flood box* `floor(centre) +- voxel::kFloodHalfExtent` voxels (96, 12 m at 0.125 m)
+(`sim::IslandBox`, `sim::FloodBox`). Only a component with a voxel in the island box can be an
+island of this blast. A flood that reaches the flood box's face layer (or the bottom row of a
+full-height window) is attached: it is ground. Nothing outside the flood box is read, so the result
+is a function of the voxels in the flood box, the material table and the voxel size - not of what is
+cached, loaded elsewhere or how many workers run. A session server's window is its play bounds plus
+`sim::kServerWindowMarginChunks` (3) chunks, which holds the flood box of every cast in the play
+bounds (a `static_assert`), and `sim::kMaxCastRadiusQ` (9 m at 0.125 m) keeps a cast's island box
+inside that margin (`sim::CastFitsRegion`).
+
+**The island search on the cell graph** (`voxel::SearchIslandsOnGraph`, `vortex.voxel:structure`).
+A terrain chunk is cut into 64 cells of 8^3 voxels. A *node* is one 6-connected component of solid,
+not ignored (liquid) voxels inside one cell: `GraphNode`, 72 bytes (`static_assert`): six 8 x 8 face
+masks, voxel count, integer mass, bounds and the load check's fields. A `ChunkGraph` holds every node
+of a chunk, ordered by cell and first voxel, and its links inside the chunk with their bond (voxel
+faces shared); links across a chunk face are computed from the two face masks (`BondVoxels`), so a
+graph depends on its own chunk only. Every component is its own node, so graph connectivity equals
+voxel 6-connectivity everywhere (cells with more than `kMaxCellNodes` = 8 nodes are only counted).
+The search: the seeds are the nodes that meet the island box; seeds joined by links among
+themselves form box components; a box component inside the box interior is an island without a
+flood; the others are flooded smallest first, breadth-first over nodes in the fixed face order
+(-x +x -y +y -z +z), until the flood closes (an island) or meets the flood box face, more than
+`sim::kMaxIslandVoxels` (60 000) voxels, a node an earlier flood gave up on, or the budget (all
+attached). Only island nodes are re-labelled per voxel, to build the `Detach` masks. It returns
+the same islands in the same order as the voxel search it replaced (`voxel::ExtractFloatingIslands`
+over the island box, then `voxel::ProveFaceComponents` in the flood box), which is kept as the
+reference (`SimulationConfig::islandSearch`, 7.4); the two differ only where a work budget runs out
+or, with a chunk of the flood box not loaded, in which of them defers or why a flood is attached.
+
+**The graph cache.** `voxel::TerrainGraphCache`, owned by the `Simulation` (`TerrainGraphs()`),
+keeps one graph per chunk with the `World::ChunkRevision` it was built from (4.3) and rebuilds a
+chunk on the first lookup after its revision changed, lazily: only chunks a search reaches. Dense
+and Packed chunks own their graph (a Packed chunk is decoded to build it); every Uniform chunk of
+one id shares one graph (empty and uniform-liquid chunks share the empty one). At most 4096
+entries: over the cap, entries whose chunk changed or unloaded go first, then the least recently
+used; the cache is cleared when the `World` or the material tables change. Which graphs are cached
+never changes a result: a graph is a pure function of its chunk's voxels and the tables. Because
+the cache trusts the revision, **every chunk edit must go through `World::EditRegion`** (or bump the
+revision). A stale island node is caught when it is re-labelled (`relabelMismatch`): nothing of it
+is written, the cache is dropped and the search runs once more on fresh graphs
+(`staleGraphRetries`; if it still differs, no island is returned). A stale attached neighbour is
+not caught. `graphsBuilt`, `chunksDecoded` and the cache's statistics depend on its history: they
+are logged and never decide anything.
+
+**The load check** (`SimulationConfig::neckRule`, on by default, graph search only; shred.md
+Part 4b). The rule: a part falls when no distribution of its weight fits the strength of what holds
+it. It runs inside the same search, after the floods, when the search is complete:
+
+* *Network.* The judged nodes are the seeds of the island box that are not islands. What hangs on
+  them and closes inside the flood box is a load. What reaches the flood box face layer, the
+  window's bottom row, an anchor material (indestructible and not ignored: bedrock) or a chunk
+  solid through is support (the sink). Natural cliffs and hills reach the face, so they are never
+  judged.
+* *Integers.* Every node supplies its mass (the sum of `densityQ`, kg/m^3, over its voxels;
+  foliage weighs nothing). A link carries at most its bond faces x the per-face capacity of the
+  weaker material on either side for its direction: `Material::strength[3]` in kg/m^2 -
+  compression for a node resting on the one below, tension for one hanging from the one above,
+  shear sideways - turned into units of the session's voxel size by `voxel::MakeNeckLimits`. A
+  node that is narrowest at some horizontal plane inside its cell (`GraphNode::cutFaces`,
+  `cutPlane`, built with the graph) is split there into two halves, so a neck is found at any
+  height, not only on cell faces.
+* *Max-flow.* A maximum preflow on perturbed capacities (c x 2^17 + 1, supplies x 2^17). Released
+  are the nodes that cannot reach the sink in its residual graph: the largest set whose load is
+  strictly greater than what its bonds carry (a load equal to its capacity holds). That set is the
+  same for every maximum preflow, whatever the arc or visit order (`Neck.ReleasedSetIndependentOfArcOrder`;
+  `voxel::SolveNeckNetwork` is the rule on an abstract network, for tests). When all supply reaches
+  the sink nothing is released, and what stays provably holds without what was released, so nothing
+  cascades and no follow-up pass is needed.
+* *Output.* Released parts are ordinary `Detach` / `ClearMask` operations (no new operation kind,
+  no wire change), at most `sim::kNeckMaxReleasedParts` (64) parts and `kNeckMaxReleasedVoxels`
+  (60 000) voxels per check, in piece order; the rest stays, still overloaded, for a later cast.
+* *When.* After every `sim::Blast` (power-0 duds included: that is how tests probe a structure) and
+  every late search. Never after `FillBox`, editor or brush edits, generation, loading or a client's
+  `ApplyOp`, and not after its own release. A structure is judged only when a cast lands near it,
+  so nothing falls on spawn or after an editor edit until someone shoots near it.
+
+**Budgets** (shred.md R5: counted, never timed). The graph search: `sim::kGraphNodeVisitBudget`
+(32 768 node visits per blast; once spent, the running flood and every later one stay attached).
+The voxel search: `sim::kFloodVisitBudget` (240 000 voxel visits). The load check:
+`kNeckMaxNetworkNodes` (8192) and `kNeckMaxArcPairs` (65 535) - above either nothing is judged;
+`kNeckExteriorVisitBudget` (16 384 node visits) - then every exterior flood is an anchor;
+`kNeckFlowWorkBudget` (65 536 preflow arc scans) - spent, nothing is released. A spent budget can
+only leave more standing, never release what holds. On a session server the cast work budget
+(`sim::CastWorkOf`, `sim::kCastWorkPerTick`) charges only counters that follow from the voxels and
+the operations (`chunkGraphs` at the cold build price, node visits, the load check's counted work,
+each operation and its box), never `graphsBuilt`, `chunksDecoded`, a time or the object half (7.5).
+
+**Unloaded chunks: deferral offline, an error on a server.** An offline window streams, so a search
+may meet a chunk that is not loaded. A chunk of the island box not loaded: nothing is searched. A
+flood that meets one in the flood box: the in-box islands go out, the face islands wait. Either way
+the blast asks the world to load it (`World::RequestLoad`) and remembers the search
+(`Simulation::DeferredIslandSearches`, at most `sim::kMaxDeferredIslandSearches` = 16; a full list
+drops the one farthest from the window's centre). `sim::RetryIslandSearches` (the engine calls it
+once per frame between the streaming and the physics phase) runs it again once its chunks have
+loaded, first replaying the carve on the chunks it had skipped (`carveReplayed`, offline only, never
+sent), and gives up only once the flood box has left the window; its operations come back as a
+`BlastResult` with `deferred` set (no explosion, no flash). The load check takes an unloaded chunk as
+support (it can only release less), still lets the islands out, and queues a late search
+(`neckDeferred`). On a session server (`SimulationConfig::sessionServer`) its window holds every
+box, so any of these is an error: counted (`islandBoxUnloaded`, `attachedByUnloaded`,
+`neckUnloaded`), and the server ends the session (7.5).
+
+**Crumbs.** Islands and released parts under `scene::MinPieceVoxels(world voxel size)` never
+become entities or bodies anywhere: all of them are in the one `ClearMask` of their blast, and
+`PresentBlast` turns them into particles (every `SceneConfig::debrisParticleStride`-th voxel, at
+most 400 bursts).
+
+**Replicated pieces** (`SimulationConfig::replication`, a session server). A `Detach` of at least
+`SceneConfig::replicatedPieceVoxels` (0.512 m^3: 262 voxels at 0.125 m) asks `sim::TakePieceSlot`
+(a cast's largest pieces first; the budgets are in 7.5). With a slot it carries a new NetId and,
+after the push, becomes a server body made from the voxels it removed - exactly the body every
+client builds from the same `Detach`. Without one it is client rubble (`netId` 0). An object piece
+of step 3 gets a NetId (`ObjectEvent::Spawn`) or, over a budget, becomes a fragment; a damaged
+replicated object that survives is an `ObjectEvent::Model`, one that breaks apart is despawned
+`Broken`. A NetId whose body could not be made (out of bodies, above the build ceiling) is despawned
+at once (`BlastResult::lostNetIds`).
 
 ### 7.3 Rubble
 
@@ -782,9 +959,10 @@ A session client's scene has `SceneConfig::rubbleLayer` on: its rubble of `debri
 `sim::Simulation` (`vortex.sim`, library `Vortex::Sim`) is the simulated half of a game without
 anything that draws it: job system, material library, chunk store, `voxel::World`,
 `physics::PhysicsWorld`, `physics::TerrainColliders`, the particle pool and the `scene::Scene`,
-plus a tick counter. It is what `vortex::Engine` owns and renders (every `Engine` accessor such as
-`World()`, `Physics()`, `Scene()` is a shortcut into it), what a session server runs and what a
-network client will predict with (`docs/design/networking.md`).
+plus a tick counter, the terrain graph cache and the replication state. It is what `vortex::Engine`
+owns and renders (every `Engine` accessor such as `World()`, `Physics()`, `Scene()` is a shortcut
+into it), what a session server runs, and what a session client (the game, a bot) predicts with
+(`docs/design/networking.md`).
 
 * **Tick.** A tick is one fixed step of `SimulationConfig::fixedTimeStep` (1/60 s). `Tick()` is
   the number of ticks simulated so far, which is the number of the tick simulated next; it starts
@@ -801,22 +979,45 @@ network client will predict with (`docs/design/networking.md`).
   guard sees what it made.
 * **World window.** `Step` and `UpdateStreaming(focusPoints)` advance loading but never move the
   window: a server places it once (`World().LoadBlocking(centre)`). Only
-  `UpdateStreaming(windowFocus, focusPoints)` recentres it; the engine passes the camera. A world
+  `UpdateStreaming(windowFocus, focusPoints)` recentres it; the engine passes the camera (a
+  session client's window follows it, or a bot's player, only on a region wider than the window: 7.5). A world
   whose window was never placed gets it with the minimum corner at chunk (0, 0, 0).
 * **Persistence.** `WorldConfig::saveDirectory` is passed to the world as given: an offline game
   or the map editor (`EngineConfig::world.saveDirectory`, the editor's "Save world" button) keeps
-  its edits. A session world is memory only - it is `template + seed`, and a world that loaded
-  saved chunks would not be the one the other side generated - so `ServerConfig` clears the
-  directory, and `net::Client::Attach` refuses a simulation that has one (7.5).
+  its edits. A session world is memory only - it is `template + seed` and resets every session,
+  and a world that loaded saved chunks would not be the one the other side generated - so
+  `ServerConfig` clears the directory, and `net::Client::Attach` refuses a simulation that has one
+  (7.5).
 * **Not stepped: presentation.** `Step` neither advances particles nor calls
   `Scene::BeginFrame()`; the owner that draws does both. Lifetimes run per tick in `Step` but per
   rendered frame, with the frame time, in the engine - nothing a server and a client must agree
   on may depend on `Lifetime` or on rubble clean-up.
+* **Switches** (`SimulationConfig`; the defaults are an offline game's):
+  * `islandSearch` - `IslandSearchKind::Graph` (the default: the cell graph, 7.2) or `Voxel` (the
+    stage-1 voxel search, kept as the reference the graph is tested against).
+  * `checkIslandSearch` (tests) - every island search also runs the other kind on the same voxels,
+    before any operation is applied, and compares the islands; differences are logged and counted
+    (`Simulation::IslandSearchCheck()`: `run`, `searches`, `mismatches`, and `neckReleases`, the
+    parts the load check released, which the stage-1 test arenas require to be 0).
+  * `neckRule` (default on) - the load check after the graph search (7.2); off with `Voxel`.
+  * `sessionServer` - a search that meets a chunk that is not loaded is an error, not a reason to
+    wait (7.2). `ServerConfig` sets it.
+  * `replication` (`ReplicationConfig`) - server bodies with a `scene::NetId` (7.5): `enabled`
+    (`ServerConfig` sets it), at most `maxLivePieces` (256) live pieces, `maxAwakePieces` (64)
+    awake replicated bodies of any kind and `bodiesPerTick` (2) new server bodies per tick.
+    `Replication()` holds the next NetId, the per-tick count and the decisions so far.
+* **Island-search state.** `TerrainGraphs()` is the `voxel::TerrainGraphCache` kept between blasts
+  (an edit makes the next search rebuild only that chunk, 7.2). `DeferredIslandSearches()` holds the
+  offline searches that wait for chunks to load; `sim::RetryIslandSearches` runs them.
 * **Server configuration.** `sim::ServerConfig(config)` returns the configuration with
-  `maxParticles = 0` (every effect is dropped silently), `scene.bakeModels = false` (models keep
-  their voxels and bodies but hold no chunk slots: the store belongs to the terrain),
-  `scene.markDebris = false` and `scene.debrisRemnants = false` (nothing is rubble), and
-  `scene.replicatedPieceVoxels = 512` (smaller object pieces are client rubble, no entity).
+  `maxParticles = 0` (every effect is dropped silently), `world.saveDirectory` cleared,
+  `scene.bakeModels = false` (models keep their voxels and bodies but hold no chunk slots: the
+  store belongs to the terrain), `scene.markDebris = false` and `scene.debrisRemnants = false`
+  (nothing is rubble), `scene.replicatedPieceVoxels` = `sim::kServerReplicatedPieceVolume`
+  (0.512 m^3) in voxels of the world's size (262 at 0.125 m: smaller object pieces are client
+  rubble, no entity), `sessionServer = true`, `physics.characterLayers =
+  sim::kSessionCharacterLayers` with `physics.characterMovesBodies = false` (the set and rule a
+  client's prediction uses, 6.1), and `replication.enabled = true`.
 * **World operations.** `sim::WorldOp` is one replicated terrain change with integer parameters
   only: `CarveSphere`, `FillSphere`, `SwapSphere`, `FillBox`, `Detach`, `ClearMask` (kind values
   are wire format). `sim::ApplyOp(world, op, edits)` makes the matching `World` call and returns the voxels
@@ -830,114 +1031,140 @@ network client will predict with (`docs/design/networking.md`).
 
 ### 7.5 Sessions
 
-`vortex.net` (library `Vortex::Net`, GPU-free) is the M1 protocol of `docs/design/networking.md`; it runs over ENet
-(UDP) between `vortex_server` and the game (`Shredborne --connect`) and in one process over loopback transports for
-the tests ("Stage 3 as built" to "Stage 8 as built" there have every choice). Stage 8: `vortex_bot` (`tools/bot`)
-is one bot player per process over real UDP, its impairment a `net::UdpRelay` below ENet; `tools/soak.sh` (game
-repository) runs a server and several bots for 1 or 10 minutes and compares their hashes and objects at exit.
+`vortex.net` (library `Vortex::Net`, GPU-free) is the M1 protocol of `docs/design/networking.md`
+(stages `[net-0]` to `[net-8]`; each stage's plan, as-built record and reviews are in its history,
+reached from that document's "Stages" table). It runs over ENet (UDP) between `vortex_server` and
+the game (`Shredborne --connect`) or `vortex_bot`, and in one process over loopback transports for
+the tests. The wire values (message types, event kinds, refusals, enums) and
+`net::kProtocolVersion` are in `src/net/Messages.cppm`; any byte change bumps the version.
 
 * **Region.** `sim::RegionDesc` (`vortex.sim:region`) = template id, seed, play bounds (whole chunks), height
   range, generator and `TerrainSettings` (the session's voxel size included). `sim::RegionWorldConfig` turns it into
   the one `WorldConfig` both sides use: window = play bounds + `kServerWindowMarginChunks` (3) on every side, full
   height over the range rounded to 16 m, memory only. `sim::IsValid` must pass before anything is built from
-  network or file input.
+  network or file input. A region resets every session: nothing of it is saved.
 * **Template.** `sim::BuildRegionTemplate` returns `RegionTemplate{ops, lights, objects, spawn}` without changing
   the world (the playground plaza is `sim::PlaygroundTemplate`). A server applies `ops` as operations 1..k, sends
   lights as `EntitySpawn`, keeps `objects` as its bodies and sends `spawn` in `Welcome`; the offline game applies
   all of it locally (`ApplyTemplateOps`, `CreateTemplateLights`, `CreateTemplateObjects`).
-* **Transport.** `net::ITransport` (`Send`, `Poll`, `RoundTripSeconds`, `ReliableBytesInFlight`, `Disconnect`,
-  `Flush`; channels state / events / bulk). `EnetTransport` (stage 5) is UDP through ENet 1.3: `Listen` / `Connect`,
-  one ENet channel per channel (state unreliable and sequenced, the others reliable), `ReliableBytesInFlight` exact
-  (bytes until ENet releases the packet), graceful `Disconnect`, a test-only receive loss below ENet.
-  `LoopbackTransport` links two endpoints in process; `ImpairedTransport` wraps any transport with seeded loss,
-  delay, jitter, duplicates, reordering, a rate limit and outages, keeping ENet's promise on reliable channels
-  (resent, in order).
-* **Server.** `net::Server` owns one `sim::Simulation` built with `sim::ServerConfig` and the region's world. A tick:
-  receive (handshake: `Hello` with protocol version, `net::BuildHash` and token -> `Welcome` with the join point
-  `joinOpSeq`, or `Refuse`; a joined client's `WindowUpdate` / `ChunkRequest` / `ModelRequest`) -> streaming ->
-  queued casts within the cast work budget (`sim::CastWorkOf`) and the event byte budget -> physics -> lifetimes ->
-  every joined peer's `EventBatch`es (never held), then its bulk while its bytes in flight are under its
-  `net::BulkPacer` window -> a `Snapshot` per client on even ticks; since stage 4 the inputs go into each player's queue
-  on receive and every player steps (`sim::StepPlayer`, slot order) between streaming and the casts. Every event is
-  encoded once and numbered (`opSeq`); the encoded events stay in a backlog only until every joined peer has them.
-  Casts must fit the window
-  (`sim::CastFitsRegion`). A full store, an incomplete operation or an island search that meets an unloaded chunk
-  marks it `Failed`, which ends the session (peers disconnected, nothing more sent).
+* **Transport.** `net::ITransport` (`Send`, `Poll`, `RoundTripSeconds`, `ReliableBytesInFlight`,
+  `ChannelBytesInFlight`, `Disconnect`, `Flush`; channels state / events / bulk). `EnetTransport`
+  `[net-5]` is UDP through ENet 1.3: `Listen` / `Connect`, one ENet channel per channel (state
+  unreliable and sequenced, the others reliable), `ReliableBytesInFlight` exact (bytes until ENet
+  releases the packet), graceful `Disconnect`, a test-only receive loss below ENet; the default port
+  is `net::kDefaultPort` (27015). `LoopbackTransport` links two endpoints in process;
+  `ImpairedTransport` wraps any transport with seeded loss, delay, jitter, duplicates, reordering,
+  a rate limit and outages, keeping ENet's promise on reliable channels (resent, in order).
+  `net::UdpRelay` `[net-8]` impairs real traffic *below* ENet: a thread on 127.0.0.1 that forwards a
+  client's datagrams to the server and back through per-direction loss, outages, a drop-tail
+  bottleneck and delay with jitter, so resends, round trips and the server's bulk pacer all meet
+  the impairment (`vortex_bot`'s link).
+* **Server.** `net::Server` owns one `sim::Simulation` built with `sim::ServerConfig` and the
+  region's world. `Start` loads the region window and cooks the spawn's colliders as a permanent
+  focus, so a join cooks none on its tick `[net-8]`. A tick: receive (handshake: `Hello` with
+  protocol version, `net::BuildHash` and token -> `Welcome` with the join point `joinOpSeq`, or
+  `Refuse`; a joined client's inputs, `WindowUpdate` / `ChunkRequest` / `ModelRequest`) ->
+  streaming -> every player steps (`sim::StepPlayer`, slot order) -> queued casts within the cast
+  work budget (`sim::CastWorkOf`, `sim::kCastWorkPerTick`) and the event byte budget -> physics ->
+  lifetimes -> every joined peer's `EventBatch`es (never held), its checks, then its bulk while its
+  bytes in flight are under its `net::BulkPacer` window -> a `Snapshot` per client on even ticks.
+  Every event is encoded once and numbered (`opSeq`); the encoded events stay in a backlog only
+  until every joined peer has them. Every server path that applies a terrain operation goes through
+  one emitter (`Server::Impl::EmitOp`), which feeds the modified map below. Casts must fit the window
+  (`sim::CastFitsRegion`). A full store, an incomplete operation or an island search that meets an
+  unloaded chunk (7.2) marks it `Failed`, which ends the session (peers disconnected, nothing more
+  sent). `Server::Hash` keeps each chunk's hash under its `World::ChunkRevision` and re-hashes the
+  chunks operations changed, 32 per tick, so a leave or a check costs no full re-hash `[net-8]`.
 * **Client.** `net::Client` does not own a simulation: once `Welcomed`, the owner builds one from
-  `MakeSimulationConfig` / `MakeGenerator` and gives it to `Attach`, which checks it against the session, loads the
-  region window, checks that the store held it and that the probe chunks are its generator's, and applies the events
-  after its join point in `opSeq` order through `net::ChunkSync` (duplicates ignored; a gap is a failure, and a failed
-  client disconnects). Terrain is never predicted; no operation is ever sent.
-* **Checks (stage 7b).** Every 2 s per client the server sends a `HashCheck` (the server's `ChunkHash`
-  at opSeq C of the last operations' chunks, 8 modified chunks least recently checked and 12 pristine chunks near the
-  player and on its path ahead, `net::HashCheckPlanner`) and an `EntityCheck` (count, xor of NetIds, xor of id-mixed
-  model hashes), each right after the events up to C, so the client compares them at exactly C: only chunks current
-  with a base at or below C; a chunk that differs becomes `Requested` and is asked for with `ChunkRequest{Repair}`
-  (chunk sync's own path below). An entity mismatch asks for the `EntityList` (ids and model hashes at Q): copies the
-  server does not have are dropped, missing or wrong ones asked for as `ModelRequest`s. Tombstones are a FIFO. Since
-  the review of 7b an entry skipped because its chunk was still loading is kept and compared once the chunk is current
-  (dropped by any operation over it), a chunk that differs again soon after its repair is logged instead of looped on,
-  and the server sends at most one `EntityList` per client per second.
-* **Server terrain mode (stage 7b, milestone M-b).** A client whose probe chunks differ at the `Welcome`, or whose
-  checks found three pristine chunks it generated differently, stops generating the server's terrain (its
-  `net::SessionGenerator` answers Empty inside the server's window) and flags every `WindowUpdate` with `kTerrainMode`
-  (sticky; the server ends a peer that clears it). The server answers each with a `TerrainAck` instead of a
-  `WindowAck`: every entering chunk of its window coded by its own cell state - uniform ones inline, Dense and Packed
-  ones queued as `ChunkData` (nearest the player's eyes in 3D first). Protocol 10 (review of 7b): the ack codes only the
-  entering cells, in `net::ForEachEnteringChunk` order (both sides walk the same cells), 0.7 KiB per window step; a
-  window update prunes the queued chunks that left the window. The client installs them by the server's packing
-  (`voxel::InstallMode::Content` / `HiddenContent`: a chunk the server packs is packed here, with no store slot, and
-  stays packed by the server's bit, not by this client's column classes; shown whenever the server may show it: an
-  edited face neighbour, or an operation near it that this client skipped). From then on it is chunk sync as below.
-  The price is the join: 16 MiB on the playground's 30 x 44 x 30 window, 40 MiB for the game's 48 x 44 x 48 window on
-  the 250 m arena and 0.8 MiB per two-chunk window step there (measured, "Stage 7b as built"), paced by the bulk window.
-* **Chunk sync (stage 7a).** A joiner gets no history as events: its `WindowUpdate` (sent on `Welcome`) is answered by
+  `MakeSimulationConfig` / `MakeGenerator` and gives it to `Attach`, which checks it against the
+  session, loads the region window, checks that the store held it and that the probe chunks are its
+  generator's, and applies the events after its join point in `opSeq` order through
+  `net::ChunkSync` (duplicates ignored; a gap is a failure, and a failed client disconnects).
+  Terrain is never predicted; no operation is ever sent.
+* **Chunk sync** `[net-7a]`. A joiner gets no history as events: its `WindowUpdate` (sent on `Welcome`) is answered by
   a `WindowAck{asOfOpSeq, modified bits}` on the events channel; the server keeps a sparse modified map (chunk ->
   last opSeq, fed from the chunks each operation changed, never cleared) and sends the modified chunks of the window as
   `ChunkData{chunk, asOfOpSeq, RLE}` on bulk, encoded when dequeued (nearest first, request answers ahead), then the
   entity baseline (`BaselineEntity` per live NetId with its own asOf and rest tick, nearest the spawn first,
   `BaselineNear` after those within 32 m, `BaselineEnd`). Bulk is paced per peer by a delay-based window over all its
-  reliable bytes; a message that does not fit waits only for that peer's bulk in flight (`ITransport::ChannelBytesInFlight`). The client keeps a
-  state and a base per chunk (`NoBase`, `Awaiting`, `Based`, `Requested`, `Unsynced`) and one rule: an operation is
-  applied to a chunk only if the chunk is current and the opSeq is above its base, live or replayed from its ring of
-  the last 1024 operations (`OpRing`); a chunk the ring no longer covers, or that found no store slot, is requested
-  whole (`ChunkRequest`). Entity events for a NetId whose copy has not come yet are held; a replicated `Detach` over
-  chunks without a base asks for its body (`ModelRequest`). The player starts once the chunks within 32 m are current
-  and the baseline near the spawn is in (`BaselineNear`); hashes are compared over the client's sync box (its window inside the server's) once it
-  is `Synced()`. The client window is the region's when it fits `ClientSettings::windowChunks` (the game: 48); a wider
-  region (the 250 m arena) gets a `windowChunks`-wide window that follows the player with one chunk of slack
-  (`sim::ClientWorldConfig`, `WorldConfig::recenterSlackChunks`): every step (`World::TakeWindowSteps`, taken at the start
-  of `Poll`, two or more between `Poll`s each sent in order) is a `WindowUpdate`, whose ack marks the entering
-  modified chunks; chunks that leave are dropped (`keepUnloadedEdits` false) and come back from the server; chunks
-  beyond the server's window are never edited (current once loaded). An installed `ChunkData` is a content change of
-  the whole chunk for the renderer (dirty slot) and for physics (the change's edit box is the chunk: no body is
-  simulated against its old collider). A window-sized client's hash is `WorldHash` over its sync box, compared with the
-  server's over the same box at the same opSeq once the client is `Synced()`.
-* **Players (stage 4).** `sim::StepPlayer(physics, terrain, character, state, input, tuning, dt)` is the one
+  reliable bytes, whose rate is the highest delivery rate of the last eight half-second intervals
+  (`BulkPacerSettings::deliveryInterval`, `deliveryWindows`), so loss does not collapse it; a
+  message that does not fit waits only for that peer's bulk in flight. The client keeps a state and
+  a base per chunk (`NoBase`, `Awaiting`, `Based`, `Requested`, `Unsynced`) and one rule: an
+  operation is applied to a chunk only if the chunk is current and the opSeq is above its base,
+  live or replayed from its ring of the last 1024 operations (`OpRing`, 1 MiB at most). A chunk is
+  requested whole (`ChunkRequest`) when it found no store slot, or when an operation the ring has
+  dropped since its base touched it (`OpRing::CoversChunk`: the ring remembers the dropped
+  operations by the chunks their ranges held). Entity events for a NetId whose copy has not come
+  yet are held; a replicated `Detach` over chunks without a base asks for its body
+  (`ModelRequest`). The player starts once the chunks within 32 m are current and the baseline near
+  the spawn is in (`BaselineNear`). The client window is the region's when it fits
+  `ClientSettings::windowChunks` (the game: 48); a wider region (the 250 m arena) gets a
+  `windowChunks`-wide window that follows the player with one chunk of slack
+  (`sim::ClientWorldConfig`, `WorldConfig::recenterSlackChunks`): every step
+  (`World::TakeWindowSteps`, taken at the start of `Poll`, two or more between `Poll`s each sent in
+  order) is a `WindowUpdate`, whose ack marks the entering modified chunks; chunks that leave are
+  dropped (`keepUnloadedEdits` false) and come back from the server; chunks beyond the server's
+  window are never edited (current once loaded). An installed `ChunkData` is a content change of the
+  whole chunk for the renderer (dirty slot) and for physics (the change's edit box is the chunk: no
+  body is simulated against its old collider). A client's hash is `WorldHash` over its sync box
+  (its window inside the server's), compared with the server's over the same box at the same opSeq,
+  and only once the client is `Synced()`.
+* **Checks** `[net-7b]`. Every 2 s per client (`hashCheckTicks` = 120) the server sends a
+  `HashCheck` (the server's `ChunkHash` at opSeq C of 4 chunks of the last operations, 8 modified
+  chunks least recently checked and 12 pristine chunks near the player and on its path ahead,
+  `net::HashCheckPlanner`) and, half a period later, an `EntityCheck` (count, xor of NetIds, xor of
+  id-mixed model hashes), each right after the events up to C, so the client compares them at
+  exactly C: only chunks current with a base at or below C. A chunk that differs becomes
+  `Requested` and is asked for with `ChunkRequest{Repair}` (chunk sync's own path). An entry skipped
+  because its chunk was still loading is kept and compared once the chunk is current (any operation
+  over the chunk drops it); a chunk that differs again soon after its repair is logged and left
+  current, never looped on. An entity mismatch asks for the `EntityList` (ids and model hashes at
+  its opSeq): copies the server does not have are dropped, missing or wrong ones asked for as
+  `ModelRequest`s, never re-made from the list; the server sends at most one list per client per
+  half check period. Tombstones are a FIFO.
+* **Server terrain mode** `[net-7b]`. A client whose probe chunks differ at the `Welcome`, or whose
+  checks found three pristine chunks it generated differently, stops generating the server's
+  terrain (its `net::SessionGenerator` answers Empty inside the server's window) and flags every
+  `WindowUpdate` with `kTerrainMode` (sticky; the server ends a peer that clears it). The server
+  answers each with a `TerrainAck` instead of a `WindowAck`: the entering cells of the window, in
+  `net::ForEachEnteringChunk` order (both sides walk the same cells), each coded by the server's
+  cell state - uniform ones inline, Dense and Packed ones queued as `ChunkData` (nearest the
+  player's eyes in 3D first); a window update prunes the queued chunks that left the window. The
+  client installs them by the server's packing (`voxel::InstallMode::Content` / `HiddenContent`: a
+  chunk the server packs is packed here, with no store slot, and stays packed by the server's bit,
+  not by this client's column classes; it is shown whenever the server may show it: an edited face
+  neighbour, or an operation near it after its ack or one this client skipped,
+  `World::ShowServerHiddenNeighbours`). From then on it is chunk sync as above. The price is the
+  join (m): 16 MiB on the playground's 30 x 44 x 30 window, 40 MiB for the game's 48 x 44 x 48
+  window on the 250 m arena and 0.8 MiB per two-chunk window step there, paced by the bulk window.
+* **Players** `[net-4]`. `sim::StepPlayer(physics, terrain, character, state, input, tuning, dt)` is the one
   movement rule (server, predicting client, offline game): integer inputs (`PlayerInput`: move axes, yaw, pitch,
   button levels), edges derived from the levels before, a cooldown, the `HasCollider` gate. A client sends the inputs
-  the server has not acknowledged (at most 8, 30 Hz) on the state channel; the server queues 16 ticks ahead, repeats
-  the last movement for a missing input and captures a cast edge as {eye, look, input tick, loadout} - a late one
-  judged at its own tick from a ring of the player's states - and casts its ray when the cast runs (stage 5). Each
-  `Snapshot` carries the tick, the
-  event stream position at it, the newest input held, the margin of the newest input that arrived (and its tick,
-  dropped ones included), the owner's state with the newest cast's input tick and why it did not run, if it did not,
-  and the other players. The client's `TickClock` keeps inputs a target
-  margin early (jump when late or well short, 2 % bleed / catch-up, hold the surplus for a hard resync); it predicts
-  with its own character (`sim::kSessionCharacterLayers`, the server's mask; the tick length and gravity come in
-  `Welcome`), with the colliders under the player flushed before every step on both sides, compares the newest
-  snapshot whose events are applied with its history (one that waits 250 ms is given up and counted), and at 2 cm or
-  more restores and replays (blended over 100 ms, snapped at 1.5 m). Other players are interpolated in the past
-  (`RemotePlayers`) at a server time that only moves forward (`ServerTime`). Driven per tick by `TicksDue` +
-  `RunTick` (tests, bots); the engine takes its ticks from `TicksDue(seconds, 8)` through `Engine::SetTickSource` (stage 5; the clock keeps
-  what is over 8 for the next frames).
-* **The game as a client (stage 5).** `Shredborne --connect HOST[:PORT] --token HEX` (`src/Session.cpp` of the game):
-  handshake, then an `Engine` built from `EngineConfig::simulation` = `Client::MakeSimulationConfig(base, 12288)`
-  (the store capped at the GPU buffer's size; `Attach` refuses a region that does not leave
-  `ClientSettings::minFreeStoreSlots` free) and `windowFollowsCamera = false`; `Attach` loads the region while it
-  polls; per tick `Poll`, presentations, `StepPlayer`. Other players are voxel figures; E asks the server for a crate
-  (`PlayerButton_Crate`, stage 6); the editor, flight and the offline scripts are not available in a session.
-* **Replicated bodies (stage 6).** A session server's bodies carry a `scene::NetId` (counting up, never reused;
+  the server has not acknowledged (at most 8, 30 Hz) on the state channel; the server queues them on receive, 16
+  ticks ahead, repeats the last movement for a missing input and captures a cast edge as {eye, look, input tick,
+  loadout} - a late one judged at its own tick from a ring of the player's states - and casts its ray when the cast
+  runs `[net-5]`. Each `Snapshot` carries the tick, the event stream position at it, the newest input held, the
+  margin of the newest input that arrived (and its tick, dropped ones included), the owner's state with the newest
+  cast's input tick and why it did not run, if it did not, and the other players. The client's `TickClock` keeps
+  inputs a target margin early (jump when late or well short, 2 % bleed / catch-up, hold the surplus for a hard
+  resync); it predicts with its own character (`sim::kSessionCharacterLayers`, the server's mask; the tick length and
+  gravity come in `Welcome`), with the colliders under the player flushed before every step on both sides
+  (`TerrainColliders::FlushBox(sim::PlayerReach(feet))`), compares the newest snapshot whose events are applied with
+  its history (one that waits 250 ms is given up and counted), and at 2 cm or more restores and replays (blended
+  over 100 ms, snapped at 1.5 m). Other players are interpolated in the past (`RemotePlayers`) at a server time that
+  only moves forward (`ServerTime`). Driven per tick by `TicksDue` + `RunTick` (tests, bots); the engine takes its
+  ticks from `TicksDue(seconds, 8)` through `Engine::SetTickSource` (the clock keeps what is over 8 for the next
+  frames).
+* **The game as a client** `[net-5]`. `Shredborne --connect HOST[:PORT] --token HEX` (`src/Session.cpp` of the
+  game): handshake, then an `Engine` built from `EngineConfig::simulation` = `Client::MakeSimulationConfig(base,
+  12288)` (the store capped at the GPU buffer's size; `Attach` refuses a region that does not leave
+  `ClientSettings::minFreeStoreSlots` free) and `windowFollowsCamera` only where the region is wider than the window
+  (`sim::ClientWindowMoves`); `Attach` loads the region while it polls; per tick `Poll`, presentations, `StepPlayer`.
+  Other players are voxel figures; E asks the server for a crate (`PlayerButton_Crate`); the editor, flight and the
+  offline scripts are not available in a session. A headless client drains before it exits (`net::DrainWatch`, the
+  same rule as `vortex_bot`) and prints the shared exit lines.
+* **Replicated bodies** `[net-6]`. A session server's bodies carry a `scene::NetId` (counting up, never reused;
   `sim::Replicate`, `sim::AllocateNetId`): the template's crates, players' crates (`PlayerButton_Crate`), terrain
   islands of at least `SceneConfig::replicatedPieceVoxels` (their `Detach` carries the NetId and the server makes the
   body from the voxels the `Detach` removed, as every client does) and object pieces `Scene::Damage` keeps as entities.
@@ -955,12 +1182,25 @@ repository) runs a server and several bots for 1 or 10 minutes and compares thei
   holds kinematic copies (`net::Client::Entities`), moved to their samples drawn in the past (`net::RemoteBodies`:
   Hermite, 67-200 ms delay) and put at the `EntityRest` pose at rest; samples of the rest's tick or older are refused.
   A player's cast hits the replicated body in front of the terrain.
-  Clients make their own rubble (shred.md stage 1e lifetimes and caps) from `netId`-0 pieces and fragments and from
-  copies evicted `ToRubble`. `net::CompareEntities` / `EntityListHash` are the entity check (`vortex_server`,
-  `tools/session-check.sh`); the wire `EntityCheck` is stage 7b's.
+  Clients make their own rubble (7.3 lifetimes and caps) from `netId`-0 pieces and fragments and from
+  copies evicted `ToRubble`. `net::CompareEntities` / `EntityListHash` compare a client's objects with the server's
+  at exit (`vortex_server`, `vortex_bot`, the game's session scripts); the wire `EntityCheck` above does it while
+  playing.
+* **Bots and the soak** `[net-8]`. `net::Bot` (`vortex.net:bot`) is one bot player: a `net::Client`
+  over its owner's transport, the simulation built from the `Welcome` (the game's store and packing
+  when it has a window), a `BotPilot` (`vortex.net:drill`: walks, runs, jumps, casts and drops crates, or
+  follows waypoints) and injected faults (a broken chunk, a broken generator). `vortex_server`'s in-process bots (simulated
+  clock, loopback or `--enet`) and `vortex_bot` (one bot per process over real UDP, its impairment a
+  `UdpRelay`, wall clock through `Bot::PassOnClock`) share it, and with it the drain rule
+  (`DrainWatch`: applied the server's last operation, `Synced`, every copy resting or still for the
+  hold time), the verdict (`JudgeBot`) and the exit lines (`SessionHashLine`,
+  `SessionEntitiesLine`, `EntityRestHash`, `DescribeBot*`). The server's `--timeline` file and
+  `LatencyFromTimeline` turn the bots' applied-opSeq times into event latency. `tools/soak.sh`
+  (game repository) runs a server and several bots for 1 or 10 minutes, optionally a terrain-mode
+  bot and a headless game client, and compares their hashes and objects at exit.
 * **Agreement.** `net::RegionHash` is `voxel::WorldHash` over the region window; probe chunks in `Welcome` compare
-  the generators; `buildHash` covers the generator's golden values (`voxel::kGeneratorGoldenHash`) and the material
-  table (`voxel::MaterialTableHash`).
+  the generators; `buildHash` covers the protocol version, the generator's golden values
+  (`voxel::kGeneratorGoldenHash`) and the material table (`voxel::MaterialTableHash`), so another build is refused.
 
 ## 8. Editor
 
@@ -1036,103 +1276,104 @@ World (statistics, save).
 
 ## 9. Testing
 
-* `VortexCoreTests` - chunks, store, traversal vs. a reference DDA, BVH, world streaming /
-  editing / persistence, quantised edits (rounding, the int64 sphere test on its boundary and at
-  the int limits, spheres vs. a reference across chunk borders and negative coordinates, exact
-  hardness compare, swap, `ClearMask`, the skipped / unsynced report), generator determinism, colliders, connectivity, importers, particles;
-  the HUD: font bitmaps and measuring, anchors, canvas quads, menu input, cursor capture.
-* `VortexPhysicsTests` - bodies, shapes, ray casts, characters (restored states, layer masks, `Layer::Rubble`, no
-  pushing with `characterMovesBodies` off), `MoveKinematic`, terrain colliders
-  (the player gate `HasCollider`); the body guard
-  (a woken body the camera left behind, a body spawned where nothing is cooked, an unloaded
-  chunk, the window edge, 60 bodies spread over the map, velocity kept through a freeze, parked
-  bodies costing no collider, an edited chunk keeping its collider) and frozen bodies.
-* `VortexSimTests` - links `Vortex::Sim` only (no Vulkan, GLFW or ImGui in the binary; checked
-  at configure time). `sim::Simulation`: 600 ticks with the offline and with the server
-  configuration on flat ground (crates land on the terrain collider and fall asleep, a timed
-  light fades and expires on its tick, model chunk slots and particles only offline), 240 ticks
-  on the built-in terrain, what counts a tick, lifetimes per tick vs per phase, fall-out, the
-  window held by `Step` and moved only by the other streaming call, the body guard
-  (inside `Step` and inside `StepPhysics`), fall-out only in the lifetime phase, the persistent
-  offline world and the memory-only server world, `ServerConfig`, calls before `Initialize` and after `Shutdown`. The server scene on its own:
-  unbaked models through creation and damage (also with a full chunk store), nothing marked as
-  rubble, effects dropped by an empty particle pool, the replicated-piece threshold (fragments,
-  a survivor going to rubble, an anchored one staying). World operations: `ApplyOp` per kind,
-  the skipped report for chunks outside the window and still loading, a detached piece built from
-  the removed voxels; `sim::Blast`: islands as `Detach` without entities, crumbs under `scene::MinPieceVoxels(world voxel size)`
-  as one `ClearMask` (the 7 / 8 boundary; offline `sim::PresentBlast` makes particles and no
-  entity or body for them), an island box that is not loaded, objects damaged and pushed,
-  fragments on a server; and the stage-2 acceptance: two simulations with different worker counts
-  fed the same operations (islands and crumbs included) have equal world hashes, a slightly
-  different stream does not. `sim::StepPlayer`: quantisers, edges and the cooldown, walk / run /
-  jump / held, and two simulations with other worker counts stepped with the same inputs staying
-  bit-equal (also with a restore every 30 ticks). Replication (stage 6): a piece of the replicated
-  size is a server body with its `Detach`'s NetId and the removed voxels as its model, a smaller one
-  client rubble; at most 2 new server bodies per tick; the awake cap and the live cap's eviction
-  order; damaged replicated objects as models, spawns and broken fragments; nothing offline.
-* `VortexNetTests` - links `Vortex::Net` only (checked at configure time). The wire format (every
-  event at its byte size, masks, `RegionDesc` bit for bit, messages, forged bytes), the transports
-  (reliable order through loss, jitter and an outage; the state channel's loss, duplicates and
-  reordering; the rate limit), session files, the build hash and probe chunks, the handshake and
-  its refusals, the client's world taken from `Welcome`, the server window, the template split,
-  the cast budget (same ticks with other worker counts and a cold graph cache, a client following
-  the delayed casts), the client against a hand-written server (overlapping batches, gaps, forged
-  `Welcome`s, refused worlds), a failed server or client ending its part, peer timeouts, pacing of a
-  late join, and the stage-3 acceptance: a server and two clients over 5 % loss agree after 200
-  blasts that free terrain. Stage 4: the client clock and remote players from margin / sample
-  sequences, and the movement acceptance with player bots on their own clocks (no correction on
-  flat ground over 5 % loss, a blast at a chunk border beside a walking player, a +50 ms ping
-  step, three lost input packets carrying a cast, a 150 ms server hitch, forced mispredictions,
-  forged packets). Stage 5: casts judged at their input tick and rays cast at dequeue, the cast
-  rejection in the owner block, and real UDP on 127.0.0.1 (wall clock, ENet resending through
-  5 % receive loss): reliable order, exactly-once delivery and `ReliableBytesInFlight`, disconnects
-  and failed connects, and a server with two walking, casting clients over three sockets ending
-  with equal world hashes. Stage 6 (`EntityTests.cpp`): the scripted fight with islands and crates,
-  a collapse with 64 awake pieces at 5 % loss (the awake and live caps), a split below the
-  threshold, a player under falling pieces at 150 ms, resting crates blocking players on both
-  sides; the rest rule against a hand-written server; `RemoteBodies` from sample sequences.
-* `VortexGraphicsTests` - SPIR-V reflection of the real shader binaries, C++ / GLSL struct
-  layout parity (`VxHudQuad` included), the material surface-kind and HUD cell-grid constants
-  (C++ vs. the text of `common.glsl`) and
-  their packing, proxy cube winding, pipeline description validation. No Vulkan device needed.
-* `VortexEngineTests` - the scene with its offline configuration on real chunk store / material /
-  physics / particle objects (no device, no window): entity lifetime releasing bodies and chunk slots, shared models
-  surviving damage, splitting (a cut beam is two entities whose voxels add up and which inherit
-  motion), loose fragments, stale ids through every function, instance and light gathering,
-  lifetimes, body <-> entity mapping; rubble (what is marked, crumbs that never become entities,
-  lifetime, far rule, cap, fast small bodies not tunnelling) and `DestroyBelow`. The editor logic on the same objects plus a flat-generator
-  world (no ImGui context either): the cursor ray (screen centre = `Camera::Forward()`, edges at
-  the field of view, y not flipped), points of a cursor ray projecting back to the cursor through
-  the matrices handed to ImGuizmo, gizmo matrix round trips, brush application and stroke spacing,
-  primitive volumes, placement, sun angles, import palettes, `.vox` / glTF import and its failure
-  paths, picking, entity description and duplication, selection going stale.
-* `tools/cpu_render` renders a frame on the CPU with the shared shader code and writes a PNG:
-  a visual check of world data, traversal and shading that needs no GPU.
-* With a GPU: `Shredborne --headless --frames N --screenshot out.png --validation` exercises
-  the Vulkan path and fails on validation errors. `--camera x,y,z[,yaw,pitch]` holds the camera
-  at a chosen pose for the run (for example `--camera 60,2.5,-100,-2.23,-0.15`: the sea, towards
-  the sun). The run ends with the GPU time of every pass: last frame and the median of the last
-  120 frames - compare medians. Adding `--editor` opens the editor with every
-  panel, cycles the tools each frame and runs its actions (select, spawn, duplicate, brush,
-  import, delete), so the editor UI is exercised on every frame of the run. The log ends with
-  `HUD: N quads drawn on the last frame`; `--pause-menu` starts with the pause menu open and
-  `--no-hud` draws no HUD (screenshot comparison, GPU time of the hud pass).
+Six GoogleTest binaries (`tests/<dir>/` -> `Vortex<Dir>Tests`), none of which needs a GPU or a
+window; `ctest --test-dir build` runs them, every test stopped after 180 s, and the tests that
+measure on the wall clock (ENet sessions, the UDP relay) run serially. The current count is in
+`ROADMAP.md`. Tests named `DISABLED_*` are measurements, run by hand
+(`--gtest_also_run_disabled_tests`).
+
+* `VortexCoreTests` (core, math, voxel, fx). Chunks and the store, traversal against a reference
+  DDA, BVH, world streaming / editing / persistence, the full-height window and packing
+  (`ViewDistance.*`), quantised edits (`QuantizedEdits.*`: rounding, the int64 sphere test on its
+  boundary and at the int limits, spheres against a reference across chunk borders and negative
+  coordinates, exact hardness compare, swap, `ClearMask`, the skipped / unsynced report), chunk
+  installs for chunk sync (`SetChunkEncoded`, the window that follows with slack), hashes
+  (`ChunkHash.*`, `WorldHash.*`) and the terrain goldens (`Terrain.*`), colliders, connectivity and
+  floating islands, the cell graph (`Structure.*`: graph = `LabelComponents`, cache refresh =
+  rebuild, eviction, stale graphs) and the load check (`Neck.*`: max-flow against brute force, the
+  released set independent of arc order, a per-voxel reference network, the watch tower on a neck
+  at every height, exact thresholds, natural terrain never failing, budgets counted, not timed),
+  importers, particles; the HUD: font bitmaps and measuring, anchors, canvas quads, menu input,
+  cursor capture.
+* `VortexPhysicsTests`. Bodies, shapes, ray casts, characters (restored states, layer masks,
+  `Layer::Rubble`, no pushing with `characterMovesBodies` off), `MoveKinematic`, terrain colliders
+  (the player gate `HasCollider`); the body guard (`TerrainGuard.*`: a woken body the camera left
+  behind, a body spawned where nothing is cooked, an unloaded chunk, the window edge, 60 bodies
+  spread over the map, velocity kept through a freeze, parked bodies costing no collider, an edited
+  chunk keeping its collider) and frozen bodies.
+* `VortexSimTests` (links `Vortex::Sim` only: no Vulkan, GLFW, ImGui or network in the binary,
+  checked at configure time). `sim::Simulation` (`Simulation.*`: ticks with the offline and the
+  server configuration, what counts a tick, the phases, the window held by `Step`, the body guard,
+  fall-out, the persistent offline world and the memory-only server world, calls outside
+  `Initialize` / `Shutdown`); the server scene (`ServerScene.*`: unbaked models, nothing marked as
+  rubble, the replicated-piece threshold); world operations (`WorldOps.*`, an operation clipped
+  chunk by chunk equals the whole one); blasts (`Blast.*` in `BlastTests.cpp`, `FaceFloodTests.cpp`
+  and `NeckTests.cpp`: islands as `Detach` without entities, crumbs as one `ClearMask`, the face
+  flood rules, deferral offline and the error on a server, nothing outside the flood box read, the
+  load check's release as an ordinary `Detach`, two simulations fed the same operations having equal
+  hashes); `Structure.GraphFloatingEqualsFaceFlood` (every stage-1 case, graph against voxel search,
+  equal operations and hashes); rubble caps (`Rubble.*`); `sim::StepPlayer` (`Player.*`: quantisers,
+  edges, walk / run / jump, two simulations with other worker counts staying bit-equal); replication
+  (`Replication.*`: pieces as server bodies with their `Detach`'s NetId, the tick, awake and live
+  caps, damaged replicated objects, nothing offline). Every `Blast.*` and `Rubble.*` arena runs with
+  `checkIslandSearch` and fails on any difference between the two searches.
+* `VortexNetTests` (links `Vortex::Net` only, checked at configure time). The wire format
+  (`Wire.*`: every event and message at its byte size, `RegionDesc` bit for bit, forged bytes); the
+  transports (`Transport.*`, `Enet.*`: reliable order through loss, jitter and outages, real UDP on
+  127.0.0.1); session files, the build hash, the handshake and its refusals (`Session.*`,
+  `SessionFile.*`); the client against a hand-written server (`Client.*`); the cast budget
+  (`CastBudget.*`); the clock, remote players and prediction (`Clock.*`, `Movement.*`, with
+  `Movement.NoCorrectionAbove2cmOnFlatGround`); chunk sync and the checks (`ChunkSync.*`,
+  `BulkPacer.*`, `HashCheckPlanner.*`); the moving client window (`ClientWindow.*`); replicated
+  bodies (`Entities.*`, `RemoteBodies.*`, with `Entities.OneScriptGivesTheSameBodiesTwice`); the
+  250 m arena (`Region250.*`: fights with checks, repairs, server terrain mode, late joins under
+  10 casts a second, walks in from outside, drains); the shared bot and the relay (`Bot.*`,
+  `Relay.*`); and the acceptances (`SessionAcceptance.*`, `EnetSession.*`: a server and clients over
+  loss that agree after blasts that free terrain).
+* `VortexGraphicsTests`. SPIR-V reflection of the real shader binaries, C++ / GLSL struct layout
+  parity (`VxHudQuad` included), the material surface-kind and HUD cell-grid constants (C++ against
+  the text of `common.glsl`) and their packing, proxy cube winding, reverse-Z, pipeline description
+  validation. No Vulkan device needed.
+* `VortexEngineTests`. The scene with its offline configuration on real chunk store / material /
+  physics / particle objects (no device, no window): entity lifetime releasing bodies and chunk
+  slots, shared models surviving damage, splitting (a cut beam is two entities whose voxels add up
+  and which inherit motion), loose fragments, stale ids through every function, instance and light
+  gathering, lifetimes, body <-> entity mapping; rubble (`SceneDebris.*`: what is marked, crumbs that
+  never become entities, lifetime, far rule, cap, fast small bodies not tunnelling) and
+  `DestroyBelow`. The editor logic on the same objects plus a flat-generator world (no ImGui context
+  either): the cursor ray, cursor rays projecting back through the matrices handed to ImGuizmo,
+  gizmo matrix round trips, brush application and stroke spacing, primitive volumes, placement, sun
+  angles, import palettes, `.vox` / glTF import and its failure paths, picking, entity description
+  and duplication, selection going stale.
+* Planned, not built: `tools/cpu_render`, a frame rendered on the CPU with the shared shader code
+  into a PNG, as a visual check of world data, traversal and shading without a GPU.
+* With a GPU: `Shredborne --headless --frames N --screenshot out.png --validation` exercises the
+  Vulkan path and fails (exit code 2) on validation errors. `--camera x,y,z[,yaw,pitch]` holds the
+  camera at a chosen pose for the run. The run ends with the GPU time of every pass: last frame and
+  the median of the last 120 frames - compare medians. Adding `--editor` opens the editor with every
+  panel, cycles the tools each frame and runs its actions (select, spawn, duplicate, brush, import,
+  delete). The log ends with `HUD: N quads drawn on the last frame`; `--pause-menu` starts with the
+  pause menu open and `--no-hud` draws no HUD. The game's scripted checks (blasts, the climb, the
+  sessions) and what each must log are the game repository's (`CLAUDE.md` "Verify").
 
 ## 10. Where the design leaves room
 
 * **Level of detail**: the grid descriptor (`size`, `minChunk`, `voxelSize`) is a parameter of
-  `VxTraceWorld`; clip-map cascades are additional grids with doubled voxel size.
-* **Bigger worlds**: world positions are already `double` / integer voxels; only render space
-  is `float`. Physics is single precision and would need Jolt's double precision build far
-  from the origin.
-* **Networking / dedicated server**: `Vortex::Core`, `Vortex::Physics`, `Vortex::Sim` and
-  `Vortex::Net` have no GPU or window dependency, `sim::Simulation` runs the whole simulation on a
-  numbered fixed tick (7.4), generation is a pure function of the seed (pinned bit for bit by
-  golden tests) and every terrain change is an integer operation (7.5). Stages 7-9 of
-  `docs/design/networking.md` add chunk sync, a soak and the on-demand world (the transport, players and replicated
-  bodies are built: stages 4-6).
+  `VxTraceWorld`; clip-map cascades are additional grids with doubled voxel size
+  (`docs/design/lod.md`, view-distance stages 4-7, not started).
+* **Bigger worlds and precision**: world positions are already `double` / integer voxels; only
+  render space is `float`. Physics is single precision and would need Jolt's double precision
+  build far from the origin.
+* **Networking beyond M1**: the session protocol is built (stages `[net-0]` to `[net-8]`: transport,
+  operations, players, replicated bodies, chunk sync, checks, server terrain mode, bots and the
+  soak). A session server loads its whole region window and keeps it; larger zones (1 km) need the
+  on-demand server world of networking stage 9 `[net-9]` (`docs/design/networking.md`, "Server world
+  without a camera"), which the GPU-free libraries, the numbered tick (7.4), a generator that is a
+  pure function of the seed (pinned bit for bit by golden tests) and integer terrain operations
+  (7.5) already allow.
 * **Memory**: chunks are dense; palette-compressed or brick-sparse chunk payloads can replace
-  `ids[]` behind `VX_VOXEL_ID` without touching traversal.
+  `ids[]` behind `VX_VOXEL_ID` without touching traversal. Hidden chunks already keep only their
+  RLE bytes (Packed cells, 4.3), and the island search's graph cache is capped (7.2).
 
 ## 11. Game interface and cursor capture
 
@@ -1162,4 +1403,7 @@ only; what a player sees is drawn by the HUD.
   `CursorCapture::Result::clicks`. Escape opens the pause menu (it does not stop the
   simulation: sessions are networked); the menu owns input while open and the editor's look is
   ended with `Editor::ReleaseInput`.
-
+* **What tests cannot see.** The data and the HUD pass are unit tested and drawn headless; the
+  windowed behaviour (the mouse lock on Wayland and X11, the pause menu with a real mouse, the
+  editor's input and focus) is confirmed only by the owner's checks, listed with their results in
+  the game repository's `docs/owner-checks.md`.

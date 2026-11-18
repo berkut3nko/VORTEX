@@ -1,12 +1,16 @@
 # Level of detail for distant terrain and objects
 
-Rebased to 0.125 m base voxels (levels 0.125 * 2^L) and a full-height window by [view-distance.md](view-distance.md);
-mechanisms below unchanged. The numbers below were rewritten for 0.125 m when the engine switched to it (view-distance
-stage 3, 2026-11-12); figures marked *(0.1 m)* are kept from the original 0.1 m text where nothing was re-measured.
+| | |
+|---|---|
+| Status | Designed, nothing built or measured for it. |
+| Decided | - Us (this design, 2026-11-10): distance budgets first; far terrain as filled clip-map cascades; no LOD for dynamic objects; simulation LOD = the terrain guard plus distance-scaled debris thresholds ("Decision").<br>- Rebased by [view-distance.md](view-distance.md) (2026-11-11, numbers rewritten for 0.125 m at view-distance stage 3, 2026-11-12): base voxel 0.125 m, levels `0.125 * 2^L` m, a full-height window at every level; the mechanisms below are unchanged. Figures marked *(0.1 m)* are kept from the original 0.1 m text where nothing was re-measured.<br>- Owner, 2026-11-12: the 92 m radius of level 0 at 0.125 m is "the sweet spot" on the UHD 620, so level 1 (192 m) is for stronger presets, not a must there (view-distance.md, "Decided"). |
+| Next | [lod-1] distance budgets = view-distance [vd-4] = perf.md L1, in ROADMAP "Later" (frame-rate block B). [lod-2]..[lod-5] with view-distance [vd-6] / [vd-7] and M6. |
+| Open | The questions in "Open questions for the game" (unanswered). |
+| History | [before-rewrite-2026-11-18.md](../history/lod/before-rewrite-2026-11-18.md): the original header |
+| Marks | Millisecond figures not quoted from ROADMAP are estimates; every stage names the measurement that confirms or kills them. Code claims were checked against the sources of 2026-11-10 (engine `ec073a8`, uncommitted physics work included); the two code `file:line` references (`Renderer.cpp:1146`, `Engine.cpp:234`) are from that tree. |
 
-Status: design decision, nothing built or measured for it. Millisecond figures not quoted from
-`ROADMAP.md` are estimates; every stage names the measurement that confirms or kills them.
-Claims about today's code were checked against the sources (uncommitted physics work included).
+Related: [view-distance.md](view-distance.md) (rebase, stages 4-7), [perf.md](perf.md) "Ranked list" (L1),
+[fx-budget.md](fx-budget.md) (effect costs in fights), [collapse.md](collapse.md) (lifetimes and body budgets).
 
 ## Decision
 
