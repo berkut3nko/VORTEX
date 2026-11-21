@@ -3,9 +3,9 @@
 | | |
 |---|---|
 | Status | Designed, nothing built or measured for it. Reviewed, rechecked adversarially and amended twice. |
-| Decided | - Owner's request (2026-11-19): the session server runs on the owner's own AVX2/FMA3 machine at home, with no public ("white") IPv4 address and no paid VPS. It finds players through STUN and UDP hole punching, with a Cloudflare Worker + D1 on the free tier as the meeting point.<br>- Us (this design, 2026-11-19): items 1-10 of "Decision in brief". |
+| Decided | - Owner's request (2026-11-19): the session server runs on the owner's own AVX2/FMA3 machine at home, with no public ("white") IPv4 address and no paid VPS. It finds players through STUN and UDP hole punching, with a Cloudflare Worker + D1 on the free tier as the meeting point.<br>- Us (this design, 2026-11-19): items 1-10 of "Decision in brief".<br>- Owner (2026-11-19): hide the token in `Hello` with M2a's protocol bump ([wp-7]); "Hello without the token" below. |
 | Next | [nat-R0] NAT probe and pair test, then [nat-R1] rendezvous (see "Stages"). ROADMAP placement: "Placement" below. |
-| Open | "Open questions" 1-7, each with the recommended answer. 1 (a relay for pairs that cannot meet) waits for R0's pair results. 7 (hiding the token in `Hello`) asks the owner, against owner decision 2. |
+| Open | "Open questions" 1-6, each with the recommended answer. 1 (a relay for pairs that cannot meet) waits for R0's pair results. |
 | History | [design-review-2026-11-19.md](../history/rendezvous/design-review-2026-11-19.md): the review's and the recheck's findings, and what was done with each |
 | Marks | **(m)** measured, **(c)** computed, **(e)** estimate, **(d)** from Cloudflare's documentation read on 2026-11-19 (re-check at R1: free tiers change). Code read at engine `a23af7a`, with WP1 uncommitted in the tree. |
 
@@ -53,8 +53,9 @@ What both sides do have:
      only probes that prove it.
    - This stops anyone who holds only the room key, and an impostor who registers the room while the server is
      down.
-   - It does **not** hide the token from someone who can read the traffic between the two players: `Hello` still
-     carries the token in plain text, as on a LAN and with `--connect` today (owner decision 2; "Open questions" 7).
+   - It does **not** hide the token from someone who can read the traffic between the two players: until M2a,
+     `Hello` still carries the token in plain text, as on a LAN and with `--connect` today. From M2a's protocol bump
+     on it does not ("Hello without the token").
 5. **The server owns its room.** D1 stores only `SHA-256(host key)`, and every update or delete must present the key.
    - A restart with the same token keeps the room, and there is no key file to lose or commit.
    - A server started with `--new-token` gets a new room each time. Its invite changes, and that is also how the
