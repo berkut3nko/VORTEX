@@ -1,5 +1,7 @@
 # VORTEX documents
 
+[[../../00 Docs Map|Docs map]] · [[ROADMAP|roadmap]] · [[ARCHITECTURE|architecture]] · [[../../docs/README|game docs index]] · [[../../CLAUDE|working notes]]
+
 The index of the engine's documents: what each one is, what to read for a task, where a stage ID or a name quoted in
 a code comment lives, and the history folder. Sizes (KiB) were measured on 2026-11-18, after the WP3 rewrite.
 

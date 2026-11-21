@@ -1,5 +1,7 @@
 # Fog: sunlit haze, fog that lies in valleys and craters, blast dust that drifts and settles
 
+[[../../../00 Docs Map|Docs map]] · [[../README|docs index]] · [[../ROADMAP|roadmap]] · [[../ARCHITECTURE|architecture]] · [[perf|perf]] · [[lod|LOD]] · [[view-distance|view distance]] · [[spread|spread]] · [[networking|networking]]
+
 | | |
 |---|---|
 | Status | Designed, nothing built or measured for it. Reviewed once by a critic (13 findings, all applied or answered). |

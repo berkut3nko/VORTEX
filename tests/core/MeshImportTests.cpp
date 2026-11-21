@@ -83,7 +83,7 @@ namespace {
     ///  - the mesh sits under two nested nodes: parent scale 2, child translation (0.125, 0, 0)
     ///    -> world cube spans x in [-0.75, 1.25], y and z in [-1, 1];
     ///  - two materials, the primitive uses the second one (voxel id 2).
-    std::filesystem::path WriteCubeGltf() {
+    std::filesystem::path WriteCubeGltf(const std::filesystem::path& directory) {
         constexpr size_t kViewOffset = 4, kAccessorOffset = 16, kStride = 16;
         constexpr size_t kVertexBytes = kAccessorOffset + 8 * kStride;   // 144
         constexpr size_t kIndexOffset = kViewOffset + kVertexBytes;      // 148
@@ -125,7 +125,7 @@ namespace {
         json += Base64(buffer);
         json += "\"}]\n}\n";
 
-        const std::filesystem::path path = std::filesystem::temp_directory_path() / "vortex_meshimport_cube.gltf";
+        const std::filesystem::path path = directory / "vortex_meshimport_cube.gltf";
         std::ofstream stream(path, std::ios::binary | std::ios::trunc);
         stream << json;
         return path;
@@ -254,7 +254,9 @@ TEST(MeshImport, MissingFileFailsCleanly) {
 }
 
 TEST(MeshImport, RejectsBadSettingsAndBrokenFiles) {
-    const std::filesystem::path path = std::filesystem::temp_directory_path() / "vortex_meshimport_broken.glb";
+    const std::filesystem::path dir = fixtures::UniqueTempDirectory("vortex_meshimport");
+    ASSERT_FALSE(dir.empty());
+    const std::filesystem::path path = dir / "vortex_meshimport_broken.glb";
     {
         std::ofstream stream(path, std::ios::binary | std::ios::trunc);
         stream << "this is not a glTF binary";
@@ -271,11 +273,13 @@ TEST(MeshImport, RejectsBadSettingsAndBrokenFiles) {
     EXPECT_FALSE(noScale.error.empty());
 
     std::error_code ec;
-    std::filesystem::remove(path, ec);
+    std::filesystem::remove_all(dir, ec);
 }
 
 TEST(MeshImport, GltfNodeTransformsStridesIndicesAndMaterials) {
-    const std::filesystem::path path = WriteCubeGltf();
+    const std::filesystem::path dir = fixtures::UniqueTempDirectory("vortex_meshimport");
+    ASSERT_FALSE(dir.empty());
+    const std::filesystem::path path = WriteCubeGltf(dir);
     MeshImportSettings settings;
     settings.file = path;
     settings.voxelsPerUnit = 4.0f;   // world cube of 2 units -> 8 voxels, all corners on integers
@@ -309,13 +313,15 @@ TEST(MeshImport, GltfNodeTransformsStridesIndicesAndMaterials) {
     EXPECT_TRUE(tooBig.volume.IsEmpty());
 
     std::error_code ec;
-    std::filesystem::remove(path, ec);
+    std::filesystem::remove_all(dir, ec);
 }
 
 TEST(MeshImport, ImportsABinaryGltfWithATexturedMaterial) {
     // A .glb made in code (tests/support/GltfFixture.h): three boxes under one root node, two
     // materials with a colour factor and one with a PNG texture.
-    const std::filesystem::path path = std::filesystem::temp_directory_path() / "vortex_meshimport_boxes.glb";
+    const std::filesystem::path dir = fixtures::UniqueTempDirectory("vortex_meshimport");
+    ASSERT_FALSE(dir.empty());
+    const std::filesystem::path path = dir / "vortex_meshimport_boxes.glb";
     ASSERT_TRUE(fixtures::WriteBoxesGlb(path));
 
     MeshImportSettings settings;
@@ -347,5 +353,5 @@ TEST(MeshImport, ImportsABinaryGltfWithATexturedMaterial) {
     EXPECT_LT(hollow.volume.CountSolid(), result.volume.CountSolid());
 
     std::error_code ec;
-    std::filesystem::remove(path, ec);
+    std::filesystem::remove_all(dir, ec);
 }

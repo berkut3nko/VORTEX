@@ -978,7 +978,9 @@ TEST(EditorImport, FailuresReportAnErrorAndCreateNoPalette) {
 
 TEST(EditorImport, GltfBecomesOneModelWithAPaletteFromItsMaterials) {
     // Three boxes with three materials in one .glb made in code (tests/support/GltfFixture.h).
-    const std::filesystem::path path = std::filesystem::temp_directory_path() / "vortex_editor_boxes.glb";
+    const std::filesystem::path dir = fixtures::UniqueTempDirectory("vortex_editor");
+    ASSERT_FALSE(dir.empty());
+    const std::filesystem::path path = dir / "vortex_editor_boxes.glb";
     ASSERT_TRUE(fixtures::WriteBoxesGlb(path));
 
     voxel::MaterialLibrary library;
@@ -1008,7 +1010,7 @@ TEST(EditorImport, GltfBecomesOneModelWithAPaletteFromItsMaterials) {
     EXPECT_EQ(library.PaletteCount(), before + 1);
 
     std::error_code ec;
-    std::filesystem::remove(path, ec);
+    std::filesystem::remove_all(dir, ec);
 }
 
 // --- picking and entities ------------------------------------------------------------------------

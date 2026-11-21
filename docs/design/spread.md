@@ -1,5 +1,7 @@
 # Spread: fire that climbs and liquid that runs down, in lockstep, with no randomness
 
+[[../../../00 Docs Map|Docs map]] · [[../README|docs index]] · [[../ROADMAP|roadmap]] · [[../ARCHITECTURE|architecture]] · [[networking|networking]] · [[shred|shred]] · [[fog|fog]] · [[fx-budget|fx budget]] · [[worldgen|worldgen]]
+
 | | |
 |---|---|
 | Status | Designed, nothing built or measured for it. Reviewed by two critics and amended. |

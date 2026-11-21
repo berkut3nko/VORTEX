@@ -1,5 +1,7 @@
 # Rendezvous: internet sessions without a public IP (STUN, UDP hole punching, Cloudflare D1)
 
+[[../../../00 Docs Map|Docs map]] · [[../README|docs index]] · [[../ROADMAP|roadmap]] · [[networking|networking]] · [[../notes/net|net notes]] · [[../../../docs/two-pc-test-windows|two-PC test (Windows)]]
+
 | | |
 |---|---|
 | Status | Designed, nothing built or measured for it. Reviewed, rechecked adversarially and amended twice. |

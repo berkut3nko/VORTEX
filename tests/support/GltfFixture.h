@@ -16,13 +16,16 @@
 #pragma once
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 namespace vortex::fixtures {
@@ -167,5 +170,23 @@ namespace vortex::fixtures {
         std::ofstream out(path, std::ios::binary | std::ios::trunc);
         out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
         return static_cast<bool>(out);
+    }
+
+    /// A new, empty directory under the system temporary directory, named `prefix` plus a random
+    /// suffix: test runs in parallel worktrees share the temporary directory, so a fixed file name
+    /// there could be truncated or removed by another run while this one reads it. Empty if no
+    /// directory could be made. The caller removes it (std::filesystem::remove_all).
+    inline std::filesystem::path UniqueTempDirectory(std::string_view prefix) {
+        std::error_code error;
+        const std::filesystem::path temp = std::filesystem::temp_directory_path(error);
+        if (error) return {};
+        std::random_device device;
+        for (int attempt = 0; attempt < 16; ++attempt) {
+            const uint64_t suffix = ((uint64_t{device()} << 32) | device()) ^
+                                    static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+            const std::filesystem::path dir = temp / (std::string(prefix) + "-" + std::to_string(suffix));
+            if (std::filesystem::create_directory(dir, error)) return dir;   // false: it exists, or an error
+        }
+        return {};
     }
 }

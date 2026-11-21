@@ -1,5 +1,7 @@
 # Mechanisms, the use key and ropes
 
+[[../../../00 Docs Map|Docs map]] · [[../README|docs index]] · [[../ROADMAP|roadmap]] · [[../ARCHITECTURE|architecture]] · [[networking|networking]] · [[shred|shred]] · [[game-ui|game UI]] · [[worldgen|worldgen]]
+
 | | |
 |---|---|
 | Status | Designed, nothing built or measured for it. |
