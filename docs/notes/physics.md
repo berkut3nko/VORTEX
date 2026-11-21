@@ -1,5 +1,7 @@
 # Physics module notes (`vortex.physics`)
 
+[[../../../00 Docs Map|Docs map]] · [[../ARCHITECTURE|architecture]] · [[../design/collapse|collapse]] · [[../design/shred|shred]]
+
 Companion to `CLAUDE.md` and `docs/ARCHITECTURE.md` section 6 / 6.1 (design, not repeated here).
 Line numbers are as of engine commit `ec073a8` (the `engine/` repository; outer repository `ac17bcf`);
 search for the symbol if they have drifted.

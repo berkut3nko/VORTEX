@@ -1,7 +1,29 @@
 # VORTEX roadmap
 
+[[../../00 Docs Map|Docs map]] · [[ARCHITECTURE|VORTEX architecture]]
+
 What exists today, and what was designed for but is not built yet. See
 [ARCHITECTURE.md](ARCHITECTURE.md) for how the pieces fit together.
+
+## How this kind of roadmap is run optimally elsewhere (web survey, 2026-11-21)
+
+- **Write the architecture down first and keep it as the contract** - the Khronos engine-architecture series states
+  the same reason this project writes a design doc before each stage ("good architecture creates a foundation that
+  supports your development process rather than fighting against it",
+  [introduction](https://docs.vulkan.org/tutorial/latest/Building_a_Simple_Engine/Engine_Architecture/01_introduction.html)).
+  The extra step this roadmap already takes - every stage ends in a second reader's review - is the version of code
+  review that single-author engines skip and pay for later.
+- **Milestones ordered by what unblocks measurements**: the shipped voxel-server practice is to separate what a peer
+  must *see* from what the sim must *tick* (Minecraft's `view-distance` vs `simulation-distance`,
+  [server optimization guide](https://github.com/YouHaveTrouble/minecraft-optimization)); M1 (netcode) before M3
+  (collapse) and the 48-chunk window with a 32 m "current" gate follow the same rule - pay for the near ring only.
+- **Numeric gates instead of adjectives** (join p99 < 15 ticks, preload < 10 s / 150 MiB RLE, `hashes equal`) are the
+  form the netcode literature uses too (Gambetta's series gives latency budgets in ticks/ms,
+  [client-server architecture](https://www.gabrielgambetta.com/client-server-game-architecture.html)); a gate a
+  headless run can fail is worth more than a milestone described in words.
+- **Reference implementations stay the maintained ones**: the worldgen design's WFC reference is still the live one
+  ([mxgmn/WaveFunctionCollapse](https://github.com/mxgmn/WaveFunctionCollapse), 25 546 stars, last push 2026-10-15 as
+  checked here), so M4 needs no new external dependency.
 
 ## Working now
 
@@ -50,21 +72,21 @@ Known costs worth attacking, in order of expected gain:
 
 ## Game direction (decided with the project owner, 2026-11-10)
 
-| Topic | Decision | What it means for the engine |
-|---|---|---|
-| Structure | Session-based matches with automatic matchmaking and seamless joining; progression is global, MMO-like. The world is a set of region maps loaded separately (Albion Online style). | A dedicated, GPU-free session server per region instance. No endless world: a region is finite. |
-| Players per session | Mixed by region type: small instanced maps and larger shared zones. | Player cap is a property of the region type; the design case for fights is 5v5 at about 10 casts per second. |
-| Persistence | A region resets every session. | A region is `template + seed`; damage is a temporary edit log. Everything expensive (support graphs, coarse LOD, colliders of prefabs) can be baked offline per prefab. |
-| World content | Procedural terrain assembled with hand-made prefabs by rules. Small arenas (about 250 m) and big zones (about 1 km) from the same generator. | Prefab format with baked data; rule-driven region generator; the server holds a whole region, clients stream a window. |
-| Combat | PvP and PvE, PvP first. | Server authority, prediction and lag compensation from the first networked build. Monsters, AI and navigation come after PvP works. |
-| Camera | First person. | Close-up voxel detail matters most; the horizon is visible. |
-| Hardware | Playable on Intel UHD 620, tuned for a GTX 1650 at 60 fps. Windows and Linux clients, Linux server. | Every feature has a cheap path. View distance is a setting: 77 m on integrated GPUs, 150 m and more on discrete ones. |
-| Destruction | Whole castles and cities can collapse. Large falling pieces are real (server-simulated, can crush); small debris is cosmetic and local to each client. Rubble fades after seconds. | The server decides which part of a structure is released and simulates a few large bodies; clients add particles and small pieces. |
-| Network stability | Large-scale destruction is limited by game rules rather than by technology: bedrock (indestructible) materials, regeneration of locations, destruction costs. | Indestructible material flag in generation rules; a per-region destruction budget; a regrowth system that restores prefabs from their template. |
-| Building | Only in fights: created matter is temporary. Medium-sized conjured objects to climb on or use as a shield. | Spell-created voxels and objects carry a lifetime; no free-form persistent building, no player housing. |
-| Magic | Create matter, move matter, change materials, spreading fire, summoning enemies. | A data-driven spell system built from a few world operations (carve, fill, swap material, impulse, spawn). |
-| Characters | Rigid voxel parts on a skeleton. | Reuses the object renderer; limbs can be separated. No skinned-mesh path. |
-| Online services | Later; stubbed now. | The session server reads players and loadouts from a file and writes results to one. |
+| Topic               | Decision                                                                                                                                                                           | What it means for the engine                                                                                                                                            |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Structure           | Session-based matches with automatic matchmaking and seamless joining; progression is global, MMO-like. The world is a set of region maps loaded separately (Albion Online style). | A dedicated, GPU-free session server per region instance. No endless world: a region is finite.                                                                         |
+| Players per session | Mixed by region type: small instanced maps and larger shared zones.                                                                                                                | Player cap is a property of the region type; the design case for fights is 5v5 at about 10 casts per second.                                                            |
+| Persistence         | A region resets every session.                                                                                                                                                     | A region is `template + seed`; damage is a temporary edit log. Everything expensive (support graphs, coarse LOD, colliders of prefabs) can be baked offline per prefab. |
+| World content       | Procedural terrain assembled with hand-made prefabs by rules. Small arenas (about 250 m) and big zones (about 1 km) from the same generator.                                       | Prefab format with baked data; rule-driven region generator; the server holds a whole region, clients stream a window.                                                  |
+| Combat              | PvP and PvE, PvP first.                                                                                                                                                            | Server authority, prediction and lag compensation from the first networked build. Monsters, AI and navigation come after PvP works.                                     |
+| Camera              | First person.                                                                                                                                                                      | Close-up voxel detail matters most; the horizon is visible.                                                                                                             |
+| Hardware            | Playable on Intel UHD 620, tuned for a GTX 1650 at 60 fps. Windows and Linux clients, Linux server.                                                                                | Every feature has a cheap path. View distance is a setting: 77 m on integrated GPUs, 150 m and more on discrete ones.                                                   |
+| Destruction         | Whole castles and cities can collapse. Large falling pieces are real (server-simulated, can crush); small debris is cosmetic and local to each client. Rubble fades after seconds. | The server decides which part of a structure is released and simulates a few large bodies; clients add particles and small pieces.                                      |
+| Network stability   | Large-scale destruction is limited by game rules rather than by technology: bedrock (indestructible) materials, regeneration of locations, destruction costs.                      | Indestructible material flag in generation rules; a per-region destruction budget; a regrowth system that restores prefabs from their template.                         |
+| Building            | Only in fights: created matter is temporary. Medium-sized conjured objects to climb on or use as a shield.                                                                         | Spell-created voxels and objects carry a lifetime; no free-form persistent building, no player housing.                                                                 |
+| Magic               | Create matter, move matter, change materials, spreading fire, summoning enemies.                                                                                                   | A data-driven spell system built from a few world operations (carve, fill, swap material, impulse, spawn).                                                              |
+| Characters          | Rigid voxel parts on a skeleton.                                                                                                                                                   | Reuses the object renderer; limbs can be separated. No skinned-mesh path.                                                                                               |
+| Online services     | Later; stubbed now.                                                                                                                                                                | The session server reads players and loadouts from a file and writes results to one.                                                                                    |
 
 ## Milestones
 

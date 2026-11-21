@@ -1,4 +1,6 @@
 # Graphics module notes (`vortex.graphics`)
+
+[[../../../00 Docs Map|Docs map]] · [[../ARCHITECTURE|architecture]] · [[../design/fx-budget|fx budget]] · [[../design/perf|perf]]
 Read `CLAUDE.md` and `docs/ARCHITECTURE.md` section 5 first; this file only adds what they do not say.
 Paths are relative to `engine/`. `R.cpp` = `src/graphics/internal/Renderer.cpp`. Line numbers are as
 of commit ac17bcf (all re-checked against the code at 7a95975); search for the symbol if they have moved.

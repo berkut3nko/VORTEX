@@ -1,5 +1,12 @@
 # Effects that stay fast in fights
 
+[[../../../00 Docs Map|Docs map]] · [[shred|shred]] · [[lod|LOD]] · [[perf|perf]] · [[../notes/graphics|graphics notes]]
+
+## How others solve this optimally (web survey, 2026-11-21)
+
+- The modern default for large particle counts: simulate in a compute shader, render with one instanced indirect draw whose instance count is written by the GPU, cull with frustum planes + a Hi-Z depth pyramid, and stream-compaction the survivors into a packed visible buffer — no CPU readback ([GPU instancing and indirect drawing for particle systems](https://salivity.github.io/game-development/article/gpu-instancing-and-indirect-drawing-for-particle-systems)).
+- A CPU pool with one instanced draw is the cheap variant this engine picks for the UHD 620; the budget rules are the same everywhere: cull live particles by distance / occlusion before shading them, cap per effect and globally, give everything a lifetime. The piece this design has not yet adopted from the consensus list is occlusion / distance culling of the live set before the draw — the natural step when stage 2 moves effect lights out of the traced pass.
+
 Status: design decision, nothing built or measured for it yet. "Measured" = `docs/ROADMAP.md`
 (UHD 620, 768x432 internal, 21 ms GPU per frame). "Est." = from reading the code; stage 1
 replaces every estimate with a number. Related: `collapse.md` (object damage, debris lifetimes),

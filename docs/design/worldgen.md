@@ -1,5 +1,12 @@
 # World generation: regions built from structures
 
+[[../../../00 Docs Map|Docs map]] · [[../../ROADMAP|roadmap (M4)]] · [[../../../docs/world/setting|setting and story]] · [[../notes/voxel|voxel notes]]
+
+## How others solve this optimally (web survey, 2026-11-21)
+
+- Rule-driven assembly of hand-made parts is a shipped pattern, and WFC is its most general solver: extract adjacency rules from a small hand-authored sample, collapse the lowest-entropy cell first, and on a contradiction restart with a new seed — fast restart beats backtracking at game scale; shipped in Bad North, Caves of Qud, Townscaper ([mxgmn/WaveFunctionCollapse](https://github.com/mxgmn/WaveFunctionCollapse), [practical builder's guide](https://www.mysimulator.uk/content/articles/wfc-procedural.html)). Nested WFC cuts large-scene generation from exponential to polynomial time ([arXiv:2509.09919](https://arxiv.org/pdf/2509.09919)) — the same hierarchy as RegionPlan -> plot -> structure here.
+- The integer `RegionPlan` stamped identically on every side is stronger than typical WFC usage: determinism by construction instead of by seed. Region types (arena / zone) with player caps, spawn points and bedrock as data, not code, matches what shipped zone-based MMOs do (Albion Online's ~430 zones, [zone map DB](https://www.albiondatabase.com/interactive-map)).
+
 Status: design decision, 2026-11-17. Nothing is built or measured for it. Figures marked *(est.)* are estimates from
 operation counts or proportions and must be measured. Every stage names the measurement that confirms or kills them.
 Claims about today's code were checked against the sources (`voxel/Generator.cppm`, `sim/Region.cppm`,

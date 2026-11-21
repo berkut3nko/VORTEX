@@ -1,5 +1,13 @@
 # Networking skeleton (M1)
 
+[[../../../00 Docs Map|Docs map]] · [[../../ROADMAP|roadmap]] · [[../../ARCHITECTURE|architecture]] · [[shred|shred]] · [[game-ui|game UI]] · [[../../../docs/two-pc-test-windows|two-PC test (Windows)]] · [[../notes/net|net notes]]
+
+## How others solve this optimally (web survey, 2026-11-21)
+
+- Authoritative server + client prediction keyed by input sequence numbers + reconciliation by replaying unacked inputs + remote-entity interpolation + rewind hit tests is the canonical recipe ([Gambetta, Fast-Paced Multiplayer II](https://www.gabrielgambetta.com/client-side-prediction-server-reconciliation.html), [IV, lag compensation](https://www.gabrielgambetta.com/lag-compensation.html)). This design already matches it (integer inputs per tick, 30 Hz snapshots, own player predicted through `sim::StepPlayer`, others interpolated); rewind hit registration is the open piece (M2 "lag-compensated hits").
+- Session-per-region servers at MMO scale are a shipped pattern: per-zone instances with a decoupled simulation layer on Photon ([Unity's Albion Online case study](https://unity.com/blog/albion-online-cross-platform-pvp-mmo-architecture), [architecture talk, Quo Vadis 2016](https://www.slideshare.net/slideshow/albion-online-software-architecture-of-an-mmo-talk-at-quo-vadis-2016-berlin/62724504)) — the same shape as M1: one authoritative server per region instance, clients stream their own window.
+- Joining by chunk sync (stage 7a) is the standard answer to "bit-identical generation across toolchains is fragile": shipped voxel MMOs send authoritative terrain to joiners rather than trusting both sides' generators. Server terrain mode (7b) is that fallback, and keeping the terrain golden tests as a release gate (two-pc-test-windows.md gate 2) matches treating identical generation as an optimization, not an assumption.
+
 Status: design decision, revised after two reviews. Stages 0-6 are built, stage 7a too (both milestones, integrated and
 accepted on 2026-11-17; "Stage 7a as built", integrated, accepted and reviewed ("Review of stage 7a", "Recheck of
 stage 7a"), committed as `62f28b4`); stage 7b ("Stage 7b plan", amended after a critic, superseded where "Stage 7b as

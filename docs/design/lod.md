@@ -1,5 +1,11 @@
 # Level of detail for distant terrain and objects
 
+[[../../../00 Docs Map|Docs map]] · [[view-distance|view distance (rebase)]] · [[perf|perf]] · [[shred|shred (debris fix)]] · [[fx-budget|fx budget]]
+
+## How others solve this optimally (web survey, 2026-11-21)
+
+- The industry pattern is a small number of coarse, render-only voxel LOD levels beyond the full-res ring, built off the main thread ([Super Chunks](https://kronnect.com/docs/voxel-play-4/super-chunks/)), octree splits by camera distance ([Voxceleron2](https://voxceleron2.ayanali.net/)), or GPU-driven LOD + streaming ([Aokana](https://arxiv.org/html/2505.02017v1)). Distance budgets on the existing chunk pyramid (stage 1 here) is the cheaper first step all of these converge to; none of them keep full-resolution detail at range.
+
 Rebased to 0.125 m base voxels (levels 0.125 * 2^L) and a full-height window by [view-distance.md](view-distance.md);
 mechanisms below unchanged. The numbers below were rewritten for 0.125 m when the engine switched to it (view-distance
 stage 3, 2026-11-12); figures marked *(0.1 m)* are kept from the original 0.1 m text where nothing was re-measured.

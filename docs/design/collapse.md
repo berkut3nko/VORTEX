@@ -1,5 +1,11 @@
 # Light structural collapse ("SHRED light")
 
+[[../../../00 Docs Map|Docs map]] · [[shred|superseded by SHRED]] · [[../../ROADMAP|roadmap (M3)]]
+
+## How others solve this optimally (web survey, 2026-11-21)
+
+- See [shred.md](shred.md) § "How others solve this optimally": shipped voxel games (Teardown) do connectivity search + released rigid bodies and bake support data per prefab; per-voxel integrity values are the naive variant. M3's baked support graph per prefab is the industry-consensus cheap path.
+
 Status: design decision, nothing built. All run-time costs for new code are estimates from
 operation counts (about 5 ns per voxel flood-filled, 1-2 ns per mask operation); stage 2 contains
 the benchmark that replaces them. Claims about today's code were checked against the sources.

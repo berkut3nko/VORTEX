@@ -1,5 +1,7 @@
 # Notes: sessions (`src/net`, `src/sim/Region.cppm`, `tests/net`, `tools/server`)
 
+[[../../../00 Docs Map|Docs map]] · [[../design/networking|networking design]] · [[../ARCHITECTURE|architecture]]
+
 Read `CLAUDE.md`, `docs/ARCHITECTURE.md` 7.5 and `docs/design/networking.md` ("Stage 3 as built", "Stage 4 as
 built", "Stage 5 as built", "Stage 6 as built", "Review of stage 6", "Stage 7a plan" with its amendments, "Stage 7a as
 built", "Stage 7b plan" with its amendments, "Stage 7b as built") first; nothing from them is repeated here. Paths

@@ -1,5 +1,12 @@
 # View distance: full height, at least 2x across, voxels no more than 1.5x larger
 
+[[../../../00 Docs Map|Docs map]] · [[lod|LOD]] · [[perf|perf]] · [[../../ROADMAP|roadmap]] · [[../notes/voxel|voxel notes]]
+
+## How others solve this optimally (web survey, 2026-11-21)
+
+- Coarse voxel LOD beyond the full-resolution chunk ring is the standard pattern ("Super Chunks": render-only stepped terrain LOD built on worker threads past the visible distance, [Voxel Play 4 docs](https://kronnect.com/docs/voxel-play-4/super-chunks/)). Packed RLE columns + the region-top tables are the same idea already present as data — a distance cascade read from the pyramid tops is the natural next level (stage 5 there).
+- Sparse octrees with per-node distance LOD on a deferred pipeline ([Voxceleron2](https://voxceleron2.ayanali.net/)) and GPU-driven voxel streaming + LOD on consumer hardware ([Aokana, arXiv:2505.02017](https://arxiv.org/html/2505.02017v1)) both converge on the same policy this design uses: stream what the camera needs, coarsen the rest, load surfaces before caves.
+
 Status: **stage 1 built** (2026-11-11, see "Stage 1 as built" at the end for what differs from this text and every
 number measured); **stage 2 built** (2026-11-12, "Stage 2 as built": the voxel preview); the owner chose
 **0.125 m**; **stage 3 built** (2026-11-12, "Stage 3 as built": the engine runs at 0.125 m); stages 4-7 not started. Owner's requests (2026-11-11): render distance at least

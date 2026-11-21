@@ -1,5 +1,7 @@
 # Notes: core, math, fx, editor, build
 
+[[../../../00 Docs Map|Docs map]] · [[../ARCHITECTURE|architecture]] · [[../design/game-ui|game UI]]
+
 Maintenance notes read from the code on 2026-11-10. They add to `CLAUDE.md` and `docs/ARCHITECTURE.md`
 and do not repeat them. Paths are relative to `engine/`; `file:N` is a line number at that date.
 Every statement was re-checked against the source on the same day; nothing here was built or run while writing.

@@ -1,5 +1,7 @@
 # Notes: scene, simulation, engine loop, game (`src/scene`, `src/sim`, `src/engine`, `tests/sim`, `tests/engine`, game `src/main.cpp`)
 
+[[../../../00 Docs Map|Docs map]] · [[../ARCHITECTURE|architecture]] · [[../design/shred|shred]] · [[../design/networking|networking]]
+
 Read `CLAUDE.md` and `docs/ARCHITECTURE.md` section 7 (7.4 for the simulation) first; nothing from them is repeated
 here. Line numbers in `src/scene`, `src/sim` and `src/engine` are as of M1 stage 1 (the commit after engine `240c650`);
 `main.cpp` and test line numbers are as of game commit `ac17bcf` / engine `ec073a8`. Paths are relative to `engine/`;

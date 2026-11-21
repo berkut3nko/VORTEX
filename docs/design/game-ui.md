@@ -1,5 +1,11 @@
 # Game UI and cursor capture (design, as built)
 
+[[../../../00 Docs Map|Docs map]] · [[networking|networking (session keys)]] · [[../../../CLAUDE|CLAUDE.md keys]] · [[../notes/core-fx-editor|core/fx/editor notes]]
+
+## How others solve this optimally (web survey, 2026-11-21)
+
+- Efficient game HUDs converge on: one instanced draw for all HUD quads, a single glyph/icon atlas, and minimal interleaving of distinct textures or fonts ([draw-call optimization](https://bugnet.io/blog/optimizing-draw-calls-for-better-game-performance), [glyph-atlas text rendering, r/opengl](https://www.reddit.com/r/opengl/comments/15s4h0d/strategies_for_efficient_text_rendering/), [instancing basics, LearnOpenGL](https://learnopengl.com/advanced-opengl/instancing)). The HUD here (data-only canvas + one instanced draw after tone mapping + the 5 x 9 bitmap font + backdrop dimming in the present pass) is exactly this recipe; keeping game UI out of an immediate-mode debug GUI is the same separation everyone else enforces.
+
 Owner's request: "rework interface, make lock mouse at center on play mode (at least at wayland).
 Leave ImGui for debugging and map editor."
 

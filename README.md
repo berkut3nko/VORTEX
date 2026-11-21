@@ -5,6 +5,8 @@ A voxel engine for large, editable worlds rendered by ray marching (Vulkan 1.3, 
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - how the engine is built and the contracts between its parts
 - [docs/ROADMAP.md](docs/ROADMAP.md) - what works today and what is planned
 
+[[../00 Docs Map|Docs map]] · [[docs/design/networking|networking]] · [[docs/design/shred|shred]] · [[docs/design/worldgen|worldgen]] · [[docs/notes/voxel|voxel notes]] · [[docs/notes/net|net notes]]
+
 ## Using it from a game
 
 ```cmake

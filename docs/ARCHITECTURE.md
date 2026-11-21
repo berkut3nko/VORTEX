@@ -1,9 +1,37 @@
 # VORTEX architecture
 
+[[../../00 Docs Map|Docs map]] · [[ROADMAP|roadmap]] · [[design/networking|networking]] · [[design/shred|shred]] · [[design/view-distance|view distance]] · [[design/lod|LOD]] · [[design/fx-budget|fx budget]] · [[design/perf|perf]] · [[design/game-ui|game UI]] · [[design/worldgen|worldgen]] · [[design/collapse|collapse]] · [[notes/voxel|voxel notes]] · [[notes/net|net notes]] · [[notes/graphics|graphics notes]] · [[notes/physics|physics notes]] · [[notes/scene-engine|scene/engine notes]] · [[notes/core-fx-editor|core/fx/editor notes]]
+
 VORTEX is a voxel engine for large, fully editable worlds rendered by ray marching, in the
 spirit of Teardown's renderer, with the scale and freedom of a Minecraft-like world. This
 document is the reference for how the engine is put together and the contract its parts
 share. If code and document disagree, fix one of them.
+
+## How this build layout is done optimally elsewhere (web survey, 2026-11-21)
+
+- **GPU-free testable core, thin GPU shell.** Khronos' *Building a Simple Game Engine* architecture series splits an
+  engine into non-graphical services (state, resources, task system) with the renderer behind a narrow interface, so
+  the logic builds and runs without a device ([architecture introduction](https://docs.vulkan.org/tutorial/latest/Building_a_Simple_Engine/Engine_Architecture/01_introduction.html),
+  [architectural patterns](https://docs.vulkan.org/tutorial/latest/Building_a_Simple_Engine/Engine_Architecture/02_architectural_patterns.html)).
+  A multi-API RHI layer (Unreal's RHI thread, [parallel rendering](https://dev.epicgames.com/documentation/unreal-engine/parallel-rendering-overview-for-unreal-engine))
+  is what an engine pays when it must ship several backends; for one backend the consensus is one backend plus a
+  headless path. This engine buys the same boundary cheaper: `vortex_assert_gpu_free` / `vortex_assert_no_network`
+  enforce it when CMake configures (section 2), no abstraction layer.
+- **Vulkan setup boilerplate.** The mainstream answer is Vulkan-Hpp RAII handles ([vk::raii guide](https://github.com/KhronosGroup/Vulkan-Hpp/blob/main/docs/VkRaiiProgrammingGuide.md),
+  [RAII wrappers](https://deepwiki.com/KhronosGroup/Vulkan-Hpp/4.1-raii-wrappers)) or a bootstrapper ([vk-bootstrap](https://charles-lunarg.github.io/vk-bootstrap/), already pinned here). Both
+  trade per-handle dispatchers and error handling for less `vkCreate*`; keeping raw handles in the hot render path and
+  VMA for memory is still normal practice, so the split that matters is setup vs. per-frame recording
+  (docs/ARCHITECTURE.md "Simplification opportunities" 1 and 5).
+- **Named modules, one per directory** (interface `.cppm` + `internal/*.cpp`): matches the toolchain vendors' guidance
+  (named modules over header units once C++20 is available, [MS comparison of inclusion methods](https://learn.microsoft.com/en-us/cpp/build/compare-inclusion-methods),
+  [a practice guide](https://daniel-petrovic.github.io/blog/cpp20-modules-practical-guide/)). The trap they all name
+  is the BMI/toolchain mismatch, which is why every target here links `vortex_options`.
+- **Pinned third parties**: FetchContent at a tag with `EXCLUDE_FROM_ALL` is the standard CMake form
+  ([FetchContent](https://cmake.org/cmake/help/latest/module/FetchContent.html)); `cmake/Dependencies.cmake` follows it.
+- **One traversal source for CPU and GPU** (`shaders/shared/trace.glsl` compiled twice) is the cheap variant of the
+  "single source of truth for data layout" the Khronos series pushes; where others generate the CPU mirror from the
+  shader side with a compiler, this engine guards the mirror with a layout test (`tests/graphics/ContractTests.cpp`)
+  and a DDA reference.
 
 ## 1. Goals and non-goals
 
@@ -62,6 +90,35 @@ Vortex::Engine    engine, editor               -> all of the above, ImGuizmo
 vortex_server     tools/server                 -> Net                        (no GPU, no window)
 Shredborne (game) ../src                       -> Engine (and so Net and ENet)
 ```
+
+```mermaid
+flowchart BT
+  Core["Vortex::Core<br/><small>core math voxel fx</small>"]
+  Physics["Vortex::Physics<br/><small>physics</small>"]
+  Sim["Vortex::Sim<br/><small>scene sim</small>"]
+  Net["Vortex::Net<br/><small>net + private ENet</small>"]
+  Graphics["Vortex::Graphics<br/><small>graphics</small>"]
+  Engine["Vortex::Engine<br/><small>engine editor</small>"]
+  Server["vortex_server<br/><small>tools/server</small>"]
+  Game["Shredborne<br/><small>../src</small>"]
+  Physics --> Core
+  Sim --> Core
+  Sim --> Physics
+  Net --> Sim
+  Graphics --> Core
+  Engine --> Sim
+  Engine --> Net
+  Engine --> Graphics
+  Server --> Net
+  Game --> Engine
+  classDef gpuFree fill:#e8f3ea,stroke:#3c7a55
+  classDef gpu fill:#fdeaea,stroke:#a34b4b
+  class Core,Physics,Sim,Net,Server gpuFree
+  class Graphics,Engine,Game gpu
+```
+
+The left-hand set (green) is what `vortex_assert_gpu_free` keeps free of Vulkan, GLFW, VMA and ImGui;
+`Vortex::Graphics` and `Vortex::Engine` (red) are the only layers that ever see a device.
 
 A dedicated server or a tool links `Vortex::Net` (or less) and never sees Vulkan. This is checked
 when the build is configured: `vortex_assert_gpu_free` (`CMakeLists.txt`) walks everything that
@@ -142,6 +199,23 @@ a chunk calls `MarkDirty(slot)`; the renderer drains `TakeDirty()` once per fram
 content no ray can reach: only its RLE bytes on the CPU, no slot). Cells are stored in a toroidal array
 (`index = coord mod size`, **column-major**: `(x + z*sx) * sy + y`), so moving the window re-targets one slab of
 columns, each a contiguous run, and moves no data.
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  Unloaded --> Loading: a column job, or the RegionStore holds it
+  Loading --> Empty
+  Loading --> Uniform
+  Loading --> Dense
+  Loading --> Packed: packHidden, buried and unedited
+  Empty --> Dense: an edit materialises it
+  Uniform --> Dense: an edit materialises it
+  Dense --> Packed: hidden and unedited, focus past nearRadius + repackMargin
+  Packed --> Dense: near the focus, an edit, an edited face neighbour, EnsureResident
+  Dense --> Empty: carved out (keeps its slot until the window leaves it)
+```
+
+Packing and unpacking are never a content change (4.3 below): the same voxels hash alike in `Dense` and `Packed`.
 
 **Full-height window** (`WorldConfig::fullHeight`, the game's setting; `docs/design/view-distance.md`, stage 1).
 The window covers a fixed range of rows - `heightRange`, or the generator's `IWorldGenerator::VerticalBounds()` plus

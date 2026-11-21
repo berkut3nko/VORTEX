@@ -1,5 +1,13 @@
 # Destruction that finishes the job ("SHRED")
 
+[[../../../00 Docs Map|Docs map]] · [[../../ROADMAP|roadmap]] · [[../../ARCHITECTURE|architecture]] · [[collapse|collapse (superseded parts)]] · [[networking|networking]] · [[fx-budget|fx budget]] · [[lod|LOD]] · [[../notes/voxel|voxel notes]] · [[../notes/scene-engine|scene/engine notes]]
+
+## How others solve this optimally (web survey, 2026-11-21)
+
+- Teardown is the shipped reference for arbitrary voxel destruction: connectivity search over voxel data plus rigid bodies for released chunks, no per-voxel stress analysis, deterministic voxel physics as the engine's core asset ([engine autopsy](https://devops-geek.net/nerd-space/dissecting-the-teardown-engine-a-technical-autopsy-of-voxel-destruction-pipelines/), [Tuxedo Labs developer on destruction + multiplayer](https://80.lv/articles/teardown-developer-breaks-down-multiplayer-and-voxel-destruction-tech)).
+- A per-voxel "structural integrity" value recalculated on damage is the naive community variant ([Unity discussions thread](https://discussions.unity.com/t/want-to-recreate-teardown-destructable-voxel-physics/828648)); the cell-graph + max-flow load check here is more principled and cheaper per shot, and its integer-exactness is what a session server needs on top.
+- Where server-authoritative collapse is done at all, the consensus cheap variant is: bake support data per prefab at build time, the server releases only cells / a few large bodies, clients add local debris — the same route as collapse.md M3's baked support graph and this design's piece budgets (2 per tick, 64 awake).
+
 Status: **stages 0, 1, 1b, 1c, 1d and 1e built and reviewed** (2026-11-12, see "Stage 0-1c as built", "Stages 1d-1e
 as built" and "Review of stages 0-1e" at the end of Part 1); the owner took the recommended answers to open questions 1, 2, 3 and 7 ("Yes, build
 1-1e"). **Stage 4 built** (2026-11-12, owner's answer to question 4: yes, before networking stage 3; see "Stage 4 as

@@ -1,5 +1,7 @@
 # vortex.voxel - maintenance notes
 
+[[../../../00 Docs Map|Docs map]] · [[../ARCHITECTURE|architecture]] · [[../design/shred|shred]] · [[../design/view-distance|view distance]] · [[../design/worldgen|worldgen]]
+
 Scope: `src/voxel`, `shaders/shared`, `tests/core`. Read `CLAUDE.md` and `docs/ARCHITECTURE.md` (sections 4, 5) first;
 nothing from them is repeated here. Paths are relative to `engine/`. Every statement was checked against the code.
 Line numbers are as of engine commit `ec073a8`; if a number no longer matches, search for the symbol named next to it.

@@ -1,5 +1,12 @@
 # Frame rate on the UHD 620: what to do, in what order
 
+[[../../../00 Docs Map|Docs map]] · [[lod|LOD]] · [[view-distance|view distance]] · [[fx-budget|fx budget]] · [[shred|shred]]
+
+## How others solve this optimally (web survey, 2026-11-21)
+
+- The standard weak-GPU answer is to render well below the output resolution and reconstruct temporally: TAAU / TSR / DLSS / FSR / XeSS all work this way, TSR reaching near-native quality at roughly half the frame time ([Unreal's anti-aliasing and upscaling docs](https://dev.epicgames.com/documentation/unreal-engine/anti-aliasing-and-upscaling-in-unreal-engine)). 768x432 internal at 1280x720 output with temporal accumulation is already this pattern; the known next gain is making the last step an upscale rather than plain AA. TAA robustness state of the art: [NVIDIA RTR temporal-antialiasing survey](https://research.nvidia.com/labs/rtr/publication/yang2020survey/).
+- Draw-call discipline is the same on every integrated GPU: collapse many small quads / instances into single instanced draws, atlas what shares a texture ([draw-call optimization overview](https://bugnet.io/blog/optimizing-draw-calls-for-better-game-performance)). The HUD, particles and voxel chunk uploads here already follow it; a half-resolution depth pre-pass (roadmap cost list #2) is the other standard item these guides converge on.
+
 Status: **draft for the owner, nothing built or measured for it.** Written read-only against the working tree of
 2026-11-12 (shaders and `src/graphics` have no uncommitted changes, so their line numbers hold). Every saving is an
 estimate **(e)** unless it cites a measurement; each item names the measurement that confirms or kills it. Machine:
