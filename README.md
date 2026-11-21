@@ -38,7 +38,7 @@ Tools (`tools/`, link `Vortex::Net` only, so they build and run without a GPU or
 add_subdirectory(engine)
 add_executable(MyGame src/main.cpp)
 target_link_libraries(MyGame PRIVATE Vortex::Engine)
-vortex_deploy_assets(MyGame)        # copies compiled shaders and models next to the executable
+vortex_deploy_assets(MyGame)        # copies compiled shaders next to the executable
 ```
 
 ```cpp
@@ -86,5 +86,3 @@ a GPU). Tests are GoogleTest suites per library (`VortexCoreTests`, `VortexPhysi
 commits, build type, compiler, CPU flags: `cmake/BuildInfo.cmake`) and prints it with `--version`.
 
 API documentation: `doxygen` in this directory writes HTML to `engine/build/doxygen/html/` (untracked).
-
-MIT licensed, see [LICENSE](LICENSE).

@@ -21,6 +21,8 @@
 #include <utility>
 #include <vector>
 
+#include "../support/GltfFixture.h"
+
 import vortex.core;
 import vortex.math;
 import vortex.voxel;
@@ -975,9 +977,9 @@ TEST(EditorImport, FailuresReportAnErrorAndCreateNoPalette) {
 }
 
 TEST(EditorImport, GltfBecomesOneModelWithAPaletteFromItsMaterials) {
-    const std::filesystem::path path = std::filesystem::path(VORTEX_TEST_SOURCE_DIR) / "models" / "frank.glb";
-    std::error_code ec;
-    if (!std::filesystem::exists(path, ec)) GTEST_SKIP() << path.string() << " not present";
+    // Three boxes with three materials in one .glb made in code (tests/support/GltfFixture.h).
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "vortex_editor_boxes.glb";
+    ASSERT_TRUE(fixtures::WriteBoxesGlb(path));
 
     voxel::MaterialLibrary library;
     const uint32_t before = library.PaletteCount();
@@ -992,10 +994,10 @@ TEST(EditorImport, GltfBecomesOneModelWithAPaletteFromItsMaterials) {
     EXPECT_EQ(result.models[0].model->Palette(), result.palette);
     EXPECT_EQ(result.models[0].offset, glm::ivec3(0));
     EXPECT_GT(result.models[0].model->SolidCount(), 0u);
-    EXPECT_EQ(result.models[0].model->Name(), "frank");
+    EXPECT_EQ(result.models[0].model->Name(), "vortex_editor_boxes");   // the file's stem
     // Every voxel id of the model has an entry in the new palette.
     EXPECT_FALSE(ListMaterials(library, result.palette).empty());
-    EXPECT_FALSE(library.Name(result.palette, 1).empty());
+    for (uint8_t id = 1; id <= 3; ++id) EXPECT_FALSE(library.Name(result.palette, id).empty()) << int{id};
 
     // Too large for the limit: rejected, and no palette is left behind.
     settings.voxelsPerUnit = 200.0f;
@@ -1004,6 +1006,9 @@ TEST(EditorImport, GltfBecomesOneModelWithAPaletteFromItsMaterials) {
     EXPECT_FALSE(rejected.ok);
     EXPECT_FALSE(rejected.error.empty());
     EXPECT_EQ(library.PaletteCount(), before + 1);
+
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
 }
 
 // --- picking and entities ------------------------------------------------------------------------

@@ -8,8 +8,8 @@
 #     shared/*.glsl              code shared with C++ (CPU reference tracer)
 #     include/*.glsl             GPU-only includes
 #
-#  vortex_deploy_assets(<target>) copies the compiled shaders and the engine's
-#  models next to the executable (assets/shaders, assets/models).
+#  vortex_deploy_assets(<target>) copies the compiled shaders next to the
+#  executable (assets/shaders).
 # =============================================================================
 
 find_program(VORTEX_GLSL_COMPILER
@@ -47,9 +47,6 @@ endif()
 set(VORTEX_SHADER_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/../shaders")
 cmake_path(NORMAL_PATH VORTEX_SHADER_SOURCE_DIR)
 set(VORTEX_SHADER_OUTPUT_DIR "${CMAKE_BINARY_DIR}/vortex_assets/shaders" CACHE INTERNAL "Compiled shader directory")
-set(VORTEX_MODEL_SOURCE_DIR "${CMAKE_CURRENT_LIST_DIR}/../models")
-cmake_path(NORMAL_PATH VORTEX_MODEL_SOURCE_DIR)
-set(VORTEX_MODEL_SOURCE_DIR "${VORTEX_MODEL_SOURCE_DIR}" CACHE INTERNAL "Engine model directory")
 
 file(GLOB VORTEX_SHADER_ENTRY_POINTS CONFIGURE_DEPENDS
     "${VORTEX_SHADER_SOURCE_DIR}/*.vert"
@@ -95,8 +92,6 @@ function(vortex_deploy_assets target)
         COMMAND ${CMAKE_COMMAND} -E make_directory "${_dir}/assets/shaders"
         COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
                 "${VORTEX_SHADER_OUTPUT_DIR}" "${_dir}/assets/shaders"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory_if_different
-                "${VORTEX_MODEL_SOURCE_DIR}" "${_dir}/assets/models"
         DEPENDS VortexShaders
         COMMENT "Deploying VORTEX assets for ${target}"
         VERBATIM

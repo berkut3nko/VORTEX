@@ -1,5 +1,7 @@
 # A small flat region for the blast drill (networking.md stage 3 acceptance as a binary):
 #   vortex_server --session drill.session --drill 200 --clients 2 --loss 0.05 --delay-ms 40 --jitter-ms 30
+# A public test token, published with the engine and used by tests and gates; the live server never uses it
+# (the game's tools/install-live.sh starts it with --new-token).
 token = 7a3f19c2e4b80d5661a2c3e4f5061728
 template = empty
 seed = 4242

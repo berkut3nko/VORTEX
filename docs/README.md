@@ -43,7 +43,6 @@ Rules every document follows:
 | [notes/scene-engine.md](notes/scene-engine.md) | notes | current | `430fde0` | 50 |
 | [notes/voxel.md](notes/voxel.md) | notes | current | `430fde0` | 58 |
 | [history/](history/) | history (see "History") | append-only | - | 1286 (52 files) |
-| [../CloseIssue.md](../CloseIssue.md) | other: a git checklist for closing an issue branch | kept until the owner decides (ROADMAP "Owner decisions pending") | - | 0.3 |
 
 API reference: run `doxygen` in `engine/`; it writes HTML to `engine/build/doxygen/html/` (untracked; nothing generated is tracked).
 

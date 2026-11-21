@@ -381,6 +381,9 @@ again). Hashes never depend on the mode (`World.ContentInstallsPackHiddenChunksL
   converted (base colour factor x average of the whole texture). Only TRIANGLES with float VEC3 positions. The first
   triangle to claim a voxel wins; interior voxels take the id of the nearest solid voxel towards -X. `FillInterior`
   allocates `(size + 2)^3` bytes on top of the volume (about 270 MB together at 512^3).
+  No model file is tracked: the import tests (`MeshImport.ImportsABinaryGltfWithATexturedMaterial`,
+  `EditorImport.GltfBecomesOneModelWithAPaletteFromItsMaterials`) write a .glb made in code to the temp directory
+  (`tests/support/GltfFixture.h`: three boxes under one root, two factor materials and one 2 x 2 PNG texture).
 - `ExtractFloatingIslands` refuses regions over 192 voxels per axis and returns nothing if any chunk of the region is
   not loaded; the optional `searched` out-parameter tells a refusal from "no island" (`sim::Blast` reports it as
   `islandsSearched`, asks the world for the box with `RequestLoad` and remembers the search;

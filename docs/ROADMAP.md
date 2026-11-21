@@ -44,7 +44,7 @@ name in `engine/CMakeLists.txt`; `--validation` without the layer exits 2; Build
 the game, `vortex_server` and `vortex_bot`; a start-up CPU check (exit 4); `MakeGenerator()` before the session's
 keep-alive thread; `VORTEX_GRAPHICS=OFF` (Core, Physics, Sim, Net, the tools and their tests without Vulkan, GLFW or
 ImGui, built in a scratch directory); G4 at 170 frames (the editor smoke run reaches the import, delete and verdict).
-Not done here: stage branches and tags, pushes and `engine/CloseIssue.md` (owner decisions 1 and 7); the Windows paths
+Not done here: stage branches and tags and pushes (owner decision 1); the Windows paths
 of the CPU check and of hard `--validation` are unverified until the owner builds there; owner check 15 (the play
 bounds, windowed) not yet run. Gates on the final tree (the walls, the sixth object layer, the new filters and the
 recheck's fixes included), 2026-11-21: G1-G19 (G6 at 0.1 and 0.15 m, G10 at W = 2, 11, 12 and W = 2 at 0.1 and
@@ -54,7 +54,7 @@ G16 had corrections before WP1 too; they are the walking client's late inputs (m
 2026-11-21, from the new `Client: correction` log line); its bound is provisional. Since the recheck: check children
 close the output-folder lock (fd 6), `tools/build.sh` checks `DEPS_FROM` pins under the locks. `tools/session-check.sh`'s
 same-`Build:`-line verdict has no automated test, and G16's correction bound is read from the client logs by hand
-(WP2). Commits: fill in when it lands.
+(WP2). Commits: engine `be1a2ca`, game `0a99568`.
 
 ## Next
 
@@ -220,7 +220,7 @@ on describe today's renderer. (m) measured, (e) estimate. Where to save frame ti
 
 ## Direction
 
-Decided with the project owner on 2026-11-10; the last three rows are later owner decisions.
+Decided with the project owner on 2026-11-10; the last four rows are later owner decisions.
 
 | Topic | Decision | What it means for the engine |
 |---|---|---|
@@ -240,6 +240,7 @@ Decided with the project owner on 2026-11-10; the last three rows are later owne
 | Voxel size and view (2026-11-12) | 0.125 m voxels; the 92 m view radius is "the sweet spot" on the UHD 620: frame rate comes before more distance there. Furniture stays blocky world voxels; step height stays 0.35 m. | `voxel::kDefaultVoxelSize` = 0.125 m (view-distance.md). |
 | Fun over realism (2026-11-16) | Fun gameplay with few bugs comes before realistic, synced rubble. The replicated piece threshold stays 0.512 m^3 (a crate breaks at its first hit). | Small pieces stay each client's own rubble; realism features rank below bug fixes, frame rate and feel. |
 | Spread (2026-11-17) | Fire and liquid spread in lockstep, with no randomness; Claude implements it. | Integer rules stepped the same on every peer ([design/spread.md](design/spread.md)). |
+| Repository contents (2026-11-21) | No LICENSE files and no licence sections; no third-party model in the repository (`models/frank.glb` deleted, no replacement); the Obsidian vault stays (the game's `00 Docs Map.md`, `.obsidian/` settings, one `[[...]]` nav line per document); web surveys live only in history. | Import tests and scripts make their glTF in code (`tests/support/GltfFixture.h`); `vortex_deploy_assets` copies shaders only; nav links name current files ([README.md](README.md) rules); [history/surveys/](history/surveys/web-survey-2026-11-21.md). |
 
 ## Milestones
 
@@ -313,7 +314,8 @@ From the review, section 6.3, with the recommended answer:
    run before and after. Filled once into [owner checks](../../docs/owner-checks.md).
 6. Looks: render scale 0.5 against 0.6, the flash out of ray-traced lighting, later H1; from screenshot pairs, 0.6
    until chosen.
-7. Delete `engine/CloseIssue.md` (the owner's git cheat sheet) from the repository: not answered, so the file stays.
+7. Delete `engine/CloseIssue.md` (the owner's git cheat sheet) from the repository: answered by the owner, deleted
+   2026-11-21.
 
 ## Open questions
 

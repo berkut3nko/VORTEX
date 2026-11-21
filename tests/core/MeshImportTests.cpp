@@ -17,6 +17,8 @@
 #include <system_error>
 #include <vector>
 
+#include "../support/GltfFixture.h"
+
 import vortex.core;
 import vortex.voxel;
 
@@ -310,40 +312,40 @@ TEST(MeshImport, GltfNodeTransformsStridesIndicesAndMaterials) {
     std::filesystem::remove(path, ec);
 }
 
-TEST(MeshImport, ImportsFrank) {
-    const std::filesystem::path path = std::filesystem::path(VORTEX_TEST_SOURCE_DIR) / "models" / "frank.glb";
-    std::error_code ec;
-    if (!std::filesystem::exists(path, ec)) GTEST_SKIP() << path.string() << " not present";
+TEST(MeshImport, ImportsABinaryGltfWithATexturedMaterial) {
+    // A .glb made in code (tests/support/GltfFixture.h): three boxes under one root node, two
+    // materials with a colour factor and one with a PNG texture.
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "vortex_meshimport_boxes.glb";
+    ASSERT_TRUE(fixtures::WriteBoxesGlb(path));
 
     MeshImportSettings settings;
     settings.file = path;
-    settings.voxelsPerUnit = 6.0f;   // the model is a few units tall: a few dozen voxels
+    settings.voxelsPerUnit = 4.0f;
     settings.maxVoxelsPerAxis = 128;
     const MeshImportResult result = ImportMesh(settings);
 
     ASSERT_TRUE(result.ok) << result.error;
-    EXPECT_FALSE(result.volume.IsEmpty());
-    const glm::ivec3 size = result.volume.Size();
-    EXPECT_GT(size.x, 1);
-    EXPECT_GT(size.y, 1);
-    EXPECT_GT(size.z, 1);
-    EXPECT_LE(size.x, 128);
-    EXPECT_LE(size.y, 128);
-    EXPECT_LE(size.z, 128);
+    // Node transforms (scale, translation, the root's children) place the boxes: (0,0,0)-(3,3,2) units.
+    EXPECT_EQ(result.volume.Size(), glm::ivec3(12, 12, 8));
+    // Surface voxels that only one box reaches carry its material (glTF material i -> voxel id i + 1).
+    EXPECT_EQ(result.volume.Get(6, 0, 4), 1);    // base, bottom face
+    EXPECT_EQ(result.volume.Get(0, 8, 2), 2);    // pillar, -x face
+    EXPECT_EQ(result.volume.Get(11, 6, 6), 3);   // crate, +x face
+    EXPECT_EQ(result.volume.Get(11, 10, 6), 0);  // above the crate: air
+    for (uint8_t id : result.volume.Data()) ASSERT_LE(id, 3);
 
-    // One textured material: its colour is the texture average, a valid linear colour.
-    ASSERT_EQ(result.materials.size(), 1u);
-    const glm::vec3 color = result.materials[0].color;
-    for (int i = 0; i < 3; ++i) {
-        EXPECT_GE(color[i], 0.0f);
-        EXPECT_LE(color[i], 1.0f);
-    }
-    for (uint8_t id : result.volume.Data()) ASSERT_LE(id, 1);
+    // Three materials: two factors, and the texture's average (red, green, blue, white: 0.5 linear).
+    ASSERT_EQ(result.materials.size(), 3u);
+    for (size_t m = 0; m < 3; ++m)
+        for (int i = 0; i < 3; ++i) EXPECT_NEAR(result.materials[m].color[i], fixtures::kBoxesGlbColors[m][static_cast<size_t>(i)], 1e-5f) << m;
 
     // Filling can only add voxels.
     settings.fillInterior = false;
     const MeshImportResult hollow = ImportMesh(settings);
     ASSERT_TRUE(hollow.ok) << hollow.error;
-    EXPECT_EQ(hollow.volume.Size(), size);
-    EXPECT_LE(hollow.volume.CountSolid(), result.volume.CountSolid());
+    EXPECT_EQ(hollow.volume.Size(), result.volume.Size());
+    EXPECT_LT(hollow.volume.CountSolid(), result.volume.CountSolid());
+
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
 }
