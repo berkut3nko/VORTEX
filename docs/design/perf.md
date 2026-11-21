@@ -1,5 +1,7 @@
 # Frame rate on the UHD 620: what to do, in what order
 
+[[../../../00 Docs Map|Docs map]] · [[lod|LOD]] · [[view-distance|view distance]] · [[fx-budget|fx budget]] · [[shred|shred]]
+
 | | |
 |---|---|
 | Status | Designed, nothing built or measured for it. |

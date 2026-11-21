@@ -1,5 +1,7 @@
 # Light structural collapse ("SHRED light")
 
+[[../../../00 Docs Map|Docs map]] · [[shred|superseded by SHRED]] · [[../ROADMAP|roadmap (M3)]]
+
 | | |
 |---|---|
 | Status | Designed, nothing built from this document as written; partly superseded by [shred.md](shred.md), which built its terrain half another way ([shred-4], [shred-4b]). |

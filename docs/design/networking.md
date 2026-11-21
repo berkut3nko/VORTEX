@@ -1,5 +1,7 @@
 # Networking skeleton (M1)
 
+[[../../../00 Docs Map|Docs map]] · [[../ROADMAP|roadmap]] · [[../ARCHITECTURE|architecture]] · [[shred|shred]] · [[game-ui|game UI]] · [[../../../docs/two-pc-test-windows|two-PC test (Windows)]] · [[../notes/net|net notes]]
+
 | | |
 |---|---|
 | Status | Built and reviewed: stages 0-8 ([net-0] .. [net-8]), the M1 session protocol, server, client, chunk sync, checks, bots and soak. Stage 9 ([net-9]) not started. The detail, M1's acceptance included, is in "Stages". |

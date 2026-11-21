@@ -1,5 +1,7 @@
 # VORTEX architecture
 
+[[../../00 Docs Map|Docs map]] · [[README|docs index]] · [[ROADMAP|roadmap]] · [[design/networking|networking]] · [[design/shred|shred]] · [[design/view-distance|view distance]] · [[design/lod|LOD]] · [[design/fx-budget|fx budget]] · [[design/perf|perf]] · [[design/game-ui|game UI]] · [[design/worldgen|worldgen]] · [[design/collapse|collapse]] · [[design/fog|fog]] · [[design/mechanisms|mechanisms]] · [[design/spread|spread]] · [[design/rendezvous|rendezvous]] · [[notes/voxel|voxel notes]] · [[notes/net|net notes]] · [[notes/graphics|graphics notes]] · [[notes/physics|physics notes]] · [[notes/scene-engine|scene/engine notes]] · [[notes/core-fx-editor|core/fx/editor notes]]
+
 VORTEX is a voxel engine for large, fully editable worlds rendered by ray marching, in the
 spirit of Teardown's renderer, with the scale and freedom of a Minecraft-like world. Its game,
 Shredborne, is a session PvP prototype on a destructible world, with an offline sandbox and an
@@ -73,6 +75,40 @@ vortex_server     tools/server                 -> Net                        (no
 vortex_bot        tools/bot                    -> Net                        (no GPU, no window)
 Shredborne (game) ../src                       -> Engine (and so Net and ENet)
 ```
+
+```mermaid
+flowchart BT
+  Core["Vortex::Core<br/><small>core math voxel fx</small>"]
+  Physics["Vortex::Physics<br/><small>physics</small>"]
+  Sim["Vortex::Sim<br/><small>scene sim</small>"]
+  Net["Vortex::Net<br/><small>net + private ENet</small>"]
+  Graphics["Vortex::Graphics<br/><small>graphics</small>"]
+  Engine["Vortex::Engine<br/><small>engine editor</small>"]
+  Server["vortex_server<br/><small>tools/server</small>"]
+  Bot["vortex_bot<br/><small>tools/bot</small>"]
+  Game["Shredborne<br/><small>../src</small>"]
+  Physics --> Core
+  Sim --> Core
+  Sim --> Physics
+  Net --> Sim
+  Graphics --> Core
+  Engine --> Core
+  Engine --> Physics
+  Engine --> Sim
+  Engine --> Net
+  Engine --> Graphics
+  Server --> Net
+  Bot --> Net
+  Game --> Engine
+  classDef gpuFree fill:#e8f3ea,stroke:#3c7a55
+  classDef gpu fill:#fdeaea,stroke:#a34b4b
+  class Core,Physics,Sim,Net,Server,Bot gpuFree
+  class Graphics,Engine,Game gpu
+```
+
+The green set is GPU-free: `vortex_assert_gpu_free` checks all of it (with `vortex_enet` and the test binaries named
+below) for Vulkan, GLFW, vk-bootstrap, VMA, ImGui and ImGuizmo. `Vortex::Graphics` and `Vortex::Engine` (red) are the
+only libraries that ever see a device; the game links Engine.
 
 The graph is not a single chain. The simulation side is `Core <- Physics <- Sim <- Net`. The
 renderer stands beside it: `Vortex::Graphics` depends on `Core` only (it imports core, math, voxel
@@ -180,6 +216,27 @@ a chunk calls `MarkDirty(slot)`; the renderer drains `TakeDirty()` once per fram
 content no ray can reach: only its RLE bytes on the CPU, no slot). Cells are stored in a toroidal array
 (`index = coord mod size`, **column-major**: `(x + z*sx) * sy + y`), so moving the window re-targets one slab of
 columns, each a contiguous run, and moves no data.
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  Unloaded --> Empty: column class, sky
+  Unloaded --> Uniform: column class, rock
+  Unloaded --> Loading: a cell job (surface band, caves, a saved chunk)
+  Loading --> Empty
+  Loading --> Uniform
+  Loading --> Dense
+  Loading --> Packed: packHidden, buried, unedited, not from a save
+  Empty --> Dense: an edit materialises it
+  Uniform --> Dense: an edit materialises it
+  Dense --> Packed: hidden and unedited, focus past nearRadius + repackMargin
+  Packed --> Dense: near the focus, an edit, an edited face neighbour, EnsureResident
+```
+
+A carved-out chunk stays `Dense` and keeps its slot. Not drawn: every cell returns to `Unloaded` when the window
+leaves it, and a session's `World::SetChunkEncoded` (chunk sync, 7.5) installs any kind over any cell, releasing a slot
+it no longer needs. Packing and unpacking are never a content change (**Packed** below): the same voxels hash alike in
+`Dense` and `Packed`.
 
 **Full-height window** (`WorldConfig::fullHeight`, the game's setting; `docs/design/view-distance.md`, stage 1).
 The window covers a fixed range of rows - `heightRange`, or the generator's `IWorldGenerator::VerticalBounds()` plus

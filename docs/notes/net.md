@@ -1,5 +1,7 @@
 # Notes: sessions (`src/net`, `src/sim/Region.cppm`, `tests/net`, `tools/server`, `tools/bot`)
 
+[[../../../00 Docs Map|Docs map]] · [[../design/networking|networking design]] · [[../ARCHITECTURE|architecture]]
+
 Checked against engine `430fde0`.
 
 Read `CLAUDE.md`, `docs/ARCHITECTURE.md` 7.5 and `docs/design/networking.md` first; nothing from them is repeated

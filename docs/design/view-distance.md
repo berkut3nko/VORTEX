@@ -1,5 +1,7 @@
 # View distance: full height, at least 2x across, voxels no more than 1.5x larger
 
+[[../../../00 Docs Map|Docs map]] · [[lod|LOD]] · [[perf|perf]] · [[../ROADMAP|roadmap]] · [[../notes/voxel|voxel notes]]
+
 | | |
 |---|---|
 | Status | Partly built: stages 1-3 (full-height window, 0.125 m voxels, 92 m offline view radius) built and reviewed; stages 4-7 (distance budgets, exact visibility, LOD levels, presets) not started. |

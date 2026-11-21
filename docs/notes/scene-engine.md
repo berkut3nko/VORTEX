@@ -1,5 +1,7 @@
 # Notes: scene, simulation, engine loop, game (`src/scene`, `src/sim`, `src/engine`, `tests/sim`, `tests/engine`, game `src/main.cpp`)
 
+[[../../../00 Docs Map|Docs map]] · [[../ARCHITECTURE|architecture]] · [[../design/shred|shred]] · [[../design/networking|networking]]
+
 Checked against engine `430fde0`.
 
 Read `CLAUDE.md` and `docs/ARCHITECTURE.md` section 7 (7.4 for the simulation) first; nothing from them is repeated

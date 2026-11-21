@@ -12,6 +12,8 @@ Rules every document follows:
 - Current text cites code by file and symbol, never by line number. Unbuilt designs keep their `file:line` references
   and name the commit they were read at.
 - Never rename a heading or a numbered item that code cites (see "Anchors cited from code").
+- Current documents carry one Obsidian navigation line (`[[...]]` wiki links, relative to the file) under the title;
+  the vault's map is the game repository's `00 Docs Map.md`. A link there names a current file, never a history one.
 
 ## Documents
 
@@ -40,7 +42,7 @@ Rules every document follows:
 | [notes/physics.md](notes/physics.md) | notes | current | `430fde0` | 31 |
 | [notes/scene-engine.md](notes/scene-engine.md) | notes | current | `430fde0` | 50 |
 | [notes/voxel.md](notes/voxel.md) | notes | current | `430fde0` | 58 |
-| [history/](history/) | history (see "History") | append-only | - | 1269 (51 files) |
+| [history/](history/) | history (see "History") | append-only | - | 1286 (52 files) |
 | [../CloseIssue.md](../CloseIssue.md) | other: a git checklist for closing an issue branch | kept until the owner decides (ROADMAP "Owner decisions pending") | - | 0.3 |
 
 API reference: run `doxygen` in `engine/`; it writes HTML to `engine/build/doxygen/html/` (untracked; nothing generated is tracked).
@@ -281,6 +283,7 @@ header and the original of every section that was kept but changed in the WP3 re
 | [worldgen/before-rewrite-2026-11-18.md](history/worldgen/before-rewrite-2026-11-18.md) | design/worldgen.md | 1-12, 162-175 |
 | [worldgen/how-it-was-chosen-2026-11-17.md](history/worldgen/how-it-was-chosen-2026-11-17.md) | design/worldgen.md "How it was chosen" | 89-130 |
 | [rendezvous/design-review-2026-11-19.md](history/rendezvous/design-review-2026-11-19.md) | written with design/rendezvous.md (engine `84ac7e7`), not moved: the review's and the recheck's findings | - |
+| [surveys/web-survey-2026-11-21.md](history/surveys/web-survey-2026-11-21.md) | the "(web survey, 2026-11-21)" sections the owner added in engine `4f7c3fe` (merged 2026-11-21) to ARCHITECTURE.md, ROADMAP.md and design/networking, shred, collapse, view-distance, lod, fx-budget, perf, game-ui, worldgen.md; with a note on the claims an audit found false or unverifiable | lines at `4f7c3fe`: ARCHITECTURE 10-34, ROADMAP 8-26, each design document 5-7 to 5-9 |
 
 The game repository keeps its own history in `docs/history/` (game commit `6151db6`): the WP3 rewrite plan
 (`REWRITE-PLAN.md`), the CLAUDE.md snapshot and its rule mapping (`claude-md/CLAUDE-2026-11-18.md`,

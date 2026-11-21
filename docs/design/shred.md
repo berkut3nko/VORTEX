@@ -1,5 +1,7 @@
 # Destruction that finishes the job ("SHRED")
 
+[[../../../00 Docs Map|Docs map]] · [[../ROADMAP|roadmap]] · [[../ARCHITECTURE|architecture]] · [[collapse|collapse (superseded parts)]] · [[networking|networking]] · [[fx-budget|fx budget]] · [[lod|LOD]] · [[../notes/voxel|voxel notes]] · [[../notes/scene-engine|scene/engine notes]]
+
 | | |
 |---|---|
 | Status | Partly built. Built and reviewed: the face flood and the rubble budget ([shred-0] .. [shred-1e]), the cell-graph island search [shred-4] and the load check [shred-4b]. Designed, nothing built: the structural integrity plan [si-1] .. [si-3]. Not started: [shred-2], [shred-3], [shred-4c], [shred-7]. Superseded by the SI plan: [shred-5], [shred-6]. Detail in "Stages". |

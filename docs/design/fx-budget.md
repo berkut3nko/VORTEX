@@ -1,5 +1,7 @@
 # Effects that stay fast in fights
 
+[[../../../00 Docs Map|Docs map]] · [[shred|shred]] · [[lod|LOD]] · [[perf|perf]] · [[../notes/graphics|graphics notes]]
+
 | | |
 |---|---|
 | Status | Designed, nothing built or measured for it (no `FxDirector`, no `--stress-fx`). Some defects it lists were fixed by other work: rubble lifetimes by size and caps (shred.md stage 1e: `scene::SceneConfig` `debrisLifetime`, `rubbleMediumLifetime`, `rubbleLargeLifetime`, `maxDebris`, `maxRubbleBodies`), crumbs as particles instead of entities (`scene::MinPieceVoxels`, 8 voxels at 0.125 m), the island search on cached cell graphs (shred.md stage 4). |

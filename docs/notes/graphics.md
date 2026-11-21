@@ -1,5 +1,7 @@
 # Graphics module notes (`vortex.graphics`)
 
+[[../../../00 Docs Map|Docs map]] · [[../ARCHITECTURE|architecture]] · [[../design/fx-budget|fx budget]] · [[../design/perf|perf]]
+
 Checked against engine `430fde0`.
 
 Read `CLAUDE.md` and `docs/ARCHITECTURE.md` section 5 first; this file only adds what they do not say. Paths are

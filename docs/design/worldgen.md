@@ -1,5 +1,7 @@
 # World generation: regions built from structures
 
+[[../../../00 Docs Map|Docs map]] · [[../ROADMAP|roadmap (M4)]] · [[../../../docs/world/setting|setting and story]] · [[../notes/voxel|voxel notes]]
+
 | | |
 |---|---|
 | Status | Designed, nothing built or measured for it. |

@@ -1,5 +1,7 @@
 # Game UI and cursor capture (design, as built)
 
+[[../../../00 Docs Map|Docs map]] · [[networking|networking (session keys)]] · [[../../../README#Controls|game README controls]] · [[../notes/core-fx-editor|core/fx/editor notes]]
+
 | | |
 |---|---|
 | Status | Built. Sections marked **Deviation** say where the build differs from the first version of this design and why. Windowed behaviour (pointer lock on Wayland / X11, focus, menu clicks, the ImGui overlay with Alt) is confirmed only by the owner: headless runs cannot exercise it. The checks and their results are in the game's [docs/owner-checks.md](../../../docs/owner-checks.md). |

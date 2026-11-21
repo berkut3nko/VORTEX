@@ -7,6 +7,8 @@ simulation and a session protocol for destructible multiplayer worlds.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - how the engine is built and the contracts between its parts
 - [docs/ROADMAP.md](docs/ROADMAP.md) - what works today, what comes next, measured numbers
 
+[[../00 Docs Map|Docs map]] · [[docs/README|docs index]] · [[docs/design/networking|networking]] · [[docs/design/shred|shred]] · [[docs/design/worldgen|worldgen]] · [[docs/notes/voxel|voxel notes]] · [[docs/notes/net|net notes]]
+
 ## Libraries
 
 | Library | Modules | Links | GPU / window |

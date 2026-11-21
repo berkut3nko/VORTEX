@@ -1,5 +1,7 @@
 # Level of detail for distant terrain and objects
 
+[[../../../00 Docs Map|Docs map]] · [[view-distance|view distance (rebase)]] · [[perf|perf]] · [[shred|shred (debris fix)]] · [[fx-budget|fx budget]]
+
 | | |
 |---|---|
 | Status | Designed, nothing built or measured for it. |

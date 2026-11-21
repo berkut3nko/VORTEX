@@ -1,5 +1,7 @@
 # VORTEX roadmap
 
+[[../../00 Docs Map|Docs map]] · [[README|docs index]] · [[ARCHITECTURE|VORTEX architecture]]
+
 What to build next, what exists today, what it costs, and what the owner decided. It is the one home of the
 milestone state, the work queue, the test count and the measured reference values. Per-stage state lives in each
 design document's "Stages" table; [ARCHITECTURE.md](ARCHITECTURE.md) says how the pieces fit. History (stage logs,
@@ -159,7 +161,7 @@ never been measured.
 
 ## State
 
-Tests: **738** in ctest: 735 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
+Tests: **742** in ctest: 739 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
 game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts) and `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
 none needing a GPU (the ENet and relay ones use UDP on 127.0.0.1). The owner's windowed checks and their results: [owner checks](../../docs/owner-checks.md).
 

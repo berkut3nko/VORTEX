@@ -1,5 +1,7 @@
 # Notes: core, math, fx, editor, build
 
+[[../../../00 Docs Map|Docs map]] · [[../ARCHITECTURE|architecture]] · [[../design/game-ui|game UI]]
+
 Checked against engine `430fde0`.
 
 These notes add to `CLAUDE.md` and `docs/ARCHITECTURE.md` and do not repeat them. Paths are relative to `engine/`.
