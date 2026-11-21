@@ -249,7 +249,8 @@ Today every material breaks into the same 4 + 2 debris and 1 + 1 dust per burst,
   the distance threshold moves into `PresentBlast` / `PresentOps` and decides only whether a `netId 0` piece becomes
   a rubble body, fractured pieces or particles. lod.md stage 1 is changed to match in stage 3's commit; the
   particle / body savings are counted in fx-budget.md only, not again in lod.md or here.
-- **Material-dependent carve on the wire** (`WorldOpKind::ShredSphere = 7`, after networking stage 3): sphere,
+- **Material-dependent carve on the wire** (`WorldOpKind::ShredSphere`, provisionally 7; it takes the next free value
+  from [notes/net.md](../notes/net.md) section 2 when it lands, magic.md amendment 4; after networking stage 3): sphere,
   power, `falloff u8`, `seed u16` (about 20 B); a voxel goes when
 
   ```
@@ -263,8 +264,8 @@ Today every material breaks into the same 4 + 2 debris and 1 + 1 dust per burst,
   (voxel for voxel against `CarveSphereQ`), `ShredNoise.GoldenValues`. `Carve = 1` stays for tools and the editor.
   The same integer rule replaces the float sphere in `Scene::Damage`.
 - **Server-side fracture** (with networking stage 6): the server fractures released pieces and emits one `Detach`
-  per piece. A `DetachFractured = 8` op (mask + seed + params, clients recompute the partition) is an optimisation
-  only after the golden test of `Fracture` exists.
+  per piece. A `DetachFractured` op (provisionally 8, from the registry when it lands; mask + seed + params, clients
+  recompute the partition) is an optimisation only after the golden test of `Fracture` exists.
 
 ## Part 4 - Structural updates after destruction
 

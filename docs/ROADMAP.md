@@ -77,21 +77,34 @@ In this order:
 7. **[wp-8] Fight measurement + fx-budget 1-2 + 10 clients.** Fights stay playable on the UHD 620: `--stress-fx`, a
    10-bot session at 10 casts/s with measured clients, then [design/fx-budget.md](design/fx-budget.md) stages 1-2.
    5-8 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP8".
-8. **[mech-1] Door and gate.** E opens doors, a lever runs a gate, crates move to Q.
-   [design/mechanisms.md](design/mechanisms.md), "Stages" row 1. Its own protocol bump, after M2a's; after WP8 so its
-   yard is measured inside a known fight budget. 9-10 d (e).
-9. **[si-2] Impacts with crush damage** (with the `NeckCheck` split and a chunk-source interface first). A falling
-   tower cracks walls and kills. [design/shred.md](design/shred.md), "SI-2 - impacts (inertial contact)". 7-11 d (e).
-10. **[fog-1] Fog stage 1.** Haze toward the sun, low mist and blast dust puffs, without losing frame rate.
+8. **[mag-1] Siege core in sim, headless only.** The spell system's first four spells, Siege Cannon, Barricade Wave,
+   Shockwave and Updraft (breach, cover, knock off, climb), with only what they use: the Pierce operator, the Burst
+   strip, Plume's single column, `CarveCapsule` / `MapMask` / `MapShape` as sim ops, knit iron that blasts chip, with
+   server-scheduled expiries, the spawn guard, Impulse and Lift zones in `sim::StepPlayer` (`kPlayerRuleRevision` 2);
+   no wire change. [design/magic.md](design/magic.md), "Stages". 6-9 d (e).
+9. **[mag-2] First playable spells.** The same four spells in offline practice and in sessions: the one magic
+   protocol bump (it reserves every value the later magic stages need), zone events with a 0.4 s lead, the spell bar
+   and the attune menu on the HUD; the owner's Felling-duel taste check. [design/magic.md](design/magic.md), "Stages".
+   6-9 d (e).
+10. **[mech-1] Door and gate.** E opens doors, a lever runs a gate, crates move to Q.
+    [design/mechanisms.md](design/mechanisms.md), "Stages" row 1. Its own protocol bump, after [mag-2]'s; after WP8 so
+    its yard is measured inside a known fight budget. 9-10 d (e).
+11. **[si-2] Impacts with crush damage** (with the `NeckCheck` split and a chunk-source interface first). A falling
+    tower cracks walls and kills. [design/shred.md](design/shred.md), "SI-2 - impacts (inertial contact)". 7-11 d (e).
+12. **[fog-1] Fog stage 1.** Haze toward the sun, low mist and blast dust puffs, without losing frame rate.
     [design/fog.md](design/fog.md), "Stages" 1. About 4 d (e).
-11. **[spread-S1] Fire offline.** A burning house that falls, offline only, no wire change (its smoke feeds fog later).
+13. **[spread-S1] Fire offline.** A burning house that falls, offline only, no wire change (its smoke feeds fog later).
     [design/spread.md](design/spread.md), "Stages" S1. Large (e).
-12. **[wg-W1] Stamped village.** The first real map, with towers worth felling. Soak tier (nightly) first.
+14. **[wg-W1] Stamped village.** The first real map, with towers worth felling. Soak tier (nightly) first.
     [design/worldgen.md](design/worldgen.md), "W1: a stamped village, offline". About 1.5 weeks (e).
 
 Placement of [mech-1] and [spread-S1] was decided by us under the owner's rules; the owner may veto it. Mechanisms
-change the E key and add a `PlayerButton`, so they take the protocol number after M2a's; spread S1 has no wire change,
-so it fits after fog stage 1; spread S2 bumps the protocol and goes to Later.
+change the E key and add a `PlayerButton`, so they take the protocol number after M2a's (and, since 2026-11-21, after
+[mag-2]'s); spread S1 has no wire change, so it fits after fog stage 1; spread S2 bumps the protocol and goes to Later.
+[mag-1] and [mag-2] go right after [wp-8] and before [mech-1] (magic.md "ROADMAP placement", us, 2026-11-21): spells
+are M2b's main verb and the game's fun first, and they need M2a's health, teams and charges, WP6's rules seam and
+[wp-8]'s fight baseline. This moves [mech-1] and everything after it two places down; **the owner may veto the
+reorder.**
 [nat-R0] and [nat-R1] go right after [wp-2] (rendezvous.md "Placement", us, the owner may veto): no wire change, and
 internet play lets testers outside the house try every later stage, M2a's first fight above all.
 
@@ -102,6 +115,11 @@ golden-test output; about 30 owner-minutes), a `windows-clang64` preset, `.gitat
 ## Later
 
 In rough order:
+- The rest of magic ([design/magic.md](design/magic.md), "Stages"; it follows [mag-2] and [si-2], not W1): [mag-3]
+  Frost and the Shatter combo (Shatter Spike, Flash Freeze, Permafrost Climb) right after [mag-2], [mag-4] Flow,
+  climbing and the rest of Metal (Molten Pour, Rising Spire, Rebar Lance, Glacier Slide) after [mag-3], [mag-7]
+  Crushing Weight after [si-2] and [mag-4], [mag-5] Thermal (after [spread-S1] headless, [spread-S2] / [spread-S3]
+  for play), [mag-6] presentation and tuning. None needs spread S4.
 - [si-1] objects break under their own weight and [si-3] re-checks away from casts, after W1 (shred.md SI plan).
 - [mech-2]..[mech-4] ropes, siege kit, placement (mechanisms.md); [spread-S2]..[spread-S6] fire in a session (a
   protocol bump), collapse from fire, liquid, presentation, tuning (spread.md).
@@ -109,7 +127,7 @@ In rough order:
   (perf.md).
 - Audio first pass (presentation only); rigid-part characters with procedural animation and team colours (3-5 d (e)
   each, may slot between packages).
-- [shred-2] / [shred-3] crumble profiles and fracture (shred.md); M2b spells; [net-9] the on-demand server world and
+- [shred-2] / [shred-3] crumble profiles and fracture (shred.md); M2b's characters and training dummy; [net-9] the on-demand server world and
   1 km zones (behind M2, owner decision of 2026-11-11); [vd-5] exact visibility flood (memory); M6 ([vd-6] / [vd-7]
   LOD levels and presets, Windows and CI); M7.
 
@@ -220,7 +238,7 @@ on describe today's renderer. (m) measured, (e) estimate. Where to save frame ti
 
 ## Direction
 
-Decided with the project owner on 2026-11-10; the last four rows are later owner decisions.
+Decided with the project owner on 2026-11-10; the last five rows are later owner decisions.
 
 | Topic | Decision | What it means for the engine |
 |---|---|---|
@@ -240,6 +258,7 @@ Decided with the project owner on 2026-11-10; the last four rows are later owner
 | Voxel size and view (2026-11-12) | 0.125 m voxels; the 92 m view radius is "the sweet spot" on the UHD 620: frame rate comes before more distance there. Furniture stays blocky world voxels; step height stays 0.35 m. | `voxel::kDefaultVoxelSize` = 0.125 m (view-distance.md). |
 | Fun over realism (2026-11-16) | Fun gameplay with few bugs comes before realistic, synced rubble. The replicated piece threshold stays 0.512 m^3 (a crate breaks at its first hit). | Small pieces stay each client's own rubble; realism features rank below bug fixes, frame rate and feel. |
 | Spread (2026-11-17) | Fire and liquid spread in lockstep, with no randomness; Claude implements it. | Integer rules stepped the same on every peer ([design/spread.md](design/spread.md)). |
+| Magic spells (2026-11-21) | Every spell is a cast type (Liquid, Flame, Solid, Torrent) x an element (Metal, Thermal, Pressure, Frost, the owner's recommended 4th): 16 named siege spells with their tactical roles ([owner's concept](history/magic/owner-concept-2026-11-21.md)). | Four integer form operators (Flow, Plume, Pierce, Burst) x four element tables, no per-spell code; reach solved on the server and sent as ops; conjured matter is terrain with server-scheduled expiries; movement effects are zones announced ahead ([design/magic.md](design/magic.md)). |
 | Repository contents (2026-11-21) | No LICENSE files and no licence sections; no third-party model in the repository (`models/frank.glb` deleted, no replacement); the Obsidian vault stays (the game's `00 Docs Map.md`, `.obsidian/` settings, one `[[...]]` nav line per document); web surveys live only in history. | Import tests and scripts make their glTF in code (`tests/support/GltfFixture.h`); `vortex_deploy_assets` copies shaders only; nav links name current files ([README.md](README.md) rules); [history/surveys/](history/surveys/web-survey-2026-11-21.md). |
 
 ## Milestones
@@ -263,9 +282,11 @@ for 1 km zones) moved behind M2 by the owner (2026-11-11). Stage log: [history/r
   60 fps on a GTX 1650 and does not fall below the idle frame rate by more than a fixed margin on the UHD 620; server
   tick p99 under 16.7 ms. LOD stage 1 ([design/lod.md](design/lod.md): distance budgets for lighting, shadow casters,
   debris and particles) is frame-rate block B.
-- **M2b**: spell framework (data-driven casts - projectile, beam, area - producing world operations, damage,
-  impulses and effects; lag-compensated hits); conjured matter (temporary walls and medium objects with a lifetime,
-  climbable, usable as cover); characters from rigid voxel parts with skeletal animation, a training dummy.
+- **M2b**: spell framework (data-driven casts - the four forms Flow, Plume, Pierce and Burst - producing world
+  operations, zones, damage, impulses and effects; lag-compensated hits); conjured matter (temporary walls and
+  medium objects with a lifetime, climbable, usable as cover): [design/magic.md](design/magic.md) [mag-1], [mag-2] and
+  [mag-4];
+  characters from rigid voxel parts with skeletal animation, a training dummy.
 
 ### M3 - Collapse of buildings
 Built: the cell graph per terrain chunk ([shred-4]) and the load check ([shred-4b]): terrain that its bonds cannot
@@ -285,8 +306,11 @@ types (arena about 250 m, zone about 1 km) with player caps, spawn points and be
 prefabs and rules, not at painting maps. Mechanisms stages 3-4 (siege kit; gates placed in W3 forts) belong here.
 
 ### M5 - Magic that changes the world
-Moving matter (telekinesis, thrown pieces), material changes (freeze, melt, petrify), spreading fire and liquid
-([design/spread.md](design/spread.md): lockstep integer rules, no randomness, Claude implements it; S1-S6).
+The owner's 16 siege spells, four cast types x four elements ([design/magic.md](design/magic.md): integer form
+operators and element tables, conjured matter with server-scheduled expiries, zones in the movement rule; the first
+slice [mag-1] / [mag-2] comes early, in M2b; Frost [mag-3] and Thermal [mag-5] deliver this milestone's material
+changes). Moving matter (telekinesis, thrown pieces), material changes (freeze, melt, petrify), spreading fire and
+liquid ([design/spread.md](design/spread.md): lockstep integer rules, no randomness, Claude implements it; S1-S6).
 Summoning, which starts the PvE track: enemy AI and navigation on destructible ground.
 
 ### M6 - Reach and platforms
@@ -323,9 +347,11 @@ Settled by the recommended answer when their stage starts (owner's standing rule
 - Player caps per region type (M1 is accepted on a 250 m arena; owner answers in networking.md "Owner decisions").
 - Regrowth rules: what regrows, how fast, visible or only when unobserved.
 - How much the client is trusted (anti-cheat depth) for PvP.
-- The largest conjured object, and the limit of conjured matter per player.
+- The largest conjured object, and the limit of conjured matter per player: for spells settled in
+  [design/magic.md](design/magic.md) (6 000 live conjured voxels per player, 60 000 per region); conjured objects
+  (bodies) stay open.
 - Per design: [shred.md](design/shred.md) (both "Open questions" sections), [fog.md](design/fog.md),
-  [mechanisms.md](design/mechanisms.md), [spread.md](design/spread.md), [worldgen.md](design/worldgen.md),
+  [mechanisms.md](design/mechanisms.md), [spread.md](design/spread.md), [magic.md](design/magic.md), [worldgen.md](design/worldgen.md),
   [lod.md](design/lod.md), [fx-budget.md](design/fx-budget.md), [collapse.md](design/collapse.md) ("Open questions
   for the game"), [perf.md](design/perf.md) (settled by us in review 6.2), and the game's
   [setting.md](../../docs/world/setting.md) section 11.

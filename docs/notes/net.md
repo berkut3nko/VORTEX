@@ -107,7 +107,16 @@ Wire values (CLAUDE.md lists the names; the numbers are here, `WireTests.cpp` an
 them). Change any byte of a message or an event -> bump `kProtocolVersion`. Retired values are never reused.
 - **Event kinds** (`EventKind`, the first byte of an event): 1-6 = `sim::WorldOpKind` (1 `CarveSphere`, 2
   `FillSphere`, 3 `SwapSphere`, 4 `FillBox`, 5 `Detach`, 6 `ClearMask`), 32 `EntitySpawn`, 33 `EntityDespawn`, 34
-  `EntityRest`, 35 `ObjectModel`, 36 `EntityWake` [net-6]. A new `WorldOpKind` takes 7, a new entity event 37.
+  `EntityRest`, 35 `ObjectModel`, 36 `EntityWake` [net-6]. A new `WorldOpKind` takes the next free value (7 today),
+  a new event the next free one after 36.
+- **This list is the registry** (magic.md amendment 4, 2026-11-21): every new `WorldOpKind`, event kind, message type,
+  refusal, rejection, template, generator and `PlayerButton` value takes the **next free value when it lands** and is
+  added here in the same commit. Numbers written in a design (spread.md, shred.md Part 3, mechanisms.md, magic.md) are
+  provisional until then. On the ROADMAP order of 2026-11-21 that gives magic's `MapShape` 7, `MapMask` 8,
+  `CarveCapsule` 9, `ZoneStart` 37, `ZoneCancel` 38, `CastFx` 39, then mechanisms' `MechanismMove` 40 and `RopeCut` 41,
+  then spread's `SpreadStep` 10 (its `IgniteSphere` / `DouseSphere` become `MapShape` maps). **One exception**,
+  reserved now: `PlayerButton_Spell = 32`, so mechanisms' `PlayerButton_Use = 16` keeps its value whichever lands
+  first (unless M2a builds a generic action-slot bit that carries the spell edge).
 - **Message types** (`MessageType`): 1 `Hello`, 2 `Welcome`, 3 `Refuse`, 4 `EventBatch`, (5 retired: `ServerStatus`),
   6 `Inputs`, 7 `Snapshot`; [net-7a] chunk sync 8 `WindowUpdate`, 9 `WindowAck`, 10 `ChunkData`, 11 `ChunkRequest`,
   12 `ModelRequest`, 13 `BaselineEntity`, 14 `BaselineEnd`, 15 `BaselineNear`; [net-7b] checks and terrain mode 16
@@ -562,7 +571,7 @@ Regions, templates and tests
   field in `PlayerInput` (and `kInputBytes`), its radius / power in the tuning, `kProtocolVersion` + 1, and a
   `Movement.*` test that a late cast of it is judged at its tick.
 - New player rule (crouch, sprint, a second jump): `sim::StepPlayer` and `PlayerTuning` (+ `WritePlayerTuning` /
-  `ReadPlayerTuning`, `sim::IsValid`), a button in `PlayerButton` if it needs one (wire format, next free bit 16),
+  `ReadPlayerTuning`, `sim::IsValid`), a button in `PlayerButton` if it needs one (wire format, next free bit 16; 32 is reserved for magic's Spell edge),
   `kProtocolVersion` + 1 (or, with no byte changed, only `sim::kPlayerRuleRevision` + 1), a `Player.*` test, then `Movement.NoCorrectionAbove2cmOnFlatGround` must still see 0
   corrections.
 - New event kind: value in `EventKind` (or a new `WorldOpKind` 7+), `WriteEvent` / `ReadEvent`, a size line in
