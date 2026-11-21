@@ -269,7 +269,8 @@ F. Change temporal accumulation or the checkerboard
   `ProxyCube`, `ReverseZ`, `ShaderReflection`, `SpirvFile`, `Pipeline` (`VortexGraphicsTests`, no GPU; they read the
   compiled `.spv` from `VORTEX_TEST_SHADER_DIR`, so a shader that does not compile fails the build first).
 - Gates G3 and G4 (both headless runs with `--validation`; exit code 2 = validation errors, counted by
-  `Device::ValidationErrorCount`). Search the log for `Vulkan:`, `Renderer:` and `Pipeline '` error lines; a pass
+  `Device::ValidationErrorCount`, or no validation layer: `graphics::DecideValidation` fails the start,
+  `Device::ValidationMissing`, `Validation.ARequestWithoutTheLayerFailsStartUp`). Search the log for `Vulkan:`, `Renderer:` and `Pipeline '` error lines; a pass
   that silently went missing shows up as `declares binding ... which the renderer does not provide` or `could not grow buffer`.
 - Start-up line `Renderer: headless mode, output WxH, render WxH, N chunk slots, X MiB GPU memory` (`Initialize`)
   confirms sizes; `Screenshot saved: file (WxH)` confirms the readback.

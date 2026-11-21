@@ -1,7 +1,7 @@
 // vortex_server: the session server of docs/design/networking.md (stages 3-6).
 //
 //   vortex_server --session <file> [--listen [PORT]] [--bind ADDR] [--token HEX | --new-token]
-//                 [--seconds S] [--exit-when-empty] [--parent-pid PID]
+//                 [--seconds S] [--exit-when-empty] [--parent-pid PID] [--version]
 //                 [--ticks N] [--drill N] [--clients N] [--enet] [--join-step K]
 //                 [--loss P] [--delay-ms D] [--jitter-ms J] [--outage-ms A,B] [--threads T]
 //                 [--stand] [--no-jumps] [--bot-casts N] [--bot-crates N] [--realtime] [--hash-out <file>]
@@ -172,8 +172,14 @@ namespace {
 }
 
 int main(int argc, char** argv) {
-    Log::Init();
     const CommandLine args(argc, argv);
+    // --version (WP1): which build this is, before anything else starts (tools/install-live.sh never runs it).
+    if (args.Has("--version")) {
+        std::printf("vortex_server %s\n", DescribeBuild().c_str());
+        return 0;
+    }
+    Log::Init();
+    Log::Info("Build: {}", DescribeBuild());
     const std::optional<std::string> sessionPath = args.Get("--session");
     if (!sessionPath) {
         std::fprintf(stderr, "usage: vortex_server --session <file> [--listen [PORT]] [--bind ADDR] [--seconds S] [--exit-when-empty] "

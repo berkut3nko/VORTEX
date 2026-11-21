@@ -629,7 +629,9 @@ and Dynamic, on the server and every client, with `PhysicsConfig::characterMoves
 nor weighs on a body, which is an obstacle and a floor to it). `Layer::Rubble` (networking stage 6) collides with
 Static, Dynamic and itself, never with Debris or a character: a session client's own large rubble, its copies of server
 bodies while they move, and a server's bodies while they move are in it, so nothing that moves differently on the two
-sides blocks a player; at rest a replicated body is in `Layer::Dynamic` on both sides (`PhysicsWorld::SetLayer`). A
+sides blocks a player; at rest a replicated body is in `Layer::Dynamic` on both sides (`PhysicsWorld::SetLayer`).
+`Layer::Bounds` holds the walls of `PhysicsWorld::SetCharacterWalls` (a session's play bounds, WP1): every character
+meets them, no body and no ray does. A
 client's copy is kinematic and follows its snapshot samples with `PhysicsWorld::MoveKinematic`. A session also calls `TerrainColliders::FlushBox(box)` before every player step: the chunks of the box
 whose newest content is not installed are cooked on the calling thread at once, so a step meets colliders that follow
 the edits applied, not the moment a worker finished.
@@ -1138,9 +1140,11 @@ the tests. The wire values (message types, event kinds, refusals, enums) and
   `World::ShowServerHiddenNeighbours`). From then on it is chunk sync as above. The price is the
   join (m): 16 MiB on the playground's 30 x 44 x 30 window, 40 MiB for the game's 48 x 44 x 48
   window on the 250 m arena and 0.8 MiB per two-chunk window step there, paced by the bulk window.
-* **Players** `[net-4]`. `sim::StepPlayer(physics, terrain, character, state, input, tuning, dt)` is the one
+* **Players** `[net-4]`. `sim::StepPlayer(physics, terrain, character, state, input, tuning, area, dt)` is the one
   movement rule (server, predicting client, offline game): integer inputs (`PlayerInput`: move axes, yaw, pitch,
-  button levels), edges derived from the levels before, a cooldown, the `HasCollider` gate. A client sends the inputs
+  button levels), edges derived from the levels before, a cooldown, the `HasCollider` gate, and in a session the play
+  area (`sim::PlayAreaOf`: the feet stop at the play bounds less the radius, against walls only characters meet,
+  `sim::SetPlayAreaWalls`; offline unbounded; networking.md "Player movement"). A client sends the inputs
   the server has not acknowledged (at most 8, 30 Hz) on the state channel; the server queues them on receive, 16
   ticks ahead, repeats the last movement for a missing input and captures a cast edge as {eye, look, input tick,
   loadout} - a late one judged at its own tick from a ring of the player's states - and casts its ray when the cast
@@ -1200,7 +1204,9 @@ the tests. The wire values (message types, event kinds, refusals, enums) and
   bot and a headless game client, and compares their hashes and objects at exit.
 * **Agreement.** `net::RegionHash` is `voxel::WorldHash` over the region window; probe chunks in `Welcome` compare
   the generators; `buildHash` covers the protocol version, the generator's golden values
-  (`voxel::kGeneratorGoldenHash`) and the material table (`voxel::MaterialTableHash`), so another build is refused.
+  (`voxel::kGeneratorGoldenHash`), the material table (`voxel::MaterialTableHash`) and the movement rule's revision
+  (`sim::kPlayerRuleRevision`), so another build is refused. Which build a process is (both commits, build type,
+  compiler, CPU flags) is its `Build:` line (`vortex::DescribeBuild`, `--version`); it is not part of `buildHash`.
 
 ## 8. Editor
 

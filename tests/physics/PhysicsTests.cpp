@@ -853,6 +853,45 @@ TEST(PhysicsWorld, CharacterStateIsRestoredAndReplaysClose) {
     f.physics.SetCharacterState(CharacterId{123456u}, glm::vec3(1.0f), glm::vec3(1.0f));
 }
 
+// SetCharacterWalls (WP1: a session's play area, sim::SetPlayAreaWalls): every character stops at the
+// walls and slides along them, whatever its layer mask; a dynamic box passes through them; no ray sees
+// them; a second call replaces them and an empty rectangle removes them.
+TEST(PhysicsWorld, CharacterWallsStopOnlyCharacters) {
+    PhysicsConfig config = SmallConfig();
+    config.characterLayers = LayerBit(Layer::Static);   // the walls need no bit
+    Fixture f(config);
+    ASSERT_TRUE(f.initialized);
+    f.AddGround();
+    const uint32_t bodies = f.physics.BodyCount();
+    f.physics.SetCharacterWalls({-3.0f, -3.0f}, {3.0f, 3.0f});
+    EXPECT_EQ(f.physics.BodyCount(), bodies + 4u);
+    CharacterDesc desc;
+    desc.position = {0.0f, kGroundTop, 0.0f};
+    const CharacterId character = f.physics.CreateCharacter(desc);
+    ASSERT_TRUE(character.IsValid());
+    // East and a little north: stops with the capsule's side on x = 3 m, slides on along it.
+    for (int i = 0; i < 120; ++i) f.physics.UpdateCharacter(character, kStep, {7.0f, 0.0f, -1.0f});
+    CharacterState state = f.physics.GetCharacterState(character);
+    EXPECT_NEAR(state.position.x, 3.0f - desc.radius, 2.0e-3f);
+    EXPECT_LT(state.position.z, -1.0f);
+    EXPECT_TRUE(state.onGround);
+    // A dynamic box thrown east passes the wall; a ray along the floor sees no wall.
+    const BodyId box = f.AddBox({0.0f, kGroundTop + 1.0f, 2.0f}, 0.25f);
+    f.physics.SetVelocity(box, {8.0f, 0.0f, 0.0f}, glm::vec3(0.0f));
+    f.Step(90);
+    EXPECT_GT(f.physics.GetState(box).position.x, 4.0f);
+    EXPECT_FALSE(f.physics.Raycast({0.0f, kGroundTop + 1.0f, -2.0f}, {1.0f, 0.0f, 0.0f}, 10.0f).hit);
+    // Replaced by a wider pair; then removed.
+    f.physics.SetCharacterWalls({-6.0f, -6.0f}, {6.0f, 6.0f});
+    EXPECT_EQ(f.physics.BodyCount(), bodies + 5u);   // the box too
+    for (int i = 0; i < 120; ++i) f.physics.UpdateCharacter(character, kStep, {7.0f, 0.0f, 0.0f});
+    EXPECT_NEAR(f.physics.GetCharacterState(character).position.x, 6.0f - desc.radius, 2.0e-3f);
+    f.physics.SetCharacterWalls(glm::vec2(0.0f), glm::vec2(0.0f));
+    EXPECT_EQ(f.physics.BodyCount(), bodies + 1u);
+    for (int i = 0; i < 60; ++i) f.physics.UpdateCharacter(character, kStep, {7.0f, 0.0f, 0.0f});
+    EXPECT_GT(f.physics.GetCharacterState(character).position.x, 6.5f);
+}
+
 // PhysicsConfig::characterLayers: a session client's predicted character collides with terrain
 // only (networking.md "Player movement"), so its own rubble - which the server's character never
 // meets - does not block it. The default still collides with Dynamic and Debris bodies.

@@ -96,8 +96,9 @@ vortex_bot     tools/bot/main.cpp       links VortexNet only: one net::Bot over 
   it is spent; an event larger than the burst is sent anyway and counted. Entity events have a budget of their own
   (200 B per tick, 12 kB/s, burst 16 KiB) that decides only what is replicated (see "Entity replication").
 - `Hello{protocolVersion, buildHash, token[16]}`. `buildHash` = `HashMix64` of `net::kProtocolVersion`,
-  `voxel::kGeneratorGoldenHash` and `voxel::MaterialTableHash` (everything the carve, the island search and the load
-  check read: shred.md R6). The token is compared in plain text with the session's (`--new-token` makes a random
+  `voxel::kGeneratorGoldenHash`, `voxel::MaterialTableHash` (everything the carve, the island search and the load
+  check read: shred.md R6) and `sim::kPlayerRuleRevision` (the movement rule, see "Player movement"; mixed only from
+  revision 1 on: `net::BuildHashOf`). The token is compared in plain text with the session's (`--new-token` makes a random
   one). No encryption (owner decision 2). Refusals: `Protocol`, `Build`, `Token`, `Full`, `Malformed`.
 
 ## Time and ticks
@@ -295,6 +296,26 @@ stops generating the server's terrain:
   `IsReady`: re-cook timing differs per side); on a client the chunks must also be current. Before every player step
   both sides call `TerrainColliders::FlushBox(sim::PlayerReach(feet))` (the client also before replays and restores),
   so what a character collides with follows the edits applied, not worker timing.
+- **The play area** (WP1): in a session the feet stay inside `sim::PlayAreaOf(RegionDesc, tuning)`, the play bounds
+  less the capsule's radius (doubles, then floats, alike on every side from `Welcome`: no new wire field). The server
+  and every client put its walls into their physics (`sim::SetPlayAreaWalls`: `PhysicsWorld::SetCharacterWalls` at the
+  play bounds, static boxes in `physics::Layer::Bounds` that only characters meet). Per axis `StepPlayer` cuts the
+  outward part of the wish to what reaches the edge this tick before Jolt moves the character; the walls stop whatever
+  else carries the capsule out (a slide down an outward face, the body it stands on), so it stops at the edge, slides
+  along it and falls down a crater wall that crosses it, as against any wall. What float rounding leaves past the edge
+  is taken back along that axis with the outward velocity zeroed (`pushedBack`); a move is never undone. Its reach
+  (`PlayerReach`) stays more than a chunk inside the server's window at 0.1-0.15 m, so the gate never meets a chunk
+  outside it. Offline `sim::PlayArea{}` is unbounded. Any change to what `StepPlayer` returns for the same inputs
+  bumps `sim::kPlayerRuleRevision`, which is in `buildHash`: builds that would move a player differently refuse each
+  other ("another build") instead of correcting each other. The play area added no wire byte (`kProtocolVersion`
+  unchanged); it is player rule revision 1, so a server of revision 0 and a client of revision 1 refuse each other.
+  `Movement.APlayerPastThePlayBoundsWalksBack` (and `...WithAMovingWindow`,
+  `Movement.APlayerOnARampAtThePlayBoundsStaysOnTheGround`,
+  `Movement.APlayerOnASteepFaceAtThePlayBoundsFallsAgainstTheWall`),
+  `Player.ThePlayAreaStopsTheFeetAtItsEdgeAndOfflineHasNone`,
+  `Player.AtThePlayAreasEdgeAFallingGroundNeitherSinksNorBobsTheFeet`,
+  `Player.AtThePlayAreasEdgeASteepFaceNeitherHoldsNorSinksTheFeet`,
+  `Player.PlayAreaOfARegionKeepsTheReachInsideTheWindow`, `PhysicsWorld.CharacterWallsStopOnlyCharacters`.
 - `sim::PlayerTuning`, the tick length and gravity travel in `Welcome` (raw bits); a client predicts with them, never
   with its own, and `Attach` refuses a simulation that differs. The character mask is `sim::kSessionCharacterLayers`
   (Static | Dynamic) on both sides; characters move no bodies in a session (`characterMovesBodies` false).

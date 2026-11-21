@@ -202,10 +202,17 @@ namespace vortex::net {
         return s;
     }
 
+    uint64_t BuildHashOf(uint32_t protocol, uint64_t generatorGolden, uint64_t materialTable, uint32_t playerRule) {
+        uint64_t h = voxel::HashMix64(0x56425549ull, protocol);   // "VBUI"
+        h = voxel::HashMix64(h, generatorGolden);
+        h = voxel::HashMix64(h, materialTable);
+        // Revision 0 mixes nothing, so the hash of a build before the revision existed is unchanged
+        // only for that build; every revision from 1 on gives another hash.
+        return playerRule == 0 ? h : voxel::HashMix64(h, playerRule);
+    }
+
     uint64_t BuildHash(const voxel::MaterialLibrary& materials) {
-        uint64_t h = voxel::HashMix64(0x56425549ull, kProtocolVersion);   // "VBUI"
-        h = voxel::HashMix64(h, voxel::kGeneratorGoldenHash);
-        return voxel::HashMix64(h, voxel::MaterialTableHash(materials));
+        return BuildHashOf(kProtocolVersion, voxel::kGeneratorGoldenHash, voxel::MaterialTableHash(materials), sim::kPlayerRuleRevision);
     }
 
     namespace {

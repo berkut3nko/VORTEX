@@ -33,13 +33,14 @@ Rules every document follows:
 | [design/mechanisms.md](design/mechanisms.md) | decision + plan (use key, doors, gates, ropes) | designed | code read on 2026-11-17 (committed as `e21a84d`) | 82 |
 | [design/spread.md](design/spread.md) | decision + plan (lockstep fire and liquid, no randomness) | designed | code read at `e21a84d` | 73 |
 | [design/worldgen.md](design/worldgen.md) | decision + plan (regions built from structures) | designed | code read on 2026-11-17 (committed as `c970f16`) | 74 |
+| [design/rendezvous.md](design/rendezvous.md) | decision + plan (internet sessions without a public IP: STUN, UDP hole punching, Cloudflare D1) | designed | code read at `a23af7a` (committed as `84ac7e7`) | 36 |
 | [notes/core-fx-editor.md](notes/core-fx-editor.md) | notes: map, invariants, traps, recipes, verifying | current | `430fde0` | 33 |
 | [notes/graphics.md](notes/graphics.md) | notes | current | `430fde0` | 25 |
 | [notes/net.md](notes/net.md) | notes (keeps the wire-value lists) | current | `430fde0` | 59 |
 | [notes/physics.md](notes/physics.md) | notes | current | `430fde0` | 31 |
 | [notes/scene-engine.md](notes/scene-engine.md) | notes | current | `430fde0` | 50 |
 | [notes/voxel.md](notes/voxel.md) | notes | current | `430fde0` | 58 |
-| [history/](history/) | history (see "History") | append-only | - | 1259 (50 files) |
+| [history/](history/) | history (see "History") | append-only | - | 1269 (51 files) |
 | [../CloseIssue.md](../CloseIssue.md) | other: a git checklist for closing an issue branch | kept until the owner decides (ROADMAP "Owner decisions pending") | - | 0.3 |
 
 API reference: run `doxygen` in `engine/`; it writes HTML to `engine/build/doxygen/html/` (untracked; nothing generated is tracked).
@@ -88,6 +89,14 @@ file (nothing built or planned in detail yet).
 | `[net-7b]` | Checks and repair (M-a), server terrain mode (M-b) | [stage-7b.md](history/networking/stage-7b.md) |
 | `[net-8]` | `vortex_bot`, soak, timeline, stalls removed, measurements | [stage-8.md](history/networking/stage-8.md) |
 | `[net-9]` | On-demand server world, 1 km zones | - |
+
+### Internet sessions ([design/rendezvous.md](design/rendezvous.md#stages))
+
+| ID | Stage | History |
+|---|---|---|
+| `[nat-R0]` | NAT probe and pair test (STUN, hole punching, no Worker) | [design-review-2026-11-19.md](history/rendezvous/design-review-2026-11-19.md) |
+| `[nat-R1]` | Rendezvous: Cloudflare Worker + D1, `--rendezvous` / `--join`, gate G20 | same |
+| `[nat-R2]` | A relay, only for pairs R0 finds cannot meet | same |
 
 Also: [owner-questions-2026-11-11.md](history/networking/owner-questions-2026-11-11.md) (the M1 questions as put to
 the owner).
@@ -172,7 +181,7 @@ two-pc-test-windows.md 1) and the second 761 stage tokens.
 
 | Cited as | Lives in |
 |---|---|
-| networking.md "Time and ticks", "Transport", "World operations" (and its numbered items), "Chunk sync", "Player movement", "Entity replication", "Region start-up" / "Region start-up and terrain agreement", "Known risks of terrain agreement after stage 0", "Server world without a camera", "Testing" | [design/networking.md](design/networking.md) (headings kept) |
+| networking.md "Time and ticks", "Transport", "World operations" (and its numbered items), "Chunk sync", "Player movement" (and its bold bullet "The play area"), "Entity replication", "Region start-up" / "Region start-up and terrain agreement", "Known risks of terrain agreement after stage 0", "Server world without a camera", "Testing" | [design/networking.md](design/networking.md) (headings kept) |
 | networking.md R5 (the cast work budget) | networking.md "Time and ticks", and shred.md Part 2 R5 |
 | networking.md "owner decision 6" (the replicated threshold) | networking.md "Owner decisions" 6 (and 7, its 2026-11-16 answer) |
 | networking.md "stage N" with no section name; "networking stage 7" (before the split into 7a / 7b) | networking.md "Stages" row `[net-N]`; stage 7 = `[net-7a]` + `[net-7b]` |
@@ -271,6 +280,7 @@ header and the original of every section that was kept but changed in the WP3 re
 | [view-distance/stage-3.md](history/view-distance/stage-3.md) | design/view-distance.md "Stage 3 as built" | 487-592 |
 | [worldgen/before-rewrite-2026-11-18.md](history/worldgen/before-rewrite-2026-11-18.md) | design/worldgen.md | 1-12, 162-175 |
 | [worldgen/how-it-was-chosen-2026-11-17.md](history/worldgen/how-it-was-chosen-2026-11-17.md) | design/worldgen.md "How it was chosen" | 89-130 |
+| [rendezvous/design-review-2026-11-19.md](history/rendezvous/design-review-2026-11-19.md) | written with design/rendezvous.md (engine `84ac7e7`), not moved: the review's and the recheck's findings | - |
 
 The game repository keeps its own history in `docs/history/` (game commit `6151db6`): the WP3 rewrite plan
 (`REWRITE-PLAN.md`), the CLAUDE.md snapshot and its rule mapping (`claude-md/CLAUDE-2026-11-18.md`,

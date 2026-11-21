@@ -8,6 +8,7 @@
 //              [--loss P] [--delay-ms D] [--jitter-ms J] [--outage-ms A,B]
 //              [--down-bytes-per-second R] [--up-bytes-per-second R] [--relay-seed S]
 //              [--timeline FILE] [--memory] [--test-undeclared-broken-chunk X,Y,Z] [--test-skip-drain]
+//   vortex_bot --version       (prints the build and exits)
 //
 // The port must be given (review of stage 8: no default, so a bot never joins the game's default port
 // 27015 by accident) and so must an end (--seconds or --end-at: a bot never runs forever).
@@ -96,8 +97,14 @@ namespace {
 }
 
 int main(int argc, char** argv) {
-    Log::Init();
     const CommandLine args(argc, argv);
+    // --version (WP1): which build this is, before anything else starts (tools/install-live.sh never runs it).
+    if (args.Has("--version")) {
+        std::printf("vortex_bot %s\n", DescribeBuild().c_str());
+        return 0;
+    }
+    Log::Init();
+    Log::Info("Build: {}", DescribeBuild());
     const std::optional<std::string> connect = args.Get("--connect");
     const std::optional<std::string> tokenText = args.Get("--token");
     const double seconds = Number(args, "--seconds", 0.0);

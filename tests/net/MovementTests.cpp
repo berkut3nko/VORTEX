@@ -962,3 +962,122 @@ TEST(Movement, ALateInputFromBeforeTheJoinCastsNothing) {
     EXPECT_EQ(m.server.LastOpSeq(), opSeq);
     EXPECT_GE(m.server.Stats().inputsBeforeJoin, 1u);
 }
+
+// WP1 (project review 2026-11-17, problem 2): the play bounds are the edge of the world a player can
+// walk. A player who ran about 12 m past them used to touch a chunk outside the server's fixed
+// window: StepPlayer's gate held it there before its input was used, so it never came back, walking
+// back included. The bot runs east for 8 s (56 m: far past the bounds at x = 12 m), west for 8 s
+// (past the bounds at x = -16 m), then stands. Both sides clamp the feet to the play bounds less the
+// capsule's radius (sim::PlayAreaOf), so the server never holds it and the prediction agrees.
+namespace {
+    constexpr float kHalfPi = 1.5707963f;
+
+    /// Ground top (metres) of voxel column x after the outward face EdgeWalk cuts: `drop` voxels down
+    /// per voxel (1: a 45 degree ramp, 4: a 76 degree pit wall, steeper than maxSlopeDegrees) from
+    /// voxel x 88 (11 m), at most 24 voxels (3 m), across the east bound at 12 m.
+    int FaceCut(int vx, int drop) { return std::min(24, drop * std::max(0, vx - 87)); }
+    float RampTop(float x, int drop) {
+        const int vx = static_cast<int>(std::floor(x / 0.125f));
+        return static_cast<float>(kGround - FaceCut(vx, drop)) * 0.125f;
+    }
+
+    void EdgeWalk(const char* name, net::ClientSettings cs, int drop) {
+        const bool ramp = drop > 0;
+        Match m(Settings(), Lossy());
+        ASSERT_TRUE(m.started);
+        if (ramp)
+            for (int x = 88; x < 112; ++x) m.server.ApplyOp(sim::WorldOp::Box({x, kGround - FaceCut(x, drop), -96}, {x + 1, kGround, 64}, 0));
+        uint32_t start = 0xFFFFFFFFu;
+        Match::Bot& bot = m.AddBot(
+            Scripted([&start](uint32_t tick) {
+                sim::PlayerInput in;
+                if (tick < start) return in;
+                const uint32_t t = tick - start;
+                if (t < 960) {
+                    in.moveZ = 127;
+                    in.buttons = sim::PlayerButton_Run;
+                    in.yaw = sim::QuantizeYaw(t < 480 ? -kHalfPi : kHalfPi);   // east (+x), then west
+                }
+                return in;
+            }),
+            0, cs);
+        ASSERT_TRUE(m.Join());
+        start = bot.client->PredictTick();
+        const uint64_t heldAtJoin = m.server.Stats().heldTicks;
+        const float east = static_cast<float>(FlatRegion().playMaxChunk.x * 32) * 0.125f - 0.3f;   // 11.7 m
+        const float west = static_cast<float>(FlatRegion().playMinChunk.x * 32) * 0.125f + 0.3f;   // -15.7 m
+        float maxX = -1.0e9f, minX = 1.0e9f, worstBelow = 0.0f, worstBob = 0.0f;
+        int airborneAtTheWall = 0, frozenInARow = 0, worstFrozen = 0;
+        float previousY = 0.0f;
+        glm::vec3 previous(0.0f);
+        bool pressing = false;
+        for (int i = 0; i < 1100; ++i) {
+            m.Pass();
+            const std::optional<sim::PlayerState> s = m.server.GetPlayer(bot.client->Slot());
+            ASSERT_TRUE(s.has_value());
+            maxX = std::max(maxX, s->position.x);
+            minX = std::min(minX, s->position.x);
+            // Never frozen in the air (the review of WP1: an undone move repeated itself for good).
+            frozenInARow = !s->OnGround() && s->position == previous ? frozenInARow + 1 : 0;
+            worstFrozen = std::max(worstFrozen, frozenInARow);
+            previous = s->position;
+            if (ramp && s->position.x > 11.0f) {
+                // The feet never sink into the face; pressing against the bound neither bobs nor lifts off.
+                worstBelow = std::max(worstBelow, RampTop(s->position.x, drop) - s->position.y);
+                const bool atWall = s->position.x > east - 0.01f && bot.client->PredictTick() - start < 470;
+                if (atWall && pressing) {
+                    worstBob = std::max(worstBob, std::abs(s->position.y - previousY));
+                    airborneAtTheWall += s->OnGround() ? 0 : 1;
+                }
+                pressing = atWall;
+                previousY = s->position.y;
+            }
+        }
+        const sim::PlayerState end = *m.server.GetPlayer(bot.client->Slot());
+        Match::Print(name, *bot.client);
+        m.PrintServer();
+        std::printf("%s: server x %.3f .. %.3f m, ends at x %.3f; held %llu ticks after the join; ramp: %.4f m below, bob %.4f m, "
+                    "%d airborne ticks at the bound, frozen in the air %d ticks in a row at worst\n",
+                    name, static_cast<double>(minX), static_cast<double>(maxX), static_cast<double>(end.position.x),
+                    static_cast<unsigned long long>(m.server.Stats().heldTicks - heldAtJoin), static_cast<double>(worstBelow),
+                    static_cast<double>(worstBob), airborneAtTheWall, worstFrozen);
+        EXPECT_LE(maxX, east + 1.0e-3f);                     // before WP1: about 23.6 m, held at the window's edge for good
+        EXPECT_GE(minX, west - 1.0e-3f);
+        EXPECT_LT(worstFrozen, 2);
+        if (drop <= 1) {
+            EXPECT_GE(end.position.x, west - 1.0e-3f);       // it walked back across the whole region
+            EXPECT_LE(end.position.x, west + 0.7f);
+        }
+        EXPECT_EQ(m.server.Stats().heldTicks, heldAtJoin);
+        const net::PredictionStats& p = bot.client->Prediction();
+        EXPECT_EQ(p.corrections, 0u);
+        EXPECT_EQ(p.snaps, 0u);
+        EXPECT_EQ(p.heldTicks, 0u);
+        EXPECT_LT(p.maxError, 0.02f);
+        if (ramp) EXPECT_LT(worstBelow, 0.125f);             // at most a voxel into the face's step corners
+        if (drop == 1) {
+            EXPECT_LT(worstBob, 0.01f);
+            EXPECT_EQ(airborneAtTheWall, 0);
+        }
+    }
+}
+
+TEST(Movement, APlayerPastThePlayBoundsWalksBack) { EdgeWalk("Edge", {}, 0); }
+
+// The same with a client window that follows the player (the arena's case): the client loads
+// pristine columns past the server's window, so it used to walk on while the server held it.
+TEST(Movement, APlayerPastThePlayBoundsWalksBackWithAMovingWindow) {
+    net::ClientSettings cs;
+    cs.windowChunks = 9;
+    ASSERT_TRUE(sim::ClientWindowMoves(FlatRegion(), cs.windowChunks));
+    EdgeWalk("Edge, moving window", cs, 0);
+}
+
+// The clamp acts where the ground falls away outward: a 45 degree ramp down across the east bound.
+TEST(Movement, APlayerOnARampAtThePlayBoundsStaysOnTheGround) { EdgeWalk("Edge, ramp", {}, 1); }
+
+// Review of WP1: a pit wall steeper than maxSlopeDegrees that falls outward across the bound. The
+// player runs off its top, falls down it against the play area's walls and is never frozen in the
+// air; the prediction agrees. (It walks back out over the voxel steps here; a pit wall need not let
+// it, so the walk back is not checked.)
+TEST(Movement, APlayerOnASteepFaceAtThePlayBoundsFallsAgainstTheWall) { EdgeWalk("Edge, steep face", {}, 4); }

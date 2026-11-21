@@ -58,6 +58,13 @@ namespace {
             character = simulation.Physics().CreateCharacter(sim::PlayerCharacterDesc(spawn, tuning));
         }
 
+        /// A session's play area: the area and its walls (sim::SetPlayAreaWalls), as a server sets them.
+        void Bound(glm::vec2 min, glm::vec2 max) {
+            area.min = min;
+            area.max = max;
+            sim::SetPlayAreaWalls(simulation.Physics(), area, tuning);
+        }
+
         void Cook() {
             const std::array<glm::dvec3, 1> focus = {glm::dvec3(state.position)};
             simulation.Terrain().Update(focus, simulation.Config().colliderRadius);
@@ -69,7 +76,7 @@ namespace {
             const std::array<glm::dvec3, 1> focus = {glm::dvec3(state.position)};
             simulation.UpdateStreaming(focus);
             const sim::PlayerStepResult r =
-                sim::StepPlayer(simulation.Physics(), simulation.Terrain(), character, state, input, tuning, simulation.FixedTimeStep());
+                sim::StepPlayer(simulation.Physics(), simulation.Terrain(), character, state, input, tuning, area, simulation.FixedTimeStep());
             simulation.StepPhysics();
             if (simulation.Terrain().Stats().pending != 0) simulation.Jobs().WaitIdle();
             return r;
@@ -77,6 +84,7 @@ namespace {
 
         sim::Simulation simulation;
         sim::PlayerTuning tuning;
+        sim::PlayArea area;                       // unbounded: the offline game
         sim::PlayerState state;
         physics::CharacterId character;
         bool initialized = false;
@@ -163,7 +171,7 @@ TEST(Player, WalksRunsJumpsAndIsHeldWithoutACollider) {
     // No collider cooked yet: held, nothing moves, but edges and the cooldown still count.
     sim::PlayerInput first = Walk(0.0f, false, sim::PlayerButton_Cast);
     const sim::PlayerStepResult held =
-        sim::StepPlayer(f.simulation.Physics(), f.simulation.Terrain(), f.character, f.state, first, f.tuning, f.simulation.FixedTimeStep());
+        sim::StepPlayer(f.simulation.Physics(), f.simulation.Terrain(), f.character, f.state, first, f.tuning, f.area, f.simulation.FixedTimeStep());
     EXPECT_TRUE(held.held);
     EXPECT_TRUE(held.cast);
     EXPECT_TRUE(f.state.flags & sim::PlayerFlag_Held);
@@ -229,7 +237,7 @@ TEST(Player, SameInputsGiveTheSameWalkAndAReplayFromARestoredStateStaysClose) {
     auto tick = [&tuning](Side& s, const sim::PlayerInput& in) {
         const std::array<glm::dvec3, 1> focus = {glm::dvec3(s.state.position)};
         s.simulation.UpdateStreaming(focus);
-        sim::StepPlayer(s.simulation.Physics(), s.simulation.Terrain(), s.character, s.state, in, tuning, s.simulation.FixedTimeStep());
+        sim::StepPlayer(s.simulation.Physics(), s.simulation.Terrain(), s.character, s.state, in, tuning, sim::PlayArea{}, s.simulation.FixedTimeStep());
         s.simulation.StepPhysics();
         s.simulation.Terrain().Flush();
     };
@@ -256,4 +264,224 @@ TEST(Player, SameInputsGiveTheSameWalkAndAReplayFromARestoredStateStaysClose) {
     }
     EXPECT_LT(worstReplay, 0.02f);
     std::printf("Two simulations: %.2e m apart at most, %.2e m with a restore every 30 ticks\n", worst, worstReplay);
+}
+
+// WP1: the play area (sim::PlayArea, a session's play bounds less the capsule's radius). The feet
+// stop at its edge the way they stop at a wall: the outward wish is cut before Jolt moves the
+// character, so nothing is pushed back afterwards; sliding along the edge goes on; walking back is
+// never held. Offline (the default, unbounded) nothing changes.
+TEST(Player, ThePlayAreaStopsTheFeetAtItsEdgeAndOfflineHasNone) {
+    Field f;
+    ASSERT_TRUE(f.initialized);
+    f.Bound(glm::vec2(-2.0f), glm::vec2(2.0f));
+    f.Cook();
+    for (int i = 0; i < 10; ++i) f.Tick(sim::PlayerInput{});
+    ASSERT_TRUE(f.state.OnGround());
+    const float east = -0.5f * std::numbers::pi_v<float>;
+    int pushed = 0;
+    for (int i = 0; i < 120; ++i) {
+        const sim::PlayerStepResult r = f.Tick(Walk(east, true));
+        EXPECT_FALSE(r.held);
+        pushed += r.pushedBack ? 1 : 0;
+        EXPECT_LE(f.state.position.x, 2.0f + 1.0e-6f);
+        EXPECT_TRUE(f.state.OnGround()) << i;
+    }
+    EXPECT_NEAR(f.state.position.x, 2.0f, 2.0e-3f);
+    EXPECT_NEAR(f.state.position.y, kGround, 0.03f);
+    EXPECT_LE(f.state.velocity.x, 1.0e-3f);
+    // Along the edge (north-east: half the wish goes out, half along -z): the feet slide along it.
+    const float z0 = f.state.position.z;
+    for (int i = 0; i < 30; ++i) f.Tick(Walk(-0.25f * std::numbers::pi_v<float>, true));
+    EXPECT_NEAR(f.state.position.x, 2.0f, 2.0e-3f);
+    EXPECT_LT(f.state.position.z, z0 - 2.0f);
+    // Back west: nothing holds it.
+    for (int i = 0; i < 60; ++i) EXPECT_FALSE(f.Tick(Walk(-east, true)).held);
+    EXPECT_LT(f.state.position.x, -1.9f);
+    EXPECT_GE(f.state.position.x, -2.0f - 1.0e-6f);
+    std::printf("Play area: %d steps pushed back\n", pushed);
+
+    // Offline: the same run passes x = 2 m.
+    Field offline;
+    ASSERT_TRUE(offline.initialized);
+    EXPECT_FALSE(offline.area.Bounded());
+    offline.Cook();
+    for (int i = 0; i < 10; ++i) offline.Tick(sim::PlayerInput{});
+    for (int i = 0; i < 120; ++i) offline.Tick(Walk(east, true));
+    EXPECT_GT(offline.state.position.x, 10.0f);
+}
+
+// Review of the WP1 plan: where the ground falls away outward at the edge (a 45 degree ramp, a 1 m
+// step down right under the edge), pressing against the edge must neither sink the feet into the
+// ground nor make them bob or lift off: the wish is cut and the walls stop the rest.
+TEST(Player, AtThePlayAreasEdgeAFallingGroundNeitherSinksNorBobsTheFeet) {
+    for (const bool ramp : {true, false}) {
+        Field f;
+        ASSERT_TRUE(f.initialized);
+        f.Bound(glm::vec2(-2.0f), glm::vec2(2.0f));
+        // Ground top (voxels) of column x: the ramp falls 45 degrees from x = 1 m to 4 m; the step
+        // drops 1 m at x = 2 m, right under the edge of the area.
+        auto top = [ramp](int x) { return ramp ? kGroundVoxels - std::clamp(x - 7, 0, 24) : (x >= 16 ? kGroundVoxels - 8 : kGroundVoxels); };
+        for (int x = 8; x < 40; ++x)
+            if (top(x) < kGroundVoxels) f.simulation.World().FillBox({x, top(x), -40}, {x + 1, kGroundVoxels, 40}, 0);
+        f.Cook();
+        for (int i = 0; i < 10; ++i) f.Tick(sim::PlayerInput{});
+        ASSERT_TRUE(f.state.OnGround());
+        float worstBelow = 0.0f, worstBob = 0.0f, worstStep = 0.0f, previousY = f.state.position.y;
+        int pressing = 0, airborne = 0, pushed = 0;
+        for (int i = 0; i < 150; ++i) {
+            const sim::PlayerStepResult r = f.Tick(Walk(-0.5f * std::numbers::pi_v<float>, false));
+            EXPECT_FALSE(r.held);
+            pushed += r.pushedBack ? 1 : 0;
+            const glm::vec3 p = f.state.position;
+            EXPECT_LE(p.x, 2.0f + 1.0e-6f);
+            worstStep = std::max(worstStep, std::abs(p.y - previousY));
+            // The lowest ground under the capsule's footprint: the feet never go below it by a voxel.
+            const int lo = static_cast<int>(std::floor((p.x - f.tuning.radius) / kVoxel));
+            const int hi = static_cast<int>(std::floor((p.x + f.tuning.radius) / kVoxel));
+            int ground = kGroundVoxels;
+            for (int x = lo; x <= hi; ++x) ground = std::min(ground, top(x));
+            worstBelow = std::max(worstBelow, static_cast<float>(ground) * kVoxel - p.y);
+            if (p.x > 2.0f - 0.01f) {
+                // The first ticks at the edge finish the step down the voxel stairs under it.
+                if (pressing > 2) worstBob = std::max(worstBob, std::abs(p.y - previousY));
+                airborne += f.state.OnGround() ? 0 : 1;
+                ++pressing;
+            }
+            previousY = p.y;
+        }
+        std::printf("%s: %d ticks pressing at the edge, %d airborne, %d pushed back, bob %.4f m (any tick %.4f m), feet %.4f m below "
+                    "the lowest ground under them at worst, end (%.3f, %.3f)\n",
+                    ramp ? "Ramp" : "Step", pressing, airborne, pushed, static_cast<double>(worstBob), static_cast<double>(worstStep),
+                    static_cast<double>(worstBelow), static_cast<double>(f.state.position.x), static_cast<double>(f.state.position.y));
+        EXPECT_GT(pressing, 60);
+        EXPECT_LT(worstBelow, kVoxel);
+        EXPECT_LT(worstBob, 0.01f);
+        EXPECT_LE(worstStep, kVoxel);
+        if (ramp) EXPECT_EQ(airborne, 0);
+        // Along the edge (south, -z): the feet move on, the edge still holds them.
+        const float z0 = f.state.position.z;
+        for (int i = 0; i < 60; ++i) {
+            f.Tick(Walk(-0.25f * std::numbers::pi_v<float>, false));
+            EXPECT_LE(f.state.position.x, 2.0f + 1.0e-6f);
+        }
+        std::printf("%s: along the edge %.3f m in 60 ticks\n", ramp ? "Ramp" : "Step", static_cast<double>(z0 - f.state.position.z));
+        EXPECT_LT(f.state.position.z, z0 - 1.5f);
+        // And back: nothing holds it.
+        for (int i = 0; i < 60; ++i) EXPECT_FALSE(f.Tick(Walk(0.5f * std::numbers::pi_v<float>, false)).held);
+        EXPECT_LT(f.state.position.x, 0.0f);
+    }
+}
+
+// Review of WP1: a face steeper than maxSlopeDegrees that falls outward across the edge (a crater
+// wall a cast leaves). Jolt slid the feet down and out by more than the 1 cm StepPlayer took back,
+// so it undid the whole move: the same position and velocity, so the next tick slid the same way and
+// was undone again - the player hovered there for good (141 ticks in a row on the 4:1 face). Now the
+// walls of the play area stop the capsule: the feet go down the face against the edge, never below
+// the ground, never frozen in the air.
+TEST(Player, AtThePlayAreasEdgeASteepFaceNeitherHoldsNorSinksTheFeet) {
+    for (const int drop : {2, 4}) {   // voxels down per voxel: about 63 and 76 degrees
+        Field f;
+        ASSERT_TRUE(f.initialized);
+        f.Bound(glm::vec2(-2.0f), glm::vec2(2.0f));
+        // Ground top (voxels) of column x: the face falls from x = 1.5 m, 6 m down to a floor.
+        auto top = [drop](int x) { return kGroundVoxels - std::min(48, drop * std::max(0, x - 11)); };
+        for (int x = 12; x < 48; ++x) f.simulation.World().FillBox({x, top(x), -40}, {x + 1, kGroundVoxels, 40}, 0);
+        f.Cook();
+        for (int i = 0; i < 10; ++i) f.Tick(sim::PlayerInput{});
+        ASSERT_TRUE(f.state.OnGround());
+        float worstBelow = 0.0f;
+        // Frozen in the air: off the ground, and the feet did not move this tick.
+        int pushed = 0, frozenInARow = 0, worstInARow = 0;
+        auto tick = [&](const sim::PlayerInput& in) {
+            const glm::vec3 before = f.state.position;
+            const sim::PlayerStepResult r = f.Tick(in);
+            EXPECT_FALSE(r.held);
+            pushed += r.pushedBack ? 1 : 0;
+            const bool frozen = !f.state.OnGround() && f.state.position == before;
+            frozenInARow = frozen ? frozenInARow + 1 : 0;
+            worstInARow = std::max(worstInARow, frozenInARow);
+            const glm::vec3 p = f.state.position;
+            EXPECT_LE(p.x, 2.0f + 1.0e-6f);
+            const int lo = static_cast<int>(std::floor((p.x - f.tuning.radius) / kVoxel));
+            const int hi = static_cast<int>(std::floor((p.x + f.tuning.radius) / kVoxel));
+            int ground = kGroundVoxels;
+            for (int x = lo; x <= hi; ++x) ground = std::min(ground, top(x));
+            worstBelow = std::max(worstBelow, static_cast<float>(ground) * kVoxel - p.y);
+        };
+        // Run east into the edge, over the top of the face.
+        for (int i = 0; i < 60; ++i) tick(Walk(-0.5f * std::numbers::pi_v<float>, true));
+        // Let go: the feet come to rest against the edge, on the face, not above it.
+        for (int i = 0; i < 120; ++i) tick(sim::PlayerInput{});
+        const glm::vec3 rest = f.state.position;
+        int highest = 0;
+        for (int x = static_cast<int>(std::floor((rest.x - f.tuning.radius) / kVoxel));
+             x <= static_cast<int>(std::floor((rest.x + f.tuning.radius) / kVoxel)); ++x)
+            highest = std::max(highest, top(x));
+        const float above = rest.y - static_cast<float>(highest) * kVoxel;
+        std::printf("Face %d:1: rests at (%.3f, %.3f), %.3f m above the highest ground under it, velocity y %.3f, on the ground %d, "
+                    "%d pushed back, frozen in the air %d ticks in a row at worst, feet %.4f m below the lowest ground under them at worst\n",
+                    drop, static_cast<double>(rest.x), static_cast<double>(rest.y), static_cast<double>(above),
+                    static_cast<double>(f.state.velocity.y), f.state.OnGround() ? 1 : 0, pushed, worstInARow, static_cast<double>(worstBelow));
+        EXPECT_LT(worstInARow, 2);
+        EXPECT_LT(above, 0.05f);
+        EXPECT_LT(std::abs(f.state.velocity.y), 0.5f);
+        EXPECT_LT(worstBelow, kVoxel);
+        // Walk back in: a 2:1 face is a staircase the character climbs (0.25 m risers under its
+        // 0.35 m step); a 4:1 face is a pit wall it does not.
+        for (int i = 0; i < 120; ++i) tick(Walk(0.5f * std::numbers::pi_v<float>, true));
+        std::printf("Face %d:1: walking back ends at (%.3f, %.3f)\n", drop, static_cast<double>(f.state.position.x),
+                    static_cast<double>(f.state.position.y));
+        EXPECT_LT(worstInARow, 2);
+        EXPECT_LT(worstBelow, kVoxel);
+        if (drop == 2) EXPECT_LT(f.state.position.x, 0.0f);
+    }
+}
+
+// sim::PlayAreaOf: the play bounds less the radius, and its reach (PlayerReach) a chunk inside the
+// server's window at every session voxel size, where the gate finds colliders.
+TEST(Player, PlayAreaOfARegionKeepsTheReachInsideTheWindow) {
+    for (const float voxelSize : {0.1f, 0.125f, 0.15f}) {
+        sim::RegionDesc region;
+        region.templateId = sim::RegionTemplateId::Empty;
+        region.playMinChunk = {-4, -5};
+        region.playMaxChunk = {3, 2};
+        region.heightRange = {0.0f, 32.0f};
+        region.generator = sim::RegionGenerator::Flat;
+        region.flatGroundVoxels = 64;
+        region.terrain.voxelSize = voxelSize;
+        {
+            voxel::MaterialLibrary scratch;
+            region.terrain.materials = voxel::RegisterDefaultWorldMaterials(scratch);
+        }
+        ASSERT_TRUE(sim::IsValid(region));
+        const sim::PlayerTuning tuning;
+        const sim::PlayArea area = sim::PlayAreaOf(region, tuning);
+        const float chunk = 32.0f * voxelSize;
+        EXPECT_TRUE(area.Bounded());
+        EXPECT_FLOAT_EQ(area.min.x, -4.0f * chunk + 0.3f);
+        EXPECT_FLOAT_EQ(area.min.y, -5.0f * chunk + 0.3f);
+        EXPECT_FLOAT_EQ(area.max.x, 3.0f * chunk - 0.3f);
+        EXPECT_FLOAT_EQ(area.max.y, 2.0f * chunk - 0.3f);
+
+        sim::SimulationConfig config = PlayerConfig();
+        config.chunkCapacity = sim::RegionChunkCapacity(region);
+        config.world = sim::RegionWorldConfig(region, config.world);
+        sim::Simulation simulation(config);
+        ASSERT_TRUE(simulation.Initialize(sim::MakeRegionGenerator(region, region.terrain.materials)));
+        simulation.World().LoadBlocking(sim::RegionWindowFocus(region));
+        ASSERT_TRUE(sim::WindowIsRegions(simulation.World(), region));
+        const glm::vec3 windowMin = glm::vec3(sim::RegionWindowMinChunk(region)) * chunk;
+        const glm::vec3 windowMax = windowMin + glm::vec3(sim::RegionWindowSize(region)) * chunk;
+        const float y = 64.0f * voxelSize;
+        for (const glm::vec2 corner : {area.min, area.max, glm::vec2(area.min.x, area.max.y), glm::vec2(area.max.x, area.min.y)}) {
+            const glm::vec3 feet(corner.x, y, corner.y);
+            const math::AABB reach = sim::PlayerReach(feet, tuning);
+            EXPECT_GE(reach.min.x, windowMin.x + chunk) << voxelSize;
+            EXPECT_GE(reach.min.z, windowMin.z + chunk) << voxelSize;
+            EXPECT_LE(reach.max.x, windowMax.x - chunk) << voxelSize;
+            EXPECT_LE(reach.max.z, windowMax.z - chunk) << voxelSize;
+            simulation.Terrain().FlushBox(reach);
+            EXPECT_TRUE(simulation.Terrain().HasCollider(sim::PlayerBounds(feet, tuning))) << voxelSize << " at " << corner.x << ", " << corner.y;
+        }
+    }
 }

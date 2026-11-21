@@ -47,11 +47,17 @@ export namespace vortex::net {
 
     /**
      * @brief Hello::buildHash of this process: kProtocolVersion, voxel::kGeneratorGoldenHash (the
-     * generator the build was made with) and voxel::MaterialTableHash(materials) (what carves,
-     * island searches and the load check read; shred.md R6). Two builds that may share a
-     * session have equal values.
+     * generator the build was made with), voxel::MaterialTableHash(materials) (what carves,
+     * island searches and the load check read; shred.md R6) and sim::kPlayerRuleRevision (the
+     * movement rule: a client and a server that would move a player differently refuse each
+     * other instead of correcting each other). Two builds that may share a session have equal
+     * values. = BuildHashOf(kProtocolVersion, kGeneratorGoldenHash, MaterialTableHash(materials),
+     * kPlayerRuleRevision).
      */
     uint64_t BuildHash(const voxel::MaterialLibrary& materials);
+    /// @brief The hash BuildHash mixes; a player rule revision of 0 (builds before it existed)
+    /// mixes nothing.
+    uint64_t BuildHashOf(uint32_t protocol, uint64_t generatorGolden, uint64_t materialTable, uint32_t playerRule);
 
     /// Probe chunks per session (networking.md "Region start-up": 64).
     inline constexpr uint32_t kProbeChunks = 64;

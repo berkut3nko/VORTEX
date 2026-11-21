@@ -98,6 +98,17 @@ namespace vortex::sim {
         return glm::ivec3(region.playMinChunk.x - kServerWindowMarginChunks, 0, region.playMinChunk.y - kServerWindowMarginChunks);
     }
 
+    PlayArea PlayAreaOf(const RegionDesc& region, const PlayerTuning& tuning) {
+        const double chunkMetres = static_cast<double>(voxel::kChunkSize) * static_cast<double>(region.terrain.voxelSize);
+        const double radius = static_cast<double>(tuning.radius);
+        PlayArea area;
+        area.min = glm::vec2(static_cast<float>(region.playMinChunk.x * chunkMetres + radius),
+                             static_cast<float>(region.playMinChunk.y * chunkMetres + radius));
+        area.max = glm::vec2(static_cast<float>(region.playMaxChunk.x * chunkMetres - radius),
+                             static_cast<float>(region.playMaxChunk.y * chunkMetres - radius));
+        return area;
+    }
+
     glm::ivec3 RegionWindowSize(const RegionDesc& region) {
         const glm::ivec2 s = region.playMaxChunk - region.playMinChunk + glm::ivec2(2 * kServerWindowMarginChunks);
         return glm::ivec3(s.x, 1, s.y);

@@ -421,8 +421,8 @@ Game (`main.cpp`)
   never walks and the last line says `in the air`. Only the run without `--camera` proves the controller. The
   frame-90 blast and beam cut run in both.
 - `ExerciseEditor` runs only while the editor is open; its frames are 1-based and go up to 160 (10, 100, 110, 120,
-  130 import, 150 delete, 160 pick + summary line). The documented `--frames 120 --editor` run (G4) ends at the brush
-  case and never imports, deletes or picks.
+  130 import, 150 delete, 160 pick + summary line). Gate G4 runs `--frames 170 --editor` (WP1), so it reaches all of
+  them and its `Editor: N entities, last action ...` line is the verdict.
 - The game runs with `fullHeight` and `packHidden` [vd-1]; its start loads with `LoadScope::Surface` (every surface
   and everything within 16 m; caves stream in afterwards), and `BuildPlayground` loads around the plaza the same way
   before it edits it.

@@ -55,7 +55,8 @@ Paths are relative to `engine/`. Code is cited by file and symbol; search for th
   wire order), `BulkPacer` (the server's per-peer bulk window), `HashCheckPlanner` [net-7b] (which chunks a peer's
   HashCheck holds).
 - `src/net/Session.cppm`, `internal/Session.cpp` - `SessionConfig`, `ParseSession` / `LoadSessionFile` /
-  `FormatSession`, tokens, `BuildHash`, `ProbeChunks` / `CheckProbes`, `RegionHash`, `BreakChunks` [net-7b] (a
+  `FormatSession`, tokens, `BuildHash` / `BuildHashOf` (protocol, generator golden, material table, player rule
+  revision), `ProbeChunks` / `CheckProbes`, `RegionHash`, `BreakChunks` [net-7b] (a
   generator that makes some chunks differently, for tests and `--bot-broken-chunk`), `SessionGenerator` [net-7b] (the
   client's generator, Empty inside the server's window once server terrain mode is on).
 - `src/net/Server.cppm`, `internal/Server.cpp` - `ServerSettings`, `CastRecord`, `ServerStats`, `net::Server` (event
@@ -312,7 +313,11 @@ The server's tick and the cast schedule
 Players and the client clock [net-4, net-5]
 - **One movement rule.** Server, predicting client and offline game move a player only with `sim::StepPlayer` from
   integer inputs; anything that changes how a player moves goes there (and into `PlayerTuning`, which travels in
-  `Welcome`), never into one side. The rest of a step is the session's too: the tick length and gravity travel in
+  `Welcome`), never into one side, and bumps `sim::kPlayerRuleRevision` (in `BuildHash`) when the same inputs give
+  another result. Server and client pass `sim::PlayAreaOf(region, tuning)` (the server from its session, the client
+  from `Welcome`, set before the first predicted tick and used by every replay) and put its walls into their physics
+  (`sim::SetPlayAreaWalls`: the server after `Initialize`, the client in `Attach`); the offline game passes
+  `sim::PlayArea{}` and has no walls. The rest of a step is the session's too: the tick length and gravity travel in
   `Welcome`, the character mask is `sim::kSessionCharacterLayers` on both sides (`Attach` refuses anything else), and
   both sides call `TerrainColliders::FlushBox(sim::PlayerReach(feet))` before every step (the client also before every
   replayed step and restore), so the colliders a step meets follow the edits applied, never worker timing.
@@ -556,7 +561,7 @@ Regions, templates and tests
   `Movement.*` test that a late cast of it is judged at its tick.
 - New player rule (crouch, sprint, a second jump): `sim::StepPlayer` and `PlayerTuning` (+ `WritePlayerTuning` /
   `ReadPlayerTuning`, `sim::IsValid`), a button in `PlayerButton` if it needs one (wire format, next free bit 16),
-  `kProtocolVersion` + 1, a `Player.*` test, then `Movement.NoCorrectionAbove2cmOnFlatGround` must still see 0
+  `kProtocolVersion` + 1 (or, with no byte changed, only `sim::kPlayerRuleRevision` + 1), a `Player.*` test, then `Movement.NoCorrectionAbove2cmOnFlatGround` must still see 0
   corrections.
 - New event kind: value in `EventKind` (or a new `WorldOpKind` 7+), `WriteEvent` / `ReadEvent`, a size line in
   `Wire.EveryWorldOpRoundTripsAtItsSize` (`Wire.EntityEventsRoundTripAtTheirSizes` for entity events),

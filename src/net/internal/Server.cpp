@@ -246,6 +246,7 @@ namespace vortex::net {
         sim::RegionTemplate tmpl;
         std::vector<ProbeHash> probes;
         uint64_t buildHash = 0;
+        sim::PlayArea playArea;           // sim::PlayAreaOf(region, settings.player): every player's StepPlayer area
         bool started = false;
         bool failed = false;
 
@@ -921,7 +922,7 @@ namespace vortex::net {
                     pl.lateJump = false;
                 }
                 const sim::PlayerStepResult r = sim::StepPlayer(simulation->Physics(), simulation->Terrain(), pl.character, pl.state, input,
-                                                                settings.player, dt);
+                                                                settings.player, playArea, dt);
                 if (lateJump) pl.state.lastButtons = static_cast<uint8_t>(levels & sim::kPlayerButtonMask);
                 stats.heldTicks += r.held ? 1u : 0u;
                 pl.Store(now);
@@ -2055,6 +2056,8 @@ namespace vortex::net {
             return false;
         }
         s.buildHash = BuildHash(s.simulation->Materials());
+        s.playArea = sim::PlayAreaOf(s.region, s.settings.player);
+        sim::SetPlayAreaWalls(s.simulation->Physics(), s.playArea, s.settings.player);   // StepPlayer's walls (WP1)
         s.entityCredit = static_cast<int64_t>(s.settings.entityEventBurstBytes);
         // Every destruction of a replicated entity becomes an EntityDespawn (stage 6).
         s.simulation->Scene().Registry().on_destroy<scene::NetId>().connect<&Impl::OnNetIdDestroyed>(s);

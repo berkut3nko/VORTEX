@@ -184,6 +184,12 @@ created / moved bodies and before `Step`. A player step calls `FlushBox(sim::Pla
   the filter of `CreateCharacter`, `UpdateCharacter`, `SetCharacterPosition` and `SetCharacterState`, kept in the
   `Simulation` (one per physics world). A session uses `sim::kSessionCharacterLayers` (Static | Dynamic) and
   `characterMovesBodies = false` on the server and every client.
+- `SetCharacterWalls(min, max)` (WP1): four static boxes in `Layer::Bounds` (enumerator 5, `kLayerCount` 6) at the
+  planes x = min.x / max.x, z = min.y / max.y, 2 m thick, y -512..512 m; replaced by the next call, removed by a
+  non-finite or empty rectangle. Every character meets them whatever `characterLayers` says (`CharacterLayerFilter`);
+  `LayerPairFilter` and `ObjectVsBroadPhaseFilter` let no body meet them and `LayerMaskFilter` hides them from every
+  `Raycast`. They count in `BodyCount`. A session's play area (`sim::SetPlayAreaWalls`;
+  `PhysicsWorld.CharacterWallsStopOnlyCharacters`).
 - `TerrainColliders::FlushBox(box)` [net-4] takes the world's changes and cooks, on the calling thread, every chunk
   of the box (grown by one voxel) whose newest content is not installed or that is not tracked yet; a worker's later
   result for it is dropped (`result.generation <= installed`). Up-to-date chunks cost a lookup. Every player step

@@ -21,6 +21,21 @@ namespace vortex::sim {
         constexpr double kHalfPi = 0.5 * std::numbers::pi;
 
         bool Finite(float v) { return std::isfinite(v); }
+
+        /// The wish speed along one axis, its outward part cut to what reaches [lo, hi] in one tick.
+        float LimitToArea(float p, float wish, float lo, float hi, float dt) {
+            if (wish > 0.0f) return std::min(wish, std::max(0.0f, (hi - p) / dt));
+            if (wish < 0.0f) return std::max(wish, std::min(0.0f, (lo - p) / dt));
+            return wish;
+        }
+
+        /// Where a move from `from` to `to` along one axis may end: `to`, or the bound it passed
+        /// (from inside the area), or `from` (a move that started outside and went further out).
+        float AreaBound(float from, float to, float lo, float hi) {
+            if (to > hi && to > from) return std::max(hi, from);
+            if (to < lo && to < from) return std::min(lo, from);
+            return to;
+        }
     }
 
     bool IsValid(const PlayerTuning& t, std::string* why) {
@@ -119,8 +134,16 @@ namespace vortex::sim {
         return true;
     }
 
+    void SetPlayAreaWalls(physics::PhysicsWorld& physics, const PlayArea& area, const PlayerTuning& tuning) {
+        if (!area.Bounded()) {
+            physics.SetCharacterWalls(glm::vec2(0.0f), glm::vec2(0.0f));
+            return;
+        }
+        physics.SetCharacterWalls(area.min - glm::vec2(tuning.radius), area.max + glm::vec2(tuning.radius));
+    }
+
     PlayerStepResult StepPlayer(physics::PhysicsWorld& physics, const physics::TerrainColliders& terrain, physics::CharacterId character,
-                                PlayerState& state, const PlayerInput& input, const PlayerTuning& tuning, float dt) {
+                                PlayerState& state, const PlayerInput& input, const PlayerTuning& tuning, const PlayArea& area, float dt) {
         PlayerStepResult r;
         r.pressed = PressButtons(state, input.buttons);
         if (state.cooldownTicks > 0) --state.cooldownTicks;
@@ -133,11 +156,31 @@ namespace vortex::sim {
             return r;
         }
         const bool run = (input.buttons & PlayerButton_Run) != 0;
-        const glm::vec3 wish = MoveDirection(input) * (run ? tuning.runSpeed : tuning.walkSpeed);
+        glm::vec3 wish = MoveDirection(input) * (run ? tuning.runSpeed : tuning.walkSpeed);
+        const bool bounded = area.Bounded() && dt > 0.0f;
+        if (bounded) {
+            // The play area: the outward wish stops at its edge, before the character moves.
+            wish.x = LimitToArea(state.position.x, wish.x, area.min.x, area.max.x, dt);
+            wish.z = LimitToArea(state.position.z, wish.z, area.min.y, area.max.y, dt);
+        }
         const bool jump = (r.pressed & PlayerButton_Jump) != 0;
         r.jumped = jump && state.OnGround();
         physics.UpdateCharacter(character, dt, wish, jump ? tuning.jumpSpeed : 0.0f);
-        const physics::CharacterState cs = physics.GetCharacterState(character);
+        physics::CharacterState cs = physics.GetCharacterState(character);
+        if (bounded) {
+            // The walls (SetPlayAreaWalls) stop the capsule at the edge; what float rounding leaves
+            // past it is taken back along that axis. A player outside the area never goes further out.
+            const float bx = AreaBound(state.position.x, cs.position.x, area.min.x, area.max.x);
+            const float bz = AreaBound(state.position.z, cs.position.z, area.min.y, area.max.y);
+            if (bx != cs.position.x || bz != cs.position.z) {
+                if (bx != cs.position.x) cs.velocity.x = 0.0f;
+                if (bz != cs.position.z) cs.velocity.z = 0.0f;
+                cs.position.x = bx;
+                cs.position.z = bz;
+                physics.SetCharacterState(character, cs.position, cs.velocity);
+                r.pushedBack = true;
+            }
+        }
         state.position = cs.position;
         state.velocity = cs.velocity;
         state.flags = cs.onGround ? PlayerFlag_OnGround : 0;

@@ -68,15 +68,20 @@ Tested toolchain: Clang 23, CMake 4.4, Ninja (Arch Linux). Minimums: Clang >= 18
 compiler gets a configure warning), CMake >= 3.28, Ninja.
 
 Requirements:
-- A Vulkan 1.3 driver and the Vulkan loader. The configure step needs the loader even for the GPU-free libraries.
+- A Vulkan 1.3 driver and the Vulkan loader (not with `VORTEX_GRAPHICS=OFF`: see Options).
 - `glslangValidator` (built from source automatically if missing).
 - An x86-64 CPU with AVX2, FMA, F16C, BMI, LZCNT and POPCNT: Jolt's flags, applied to every target through
-  `vortex_options` so the module interfaces agree.
+  `vortex_options` so the module interfaces agree. Every executable links `vortex_cpu_check` (`src/startup/CpuCheck.c`),
+  which refuses an older CPU at start (exit code 4, the missing features named).
 - All other dependencies are fetched at pinned versions (`cmake/Dependencies.cmake`).
 
-Options: `VORTEX_BUILD_TESTS` (default on when the engine is the top-level project), `VORTEX_BUILD_TOOLS` (on),
-`VORTEX_WARNINGS_AS_ERRORS` (off). Tests are GoogleTest suites per library (`VortexCoreTests`, `VortexPhysicsTests`,
-`VortexSimTests`, `VortexNetTests`, `VortexGraphicsTests`, `VortexEngineTests`); run them with `ctest`.
+Options: `VORTEX_BUILD_TESTS` (default on when the engine is the top-level project), `VORTEX_BUILD_TOOLS`
+(`vortex_server`, `vortex_bot`; on), `VORTEX_WARNINGS_AS_ERRORS` (off), `VORTEX_GRAPHICS` (on; off builds only Core,
+Physics, Sim, Net, the tools and their tests, with no Vulkan loader, GLFW or ImGui: a server host or a CI job without
+a GPU). Tests are GoogleTest suites per library (`VortexCoreTests`, `VortexPhysicsTests`, `VortexSimTests`,
+`VortexNetTests`, `VortexGraphicsTests`, `VortexEngineTests`; the last two only with `VORTEX_GRAPHICS`) plus
+`CpuCheck.RefusesAMissingFeature`; run them with `ctest`. Every program logs its build first (`Build: ...`, both
+commits, build type, compiler, CPU flags: `cmake/BuildInfo.cmake`) and prints it with `--version`.
 
 API documentation: `doxygen` in this directory writes HTML to `engine/build/doxygen/html/` (untracked).
 

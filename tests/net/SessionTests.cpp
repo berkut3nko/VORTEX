@@ -261,6 +261,22 @@ TEST(SessionFile, BuildHashSeesTheMaterialTable) {
     EXPECT_NE(net::BuildHash(a), net::BuildHash(b));
 }
 
+// WP1: the movement rule is part of the build hash, so a client and a server that would move a
+// player differently (one with the play-area clamp, one without) refuse each other ("another build")
+// instead of correcting each other at the edge. Revision 0 (a build before the revision existed)
+// mixes nothing.
+TEST(SessionFile, BuildHashSeesThePlayerRuleRevision) {
+    voxel::MaterialLibrary materials;
+    voxel::RegisterDefaultWorldMaterials(materials);
+    const uint64_t table = voxel::MaterialTableHash(materials);
+    EXPECT_EQ(net::BuildHash(materials), net::BuildHashOf(net::kProtocolVersion, voxel::kGeneratorGoldenHash, table, sim::kPlayerRuleRevision));
+    EXPECT_GE(sim::kPlayerRuleRevision, 1u);
+    const uint64_t before = net::BuildHashOf(net::kProtocolVersion, voxel::kGeneratorGoldenHash, table, 0);
+    EXPECT_NE(net::BuildHash(materials), before);
+    EXPECT_NE(net::BuildHashOf(net::kProtocolVersion, voxel::kGeneratorGoldenHash, table, 2),
+              net::BuildHashOf(net::kProtocolVersion, voxel::kGeneratorGoldenHash, table, 1));
+}
+
 TEST(SessionFile, ProbeChunksFindAGeneratorThatDiffers) {
     sim::RegionDesc region = DrillRegion();
     region.generator = sim::RegionGenerator::Terrain;

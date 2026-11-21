@@ -90,11 +90,19 @@ namespace vortex::graphics {
         bool initialized = false;
         bool headless = true;
         bool validation = false;
+        bool validationMissing = false;   ///< Initialize refused: validation requested without the layer.
         PFN_vkSetDebugUtilsObjectNameEXT setObjectName = nullptr;   ///< Null unless debug utils is enabled.
 
         /// Outlives Shutdown() on purpose: destruction-time validation errors are still counted.
         std::atomic<uint32_t> validationErrors{0};
     };
+
+    ValidationDecision DecideValidation(bool requested, bool layerAvailable, bool debugUtilsAvailable) {
+        ValidationDecision d;
+        d.enable = requested && layerAvailable && debugUtilsAvailable;
+        d.fail = requested && !d.enable;
+        return d;
+    }
 
     Device::Device() : m_Impl(std::make_unique<Impl>()) {}
 
@@ -118,11 +126,16 @@ namespace vortex::graphics {
         // vk-bootstrap also counts extensions that only a layer provides. That is fine together
         // with the validation layer; without it the extension must come from the implementation.
         const bool debugUtils = systemInfo.value().debug_utils_available;
-        const bool validation = config.validation && systemInfo.value().validation_layers_available && debugUtils;
-        if (config.validation && !validation) {
-            Log::Warn("Vulkan validation was requested but the validation layer{} is not installed; continuing without it",
-                      systemInfo.value().validation_layers_available ? "'s debug utils extension" : "");
+        const ValidationDecision decision = DecideValidation(config.validation, systemInfo.value().validation_layers_available, debugUtils);
+        if (decision.fail) {
+            Log::Error("Vulkan validation was requested (--validation) but the Khronos validation layer (VK_LAYER_KHRONOS_validation){} "
+                       "is not installed. Install it (Arch: sudo pacman -S vulkan-validation-layers; MSYS2: "
+                       "mingw-w64-clang-x86_64-vulkan-validation-layers and VK_ADD_LAYER_PATH) or run without --validation",
+                       systemInfo.value().validation_layers_available ? "'s debug utils extension" : "");
+            impl.validationMissing = true;
+            return false;
         }
+        const bool validation = decision.enable;
 
         vkb::InstanceBuilder instanceBuilder;
         instanceBuilder.set_app_name(config.appName)
@@ -337,6 +350,7 @@ namespace vortex::graphics {
     float Device::TimestampPeriod() const { return m_Impl->properties.limits.timestampPeriod; }
 
     bool Device::ValidationEnabled() const { return m_Impl->validation; }
+    bool Device::ValidationMissing() const { return m_Impl->validationMissing; }
     uint32_t Device::ValidationErrorCount() const {
         return m_Impl->validationErrors.load(std::memory_order_relaxed);
     }

@@ -14,6 +14,7 @@ import vortex.scene;
 import :simulation;
 import :worldop;
 import :blast;
+import :player;
 
 export namespace vortex::sim {
 
@@ -70,6 +71,15 @@ export namespace vortex::sim {
     /// bounds plus kServerWindowMarginChunks chunks on all four horizontal sides; y is set by the
     /// full-height range (size 1 and row 0 here).
     glm::ivec3 RegionWindowMinChunk(const RegionDesc& region);
+    /**
+     * @brief Where a player's feet may go in a session on `region` (sim::StepPlayer's `area`): the
+     * play bounds less `tuning.radius` on every side, so the capsule stays inside the play bounds.
+     * Server and client compute it from `Welcome` alike (doubles, then floats). Its reach
+     * (PlayerReach: the capsule grown by 1 m) stays more than a chunk inside the server's window
+     * (kServerWindowMarginChunks) at every session voxel size, so StepPlayer's gate never meets a
+     * chunk outside the window.
+     */
+    PlayArea PlayAreaOf(const RegionDesc& region, const PlayerTuning& tuning);
     /// @brief The chunk rows [x, y) of the region's full-height window (World's rounding).
     glm::ivec2 RegionRows(const RegionDesc& region);
     glm::ivec3 RegionWindowSize(const RegionDesc& region);

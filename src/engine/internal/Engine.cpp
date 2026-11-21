@@ -409,6 +409,8 @@ namespace vortex {
         return errors > 0 ? 2 : 0;
     }
 
+    bool Engine::ValidationLayerMissing() const { return m_Impl->device.ValidationMissing(); }
+
     bool Engine::TerrainReady(const glm::dvec3& position) const {
         return m_Impl->sim.IsInitialized() && m_Impl->sim.Terrain().IsReady(position);
     }

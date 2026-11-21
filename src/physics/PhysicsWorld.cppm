@@ -37,6 +37,9 @@ export namespace vortex::physics {
         /// with Debris or Character - and no session character collides with it, so nothing the
         /// server does not have blocks a predicted player.
         Rubble,
+        /// The walls of PhysicsWorld::SetCharacterWalls (a session's play area): every character meets
+        /// them whatever its layer mask says; no body collides with them and no ray sees them.
+        Bounds,
     };
 
     /// @brief The bit of `layer` in a layer mask (PhysicsConfig::characterLayers).
@@ -280,6 +283,15 @@ export namespace vortex::physics {
          * the error the reconciliation threshold absorbs. Non-finite values are ignored (logged).
          */
         void SetCharacterState(CharacterId character, const glm::vec3& feetPosition, const glm::vec3& velocity);
+        /**
+         * @brief Walls that stop every character at the planes x = min.x, x = max.x, z = min.y and
+         * z = max.y (a session's play bounds; sim::SetPlayAreaWalls). The capsule stops against them
+         * as against any wall and slides along them and down whatever it stands on, so nothing has to
+         * take a move back afterwards. They are static bodies in Layer::Bounds, 2 m thick, from
+         * y = -512 m to 512 m: no body collides with them and no ray sees them. Replaces the walls
+         * set before; a non-finite or empty rectangle removes them.
+         */
+        void SetCharacterWalls(const glm::vec2& min, const glm::vec2& max);
 
     private:
         struct Impl;

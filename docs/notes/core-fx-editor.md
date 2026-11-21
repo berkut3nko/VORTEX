@@ -290,11 +290,10 @@ Code is cited by file and symbol; search for the symbol. The text before this re
 - **`.vox` z offset uses the ceiling**, x and y the floor (`Tools.cpp` import); looks inconsistent, is correct for the
   mirrored axis (`EditorImport.VoxModelsKeepTheirLayoutOnTheMirroredAxis`).
 - **`ImportFile` can fail half way**: models created before running out of chunk slots stay, and the palette stays.
-- **The gate's editor smoke run stops early.** `ExerciseEditor` acts at headless frames 10, 100, 110, 120, 130
-  (import), 150 (delete) and 160 (pick + the summary log line). Gate G4 runs `--frames 120 --editor`, which never
-  reaches the import, the delete or the summary line. Use `--frames 170` when the change touches those. New exercise
-  steps: keep them below the frame count you actually run, or raise the gate's count in `CLAUDE.md` in the same
-  commit.
+- **The gate's editor smoke run must reach every step.** `ExerciseEditor` acts at headless frames 10, 100, 110, 120,
+  130 (import), 150 (delete) and 160 (pick + the summary log line); gate G4 runs `--frames 170 --editor` (WP1; it ran
+  120 before and never reached the import, the delete or the summary line). New exercise steps: keep them below 170,
+  or raise the gate's count in `CLAUDE.md` in the same commit.
 - **Losing window focus fires every release edge.** The window's focus callback calls `Input::Clear()`, so all held
   keys and buttons report `KeyReleased` / `MouseReleased` on the next frame, unmasked by UI capture. Code that acts on
   a release (not only the editor look latch) must tolerate that.

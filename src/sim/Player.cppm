@@ -3,6 +3,7 @@ module;
 #include <glm/glm.hpp>
 
 #include <cstdint>
+#include <limits>
 #include <string>
 
 export module vortex.sim:player;
@@ -95,12 +96,43 @@ export namespace vortex::sim {
     /// @brief Finite and in range (network input: a client checks the server's before using it).
     bool IsValid(const PlayerTuning& tuning, std::string* why = nullptr);
 
+    /**
+     * @brief Where a player's feet may go, x and z in world metres (docs/design/networking.md
+     * "Player movement", "The play area"). A session's is sim::PlayAreaOf(RegionDesc, tuning): the
+     * play bounds less the capsule's radius, computed alike on the server and every client from
+     * `Welcome`. The default is unbounded: the offline game has no play bounds.
+     */
+    struct PlayArea {
+        glm::vec2 min{-std::numeric_limits<float>::infinity()};
+        glm::vec2 max{std::numeric_limits<float>::infinity()};
+        bool Bounded() const {
+            return min.x > -std::numeric_limits<float>::max() || min.y > -std::numeric_limits<float>::max() ||
+                   max.x < std::numeric_limits<float>::max() || max.y < std::numeric_limits<float>::max();
+        }
+        friend bool operator==(const PlayArea&, const PlayArea&) = default;
+    };
+    /**
+     * @brief Puts the walls of `area` into `physics` (PhysicsWorld::SetCharacterWalls at the area
+     * grown by the capsule's radius: the play bounds), or removes them for an unbounded area. A
+     * session server and every client call it when they build their simulation (StepPlayer relies
+     * on them: they stop the capsule at the edge, down a steep outward face too).
+     */
+    void SetPlayAreaWalls(physics::PhysicsWorld& physics, const PlayArea& area, const PlayerTuning& tuning);
+    /**
+     * @brief The revision of the movement rule (StepPlayer and PlayAreaOf). Bump it whenever the
+     * same inputs on the same world give another result: it is part of net::BuildHash, so a client
+     * and a server of different revisions refuse each other ("another build") instead of
+     * correcting each other. 1: the play area (WP1, 2026-11-19).
+     */
+    inline constexpr uint32_t kPlayerRuleRevision = 1;
+
     /// @brief What one StepPlayer did.
     struct PlayerStepResult {
         uint8_t pressed = 0;     ///< Button edges of this input.
         bool held = false;       ///< The gate held the player: nothing moved.
         bool jumped = false;     ///< A jump was asked for on the ground.
         bool cast = false;       ///< A cast edge the cooldown accepted (the server captures it; a client shows it).
+        bool pushedBack = false; ///< The move ended past the play area's edge (float rounding at its walls): taken back along that axis.
     };
 
     /// @brief Radians <-> the integers of PlayerInput (round to nearest; yaw wraps, pitch clamps to +-pi/2).
@@ -140,11 +172,19 @@ export namespace vortex::sim {
      * HasCollider). Otherwise the character moves with the wish velocity (run or walk speed),
      * jumps on a Jump edge if on the ground, and `state` takes its new position, velocity and
      * ground flag. `character` must be in `state` already (created there, or RestorePlayer).
+     * The play area (`area`; unbounded offline; its walls in `physics`, SetPlayAreaWalls): per
+     * axis, the outward part of the wish is cut to what reaches the area's edge this tick, and the
+     * walls stop whatever else carries the capsule out (a slide down an outward face, the body it
+     * stands on), so it stops at the edge, slides along it and falls down it. What float rounding
+     * leaves past the edge is taken back along that axis with the outward velocity zeroed
+     * (`pushedBack`); a player outside the area (none should be) never goes further out. A move is
+     * never undone. The gate never meets a chunk past the server's window (PlayAreaOf: the reach
+     * stays a chunk inside it).
      * Integer inputs, fixed tick: what does not repeat bit for bit is Jolt's contact order, which
      * the reconciliation threshold absorbs.
      */
     PlayerStepResult StepPlayer(physics::PhysicsWorld& physics, const physics::TerrainColliders& terrain, physics::CharacterId character,
-                                PlayerState& state, const PlayerInput& input, const PlayerTuning& tuning, float dt);
+                                PlayerState& state, const PlayerInput& input, const PlayerTuning& tuning, const PlayArea& area, float dt);
 
     /// @brief Puts the character into `state` (physics::PhysicsWorld::SetCharacterState): before a replay.
     void RestorePlayer(physics::PhysicsWorld& physics, physics::CharacterId character, const PlayerState& state);

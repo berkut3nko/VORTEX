@@ -148,7 +148,8 @@ namespace vortex::physics {
         constexpr JPH::ObjectLayer kLayerDebris = static_cast<JPH::ObjectLayer>(Layer::Debris);
         constexpr JPH::ObjectLayer kLayerCharacter = static_cast<JPH::ObjectLayer>(Layer::Character);
         constexpr JPH::ObjectLayer kLayerRubble = static_cast<JPH::ObjectLayer>(Layer::Rubble);
-        constexpr JPH::ObjectLayer kLayerCount = 5;
+        constexpr JPH::ObjectLayer kLayerBounds = static_cast<JPH::ObjectLayer>(Layer::Bounds);
+        constexpr JPH::ObjectLayer kLayerCount = 6;
 
         constexpr JPH::BroadPhaseLayer kBroadPhaseNonMoving(0);
         constexpr JPH::BroadPhaseLayer kBroadPhaseMoving(1);
@@ -163,7 +164,7 @@ namespace vortex::physics {
         public:
             JPH::uint GetNumBroadPhaseLayers() const override { return kBroadPhaseLayerCount; }
             JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override {
-                return layer == kLayerStatic ? kBroadPhaseNonMoving : kBroadPhaseMoving;
+                return layer == kLayerStatic || layer == kLayerBounds ? kBroadPhaseNonMoving : kBroadPhaseMoving;
             }
 #if defined(JPH_EXTERNAL_PROFILE) || defined(JPH_PROFILE_ENABLED)
             const char* GetBroadPhaseLayerName(JPH::BroadPhaseLayer layer) const override {
@@ -175,7 +176,9 @@ namespace vortex::physics {
         class ObjectVsBroadPhaseFilter final : public JPH::ObjectVsBroadPhaseLayerFilter {
         public:
             bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer broadPhase) const override {
-                // Static objects only ever need to be tested against things that move.
+                // Static objects only ever need to be tested against things that move; the walls of
+                // SetCharacterWalls against nothing (characters query them themselves).
+                if (layer == kLayerBounds) return false;
                 return layer != kLayerStatic || broadPhase == kBroadPhaseMoving;
             }
         };
@@ -184,6 +187,7 @@ namespace vortex::physics {
         public:
             bool ShouldCollide(JPH::ObjectLayer a, JPH::ObjectLayer b) const override {
                 if (a == kLayerStatic && b == kLayerStatic) return false;
+                if (a == kLayerBounds || b == kLayerBounds) return false;   // only characters meet them
                 if (a == kLayerDebris && b == kLayerDebris) return false;
                 // Rubble (a session client's own lumps and its moving copies of server bodies,
                 // networking stage 6) meets the world, ordinary bodies and itself only.
@@ -202,7 +206,9 @@ namespace vortex::physics {
             explicit CharacterLayerFilter(uint8_t mask = kDefaultCharacterLayers) : m_Mask(mask) {}
             bool ShouldCollide(JPH::ObjectLayer layer) const override {
                 // Rubble (networking stage 6: a session client's own lumps, its moving copies of server
-                // bodies, a server's moving bodies) never meets a character, whatever the mask says.
+                // bodies, a server's moving bodies) never meets a character, whatever the mask says;
+                // the walls of SetCharacterWalls always do.
+                if (layer == kLayerBounds) return true;
                 return layer != kLayerCharacter && layer != kLayerRubble && layer < 8 && ((m_Mask >> layer) & 1u) != 0;
             }
 
@@ -214,7 +220,9 @@ namespace vortex::physics {
         class LayerMaskFilter final : public JPH::ObjectLayerFilter {
         public:
             explicit LayerMaskFilter(uint8_t mask) : m_Mask(mask) {}
-            bool ShouldCollide(JPH::ObjectLayer layer) const override { return layer < 8 && ((m_Mask >> layer) & 1u) != 0; }
+            bool ShouldCollide(JPH::ObjectLayer layer) const override {
+                return layer != kLayerBounds && layer < 8 && ((m_Mask >> layer) & 1u) != 0;
+            }
 
         private:
             uint8_t m_Mask;
@@ -391,6 +399,7 @@ namespace vortex::physics {
             JPH::PhysicsSystem system;
             std::vector<CharacterSlot> characters;
             std::vector<uint32_t> freeCharacters;
+            std::vector<JPH::BodyID> walls;        // SetCharacterWalls
         };
 
         /// Bookkeeping of one dynamic body. While `frozen` the Jolt body is static and this holds
@@ -1201,6 +1210,40 @@ namespace vortex::physics {
         slot->character->RefreshContacts(sim.system.GetDefaultBroadPhaseLayerFilter(kLayerCharacter),
                                          sim.characterFilter, JPH::BodyFilter(), JPH::ShapeFilter(),
                                          sim.tempAllocator);
+    }
+
+    void PhysicsWorld::SetCharacterWalls(const glm::vec2& min, const glm::vec2& max) {
+        Impl::Simulation* sim = m_Impl->sim.get();
+        if (!sim) return;
+        JPH::BodyInterface& bodies = sim->system.GetBodyInterface();
+        for (const JPH::BodyID id : sim->walls) {
+            bodies.RemoveBody(id);
+            bodies.DestroyBody(id);
+        }
+        sim->walls.clear();
+        if (!std::isfinite(min.x) || !std::isfinite(min.y) || !std::isfinite(max.x) || !std::isfinite(max.y) || !(min.x < max.x) ||
+            !(min.y < max.y))
+            return;
+        constexpr float kHalfThickness = 1.0f, kHalfHeight = 512.0f;
+        const glm::vec2 centre = 0.5f * (min + max), half = 0.5f * (max - min) + glm::vec2(2.0f * kHalfThickness);
+        const struct {
+            glm::vec3 centre, halfExtent;
+        } walls[4] = {
+            {{min.x - kHalfThickness, 0.0f, centre.y}, {kHalfThickness, kHalfHeight, half.y}},
+            {{max.x + kHalfThickness, 0.0f, centre.y}, {kHalfThickness, kHalfHeight, half.y}},
+            {{centre.x, 0.0f, min.y - kHalfThickness}, {half.x, kHalfHeight, kHalfThickness}},
+            {{centre.x, 0.0f, max.y + kHalfThickness}, {half.x, kHalfHeight, kHalfThickness}},
+        };
+        for (const auto& w : walls) {
+            const JPH::BodyCreationSettings settings(new JPH::BoxShape(ToJolt(w.halfExtent)), ToJoltR(w.centre), JPH::Quat::sIdentity(),
+                                                     JPH::EMotionType::Static, kLayerBounds);
+            const JPH::BodyID id = bodies.CreateAndAddBody(settings, JPH::EActivation::DontActivate);
+            if (id.IsInvalid()) {
+                Log::Error("PhysicsWorld::SetCharacterWalls: out of bodies");
+                continue;
+            }
+            sim->walls.push_back(id);
+        }
     }
 
     void PhysicsWorld::SetCharacterPosition(CharacterId character, const glm::vec3& feetPosition) {

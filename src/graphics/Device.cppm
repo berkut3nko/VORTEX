@@ -16,9 +16,21 @@ export namespace vortex::graphics {
 
     struct DeviceConfig {
         std::string appName = "VORTEX";
-        bool validation = false;        ///< Enable the Khronos validation layer if it is installed.
+        bool validation = false;        ///< The Khronos validation layer: start-up fails without it (ValidationMissing()).
         std::string preferredGpu;       ///< Substring of the device name to prefer ("" = best available).
     };
+
+    /// @brief What a validation request comes to (DecideValidation).
+    struct ValidationDecision {
+        bool enable = false;   ///< Create the instance with the validation layer and its messenger.
+        bool fail = false;     ///< Requested, but the layer (or its debug utils extension) is missing: start-up fails.
+    };
+    /**
+     * @brief The validation rule (WP1): a request without the layer fails start-up instead of
+     * running without it, so an automated run that exits 0 under --validation proves the layer
+     * ran (exit code 2, the same as a run with validation errors).
+     */
+    ValidationDecision DecideValidation(bool requested, bool layerAvailable, bool debugUtilsAvailable);
 
     /**
      * @brief Vulkan instance, physical + logical device, the graphics queue and the allocator.
@@ -56,6 +68,8 @@ export namespace vortex::graphics {
         float TimestampPeriod() const;
 
         bool ValidationEnabled() const;
+        /// @brief Initialize failed because validation was requested and the layer is not installed.
+        bool ValidationMissing() const;
         /// @brief Number of validation errors reported since start-up.
         uint32_t ValidationErrorCount() const;
 

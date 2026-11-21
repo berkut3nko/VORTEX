@@ -115,6 +115,9 @@ export namespace vortex {
 
         /// @param generator World generator; nullptr = built-in terrain with the default materials.
         bool Initialize(std::shared_ptr<voxel::IWorldGenerator> generator = nullptr);
+        /// @brief Initialize failed because --validation was asked for and the Khronos validation
+        /// layer is not installed (graphics::DecideValidation): the game exits 2, as for validation errors.
+        bool ValidationLayerMissing() const;
         int Run(Application& app);
         void RequestExit();
 

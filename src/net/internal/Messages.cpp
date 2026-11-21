@@ -23,7 +23,7 @@ namespace vortex::net {
     const char* ToString(RefuseReason reason) {
         switch (reason) {
             case RefuseReason::Protocol: return "another protocol version";
-            case RefuseReason::Build: return "another build (generator or material table)";
+            case RefuseReason::Build: return "another build (generator, material table or player rule)";
             case RefuseReason::Token: return "wrong token";
             case RefuseReason::Full: return "the session is full";
             case RefuseReason::Malformed: return "malformed message";

@@ -103,6 +103,7 @@ namespace vortex::net {
         RefuseReason refusal = RefuseReason::Malformed;
         PeerId server = 0;
         Welcome welcome;
+        sim::PlayArea playArea;             // sim::PlayAreaOf(welcome.region, welcome.player): StepPlayer's area
         sim::Simulation* simulation = nullptr;
         std::deque<StreamItem> pending;   // received before Attach (or not yet applied)
         std::deque<std::vector<uint8_t>> pendingBulk;   // bulk messages not processed yet
@@ -124,6 +125,8 @@ namespace vortex::net {
         std::unordered_set<uint32_t> asked;          // NetIds of ModelRequests out
         std::vector<uint32_t> modelsToAsk;
         uint32_t applied = 0;
+        bool anyTerrainOp = false;
+        uint32_t lastTerrainOpTick = 0;   // nextTick when the newest terrain operation was applied (LogCorrection)
         uint32_t serverLast = 0;
         ClientStats stats;
         std::unordered_map<uint32_t, scene::Entity> entities;   // NetId -> light entity
@@ -241,7 +244,7 @@ namespace vortex::net {
             input.tick = nextTick;
             FreshColliders();
             const sim::PlayerStepResult r = sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, input,
-                                                            welcome.player, Dt());
+                                                            welcome.player, playArea, Dt());
             history[nextTick % kHistoryTicks] = {true, nextTick, input, player};
             ++nextTick;
             return r;
@@ -326,6 +329,7 @@ namespace vortex::net {
                 return;
             }
             ++prediction.corrections;
+            LogCorrection(snap, h.state, error);
             const glm::vec3 before = player.position;
             Restore(snap.owner);
             history[t % kHistoryTicks].state = player;
@@ -334,7 +338,7 @@ namespace vortex::net {
             for (uint32_t k = t + 1; k < nextTick; ++k) {
                 HistoryEntry& e = history[k % kHistoryTicks];
                 FreshColliders();
-                sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, e.input, welcome.player, Dt());
+                sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, e.input, welcome.player, playArea, Dt());
                 e.state = player;
                 ++replayed;
             }
@@ -351,6 +355,25 @@ namespace vortex::net {
                 offset += before - player.position;
                 blendLeft = settings.blendTicks;
             }
+        }
+
+        /// One line per correction, the first kLoggedCorrections of a session (G16's corrections are
+        /// read from them: where, how far ahead, on the ground or not, after which terrain operation,
+        /// how far from the play area's edge).
+        void LogCorrection(const Snapshot& snap, const sim::PlayerState& predicted, float error) {
+            constexpr uint64_t kLoggedCorrections = 16;
+            if (prediction.corrections > kLoggedCorrections) return;
+            const glm::vec3 p = predicted.position, q = snap.owner.position;
+            const glm::vec3 pv = predicted.velocity, qv = snap.owner.velocity;
+            const float edge = std::min(std::min(q.x - playArea.min.x, playArea.max.x - q.x), std::min(q.z - playArea.min.y, playArea.max.y - q.z));
+            const std::string sinceOp = anyTerrainOp ? std::to_string(nextTick - lastTerrainOpTick) + " ticks" : "none";
+            Log::Info("Client: correction {} at tick {} ({} ahead): error {:.3f} m; predicted ({:.2f}, {:.2f}, {:.2f}) v ({:.2f}, {:.2f}, {:.2f}) {}; "
+                      "server ({:.2f}, {:.2f}, {:.2f}) v ({:.2f}, {:.2f}, {:.2f}) {}; opSeq {} here / {} in the snapshot, last terrain op {} "
+                      "ago; {:.1f} m inside the play area{}",
+                      prediction.corrections, snap.tick, nextTick - 1 - snap.tick, error, p.x, p.y, p.z, pv.x, pv.y, pv.z,
+                      predicted.OnGround() ? "on the ground" : "in the air", q.x, q.y, q.z, qv.x, qv.y, qv.z,
+                      snap.owner.OnGround() ? "on the ground" : "in the air", applied, snap.lastOpSeq, sinceOp, edge,
+                      prediction.corrections == kLoggedCorrections ? " (later corrections are not logged)" : "");
         }
 
         void OnSnapshot(const std::vector<uint8_t>& bytes) {
@@ -509,6 +532,7 @@ namespace vortex::net {
                     p.chunk.y < rows.x || p.chunk.y >= rows.y)
                     return Fail("malformed Welcome: a probe chunk outside the region's window");
             welcome = std::move(w);
+            playArea = sim::PlayAreaOf(welcome.region, welcome.player);
             // Terrain agreement: the probe chunks from this client's own generator.
             const std::shared_ptr<voxel::IWorldGenerator> generator = Generator();
             ownProbes = RehashProbes(welcome.probes, *generator);
@@ -1487,6 +1511,10 @@ namespace vortex::net {
                         ++stats.testDroppedEvents;      // a test's fault: as if it never came
                     } else {
                         Apply(seq, batch.events[i]);
+                        if (std::holds_alternative<sim::WorldOp>(batch.events[i])) {
+                            anyTerrainOp = true;
+                            lastTerrainOpTick = nextTick;
+                        }
                     }
                     if (state != ClientState::Playing) return;
                     applied = seq;
@@ -1654,7 +1682,7 @@ namespace vortex::net {
                     HistoryEntry& e = s.history[k % kHistoryTicks];
                     if (!e.valid || e.tick != k) continue;
                     s.FreshColliders();
-                    sim::StepPlayer(s.simulation->Physics(), s.simulation->Terrain(), s.character, s.player, e.input, s.welcome.player, s.Dt());
+                    sim::StepPlayer(s.simulation->Physics(), s.simulation->Terrain(), s.character, s.player, e.input, s.welcome.player, s.playArea, s.Dt());
                     e.state = s.player;
                 }
             }
@@ -1867,6 +1895,7 @@ namespace vortex::net {
         s.player = sim::PlayerState{};
         s.player.position = glm::vec3(s.welcome.spawn);
         s.character = simulation.Physics().CreateCharacter(sim::PlayerCharacterDesc(s.player.position, s.welcome.player));
+        sim::SetPlayAreaWalls(simulation.Physics(), s.playArea, s.welcome.player);   // as the server's (WP1)
         const std::array<glm::dvec3, 1> focus = {s.welcome.spawn};
         simulation.Terrain().Update(focus, simulation.Config().colliderRadius);
         simulation.Terrain().Flush();

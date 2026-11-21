@@ -11,9 +11,10 @@ cmake_minimum_required(VERSION 3.28)
 #                      numbered fixed tick (no GPU, no window: what a session server runs)
 #    Vortex::Net       the session protocol: transports, messages, server, client
 #                      (no GPU, no window: vortex_server links only this)
-#    Vortex::Graphics  Vulkan renderer, window, UI
-#    Vortex::Engine    application loop, editor                <- games link this
-#    VortexShaders     GLSL -> SPIR-V
+#    Vortex::Graphics  Vulkan renderer, window, UI              (VORTEX_GRAPHICS)
+#    Vortex::Engine    application loop, editor                <- games link this (VORTEX_GRAPHICS)
+#    VortexShaders     GLSL -> SPIR-V                           (VORTEX_GRAPHICS)
+#    vortex_cpu_check  start-up CPU check, linked into every executable
 # =============================================================================
 project(VORTEX VERSION 0.2.0 LANGUAGES CXX C)
 
@@ -30,8 +31,11 @@ if(CMAKE_BUILD_TYPE MATCHES "^(Release|RelWithDebInfo|MinSizeRel)$")
 endif()
 
 option(VORTEX_BUILD_TESTS "Build the engine unit tests" ${PROJECT_IS_TOP_LEVEL})
-option(VORTEX_BUILD_TOOLS "Build engine tools (CPU reference renderer)" ON)
+option(VORTEX_BUILD_TOOLS "Build the engine tools (vortex_server, vortex_bot)" ON)
 option(VORTEX_WARNINGS_AS_ERRORS "Treat engine warnings as errors" OFF)
+# OFF builds only what needs no GPU and no window: Core, Physics, Sim, Net, vortex_server, vortex_bot and
+# their tests (a server host, a CI job without a Vulkan loader). Read by Dependencies.cmake: keep it here.
+option(VORTEX_GRAPHICS "Build the renderer, window, UI, engine and editor (Vulkan, GLFW, ImGui)" ON)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     message(STATUS "VORTEX: no build type selected, defaulting to RelWithDebInfo")
@@ -50,7 +54,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Dependencies)
-include(VortexShaders)
+if(VORTEX_GRAPHICS)
+    include(VortexShaders)
+else()
+    message(STATUS "VORTEX: VORTEX_GRAPHICS OFF: Core, Physics, Sim, Net, vortex_server, vortex_bot and their tests only")
+endif()
 
 # -----------------------------------------------------------------------------
 #  Common options shared by every engine target and everything that imports
@@ -71,7 +79,7 @@ endif()
 # is not touched (it does not link vortex_options).
 # clang-cl reports the compiler id "Clang" too but silently ignores a bare -ffp-contract=off
 # (only a warning), so it gets the flag through /clang: and an unknown argument is made an error.
-# Tests Noise.GoldenFloatBits and Terrain.GoldenHeightBits fail on a build that contracts.
+# Tests Terrain.GoldenNoiseBits and Terrain.GoldenHeightBits (tests/core/HashTests.cpp) fail on a build that contracts.
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND CMAKE_CXX_COMPILER_FRONTEND_VARIANT STREQUAL "MSVC")
     target_compile_options(vortex_options INTERFACE /clang:-ffp-contract=off -Werror=unknown-argument)
 elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -91,6 +99,14 @@ target_compile_definitions(vortex_options INTERFACE
 )
 target_link_libraries(vortex_options INTERFACE glm::glm)
 
+# The start-up CPU check (src/startup/CpuCheck.c, plain C, built without vortex_options' -mavx2 ...):
+# every executable links it, and refuses to start on a CPU without the instructions the build
+# assumes (exit code 4 with a message) instead of crashing on the first one. An OBJECT library, so
+# the linker keeps its constructor.
+add_library(vortex_cpu_check OBJECT "${CMAKE_CURRENT_SOURCE_DIR}/src/startup/CpuCheck.c")
+target_include_directories(vortex_cpu_check PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/src/startup")
+set_target_properties(vortex_cpu_check PROPERTIES C_STANDARD 11 C_STANDARD_REQUIRED ON C_EXTENSIONS OFF)
+
 add_library(vortex_warnings INTERFACE)
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(vortex_warnings INTERFACE
@@ -103,6 +119,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(vortex_warnings INTERFACE -Werror)
     endif()
 endif()
+target_link_libraries(vortex_cpu_check PRIVATE vortex_warnings)
 
 # Helper: a static library made of module interfaces (*.cppm) and
 # implementation units (*.cpp) found below the given source directories.
@@ -128,6 +145,7 @@ vortex_add_module_library(VortexCore core math voxel fx)
 target_include_directories(VortexCore PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/shaders")   # shared CPU/GPU code
 target_link_libraries(VortexCore PRIVATE spdlog::spdlog vortex_tinygltf)
 add_library(Vortex::Core ALIAS VortexCore)
+include(BuildInfo)   # vortex::GetBuildInfo: the commits, build type, compiler and CPU flags
 
 # --- Physics -------------------------------------------------------------------
 vortex_add_module_library(VortexPhysics physics)
@@ -146,7 +164,8 @@ vortex_add_module_library(VortexNet net)
 target_link_libraries(VortexNet PUBLIC VortexSim PRIVATE vortex_enet)
 add_library(Vortex::Net ALIAS VortexNet)
 
-# --- Graphics ------------------------------------------------------------------
+# --- Graphics (VORTEX_GRAPHICS) -------------------------------------------------
+if(VORTEX_GRAPHICS)
 vortex_add_module_library(VortexGraphics graphics)
 target_link_libraries(VortexGraphics
     PUBLIC  VortexCore vortex_imgui
@@ -162,6 +181,7 @@ target_link_libraries(VortexEngine
 )
 add_dependencies(VortexEngine VortexShaders)
 add_library(Vortex::Engine ALIAS VortexEngine)
+endif()
 
 # -----------------------------------------------------------------------------
 #  The GPU-free libraries must stay GPU-free: a session server and its tests are

@@ -18,6 +18,9 @@ set(FETCHCONTENT_QUIET ON)
 set(_VORTEX_SAVED_SCAN ${CMAKE_CXX_SCAN_FOR_MODULES})
 set(CMAKE_CXX_SCAN_FOR_MODULES OFF)
 
+# Vulkan, vk-bootstrap, VMA and GLFW, ImGui and ImGuizmo: only with VORTEX_GRAPHICS (engine/CMakeLists.txt).
+# Without it no Vulkan loader is needed and none of them is fetched.
+if(VORTEX_GRAPHICS)
 # -----------------------------------------------------------------------------
 #  Vulkan (headers are fetched so the build does not depend on an installed
 #  SDK; only the system loader `libvulkan` is required at link time)
@@ -73,7 +76,7 @@ target_include_directories(vortex_vma SYSTEM INTERFACE ${vulkanmemoryallocator_S
 target_link_libraries(vortex_vma INTERFACE Vulkan::Headers)
 
 # -----------------------------------------------------------------------------
-#  Windowing / logging / math
+#  Windowing (VORTEX_GRAPHICS)
 # -----------------------------------------------------------------------------
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
@@ -85,7 +88,11 @@ FetchContent_Declare(glfw
     GIT_SHALLOW    TRUE
 )
 FetchContent_MakeAvailable(glfw)
+endif()   # VORTEX_GRAPHICS
 
+# -----------------------------------------------------------------------------
+#  Logging / math
+# -----------------------------------------------------------------------------
 set(SPDLOG_BUILD_EXAMPLE OFF CACHE BOOL "" FORCE)
 set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(SPDLOG_INSTALL OFF CACHE BOOL "" FORCE)
@@ -188,6 +195,7 @@ target_include_directories(vortex_tinygltf SYSTEM INTERFACE ${tinygltf_SOURCE_DI
 # -----------------------------------------------------------------------------
 #  UI: Dear ImGui + ImGuizmo (no upstream CMake)
 # -----------------------------------------------------------------------------
+if(VORTEX_GRAPHICS)
 FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
     GIT_TAG        v1.91.9b
@@ -217,6 +225,7 @@ FetchContent_MakeAvailable(imguizmo)
 add_library(vortex_imguizmo STATIC ${imguizmo_SOURCE_DIR}/src/ImGuizmo.cpp)
 target_include_directories(vortex_imguizmo SYSTEM PUBLIC ${imguizmo_SOURCE_DIR}/src)
 target_link_libraries(vortex_imguizmo PUBLIC vortex_imgui)
+endif()   # VORTEX_GRAPHICS
 
 # -----------------------------------------------------------------------------
 #  Tests
@@ -233,9 +242,10 @@ if(VORTEX_BUILD_TESTS)
     FetchContent_MakeAvailable(googletest)
 endif()
 
-# Silence warnings coming from third-party sources we compile ourselves.
-foreach(_t vortex_imgui vortex_imguizmo vortex_enet)
-    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+# Silence warnings coming from third-party sources we compile ourselves (googletest's own CMake adds
+# -Wall -Wconversion ... and clang warns in gtest-printers.h: a fresh build would not be warning-free).
+foreach(_t vortex_imgui vortex_imguizmo vortex_enet gtest gtest_main gmock gmock_main)
+    if(TARGET ${_t} AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         target_compile_options(${_t} PRIVATE -w)
     endif()
 endforeach()
