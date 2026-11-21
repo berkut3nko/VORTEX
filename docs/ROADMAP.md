@@ -77,18 +77,18 @@ In this order:
 7. **[wp-8] Fight measurement + fx-budget 1-2 + 10 clients.** Fights stay playable on the UHD 620: `--stress-fx`, a
    10-bot session at 10 casts/s with measured clients, then [design/fx-budget.md](design/fx-budget.md) stages 1-2.
    5-8 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP8".
-8. **[mag-1] Siege core in sim, headless only.** The spell system's first four spells, Siege Cannon, Barricade Wave,
+8. **[mech-1] Door and gate.** E opens doors, a lever runs a gate, crates move to Q.
+   [design/mechanisms.md](design/mechanisms.md), "Stages" row 1. Its own protocol bump, after M2a's; after WP8 so its
+   yard is measured inside a known fight budget. 9-10 d (e).
+9. **[mag-1] Siege core in sim, headless only.** The spell system's first four spells, Siege Cannon, Barricade Wave,
    Shockwave and Updraft (breach, cover, knock off, climb), with only what they use: the Pierce operator, the Burst
    strip, Plume's single column, `CarveCapsule` / `MapMask` / `MapShape` as sim ops, knit iron that blasts chip, with
    server-scheduled expiries, the spawn guard, Impulse and Lift zones in `sim::StepPlayer` (`kPlayerRuleRevision` 2);
    no wire change. [design/magic.md](design/magic.md), "Stages". 6-9 d (e).
-9. **[mag-2] First playable spells.** The same four spells in offline practice and in sessions: the one magic
-   protocol bump (it reserves every value the later magic stages need), zone events with a 0.4 s lead, the spell bar
-   and the attune menu on the HUD; the owner's Felling-duel taste check. [design/magic.md](design/magic.md), "Stages".
-   6-9 d (e).
-10. **[mech-1] Door and gate.** E opens doors, a lever runs a gate, crates move to Q.
-    [design/mechanisms.md](design/mechanisms.md), "Stages" row 1. Its own protocol bump, after [mag-2]'s; after WP8 so
-    its yard is measured inside a known fight budget. 9-10 d (e).
+10. **[mag-2] First playable spells.** The same four spells in offline practice and in sessions: the one magic
+    protocol bump (it reserves every value the later magic stages need), zone events with a 0.4 s lead, the spell bar
+    and the attune menu on the HUD; the owner's Felling-duel taste check. [design/magic.md](design/magic.md), "Stages".
+    6-9 d (e).
 11. **[si-2] Impacts with crush damage** (with the `NeckCheck` split and a chunk-source interface first). A falling
     tower cracks walls and kills. [design/shred.md](design/shred.md), "SI-2 - impacts (inertial contact)". 7-11 d (e).
 12. **[fog-1] Fog stage 1.** Haze toward the sun, low mist and blast dust puffs, without losing frame rate.
@@ -99,12 +99,11 @@ In this order:
     [design/worldgen.md](design/worldgen.md), "W1: a stamped village, offline". About 1.5 weeks (e).
 
 Placement of [mech-1] and [spread-S1] was decided by us under the owner's rules; the owner may veto it. Mechanisms
-change the E key and add a `PlayerButton`, so they take the protocol number after M2a's (and, since 2026-11-21, after
-[mag-2]'s); spread S1 has no wire change, so it fits after fog stage 1; spread S2 bumps the protocol and goes to Later.
-[mag-1] and [mag-2] go right after [wp-8] and before [mech-1] (magic.md "ROADMAP placement", us, 2026-11-21): spells
-are M2b's main verb and the game's fun first, and they need M2a's health, teams and charges, WP6's rules seam and
-[wp-8]'s fight baseline. This moves [mech-1] and everything after it two places down; **the owner may veto the
-reorder.**
+change the E key and add a `PlayerButton`, so they take the protocol number after M2a's; spread S1 has no wire change,
+so it fits after fog stage 1; spread S2 bumps the protocol and goes to Later.
+[mag-1] and [mag-2] come right after [mech-1] (owner, 2026-11-21: "Doors first", vetoing our proposal to put them
+before it): they need M2a's health, teams and charges, WP6's rules seam and [wp-8]'s fight baseline, and [mag-2]
+takes the protocol number after [mech-1]'s.
 [nat-R0] and [nat-R1] go right after [wp-2] (rendezvous.md "Placement", us, the owner may veto): no wire change, and
 internet play lets testers outside the house try every later stage, M2a's first fight above all.
 

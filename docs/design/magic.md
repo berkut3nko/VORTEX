@@ -5,8 +5,8 @@
 | | |
 |---|---|
 | Status | Designed and reviewed, nothing built or measured for it. Merged from three proposals by a judge's synthesis brief; reviewed by two critics on 2026-11-21 (29 findings on 27 issues, all taken, three only in part: [design-review-2026-11-21.md](../history/magic/design-review-2026-11-21.md)). |
-| Decided | - Owner's concept (2026-11-21), verbatim in [owner-concept-2026-11-21.md](../history/magic/owner-concept-2026-11-21.md), not reopened here: every spell is a **Cast Type** (Liquid: down and pooling; Flame: up and rising; Solid: linear penetration that spends structural health per voxel; Torrent: lateral or radial burst) x an **Element** (Metal: create and reinforce voxels; Thermal: damage over time, ignition, heats metal; Pressure: impulse, knockback, launch, bonus damage to brittle voxels, no residue; Frost, the owner's recommended 4th: slow, freeze liquid into walkable ice, brittleness 2x against Pressure and Solid). All 16 named siege spells and their tactical roles.<br>- Owner, standing rules: fun gameplay with few bugs first; realistic synced simulation is unnecessary; we settle open design questions ourselves with a recommended answer; every feature has a cheap path and a measured cost; replicated world edits are integer-exact and no float decides which voxel changes; no randomness in replicated rules; everything stays original.<br>- Owner (2026-11-17, [spread.md](spread.md)): fire is lockstep, a simple spread operation, no randomness; Claude implements it. Owner (2026-11-10, ROADMAP "Direction"): building only in fights, created matter is temporary; magic means create matter, move matter, change materials, spreading fire and summoning.<br>- Us (this design, 2026-11-21): items 1-16 of "Decision in brief" and every answer in "Open questions", as amended by the design review. Base: proposal 3 (8.2 of 10), with proposal 2's player design (7.2) and proposal 1's exact operators (7.0) ([proposal-scores-2026-11-21.md](../history/magic/proposal-scores-2026-11-21.md)).<br>- Us, ROADMAP placement under the owner's standing rules (the owner may veto): [mag-1] and [mag-2] right after [wp-8] and before [mech-1] ("ROADMAP placement"). |
-| Next | [mag-1] the siege core in sim, headless only, in ROADMAP "Next" after [wp-8]. |
+| Decided | - Owner's concept (2026-11-21), verbatim in [owner-concept-2026-11-21.md](../history/magic/owner-concept-2026-11-21.md), not reopened here: every spell is a **Cast Type** (Liquid: down and pooling; Flame: up and rising; Solid: linear penetration that spends structural health per voxel; Torrent: lateral or radial burst) x an **Element** (Metal: create and reinforce voxels; Thermal: damage over time, ignition, heats metal; Pressure: impulse, knockback, launch, bonus damage to brittle voxels, no residue; Frost, the owner's recommended 4th: slow, freeze liquid into walkable ice, brittleness 2x against Pressure and Solid). All 16 named siege spells and their tactical roles.<br>- Owner, standing rules: fun gameplay with few bugs first; realistic synced simulation is unnecessary; we settle open design questions ourselves with a recommended answer; every feature has a cheap path and a measured cost; replicated world edits are integer-exact and no float decides which voxel changes; no randomness in replicated rules; everything stays original.<br>- Owner (2026-11-17, [spread.md](spread.md)): fire is lockstep, a simple spread operation, no randomness; Claude implements it. Owner (2026-11-10, ROADMAP "Direction"): building only in fights, created matter is temporary; magic means create matter, move matter, change materials, spreading fire and summoning.<br>- Us (this design, 2026-11-21): items 1-16 of "Decision in brief" and every answer in "Open questions", as amended by the design review. Base: proposal 3 (8.2 of 10), with proposal 2's player design (7.2) and proposal 1's exact operators (7.0) ([proposal-scores-2026-11-21.md](../history/magic/proposal-scores-2026-11-21.md)).<br>- Owner (2026-11-21, "Doors first"): [mag-1] and [mag-2] right after [mech-1] ("ROADMAP placement"); our proposal to put them before it was vetoed. |
+| Next | [mag-1] the siege core in sim, headless only, in ROADMAP "Next" after [mech-1] (owner, 2026-11-21). |
 | Open | "Open questions" 1-29, each with the recommended answer. For the owner: the in-world name for "Napalm" (question 19), the keys, colours and feel of slick ground and launches (windowed, question 23), the reorder of ROADMAP "Next" (question 24), and the damage split between Thermal and Pressure (question 27). |
 | History | [owner-concept-2026-11-21.md](../history/magic/owner-concept-2026-11-21.md): the owner's concept, verbatim<br>[proposal-scores-2026-11-21.md](../history/magic/proposal-scores-2026-11-21.md): the scores of the three proposals, what the merged design takes from each, and the conflicts settled<br>[design-review-2026-11-21.md](../history/magic/design-review-2026-11-21.md): the two critics' findings and what was done with each |
 | Marks | **(m)** measured (quoted from ROADMAP), **(c)** computed from sizes, **(e)** estimate; every (e) names the measurement that replaces it. Voxel counts are at 0.125 m. Work units are `sim::CastWorkOf` units (about 0.11 us each on the UHD 620 laptop: 10 000 units = 1.09 ms). Code read at engine `58f2650`. |
@@ -1138,9 +1138,9 @@ zones of every kind across two clients, a truncation among them) gives **0 corre
 ### Wire values (one protocol bump, in [mag-2])
 
 Every value below takes the **next free number when it lands**; [notes/net.md](../notes/net.md) section 2 is the
-registry (its rule was written there with this design's review), and the wire tests pin it. On today's ROADMAP order
-([mag-2] before spread S2, [mech-1] and shred's optional `ShredSphere`) the numbers in brackets apply; mechanisms'
-`MechanismMove` and `RopeCut` then take 40 and 41. Sizes include the event kind byte and follow from the layouts.
+registry (its rule was written there with this design's review), and the wire tests pin it. The numbers in brackets
+assumed [mag-2] before [mech-1]; since the owner put [mech-1] first (2026-11-21), mechanisms' values land first and
+magic's take the next free numbers after them, from the registry, when [mag-2] lands. Sizes include the event kind byte and follow from the layouts.
 
 | Value | Layout | Size |
 |---|---|---|
@@ -1176,7 +1176,8 @@ deferred-check drop work as for kinds 1-6 (only `SpreadStep` needs list membersh
 costs, lifetimes, zone parameters, cooldowns, damage); the ids and flags go through `MaterialTableHash`, pitch through
 `SpreadTableHash`; `kPlayerRuleRevision` is 2 from [mag-1] and rises to 5 by [mag-7].
 
-**`kProtocolVersion`**: the next number after M2a's 11, so 12 in [mag-2] on today's order, and [mech-1] takes 13.
+**`kProtocolVersion`**: the next number when [mag-2] lands: after M2a's 11 and [mech-1]'s 12, so 13 on the ROADMAP
+order the owner set on 2026-11-21.
 
 ### Apply (`sim::ApplyOp`, every peer, with or without a `ChunkClip`)
 
@@ -1425,10 +1426,10 @@ Commits (engine / game) and history files are added to each row as its stage lan
 
 ## ROADMAP placement
 
-Us, under the owner's standing rules; **the owner may veto**: [mag-1] and [mag-2] go into "Next" right after [wp-8]
-and before [mech-1]. Spells are M2b's main verb and the game's fun first; they need M2a's health, teams, spawns,
-charges and action slot, WP6's rules seam, and [wp-8]'s fight measurement as their baseline. This reorders "Next" from
-item 8 on: [mech-1] takes the protocol number after [mag-2]'s, and its wire numbers follow the registry rule. The rest
+The owner decided (2026-11-21, "Doors first"): [mag-1] and [mag-2] go into "Next" right after [mech-1]. (We had
+proposed them before [mech-1]; the owner vetoed.) They need M2a's health, teams, spawns, charges and action slot,
+WP6's rules seam, and [wp-8]'s fight measurement as their baseline. [mag-2] takes the protocol number after
+[mech-1]'s, and its wire numbers follow the registry rule. The rest
 follow [mag-2], not W1: [mag-3] (Frost) right after [mag-2], so the top-ranked Shatter combo is the next thing
 playable; [mag-4] after [mag-3]; [mag-5] after [spread-S1] (headless) and [spread-S2] / [spread-S3] (play); [mag-7]
 after [si-2] and [mag-4]; [mag-6] closes. Spread S4 (lockstep liquid) stays in "Later" and is needed by none of the 16
@@ -1599,8 +1600,8 @@ become `MapShape` maps.
 23. **Keys, colours, slick and launch feel?** As above (LMB blast, RMB spell, 1-4 form, R element; violet-grey, orange,
     white, cyan with one particle shape each; ice at 3 m/s^2). The owner confirms them windowed after [mag-2] and
     [mag-4].
-24. **ROADMAP placement?** [mag-1] and [mag-2] after [wp-8], before [mech-1] ("ROADMAP placement"). It reorders "Next";
-    the owner may veto. The later stages follow [mag-2] (Frost first), not W1.
+24. **ROADMAP placement?** Answered by the owner (2026-11-21, "Doors first"): [mag-1] and [mag-2] right after
+    [mech-1] ("ROADMAP placement"). The later stages follow [mag-2] (Frost first), not W1.
 25. **Summoning?** Not one of the 16. Calling stays M5's PvE track.
 26. **Mechanisms?** Conjured matter blocks gates as terrain does: a closing gate stops at it (mechanisms' blocked rule);
     no new rule.
