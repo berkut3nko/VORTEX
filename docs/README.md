@@ -39,6 +39,7 @@ Rules every document follows:
 | [design/worldgen.md](design/worldgen.md) | decision + plan (regions built from structures) | designed | code read on 2026-11-17 (committed as `c970f16`) | 74 |
 | [design/rendezvous.md](design/rendezvous.md) | decision + plan (internet sessions without a public IP: STUN, UDP hole punching, Cloudflare D1) | designed | code read at `a23af7a` (committed as `84ac7e7`) | 36 |
 | [design/magic.md](design/magic.md) | decision + plan (spells: four forms x four elements, the 16 siege spells, conjured matter, zones) | designed | code read at `58f2650` | 145 |
+| [llm/README.md](llm/README.md) | guide: task packs for a local model (work loop, rules, values planned across packs, card template); the packs `llm/<stage>.md` | current | `bafca16` | 22 |
 | [notes/core-fx-editor.md](notes/core-fx-editor.md) | notes: map, invariants, traps, recipes, verifying | current | `430fde0` | 33 |
 | [notes/graphics.md](notes/graphics.md) | notes | current | `430fde0` | 25 |
 | [notes/net.md](notes/net.md) | notes (keeps the wire-value lists; the registry of wire values) | current | `430fde0` | 60 |
@@ -63,6 +64,7 @@ the files and sections named, measured on 2026-11-18, CLAUDE.md not included):
 | World generation (terrain, regions, templates) | [design/worldgen.md](design/worldgen.md); [ARCHITECTURE.md](ARCHITECTURE.md) 4.3; [notes/voxel.md](notes/voxel.md); view-distance.md "Vertical design" and "Voxel size choice"; shred.md Part 4b (what the load check releases); the game's `docs/world/setting.md` for names and lore | 228 |
 | Game interface (HUD, menu, input, cursor) | [design/game-ui.md](design/game-ui.md); [ARCHITECTURE.md](ARCHITECTURE.md) 11; [notes/core-fx-editor.md](notes/core-fx-editor.md) | 53 |
 | Spell change (forms, elements, conjured matter, zones) | [design/magic.md](design/magic.md); [design/spread.md](design/spread.md) (Thermal's fire); [notes/net.md](notes/net.md) section 2 (the wire-value registry); networking.md "World operations" and "Player movement"; shred.md Part 2 (R1-R7), and Part 4b for `extraLoad` | 255 (without Part 4b) |
+| A card of a task pack (local model) | [llm/README.md](llm/README.md); the pack's header, "Decisions", "Skeleton" and its card; the card's "Read first" list | 22 plus the card's list |
 | A new design | [ROADMAP.md](ROADMAP.md) "Now" / "Next" (where it fits); the design documents it touches (their "Related" lines); one built design as a model of the form, e.g. [design/networking.md](design/networking.md) | 83 plus the documents it touches |
 
 A new design document starts with the standard header (a table of Status / Decided / Next / Open / History / Marks,
