@@ -6,7 +6,7 @@
 |---|---|
 | Status | Designed, nothing built or measured for it. Reviewed, rechecked adversarially and amended twice. |
 | Decided | - Owner's request (2026-11-19): the session server runs on the owner's own AVX2/FMA3 machine at home, with no public ("white") IPv4 address and no paid VPS. It finds players through STUN and UDP hole punching, with a Cloudflare Worker + D1 on the free tier as the meeting point.<br>- Us (this design, 2026-11-19): items 1-10 of "Decision in brief".<br>- Owner (2026-11-19): hide the token in `Hello` with M2a's protocol bump ([wp-7]); "Hello without the token" below. |
-| Next | [nat-R0] NAT probe and pair test, then [nat-R1] rendezvous (see "Stages"). ROADMAP placement: "Placement" below. |
+| Next | [nat-R0] NAT probe and pair test (ROADMAP "Now" since 2026-11-22, after [wp-2]), then [nat-R1] rendezvous (see "Stages"). ROADMAP placement: "Placement" below. |
 | Open | "Open questions" 1-6, each with the recommended answer. 1 (a relay for pairs that cannot meet) waits for R0's pair results. |
 | History | [design-review-2026-11-19.md](../history/rendezvous/design-review-2026-11-19.md): the review's and the recheck's findings, and what was done with each |
 | Marks | **(m)** measured, **(c)** computed, **(e)** estimate, **(d)** from Cloudflare's documentation read on 2026-11-19 (re-check at R1: free tiers change). Code read at engine `a23af7a`, with WP1 uncommitted in the tree. |

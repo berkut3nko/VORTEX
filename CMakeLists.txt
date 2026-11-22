@@ -162,6 +162,10 @@ vortex_add_module_library(VortexNet net)
 # ENet (stage 5) is private: only VortexNet's implementation includes it; what links VortexNet (the
 # server, the game, VortexNetTests) gets the static library, Core / Physics / Sim never do.
 target_link_libraries(VortexNet PUBLIC VortexSim PRIVATE vortex_enet)
+if(WIN32)
+    # rendezvous.md [nat-R0]: lan candidates from GetAdaptersAddresses (src/net/internal/Address.cpp).
+    target_link_libraries(VortexNet PRIVATE iphlpapi ws2_32)
+endif()
 add_library(Vortex::Net ALIAS VortexNet)
 
 # --- Graphics (VORTEX_GRAPHICS) -------------------------------------------------

@@ -54,6 +54,78 @@ namespace vortex::net {
 
     Bot::~Bot() = default;
 
+    namespace {
+        std::string MaterialName(const voxel::WorldMaterials& m, uint8_t id) {
+            if (id == 0) return "air";
+            const std::pair<uint8_t, const char*> names[] = {
+                {m.grass, "grass"},   {m.grassDry, "dry grass"}, {m.dirt, "dirt"},   {m.stone, "stone"},     {m.stoneDark, "dark stone"},
+                {m.sand, "sand"},     {m.snow, "snow"},          {m.water, "water"}, {m.wood, "wood"},       {m.leaves, "leaves"},
+                {m.leavesAutumn, "autumn leaves"}, {m.planks, "planks"},          {m.brick, "brick"}, {m.iron, "iron"},
+                {m.gold, "gold"},     {m.crystal, "crystal"},    {m.lava, "lava"},   {m.torch, "torch"},     {m.glass, "glass"},
+                {m.bedrock, "bedrock"}};
+            for (const auto& [value, name] : names)
+                if (value == id) return name;
+            return std::format("material {}", id);
+        }
+
+        /// What is at a standing walker's capsule now (Bot::LongestStillContext): cheap, once per stretch.
+        /// Held: the predicted state carries sim::PlayerFlag_Held (StepPlayer's gate found no terrain
+        /// collider under the capsule and did not move it), with the stretch's held ticks so far.
+        std::string StillContextOf(const Client& c, const sim::Simulation& simulation, const BotPilot::StillStretch& stretch) {
+            const sim::PlayerState& p = c.Player();
+            const bool held = (p.flags & sim::PlayerFlag_Held) != 0;
+            const voxel::World& w = simulation.World();
+            const double half = 0.5 * static_cast<double>(w.VoxelSize());
+            const glm::dvec3 feet(p.position);
+            const uint8_t under = w.GetVoxel(w.WorldToVoxel(feet - glm::dvec3(0.0, half, 0.0)));
+            const uint8_t head = w.GetVoxel(w.WorldToVoxel(feet + glm::dvec3(0.0, static_cast<double>(c.Tuning().height) + half, 0.0)));
+            const EntityInfo* nearest = nullptr;
+            float best = 0.0f;
+            const std::vector<EntityInfo> entities = c.Entities();
+            for (const EntityInfo& e : entities) {
+                const float d = glm::length(e.position - p.position);
+                if (nearest == nullptr || d < best) {
+                    nearest = &e;
+                    best = d;
+                }
+            }
+            const voxel::WorldMaterials& ids = simulation.WorldMaterialIds();
+            return std::format("{} ({} of the stretch's {} ticks so far held), {}, under the feet {}, above the head {}, nearest replicated object {}",
+                               held ? "held: no terrain collider under the capsule yet (StepPlayer's gate)" : "not held", stretch.heldTicks,
+                               stretch.ticks, p.OnGround() ? "on the ground" : "not on the ground", MaterialName(ids, under), MaterialName(ids, head),
+                               nearest == nullptr ? std::string("none")
+                                                  : std::format("{} at {:.1f} m from the feet (its origin; {})", nearest->netId, best,
+                                                                nearest->resting ? "resting" : "awake"));
+        }
+    }
+
+    void Bot::NoteStill() {
+        // A walker's still stretch (BotPilot::Still: within 1 m): what is around it 1 s in, kept for the
+        // longest stretch, and a line once one lasts 10 s (its time stamp says when; the bound is 20 s).
+        // Its confined stretch (within 4 m): 2 s in (running, it leaves 4 m in 0.6 s), a line at 20 s
+        // (the bound is 45 s).
+        NoteStretch(m_Still, m_Pilot->Still(), m_Pilot->LongestStill(), 1.0, 10.0, "still");
+        NoteStretch(m_Confined, m_Pilot->Confined(), m_Pilot->LongestConfined(), 2.0, 20.0, "within 4 m");
+    }
+
+    void Bot::NoteStretch(StretchNote& note, const BotPilot::StillStretch& now, const BotPilot::StillStretch& longest, double contextSeconds,
+                          double logSeconds, const char* what) {
+        const double tick = static_cast<double>(m_Simulation->FixedTimeStep());
+        const uint32_t contextAt = static_cast<uint32_t>(std::lround(contextSeconds / tick));
+        if (now.ticks == contextAt) {
+            note.context = StillContextOf(*m_Client, *m_Simulation, now);
+            note.start = now.startTick;
+        }
+        if (longest.startTick == note.start && longest.ticks >= contextAt && note.longestStart != note.start) {
+            note.longestContext = note.context;
+            note.longestStart = note.start;
+        }
+        if (now.ticks == static_cast<uint32_t>(std::lround(logSeconds / tick)))
+            Log::Info("Client {} walk: {} for {:.0f} s at ({:.1f}, {:.1f}, {:.1f}) since pilot tick {}, {} ticks held; {:.0f} s in: {}",
+                      m_Settings.id, what, logSeconds, now.at.x, now.at.y, now.at.z, now.startTick, now.heldTicks, contextSeconds,
+                      note.start == now.startTick ? note.context : std::string("-"));
+    }
+
     bool Bot::WaitingForRepair() const { return m_Settings.hasBrokenChunk && !m_Repaired; }
 
     void Bot::BuildAndAttach(const std::function<void()>& whileLoading) {
@@ -117,6 +189,7 @@ namespace vortex::net {
             m_WantedTicks += wanted && m_Predicted ? 1u : 0u;
             m_ActedTicks += act ? 1u : 0u;
             const sim::PlayerInput controls = act ? m_Pilot->Next(c.Player()) : sim::PlayerInput{};
+            if (act && m_Settings.walkAcross && m_Simulation) NoteStill();
             const sim::PlayerStepResult r = c.RunTick(controls);
             m_Casts += r.cast ? 1u : 0u;
             if (c.Predicting()) {
@@ -409,13 +482,31 @@ namespace vortex::net {
         }
         if (bot.Settings().walkAcross && bot.Pilot() != nullptr) {
             const BotPilot& pilot = *bot.Pilot();
-            lines.push_back(std::format("Client {} walk: {} of {} waypoints reached{}, {} given up, x from {:.1f} to {:.1f} m, feet at ({:.1f}, "
-                                        "{:.1f}, {:.1f}); {} ticks held over chunks without a base, {} snapshots taken as they were, {} resumes",
+            // Where it gave up (x / z, the first 8): whatever held it there (a tree, a wall, a pit, a body).
+            std::string where;
+            for (size_t i = 0; i < pilot.GiveUps().size() && i < 8; ++i)
+                where += std::format("{}({:.1f}, {:.1f})", i == 0 ? " at " : ", ", pilot.GiveUps()[i].x, pilot.GiveUps()[i].y);
+            if (pilot.GiveUps().size() > 8) where += ", ...";
+            // The longest still stretch (within 1 m while it headed for a waypoint) and the longest confined
+            // one (within 4 m): how long, how much of it held by the collider gate, where, from which pilot
+            // tick, and what was around it 1 s / 2 s in (the 2026-11-22 failure stood 150 s for no known reason).
+            const double tick = static_cast<double>(simulation->FixedTimeStep());
+            const auto stretch = [tick](const char* what, const BotPilot::StillStretch& st, const std::string& context) {
+                return std::format("longest {} {:.1f} s ({:.1f} s of it held) at ({:.1f}, {:.1f}, {:.1f}) from pilot tick {}{}", what, st.ticks * tick,
+                                   st.heldTicks * tick, st.at.x, st.at.y, st.at.z, st.startTick, context.empty() ? std::string() : ": " + context);
+            };
+            lines.push_back(std::format("Client {} walk: {} of {} waypoints reached{}, {} given up{}, {} detours ({} ticks, {:.1f} % of {} walking), "
+                                        "{}; {}; x from {:.1f} to {:.1f} m, "
+                                        "feet at ({:.1f}, {:.1f}, {:.1f}); {} ticks held over chunks without a base, {} snapshots taken as they "
+                                        "were, {} resumes",
                                         id, pilot.WaypointsReached(), 3 * (pilot.Laps() + 1),
                                         pilot.Laps() > 0 ? std::format(" ({} laps begun again, --loop)", pilot.Laps()) : std::string(),
-                                        pilot.WaypointsGivenUp(), bot.MinX(), bot.MaxX(), c.Player().position.x,
-                                        c.Player().position.y, c.Player().position.z, c.Prediction().syncHeldTicks, c.Prediction().syncTaken,
-                                        c.Prediction().syncResumes));
+                                        pilot.WaypointsGivenUp(), where, pilot.Detours(), pilot.DetourTicks(),
+                                        pilot.WalkTicks() > 0 ? 100.0 * pilot.DetourTicks() / pilot.WalkTicks() : 0.0, pilot.WalkTicks(),
+                                        stretch("still", pilot.LongestStill(), bot.LongestStillContext()),
+                                        stretch("within 4 m", pilot.LongestConfined(), bot.LongestConfinedContext()), bot.MinX(),
+                                        bot.MaxX(), c.Player().position.x, c.Player().position.y, c.Player().position.z,
+                                        c.Prediction().syncHeldTicks, c.Prediction().syncTaken, c.Prediction().syncResumes));
         }
         return lines;
     }
@@ -511,7 +602,32 @@ namespace vortex::net {
                 fail(std::format("it reached {} waypoints and gave up {}", pilot->WaypointsReached(), pilot->WaypointsGivenUp()));
             if (c.WindowMoves() && cs.windowUpdates == 0) fail("its window never moved");
         }
+        if (s.walkAcross && pilot != nullptr) {
+            const double tick = bot.GetSimulation() != nullptr ? static_cast<double>(bot.GetSimulation()->FixedTimeStep()) : 1.0 / 60.0;
+            for (std::string& why : WalkerSnagFailures(*pilot, gates, tick)) fail(std::move(why));
+        }
         return v;
+    }
+
+    std::vector<std::string> WalkerSnagFailures(const BotPilot& pilot, const BotGates& gates, double tickSeconds) {
+        std::vector<std::string> reasons;
+        const BotPilot::StillStretch& still = pilot.LongestStill();
+        const double stillSeconds = static_cast<double>(still.ticks) * tickSeconds;
+        if (gates.maxStillSeconds > 0.0f && stillSeconds > static_cast<double>(gates.maxStillSeconds))
+            reasons.push_back(std::format("it stood still {:.1f} s at ({:.1f}, {:.1f}, {:.1f}) from pilot tick {} (over {:.0f} s; {:.1f} s of it held)",
+                                          stillSeconds, still.at.x, still.at.y, still.at.z, still.startTick, gates.maxStillSeconds,
+                                          static_cast<double>(still.heldTicks) * tickSeconds));
+        const double share = pilot.WalkTicks() > 0 ? static_cast<double>(pilot.DetourTicks()) / static_cast<double>(pilot.WalkTicks()) : 0.0;
+        if (gates.maxDetourShare > 0.0f && share > static_cast<double>(gates.maxDetourShare))
+            reasons.push_back(std::format("it spent {} of its {} walking ticks detouring ({:.1f} %, over {:.0f} %; {} detours)", pilot.DetourTicks(),
+                                          pilot.WalkTicks(), 100.0 * share, 100.0 * gates.maxDetourShare, pilot.Detours()));
+        const BotPilot::StillStretch& confined = pilot.LongestConfined();
+        const double confinedSeconds = static_cast<double>(confined.ticks) * tickSeconds;
+        if (gates.maxConfinedSeconds > 0.0f && confinedSeconds > static_cast<double>(gates.maxConfinedSeconds))
+            reasons.push_back(std::format("it stayed within {:.0f} m {:.1f} s at ({:.1f}, {:.1f}, {:.1f}) from pilot tick {} (over {:.0f} s; {:.1f} s of it held)",
+                                          BotPilot::kConfinedMetres, confinedSeconds, confined.at.x, confined.at.y, confined.at.z,
+                                          confined.startTick, gates.maxConfinedSeconds, static_cast<double>(confined.heldTicks) * tickSeconds));
+        return reasons;
     }
 
     std::vector<std::string> ClientCheckFailures(const Client& c, bool terrainModeExpected) {

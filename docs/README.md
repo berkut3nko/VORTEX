@@ -34,17 +34,18 @@ Rules every document follows:
 | [design/lod.md](design/lod.md) | plan (distance budgets, terrain LOD levels) | designed | code read at `ec073a8` | 17 |
 | [design/fx-budget.md](design/fx-budget.md) | plan (effects in fights) | designed | code read at `ec073a8` | 17 |
 | [design/fog.md](design/fog.md) | decision + plan (volumetric fog) | designed | code read at `71dc23e` | 52 |
-| [design/mechanisms.md](design/mechanisms.md) | decision + plan (use key, doors, gates, ropes) | designed | code read on 2026-11-17 (committed as `e21a84d`) | 82 |
+| [design/mechanisms.md](design/mechanisms.md) | decision + plan (use key, doors, gates, ropes) | designed | code read on 2026-11-17 (committed as `e21a84d`) | 83 |
 | [design/spread.md](design/spread.md) | decision + plan (lockstep fire and liquid, no randomness) | designed | code read at `e21a84d` | 73 |
 | [design/worldgen.md](design/worldgen.md) | decision + plan (regions built from structures) | designed | code read on 2026-11-17 (committed as `c970f16`) | 74 |
 | [design/rendezvous.md](design/rendezvous.md) | decision + plan (internet sessions without a public IP: STUN, UDP hole punching, Cloudflare D1) | designed | code read at `a23af7a` (committed as `84ac7e7`) | 36 |
+| [design/magic.md](design/magic.md) | decision + plan (spells: four forms x four elements, the 16 siege spells, conjured matter, zones) | designed | code read at `58f2650` | 145 |
 | [notes/core-fx-editor.md](notes/core-fx-editor.md) | notes: map, invariants, traps, recipes, verifying | current | `430fde0` | 33 |
 | [notes/graphics.md](notes/graphics.md) | notes | current | `430fde0` | 25 |
-| [notes/net.md](notes/net.md) | notes (keeps the wire-value lists) | current | `430fde0` | 59 |
+| [notes/net.md](notes/net.md) | notes (keeps the wire-value lists; the registry of wire values) | current | `430fde0` | 60 |
 | [notes/physics.md](notes/physics.md) | notes | current | `430fde0` | 31 |
 | [notes/scene-engine.md](notes/scene-engine.md) | notes | current | `430fde0` | 50 |
 | [notes/voxel.md](notes/voxel.md) | notes | current | `430fde0` | 58 |
-| [history/](history/) | history (see "History") | append-only | - | 1286 (52 files) |
+| [history/](history/) | history (see "History") | append-only | - | 1333 (55 files) |
 
 API reference: run `doxygen` in `engine/`; it writes HTML to `engine/build/doxygen/html/` (untracked; nothing generated is tracked).
 
@@ -61,6 +62,7 @@ the files and sections named, measured on 2026-11-18, CLAUDE.md not included):
 | Physics change (bodies, colliders, characters) | [ARCHITECTURE.md](ARCHITECTURE.md) 6 and 7.3; [notes/physics.md](notes/physics.md); networking.md "Player movement" and "Entity replication"; shred.md SI-2 for impacts | 68 |
 | World generation (terrain, regions, templates) | [design/worldgen.md](design/worldgen.md); [ARCHITECTURE.md](ARCHITECTURE.md) 4.3; [notes/voxel.md](notes/voxel.md); view-distance.md "Vertical design" and "Voxel size choice"; shred.md Part 4b (what the load check releases); the game's `docs/world/setting.md` for names and lore | 228 |
 | Game interface (HUD, menu, input, cursor) | [design/game-ui.md](design/game-ui.md); [ARCHITECTURE.md](ARCHITECTURE.md) 11; [notes/core-fx-editor.md](notes/core-fx-editor.md) | 53 |
+| Spell change (forms, elements, conjured matter, zones) | [design/magic.md](design/magic.md); [design/spread.md](design/spread.md) (Thermal's fire); [notes/net.md](notes/net.md) section 2 (the wire-value registry); networking.md "World operations" and "Player movement"; shred.md Part 2 (R1-R7), and Part 4b for `extraLoad` | 255 (without Part 4b) |
 | A new design | [ROADMAP.md](ROADMAP.md) "Now" / "Next" (where it fits); the design documents it touches (their "Related" lines); one built design as a model of the form, e.g. [design/networking.md](design/networking.md) | 83 plus the documents it touches |
 
 A new design document starts with the standard header (a table of Status / Decided / Next / Open / History / Marks,
@@ -71,7 +73,7 @@ reviewed**, **Built**, **Designed**, **Not started**, **Superseded**. Add the ne
 ## Stage IDs
 
 Every ID points to the stage row of its design document, which holds the state and the commits. networking.md,
-shred.md and view-distance.md carry the bracketed IDs in their "Stages" rows; in the other documents an ID maps to
+shred.md, view-distance.md and magic.md carry the bracketed IDs in their "Stages" rows; in the other documents an ID maps to
 the numbered stage of its "Stages" section or table (`[fog-2]` = fog.md "Stages" item 2, `[collapse-3]` =
 collapse.md item 3, `[spread-S2]` = spread.md row S2, `[mech-3]` = mechanisms.md row 3, `[wg-W2]` = worldgen.md
 "Staged delivery" W2, `[si-2]` = shred.md "SI-2"); superseded IDs point to the history file named in the table. "-" = no history
@@ -158,11 +160,13 @@ Also: [owner-questions-2026-11-11.md](history/view-distance/owner-questions-2026
 | `[mech-1]`..`[mech-5]` | Door and gate; ropes; siege kit; placement; later (after M2) | [mechanisms.md](design/mechanisms.md#stages) | [design-review-2026-11-17.md](history/mechanisms/design-review-2026-11-17.md) |
 | `[spread-S1]`..`[spread-S6]` | Fire offline; fire in a session; collapse from fire; liquid; presentation; tuning | [spread.md](design/spread.md), "Stages" | [proposal-scores-2026-11-17.md](history/spread/proposal-scores-2026-11-17.md), [design-review-2026-11-17.md](history/spread/design-review-2026-11-17.md) |
 | `[wg-W1]`..`[wg-W6]` | Stamped village offline; in a session; forts and fights; materials, history, second kit; zones; reach | [worldgen.md](design/worldgen.md#staged-delivery) | [how-it-was-chosen-2026-11-17.md](history/worldgen/how-it-was-chosen-2026-11-17.md) |
+| `[mag-1]`..`[mag-7]` | Siege core in sim (Siege Cannon, Barricade Wave, Shockwave, Updraft); first playable (the one protocol bump); Frost and the Shatter combo; Flow, climbing and the rest of Metal; Thermal; presentation and tuning; Crushing Weight (after [si-2]) | [magic.md](design/magic.md#stages) | [owner-concept-2026-11-21.md](history/magic/owner-concept-2026-11-21.md), [proposal-scores-2026-11-21.md](history/magic/proposal-scores-2026-11-21.md), [design-review-2026-11-21.md](history/magic/design-review-2026-11-21.md) |
 
 ### Work packages ([ROADMAP.md](ROADMAP.md#now) "Now" / "Next")
 
 The project review of 2026-11-17 (game repository, `docs/history/reviews/project-review-2026-11-17.md`, section 4)
-defines them: `[wp-1]` safety and the stuck-at-the-edge fix; `[wp-2]` `tools/verify.sh`; `[wp-3]` the document
+defines them: `[wp-1]` safety and the stuck-at-the-edge fix; `[wp-2]` `tools/verify.sh` (its plan, critic findings, as-built notes and review: game repository,
+`docs/history/wp2/plan-2026-11-21.md`); `[wp-3]` the document
 rewrite; `[wp-4]` frame-rate block A + settings (`[perf-A]`); `[wp-5]` visible play boundary; `[wp-6]` rules seam +
 net split; `[wp-7]` M2a "first fight"; `[wp-8]` fight measurement (`[fx-1]`, `[fx-2]`); `[wp-9]` = `[si-2]`;
 `[wp-10]` = `[fog-1]`; `[wp-11]` = `[wg-W1]`. History: [m1-stage-log.md](history/roadmap/m1-stage-log.md) (M1's stage
@@ -170,7 +174,11 @@ log), [drafts-2026-11-12.md](history/roadmap/drafts-2026-11-12.md).
 
 ## Anchors cited from code
 
-Code comments quote document names, headings and numbered items. Each must resolve. Regenerate the list with
+Code comments quote document names, headings and numbered items. Each must resolve. `tools/doc-check.sh` (game
+repository; ctest `Tools.DocCheck`) verifies this table: every quoted "..." in a row is a heading (or failing that
+text) of the files the row names (its links and bare `name.md` names); unquoted text is an alias it does not check.
+It also checks that every `name.md` a code comment names exists and that a `name.md "Quoted"` there is a heading of
+that document or a quoted entry of this table. Regenerate the list with
 
 ```
 grep -rnoE '[A-Za-z/-]+\.md[^)]{0,60}' engine/src engine/tests engine/tools engine/shaders src tools
@@ -186,30 +194,30 @@ two-pc-test-windows.md 1) and the second 761 stage tokens.
 |---|---|
 | networking.md "Time and ticks", "Transport", "World operations" (and its numbered items), "Chunk sync", "Player movement" (and its bold bullet "The play area"), "Entity replication", "Region start-up" / "Region start-up and terrain agreement", "Known risks of terrain agreement after stage 0", "Server world without a camera", "Testing" | [design/networking.md](design/networking.md) (headings kept) |
 | networking.md R5 (the cast work budget) | networking.md "Time and ticks", and shred.md Part 2 R5 |
-| networking.md "owner decision 6" (the replicated threshold) | networking.md "Owner decisions" 6 (and 7, its 2026-11-16 answer) |
-| networking.md "stage N" with no section name; "networking stage 7" (before the split into 7a / 7b) | networking.md "Stages" row `[net-N]`; stage 7 = `[net-7a]` + `[net-7b]` |
+| networking.md owner decision 6 (the replicated threshold) | networking.md "Owner decisions" 6 (and 7, its 2026-11-16 answer) |
+| networking.md stage N with no section name; networking stage 7 (before the split into 7a / 7b) | networking.md "Stages" row `[net-<N>]`; stage 7 = `[net-7a]` + `[net-7b]` |
 | networking.md "the tick-rate scale" | networking.md "Architecture" (`Engine::SetTickSource`); history [stage-1.md](history/networking/stage-1.md), [stage-5.md](history/networking/stage-5.md) |
 | networking.md "stage 0" | [stage-0-starting-point.md](history/networking/stage-0-starting-point.md); networking.md "Known risks of terrain agreement after stage 0" |
 | networking.md "Stage 1 as built" | [history/networking/stage-1.md](history/networking/stage-1.md) |
-| networking.md stage 2 (world operations, crumbs, "Changed by shred.md ...") | [history/networking/stage-2.md](history/networking/stage-2.md) |
+| networking.md stage 2 (world operations, crumbs, "Changed by shred.md" ...) | [history/networking/stage-2.md](history/networking/stage-2.md) |
 | networking.md "Stage 3 as built", "Review of stage 3" | [history/networking/stage-3.md](history/networking/stage-3.md) |
 | networking.md "Stage 4 as built", "Review of stage 4" | [history/networking/stage-4.md](history/networking/stage-4.md) |
 | networking.md "Stage 5 as built", "Review of stage 5" | [history/networking/stage-5.md](history/networking/stage-5.md) |
 | networking.md "Stage 6 as built", "Review of stage 6" | [history/networking/stage-6.md](history/networking/stage-6.md) |
-| networking.md "Stage 7a plan" (its amendments 1-12, "The moving client window", milestone M-b), "stage 7a M-b" ("M-b as built"), "Review of stage 7a", "Recheck of stage 7a" | [history/networking/stage-7a.md](history/networking/stage-7a.md) |
+| networking.md "Stage 7a plan" (its amendments 1-12, "The moving client window", milestone M-b), stage 7a M-b ("M-b as built"), "Review of stage 7a", "Recheck of stage 7a" | [history/networking/stage-7a.md](history/networking/stage-7a.md) |
 | networking.md "Stage 7b plan" (its choices, amendments, Tests, "`HashCheck`: server", "`HashCheck`: client", "Wire `EntityCheck`"), "stage 7b M-b" ("Stage 7b M-b as built"), "Review of stage 7b", "Recheck of stage 7b" | [history/networking/stage-7b.md](history/networking/stage-7b.md) |
 | networking.md "Stage 8", "Stage 8 as built" (items 9 and 13; O1-O11, e.g. O2 / O3 / O4 / O5), "Stage 8 measurements", plan amendments (A1-A16), "Review of stage 8" (R1-R20), "Recheck of stage 8" | [history/networking/stage-8.md](history/networking/stage-8.md) |
 | networking.md stage 9 | networking.md "Stages" row `[net-9]` |
 | shred.md Part 2 R1-R7 | [design/shred.md](design/shred.md) "Part 2 - Rules every later stage follows" |
-| shred.md stage 1 rules 1-9 ("rule 6", "stage 1, rule 7") | shred.md "Fix: prove face-touching components by an outward flood (stage 1)" |
+| shred.md stage 1 rules 1-9 ("rule 6", stage 1, rule 7) | shred.md "Fix: prove face-touching components by an outward flood (stage 1)" |
 | shred.md Part 4 ("largest and lowest first", `serverBodiesPerTick`, at most 2 new server bodies per tick) | shred.md "Part 4 - Structural updates after destruction" |
-| shred.md Part 4b, "The rule, exactly", "The narrowest plane", steps and phases ("step 2", "step 4", "phase 3b"), "Work bound per cast", failure modes ("failure mode 3") | shred.md "Part 4b - Weak necks (load check)" (headings and numbering kept) |
+| shred.md Part 4b, "The rule, exactly", "The narrowest plane", steps and phases ("step 2", "step 4", "phase 3b"), "Work bound per cast", failure modes ("failure mode 3") | shred.md "Part 4b - Weak necks (load check)" (headings and numbering kept); phase 3b and failure mode 3 as built: [history/shred/stage-4b.md](history/shred/stage-4b.md) |
 | shred.md "Other causes checked", "Tests for stage 1", stage 0 / 1 / 1b / 1c / 1d / 1e, "Stages 1d-1e as built" | [history/shred/stage-0-1e.md](history/shred/stage-0-1e.md) |
 | shred.md "open question 7" (`Blast.cppm`, `kNeckFlowWorkBudget`) | Part 4b's question 7 (the flow budget): [history/shred/owner-questions.md](history/shred/owner-questions.md) item 7; decided in shred.md header "Decided" (Us, 2026-11-13, in [net-3]). Not shred.md's current "Open questions for the owner" item 7 |
 | shred.md stage 4, "Stage 4 as built" | [history/shred/stage-4.md](history/shred/stage-4.md); row `[shred-4]` |
 | shred.md "Stage 4b review" (= "Review of stage 4b"), stage 4b | [history/shred/stage-4b.md](history/shred/stage-4b.md); row `[shred-4b]` |
 | shred.md "stage 7, owner" | shred.md "Stages" row `[shred-7]`; [history/shred/stage-4.md](history/shred/stage-4.md) "Optional later: load flow" |
-| view-distance.md "Stage 1 as built", "as built", "stage 1 gates", stage 1 | [history/view-distance/stage-1.md](history/view-distance/stage-1.md); row `[vd-1]` |
+| view-distance.md "Stage 1 as built", "as built", stage 1 gates, stage 1 | [history/view-distance/stage-1.md](history/view-distance/stage-1.md); row `[vd-1]` |
 | view-distance.md stage 2 (voxel preview, `--probe`) | [history/view-distance/stage-2.md](history/view-distance/stage-2.md); row `[vd-2]` |
 | view-distance.md stage 3 | [history/view-distance/stage-3.md](history/view-distance/stage-3.md); row `[vd-3]` |
 | collapse.md (node merging, `SupportCell`, connectivity claim) | [design/collapse.md](design/collapse.md) "How it works" (body kept) |
@@ -284,6 +292,9 @@ header and the original of every section that was kept but changed in the WP3 re
 | [worldgen/before-rewrite-2026-11-18.md](history/worldgen/before-rewrite-2026-11-18.md) | design/worldgen.md | 1-12, 162-175 |
 | [worldgen/how-it-was-chosen-2026-11-17.md](history/worldgen/how-it-was-chosen-2026-11-17.md) | design/worldgen.md "How it was chosen" | 89-130 |
 | [rendezvous/design-review-2026-11-19.md](history/rendezvous/design-review-2026-11-19.md) | written with design/rendezvous.md (engine `84ac7e7`), not moved: the review's and the recheck's findings | - |
+| [magic/owner-concept-2026-11-21.md](history/magic/owner-concept-2026-11-21.md) | written with design/magic.md, not moved: the owner's magic concept of 2026-11-21, verbatim | - |
+| [magic/proposal-scores-2026-11-21.md](history/magic/proposal-scores-2026-11-21.md) | written with design/magic.md, not moved: the scores of the three proposals and the synthesis brief | - |
+| [magic/design-review-2026-11-21.md](history/magic/design-review-2026-11-21.md) | written with design/magic.md's review, not moved: the two critics' 29 findings and what was done with each | - |
 | [surveys/web-survey-2026-11-21.md](history/surveys/web-survey-2026-11-21.md) | the "(web survey, 2026-11-21)" sections the owner added in engine `4f7c3fe` (merged 2026-11-21) to ARCHITECTURE.md, ROADMAP.md and design/networking, shred, collapse, view-distance, lod, fx-budget, perf, game-ui, worldgen.md; with a note on the claims an audit found false or unverifiable | lines at `4f7c3fe`: ARCHITECTURE 10-34, ROADMAP 8-26, each design document 5-7 to 5-9 |
 
 The game repository keeps its own history in `docs/history/` (game commit `6151db6`): the WP3 rewrite plan

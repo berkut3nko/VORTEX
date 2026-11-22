@@ -107,9 +107,24 @@ export namespace vortex::net {
         /// stage 8, so a bot that silently stops predicting fails its verdict (BotGates::minActedShare).
         uint64_t WantedTicks() const { return m_WantedTicks; }
         uint64_t ActedTicks() const { return m_ActedTicks; }
+        /// @brief A walker: what was near its feet 1 s into its longest still stretch (held by the
+        /// collider gate or not and its held ticks so far, the nearest replicated object, the ground and
+        /// head-height materials, on the ground or not); empty when no stretch lasted 1 s. The walk line
+        /// carries it (DescribeBotWindow).
+        const std::string& LongestStillContext() const { return m_Still.longestContext; }
+        /// @brief The same 2 s into its longest confined stretch (BotPilot::LongestConfined, within 4 m).
+        const std::string& LongestConfinedContext() const { return m_Confined.longestContext; }
 
     private:
+        /// What was at the capsule some way into a stretch, kept for the longest (NoteStretch).
+        struct StretchNote {
+            std::string context, longestContext;   ///< of the stretch going on / the longest
+            uint32_t start = 0, longestStart = 0;   ///< their BotPilot::StillStretch::startTick
+        };
         void BuildAndAttach(const std::function<void()>& whileLoading);
+        void NoteStill();
+        void NoteStretch(StretchNote& note, const BotPilot::StillStretch& now, const BotPilot::StillStretch& longest, double contextSeconds,
+                         double logSeconds, const char* what);
 
         BotSettings m_Settings;
         ITransport& m_Link;
@@ -125,6 +140,7 @@ export namespace vortex::net {
         double m_LastPassAt = -1.0;
         bool m_Predicted = false;
         uint64_t m_WantedTicks = 0, m_ActedTicks = 0;
+        StretchNote m_Still, m_Confined;   ///< BotPilot::Still / Confined
         uint32_t m_Seen = 0;
         bool m_Counting = false;
         double m_PlayingSince = -1.0;
@@ -258,7 +274,34 @@ export namespace vortex::net {
         /// near), at least 2 waypoints reached, fewer given up than reached, and (a moving window) window
         /// updates sent.
         float minWalkShare = 0.0f;
+        /// A walker: its longest still stretch (BotPilot::LongestStill: within 1 m for this long while it
+        /// headed for a waypoint) at most this many seconds; 0 = not judged. A pilot that goes round what
+        /// holds it would otherwise hide a walker that snags (G19 of 2026-11-22 stood 150 s).
+        float maxStillSeconds = 0.0f;
+        /// A walker: its ticks in a detour (BotPilot::DetourTicks) at most this share of the ticks it
+        /// headed for a waypoint (BotPilot::WalkTicks); 0 = not judged.
+        float maxDetourShare = 0.0f;
+        /// A walker: its longest confined stretch (BotPilot::LongestConfined: within 4 m for this long
+        /// while it headed for a waypoint) at most this many seconds; 0 = not judged. A walker held in a
+        /// pit that shuffles more than 1 m restarts its still stretch, and a 60-90 s episode hides in a
+        /// run's detour share.
+        float maxConfinedSeconds = 0.0f;
     };
+    /// The walker's snag bounds vortex_bot and vortex_server judge (G13, G17, G19). Still: 20 s is 4
+    /// waypoints given up in one place; on 2026-11-22 a passing arena soak's and G13's longest stretch was
+    /// 1.9 s (the spawn), the failed G19 stood 150 s. Detour share: the two passing soaks with the detour
+    /// spent at most 3.8 / 2.9 % stepping aside, 6.6 / 4.9 % with the straight tries between (estimated
+    /// from their legs), a later soak 2.3 % and G13 3.7 % (measured); the failed run's 43 give-ups alone
+    /// are about 29 %. 15 % is over twice the worst pass and half the failure.
+    /// Confined (within 4 m): a walker that walks crosses 4 m in 0.6 s running, about 1 s walking; its
+    /// healthy runs' longest confined stretch is the spawn's (KWALKER_CONFINED_MEASURED). 45 s is 9
+    /// waypoints given up in one pit, over twice the still bound (a detour's legs aside are 0.5-1.5 s of
+    /// running, so a slow way round a wide obstacle stays within 4 m longer than within 1 m), and under
+    /// the 60-90 s an episode needs to hide in the detour share. The spawn's collider hold counts in
+    /// both stretches: it ends by itself in about 2 s, and one that does not is a fault worth failing.
+    inline constexpr float kWalkerMaxStillSeconds = 20.0f;
+    inline constexpr float kWalkerMaxDetourShare = 0.15f;
+    inline constexpr float kWalkerMaxConfinedSeconds = 45.0f;
     struct BotVerdict {
         bool ok = true;
         std::vector<std::string> reasons; ///< what failed, one short phrase each
@@ -272,6 +315,13 @@ export namespace vortex::net {
      * The comparisons with the server are the owner's (vortex_server) or a script's (tools/soak.sh).
      */
     BotVerdict JudgeBot(const Bot& bot, const BotGates& gates);
+    /**
+     * @brief The walker's snag gates (BotGates::maxStillSeconds, maxDetourShare, maxConfinedSeconds)
+     * against its pilot, one phrase per failure ("it stood still ...", "it spent ... detouring", "it
+     * stayed within 4 m ..."); JudgeBot adds them for a
+     * walker. `tickSeconds`: the session's tick length.
+     */
+    std::vector<std::string> WalkerSnagFailures(const BotPilot& pilot, const BotGates& gates, double tickSeconds);
 
     /**
      * @brief What a client's own checks say against it (review of stage 8; the game's headless exit and

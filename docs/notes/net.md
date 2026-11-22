@@ -70,7 +70,19 @@ Paths are relative to `engine/`. Code is cited by file and symbol; search for th
 - `src/net/Drill.cppm`, `internal/Drill.cpp` - `BlastDrill`: mushroom / bar / neck tower per step, sites of 100 x 100
   voxels in the play bounds, a crate in each blast and one per site in the margin, `KeepSites`; `RunDrillStep` (clear
   the site's bodies, build, crates, cast); `BotPilot` / `PilotSettings`: seeded controls of a bot player
-  (`crateEveryTicks`: the E key).
+  (`crateEveryTicks`: the E key). Waypoint mode (`--walk-across`) goes round what holds it (`detourAfterTicks`,
+  `detourTicks`: aside at right angles, to one side then the other for longer, between straight tries;
+  `Pilot.AWalkerGoesRoundATreeAndAWallOnItsLine`), records where it gave a waypoint up (`GiveUps`), counts detours
+  (one per hold) and their ticks, and keeps its longest still stretch (`LongestStill`: within 1 m while it headed
+  for a waypoint). G19 of 2026-11-22 failed (17 reached, 43 given up): trees on the arena's middle z held a straight
+  pusher now and then, a contributing weakness only; about 30 of the give-ups came from one 150 s stretch in which
+  the walker stood still for a reason not yet known (another bot's cast, a resting replicated body - Dynamic is in
+  `kSessionCharacterLayers` -, the capsule wedged in a canopy after a jump). The detour would hide such a snag, so
+  `net::WalkerSnagFailures` (in `JudgeBot`; `vortex_bot` and `vortex_server` set `kWalkerMaxStillSeconds` 20 s and
+  `kWalkerMaxDetourShare` 15 %) fails a walker that stood still longer or detoured more
+  (`Pilot.TheSnagGatesFailAStillOrDetouringWalkerAndPassAFreeOne`), and the walk line names the longest stretch with
+  what was at the capsule 1 s in (nearest replicated object, the materials under the feet and above the head; a
+  `walk: still for 10 s` line stamps when one begins) so the next one names its cause.
 - `src/sim/Player.cppm`, `internal/Player.cpp` - `PlayerInput` / `PlayerState` / `PlayerTuning`, `PlayerButton`,
   `StepPlayer`, `PlayerReach`, `kSessionCharacterLayers`, the quantisers (the movement rule of server, client and
   offline game).
@@ -107,7 +119,16 @@ Wire values (CLAUDE.md lists the names; the numbers are here, `WireTests.cpp` an
 them). Change any byte of a message or an event -> bump `kProtocolVersion`. Retired values are never reused.
 - **Event kinds** (`EventKind`, the first byte of an event): 1-6 = `sim::WorldOpKind` (1 `CarveSphere`, 2
   `FillSphere`, 3 `SwapSphere`, 4 `FillBox`, 5 `Detach`, 6 `ClearMask`), 32 `EntitySpawn`, 33 `EntityDespawn`, 34
-  `EntityRest`, 35 `ObjectModel`, 36 `EntityWake` [net-6]. A new `WorldOpKind` takes 7, a new entity event 37.
+  `EntityRest`, 35 `ObjectModel`, 36 `EntityWake` [net-6]. A new `WorldOpKind` takes the next free value (7 today),
+  a new event the next free one after 36.
+- **This list is the registry** (magic.md amendment 4, 2026-11-21): every new `WorldOpKind`, event kind, message type,
+  refusal, rejection, template, generator and `PlayerButton` value takes the **next free value when it lands** and is
+  added here in the same commit. Numbers written in a design (spread.md, shred.md Part 3, mechanisms.md, magic.md) are
+  provisional until then. On the ROADMAP order of 2026-11-21 that gives magic's `MapShape` 7, `MapMask` 8,
+  `CarveCapsule` 9, `ZoneStart` 37, `ZoneCancel` 38, `CastFx` 39, then mechanisms' `MechanismMove` 40 and `RopeCut` 41,
+  then spread's `SpreadStep` 10 (its `IgniteSphere` / `DouseSphere` become `MapShape` maps). **One exception**,
+  reserved now: `PlayerButton_Spell = 32`, so mechanisms' `PlayerButton_Use = 16` keeps its value whichever lands
+  first (unless M2a builds a generic action-slot bit that carries the spell edge).
 - **Message types** (`MessageType`): 1 `Hello`, 2 `Welcome`, 3 `Refuse`, 4 `EventBatch`, (5 retired: `ServerStatus`),
   6 `Inputs`, 7 `Snapshot`; [net-7a] chunk sync 8 `WindowUpdate`, 9 `WindowAck`, 10 `ChunkData`, 11 `ChunkRequest`,
   12 `ModelRequest`, 13 `BaselineEntity`, 14 `BaselineEnd`, 15 `BaselineNear`; [net-7b] checks and terrain mode 16
@@ -348,9 +369,10 @@ Players and the client clock [net-4, net-5]
 
 Exit rules of a session client
 - **A headless game client** (`--connect --headless`) drains at exit (applied == the server's opSeq, held 1 s, at most
-  5 s) and exits 1 when it cannot: the hash it logs is then comparable with the server's last one. It also exits 1
-  when its own checks found a mismatch, a check came out of its stream position, or it played in server terrain mode
-  without `--other-terrain` (`net::ClientCheckFailures`, called from `../src/Session.cpp`). `vortex_bot` applies the
+  5 s) and exits 3 when it cannot (`Session: replication not shown: ...`): the hash it logs is then comparable with
+  the server's last one. It also exits 3 when its hash is incomplete, its own checks found a mismatch, a check came out
+  of its stream position, or it played in server terrain mode without `--other-terrain` (`net::ClientCheckFailures`,
+  called from `../src/Session.cpp`). Exit 1 stays a connection that was refused, lost or failed. `vortex_bot` applies the
   same failures through `net::JudgeBot`, plus the `BotGates` (it predicted, cast, dropped crates and walked as told).
 
 ## 3. Traps
@@ -562,7 +584,7 @@ Regions, templates and tests
   field in `PlayerInput` (and `kInputBytes`), its radius / power in the tuning, `kProtocolVersion` + 1, and a
   `Movement.*` test that a late cast of it is judged at its tick.
 - New player rule (crouch, sprint, a second jump): `sim::StepPlayer` and `PlayerTuning` (+ `WritePlayerTuning` /
-  `ReadPlayerTuning`, `sim::IsValid`), a button in `PlayerButton` if it needs one (wire format, next free bit 16),
+  `ReadPlayerTuning`, `sim::IsValid`), a button in `PlayerButton` if it needs one (wire format, next free bit 16; 32 is reserved for magic's Spell edge),
   `kProtocolVersion` + 1 (or, with no byte changed, only `sim::kPlayerRuleRevision` + 1), a `Player.*` test, then `Movement.NoCorrectionAbove2cmOnFlatGround` must still see 0
   corrections.
 - New event kind: value in `EventKind` (or a new `WorldOpKind` 7+), `WriteEvent` / `ReadEvent`, a size line in
@@ -604,7 +626,9 @@ Regions, templates and tests
 - G16 (`tools/session-check.sh` in the game repository): `vortex_server` on 127.0.0.1 with a fresh token and two
   headless game clients; `PASS` only when all three exit 0, both clients' drained hashes and entity lines equal the
   server's at the same opSeq, and both clients' `Checks:` lines report HashChecks compared, 0 hash and entity
-  mismatches and 0 checks out of order (logs and screenshots in `build/session-check/`: look at them).
+  mismatches and 0 checks out of order, and each client's corrections stay within G16's bound (logs and screenshots
+  in `build/session-check/`: look at them). The game repository's `tools/verify.sh` runs G11-G19 and asserts each
+  gate's lines (its `docs/verify.md` "tools/verify.sh" lists them): a reworded line here breaks its judge.
 - G17 / G18 / G19 (the soak, `tools/soak.sh` in the game repository): each bot is a `vortex_bot` process behind its own
   `UdpRelay`; its `Latency:` line needs the server's `--timeline` file (one host). `GAME_CLIENT=1` adds a headless game
   client that joins once the bots are ready to leave (compared like a bot; look at `game.png`); `TERRAIN=1` (default of

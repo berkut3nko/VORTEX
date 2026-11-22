@@ -14,6 +14,7 @@ module;
 export module vortex.net:enet;
 
 import :transport;
+import :address;
 
 export namespace vortex::net {
 
@@ -42,6 +43,10 @@ export namespace vortex::net {
         /// What this transport sends is not limited by it.
         size_t maxIncomingMessageBytes = 0;
         size_t maxIncomingWaitingBytes = 0;
+        /// rendezvous.md "The engine side": the host's intercept takes STUN answers (to a request this
+        /// transport sent) and punch datagrams (magic "VXPN") before ENet parses them; TakeRaw returns
+        /// them. false only in Enet.APunchOrStunDatagramNeverReachesENet, to hand them to plain ENet.
+        bool interceptRaw = true;
     };
 
     /// @brief A listening transport's default EnetSettings::maxIncomingMessageBytes / maxIncomingWaitingBytes.
@@ -55,6 +60,9 @@ export namespace vortex::net {
         uint64_t messagesSent = 0, bytesSent = 0;
         uint64_t messagesReceived = 0, bytesReceived = 0;
         uint64_t sendFailures = 0;        ///< enet_peer_send refused a message (dropped, counted)
+        uint64_t rawTaken = 0;            ///< STUN answers and punch datagrams the intercept took (TakeRaw)
+        uint64_t rawDropped = 0;          ///< ... dropped because TakeRaw was not called (kMaxRawWaiting)
+        uint64_t strangersDropped = 0;    ///< ENet datagrams a client host dropped: not from its server
         /// Stage 8: message payload bytes by channel (State, Events, Bulk); they add up to bytesSent /
         /// bytesReceived.
         std::array<uint64_t, kChannelCount> channelBytesSent{}, channelBytesReceived{};
@@ -76,10 +84,23 @@ export namespace vortex::net {
         /// @brief Listens on `bindAddress:port`; an empty address or "0.0.0.0" listens on every
         /// interface, port 0 takes any free port (Port() tells which). nullptr and `error` on failure.
         static std::unique_ptr<EnetTransport> Listen(const std::string& bindAddress, uint16_t port, EnetSettings settings, std::string* error);
-        /// @brief Starts connecting to `host:port` (a name or a dotted address). Poll reports
-        /// Connected, or Disconnected for the same peer when the server cannot be reached (after
-        /// ENet's connect timeout). nullptr and `error` when the name does not resolve.
+        /// @brief Starts connecting to `host:port` (a name or a dotted address): Open + ConnectTo. Poll
+        /// reports Connected, or Disconnected for the same peer when the server cannot be reached
+        /// (after ENet's connect timeout). nullptr and `error` when the name does not resolve.
         static std::unique_ptr<EnetTransport> Connect(const std::string& host, uint16_t port, EnetSettings settings, std::string* error);
+        /// @brief A client host on `bindAddress:port` (empty: every interface; port 0: any) that connects
+        /// to nobody yet (rendezvous.md: STUN and punching run on its socket first). Until ConnectTo it
+        /// drops every ENet datagram, and afterwards every one not from its server: no stranger takes
+        /// its one peer slot.
+        static std::unique_ptr<EnetTransport> Open(const std::string& bindAddress, uint16_t port, EnetSettings settings, std::string* error);
+        /// @brief Starts the ENet connection of a host made by Open (once). false and `error` otherwise.
+        bool ConnectTo(Endpoint server, std::string* error);
+        /// @brief Sends one datagram outside ENet's format on the host's socket (STUN, punching). A STUN
+        /// Binding request's transaction id is remembered, so its answer is taken from ENet.
+        void SendRaw(Endpoint to, std::span<const uint8_t> bytes);
+        /// @brief The STUN answers and punch datagrams the intercept took since the last call (they
+        /// arrive inside Poll, which services the host). At most kMaxRawWaiting are kept.
+        std::vector<Datagram> TakeRaw();
 
         ~EnetTransport() override;
         EnetTransport(const EnetTransport&) = delete;
@@ -185,6 +206,13 @@ export namespace vortex::net {
         explicit UdpRelay(std::unique_ptr<Impl> impl);
         std::unique_ptr<Impl> m_Impl;
     };
+
+    /// @brief Raw datagrams an EnetTransport keeps for TakeRaw; more are dropped (counted).
+    inline constexpr size_t kMaxRawWaiting = 256;
+
+    /// @brief Resolves "host[:port]" (a name or a dotted address) to an IPv4 endpoint (ENet's lookup).
+    /// false and `error` otherwise.
+    bool ResolveEndpoint(const std::string& text, uint16_t defaultPort, Endpoint& out, std::string* error);
 
     /// @brief Splits "host" or "host:port" (port 1-65535) into its parts; a missing port is
     /// `defaultPort`. false for an empty host or a malformed port.

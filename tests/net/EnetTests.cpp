@@ -511,3 +511,132 @@ TEST(EnetSession, TwoPlayersWalkCastAndAgreeOverUdpWithLoss) {
         EXPECT_GT(p.transport->Stats().datagramsDropped, 0u);
     }
 }
+
+// rendezvous.md "Punch datagram": STUN answers and punch datagrams share the ENet host's socket, and
+// plain ENet (the intercept's raw taking off) drops both before any peer changes: "VX" read as an ENet
+// header is peer id 1624, a STUN answer's 0x0101 peer id 257, both past the host's peer count. With the
+// intercept on (always, in every build of this) they go to TakeRaw instead: a punch datagram always, a
+// STUN answer only to a request this transport sent.
+TEST(Enet, APunchOrStunDatagramNeverReachesENet) {
+    net::Punch p;
+    p.kind = net::PunchKind::Probe;
+    p.sender = net::PunchRole::Client;
+    p.nonceClient = 1;
+    const auto punch = net::EncodePunch(p);
+    net::StunTransaction asked{};
+    for (size_t i = 0; i < asked.size(); ++i) asked[i] = static_cast<uint8_t>(0xA0 + i);
+    net::StunTransaction stranger = asked;
+    stranger[0] ^= 0xFF;
+
+    for (const bool intercept : {false, true}) {
+        SCOPED_TRACE(intercept ? "the transport's intercept" : "plain ENet");
+        net::EnetSettings serverSettings;
+        serverSettings.interceptRaw = intercept;
+        UdpPair pair(serverSettings, {});
+        ASSERT_TRUE(pair.Connected());
+        std::string error;
+        const std::unique_ptr<net::EnetTransport> sender = net::EnetTransport::Open("127.0.0.1", 0, {}, &error);
+        ASSERT_TRUE(sender) << error;
+        const net::Endpoint serverAt{net::Ipv4(127, 0, 0, 1), pair.server->Port()};
+        const net::Endpoint senderAt{net::Ipv4(127, 0, 0, 1), sender->Port()};
+        // The server asked the sender a STUN question (the sender's host drops it: not its transaction).
+        const auto request = net::MakeStunBindingRequest(asked);
+        pair.server->SendRaw(senderAt, request);
+        for (int i = 0; i < 5; ++i) {
+            sender->SendRaw(serverAt, punch);
+            sender->SendRaw(serverAt, net::MakeStunBindingResponse(asked, senderAt));
+            sender->SendRaw(serverAt, net::MakeStunBindingResponse(stranger, senderAt));
+        }
+        std::vector<net::TransportEvent> atServer, atClient;
+        const Clock::time_point start = Clock::now();
+        while (Since(start) < 0.5) {
+            Drain(*pair.server, atServer);
+            Drain(*pair.client, atClient);
+            Drain(*sender, atClient);
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        EXPECT_TRUE(atServer.empty());
+        EXPECT_EQ(pair.server->PeerCount(), 1u);
+        const std::vector<net::Datagram> raw = pair.server->TakeRaw();
+        EXPECT_EQ(raw.size(), intercept ? 10u : 0u);
+        for (const net::Datagram& d : raw) {
+            EXPECT_EQ(d.address, senderAt);
+            net::StunTransaction t{};
+            EXPECT_TRUE(net::HasPunchMagic(d.bytes) || (net::LooksLikeStun(d.bytes, &t) && t == asked));
+        }
+        EXPECT_TRUE(sender->TakeRaw().empty());
+        // The connection still carries messages both ways.
+        const std::vector<uint8_t> hello = Message(7, 32);
+        pair.client->Send(pair.atClient, net::Channel::Events, hello);
+        pair.client->Flush();
+        bool arrived = false;
+        const Clock::time_point again = Clock::now();
+        while (!arrived && Since(again) < 3.0) {
+            net::TransportEvent e;
+            while (pair.server->Poll(e))
+                if (e.type == net::TransportEvent::Type::Received && e.data == hello) arrived = true;
+            pair.client->Poll(e);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        EXPECT_TRUE(arrived);
+    }
+}
+
+// A client host made by Open (punching on its socket) takes no ENet connection from anyone: a stranger
+// connecting to its port never gets its one peer slot. After ConnectTo it talks to its server only,
+// and punch datagrams still reach TakeRaw.
+TEST(Enet, AClientHostTakesNoStrangerWhilePunching) {
+    std::string error;
+    const std::unique_ptr<net::EnetTransport> client = net::EnetTransport::Open("127.0.0.1", 0, {}, &error);
+    ASSERT_TRUE(client) << error;
+    const net::Endpoint clientAt{net::Ipv4(127, 0, 0, 1), client->Port()};
+    net::EnetSettings quick;
+    quick.timeoutMinimumMs = 1000;
+    quick.timeoutMaximumMs = 2000;
+    const std::unique_ptr<net::EnetTransport> stranger = net::EnetTransport::Connect("127.0.0.1", client->Port(), quick, &error);
+    ASSERT_TRUE(stranger) << error;
+    std::vector<net::TransportEvent> atClient, atStranger;
+    Clock::time_point start = Clock::now();
+    while (Since(start) < 1.5) {
+        Drain(*client, atClient);
+        Drain(*stranger, atStranger);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    EXPECT_TRUE(atClient.empty());
+    for (const net::TransportEvent& e : atStranger) EXPECT_NE(e.type, net::TransportEvent::Type::Connected);
+    EXPECT_EQ(client->PeerCount(), 0u);
+    EXPECT_GT(client->Stats().strangersDropped, 0u);
+
+    // Its server: the connection is made, the stranger stays out, punch datagrams still arrive.
+    const std::unique_ptr<net::EnetTransport> server = net::EnetTransport::Listen("127.0.0.1", 0, {}, &error);
+    ASSERT_TRUE(server) << error;
+    ASSERT_TRUE(client->ConnectTo({net::Ipv4(127, 0, 0, 1), server->Port()}, &error)) << error;
+    EXPECT_FALSE(client->ConnectTo({net::Ipv4(127, 0, 0, 1), server->Port()}, &error));
+    net::Punch p;
+    p.nonceClient = 3;
+    const auto punch = net::EncodePunch(p);
+    bool clientConnected = false, serverConnected = false;
+    start = Clock::now();
+    while ((!clientConnected || !serverConnected) && Since(start) < 5.0) {
+        net::TransportEvent e;
+        while (client->Poll(e)) clientConnected |= e.type == net::TransportEvent::Type::Connected;
+        while (server->Poll(e)) serverConnected |= e.type == net::TransportEvent::Type::Connected;
+        Drain(*stranger, atStranger);
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    EXPECT_TRUE(clientConnected);
+    EXPECT_TRUE(serverConnected);
+    stranger->SendRaw(clientAt, punch);
+    start = Clock::now();
+    std::vector<net::Datagram> raw;
+    while (raw.empty() && Since(start) < 2.0) {
+        net::TransportEvent e;
+        while (client->Poll(e)) {}
+        raw = client->TakeRaw();
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    ASSERT_EQ(raw.size(), 1u);
+    EXPECT_EQ(raw[0].address.port, stranger->Port());
+    EXPECT_EQ(client->PeerCount(), 1u);
+    for (const net::TransportEvent& e : atStranger) EXPECT_NE(e.type, net::TransportEvent::Type::Connected);
+}

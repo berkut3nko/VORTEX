@@ -532,6 +532,11 @@ only binds when the budgets are nearly spent.
 
 ### Wire format (`kProtocolVersion` takes the next protocol number when S2 lands)
 
+The kind numbers here are provisional: each takes the next free value from the registry in
+[notes/net.md](../notes/net.md) section 2 when it lands (magic.md amendment 4). Under magic.md amendment 3, kinds 7
+and 9 become `MapShape` maps 1 (Ignite) and 2 (Douse), so `SpreadStep` alone remains a new kind (10 on the ROADMAP
+order of 2026-11-21, after magic's 7-9).
+
 | Kind | Layout | Size |
 |---|---|---|
 | 7 `IgniteSphere` | as CarveSphere: kind u8, centre i32 × 3 (1/16 voxel), radius u16, power u16 = 0 | 17 B |

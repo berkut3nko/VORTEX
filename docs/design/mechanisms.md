@@ -398,6 +398,11 @@ New wire values (all bump `kProtocolVersion`; `docs/notes/net.md` "Recipes", new
 | `PlayerButton_Use` = 16 | 0 | A bit in the input byte |
 | `EntityList` | unchanged | A mechanism's `modelHash` entry is `VolumeHash ^ MechanismTerm(...)` (below): no layout change |
 
+The event numbers above are provisional: each value takes the next free number from the registry in
+[notes/net.md](../notes/net.md) section 2 when [mech-1] lands (magic.md amendment 4). The owner put [mech-1] before
+magic's [mag-2] (2026-11-21), so these values land first and take the next free numbers then; `PlayerButton_Use`
+keeps 16 (magic's Spell edge is reserved at 32). `Mechanisms.WireSizes` pins the sizes and whatever values land.
+
 **Clients keep mechanisms apart from copies.** The stage-6 copy code is driven by rest / wake events and samples,
 which a mechanism never gets, and it sets layers itself (`MakeCopy` from `resting`, `MoveCopies` to Rubble every tick
 with zero velocity, an `ObjectModel` re-making a survivor moving until a wake / rest that never comes). Left as is, a
@@ -751,8 +756,8 @@ GPU-free first (VortexSimTests unless noted), each written to fail against a stu
   `Rope.AnchorAirCuts`, `Rope.LoadDespawnCutsItsRope`, `Rope.LoadFallsAfterTheCut`, `Rope.LoadSwingsAndRests` (rests
   within 5 s), `Rope.DamagedLoadKeepsItsRopeIfTheAttachVoxelSurvives`, `Rope.CutChainJamsTheGate`;
   `RopeStrand.LengthWithin5Percent`, `PinnedEndsStay`, `SleepsWithoutWind` (Core tests).
-- VortexNetTests: `Mechanisms.WireSizes` (spawn with 1 and 8 segments, `MechanismMove` 16, `RopeCut` 12, owner block
-  37), `Mechanisms.LateJoinerDerivesTheSamePosition` (two pending segments), `Mechanisms.DentedDoorKeepsItsLayerOnEverySide`,
+- VortexNetTests: `Mechanisms.WireSizes` (the values taken from the registry when [mech-1] lands; spawn with 1 and 8
+  segments, `MechanismMove` 16, `RopeCut` 12, owner block 37), `Mechanisms.LateJoinerDerivesTheSamePosition` (two pending segments), `Mechanisms.DentedDoorKeepsItsLayerOnEverySide`,
   `Mechanisms.NoCorrectionWalkingThroughAnOpeningGate` (RTT 100 ms at the computed lead: 0 corrections),
   `Mechanisms.NoCorrectionUnderARisingGate`, `Mechanisms.CorrectionOnlyWhenTheEventIsLate` (RTT 400 ms, beyond the
   clamp: the player who touched the door is corrected, one who did not is not), `Mechanisms.EntityCheckCoversTheSegment`

@@ -5,6 +5,7 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <numbers>
 #include <vector>
 
 module vortex.net;
@@ -145,6 +146,7 @@ namespace vortex::net {
                     ++m_Reached;
                 } else if (m_SinceProgress >= m_Settings.stuckTicks) {
                     ++m_GivenUp;
+                    if (m_GiveUps.size() < kMaxGiveUps) m_GiveUps.push_back(feet);
                 } else {
                     if (m_SinceProgress == 0 && m_BestDistance == 0.0f) m_BestDistance = d;
                     if (d < m_BestDistance - 1.0f) {
@@ -164,9 +166,49 @@ namespace vortex::net {
                 m_Waypoint = 0;
                 ++m_Laps;
             }
-            if (Done()) return in;
+            if (Done()) {
+                m_Still = {};                                   // it stands as told
+                m_Confined = {};
+                return in;
+            }
+            ++m_WalkTicks;
+            // Still (within 1 m, x / z, of where the stretch began) and confined (within 4 m).
+            const uint32_t held = (state.flags & sim::PlayerFlag_Held) != 0 ? 1u : 0u;
+            const auto extend = [&](StillStretch& now, StillStretch& longest, float metres) {
+                if (now.ticks == 0 || glm::length(glm::vec2(now.at.x, now.at.z) - feet) >= metres) {
+                    now = {1, m_Tick, held, state.position};
+                } else {
+                    ++now.ticks;
+                    now.heldTicks += held;
+                }
+                if (now.ticks > longest.ticks) longest = now;
+            };
+            extend(m_Still, m_LongestStill, kStillMetres);
+            extend(m_Confined, m_LongestConfined, kConfinedMetres);
             const glm::vec2 to = m_Settings.waypoints[m_Waypoint] - feet;
-            in.yaw = sim::QuantizeYaw(std::atan2(-to.x, -to.y));
+            float yaw = std::atan2(-to.x, -to.y);
+            // Held (no metre of progress for detourAfterTicks): go round it. Attempt n steps aside
+            // (one side, the other, the first ...) for (n + 1) x detourTicks, then heads for the waypoint again
+            // for detourTicks; a metre of progress resets m_SinceProgress and so ends the detour (as does
+            // giving the waypoint up). One detour is counted per hold, every tick of it in m_DetourTicks.
+            const bool detour = m_Settings.detourTicks > 0 && m_SinceProgress >= m_Settings.detourAfterTicks;
+            m_Detours += detour && !m_InDetour ? 1u : 0u;
+            m_InDetour = detour;
+            if (detour) {
+                ++m_DetourTicks;
+                uint32_t k = m_SinceProgress - m_Settings.detourAfterTicks;
+                for (uint32_t n = 0;; ++n) {
+                    const uint32_t aside = (n + 1) * m_Settings.detourTicks;
+                    if (k < aside) {
+                        yaw += (n % 2 == 0 ? -0.5f : 0.5f) * std::numbers::pi_v<float>;
+                        break;
+                    }
+                    k -= aside;
+                    if (k < m_Settings.detourTicks) break;   // heading for the waypoint again
+                    k -= m_Settings.detourTicks;
+                }
+            }
+            in.yaw = sim::QuantizeYaw(yaw);
             in.moveZ = 127;
             in.buttons = m_Settings.run ? sim::PlayerButton_Run : 0;
             // Jump now and then, and whenever it stops making progress (a step, a bank).
