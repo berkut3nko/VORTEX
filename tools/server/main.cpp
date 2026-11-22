@@ -971,6 +971,9 @@ int main(int argc, char** argv) {
             // made, the injected faults were found and repaired, the store gate, the checks ran. The
             // in-process bots join late in short runs: at least one check of each kind.
             net::BotGates gates;
+            gates.maxStillSeconds = net::kWalkerMaxStillSeconds;   // a --walk-across walker that snags (G13)
+            gates.maxDetourShare = net::kWalkerMaxDetourShare;
+            gates.maxConfinedSeconds = net::kWalkerMaxConfinedSeconds;
             const net::BotVerdict v = net::JudgeBot(*bot.bot, gates);
             ok = ok && v.ok;
             std::string reasons;

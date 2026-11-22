@@ -7,10 +7,13 @@
 #include <glm/glm.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <regex>
@@ -22,6 +25,7 @@
 
 import vortex.core;
 import vortex.voxel;
+import vortex.physics;
 import vortex.sim;
 import vortex.net;
 
@@ -347,6 +351,8 @@ TEST(Bot, ThePlayedGatesFailWithTheirOwnReasons) {
     played.minPilotShare = 0.5f;
     played.maxRejectedCastShare = 0.2f;
     played.minWalkShare = 0.8f;
+    played.maxStillSeconds = net::kWalkerMaxStillSeconds;
+    played.maxDetourShare = net::kWalkerMaxDetourShare;
     bool early = false;
     for (uint32_t t = 0; t < 1500; ++t) {
         rig.Step();
@@ -392,6 +398,13 @@ TEST(Bot, ThePlayedGatesFailWithTheirOwnReasons) {
     const net::BotVerdict vfar = net::JudgeBot(*mw.bot, far);
     EXPECT_FALSE(vfar.ok);
     EXPECT_TRUE(HasReason(vfar, "it walked x from")) << Reasons(vfar);
+    // JudgeBot carries the walker's snag gates (WalkerSnagFailures): a bound under its longest still
+    // stretch fails it.
+    net::BotGates still = played;
+    still.maxStillSeconds = 0.001f;
+    const net::BotVerdict vstill = net::JudgeBot(*mw.bot, still);
+    EXPECT_FALSE(vstill.ok);
+    EXPECT_TRUE(HasReason(vstill, "it stood still")) << Reasons(vstill);
     net::BotGates acted = played;
     acted.minActedShare = 1.01f;
     const net::BotVerdict vacted = net::JudgeBot(*mw.bot, acted);
@@ -550,6 +563,235 @@ TEST(Bot, DurationHistogramKeepsPercentilesInFixedMemory) {
     EXPECT_DOUBLE_EQ(h.Percentile(0.99), h.Max());
     EXPECT_DOUBLE_EQ(h.Max(), 0.25 + 0.001 * 2999);
     EXPECT_LT(h.Percentile(0.5), 0.011);
+}
+
+// G19 failed on 2026-11-22 (arena, bot 0: "it reached 17 waypoints and gave up 43"). About 30 of those
+// give-ups came from one 150 s stretch in which the walker stood still for a reason not yet known (the
+// walk line now names the longest still stretch and what was near it). Trees on the walker's line (a
+// one-voxel trunk under a canopy that hangs 1.6 m above the ground: the capsule's head meets it, a jump
+// only lifts it into the leaves) are a contributing weakness: a straight pusher was held behind them for
+// 5 s now and then. On flat ground with such a tree and a wall it cannot jump (3 m high, 4 m wide) across
+// its line, the soak's walker (run, jumps, --loop) must go round both, both ways, every lap: no waypoint
+// given up.
+TEST(Pilot, AWalkerGoesRoundATreeAndAWallOnItsLine) {
+    sim::RegionDesc region;
+    region.templateId = sim::RegionTemplateId::Empty;
+    region.seed = 31;
+    region.playMinChunk = {-8, -3};
+    region.playMaxChunk = {8, 4};
+    region.heightRange = {0.0f, 32.0f};
+    region.generator = sim::RegionGenerator::Flat;
+    region.flatGroundVoxels = 100;                       // ground top at 12.5 m
+    region.terrain.voxelSize = 0.125f;
+    voxel::MaterialLibrary scratch;
+    const voxel::WorldMaterials ids = voxel::RegisterDefaultWorldMaterials(scratch);
+    region.terrain.materials = ids;
+    ASSERT_TRUE(sim::IsValid(region));
+    sim::SimulationConfig config;
+    config.maxParticles = 0;
+    config.jobThreads = 2;
+    config.physics.threads = 1;
+    config.chunkCapacity = sim::RegionChunkCapacity(region);
+    config.world = sim::RegionWorldConfig(region, config.world);
+    sim::Simulation simulation(config);
+    ASSERT_TRUE(simulation.Initialize(sim::MakeRegionGenerator(region, ids)));
+    simulation.World().LoadBlocking(sim::RegionWindowFocus(region));
+    voxel::World& world = simulation.World();
+    // Voxels: the line is z = 16 (2 m). The tree at x = -5 m: its trunk beside the line (z 2.5 m), its
+    // canopy over it from 1.6 to 3 m above the ground (the arena's at x -92.7 m). The wall at x = +5 m.
+    world.FillBox({-40, 100, 20}, {-39, 140, 21}, ids.wood);
+    world.FillBox({-52, 113, 4}, {-28, 124, 36}, ids.leaves);
+    world.FillBox({40, 100, 0}, {44, 124, 32}, ids.stone);
+    const sim::PlayerTuning tuning;
+    const sim::PlayArea area = sim::PlayAreaOf(region, tuning);
+    sim::SetPlayAreaWalls(simulation.Physics(), area, tuning);
+    sim::PlayerState state;
+    state.position = glm::vec3(-20.0f, 12.5f, 2.0f);
+    const physics::CharacterId character = simulation.Physics().CreateCharacter(sim::PlayerCharacterDesc(state.position, tuning));
+    net::PilotSettings ps;                               // as vortex_bot --walk-across --loop (BuildAndAttach)
+    ps.waypoints = {{-24.0f, 2.0f}, {24.0f, 2.0f}, {0.0f, 2.0f}};
+    ps.loopWaypoints = true;
+    ps.casts = false;
+    net::BotPilot pilot(region, 0xb07u, ps);
+    float minX = state.position.x, maxX = state.position.x;
+    uint32_t given = 0;
+    for (int t = 0; t < 60 * 60; ++t) {
+        const std::array<glm::dvec3, 1> focus = {glm::dvec3(state.position)};
+        simulation.UpdateStreaming(focus);
+        simulation.Terrain().FlushBox(sim::PlayerReach(state.position, tuning));
+        const sim::PlayerInput in = pilot.Next(state);
+        if (pilot.WaypointsGivenUp() != given) {
+            given = pilot.WaypointsGivenUp();
+            ADD_FAILURE() << "tick " << t << ": a waypoint given up at (" << state.position.x << ", " << state.position.y << ", "
+                          << state.position.z << ")";
+        }
+        sim::StepPlayer(simulation.Physics(), simulation.Terrain(), character, state, in, tuning, area, simulation.FixedTimeStep());
+        simulation.StepPhysics();
+        if (simulation.Terrain().Stats().pending != 0) simulation.Jobs().WaitIdle();
+        minX = std::min(minX, state.position.x);
+        maxX = std::max(maxX, state.position.x);
+    }
+    std::printf("[ pilot ] %u waypoints reached, %u given up, %u laps; %u detours (%u ticks); x from %.1f to %.1f m\n",
+                pilot.WaypointsReached(), pilot.WaypointsGivenUp(), pilot.Laps(), pilot.Detours(), pilot.DetourTicks(),
+                static_cast<double>(minX), static_cast<double>(maxX));
+    EXPECT_EQ(pilot.WaypointsGivenUp(), 0u);
+    EXPECT_TRUE(pilot.GiveUps().empty());
+    EXPECT_GE(pilot.Detours(), 4u);                      // the tree and the wall held it each way
+    EXPECT_GE(pilot.WaypointsReached(), 9u);             // 3 laps of 120 m at 7 m/s, the detours included
+    // It goes round, so the snag gates hold: never still for long, a small share of its ticks detouring.
+    net::BotGates gates;
+    gates.maxStillSeconds = net::kWalkerMaxStillSeconds;
+    gates.maxDetourShare = net::kWalkerMaxDetourShare;
+    gates.maxConfinedSeconds = net::kWalkerMaxConfinedSeconds;
+    const std::vector<std::string> snags = net::WalkerSnagFailures(pilot, gates, simulation.FixedTimeStep());
+    EXPECT_TRUE(snags.empty()) << (snags.empty() ? std::string() : snags[0]);
+    // Going round the tree and the wall keeps it within 4 m for a few seconds at most, nowhere near 45 s.
+    EXPECT_LE(pilot.LongestConfined().ticks, 60u * 10u);
+    EXPECT_EQ(pilot.LongestStill().heldTicks, 0u);       // its terrain had colliders throughout
+    std::printf("[ pilot ] %u of %u walking ticks detouring, longest still %u ticks, longest within 4 m %u ticks\n", pilot.DetourTicks(),
+                pilot.WalkTicks(), pilot.LongestStill().ticks, pilot.LongestConfined().ticks);
+}
+
+namespace {
+    // A walker on a plane without physics (BotPilot only, GPU-free): each tick its feet move 7 m/s / 60 the
+    // way its input points, except into `blocked` (a wall: the move along x is refused, z slides on).
+    struct PlaneWalk {
+        sim::RegionDesc region;
+        net::BotPilot pilot;
+        sim::PlayerState state;
+        std::function<bool(glm::vec2)> blocked;
+        explicit PlaneWalk(net::PilotSettings ps) : region(PlaneRegion()), pilot(region, 0x5aau, std::move(ps)) {}
+        static sim::RegionDesc PlaneRegion() {
+            sim::RegionDesc r;
+            r.playMinChunk = {-40, -40};
+            r.playMaxChunk = {40, 40};
+            r.terrain.voxelSize = 0.125f;
+            return r;
+        }
+        void Run(uint32_t ticks, bool move = true) {
+            for (uint32_t t = 0; t < ticks; ++t) {
+                // Not moving: as StepPlayer's collider gate holds a player (PlayerFlag_Held).
+                state.flags = move ? 0 : sim::PlayerFlag_Held;
+                const sim::PlayerInput in = pilot.Next(state);
+                if (!move || in.moveZ == 0) continue;
+                const float yaw = sim::YawRadians(in.yaw);
+                const glm::vec2 step = glm::vec2(-std::sin(yaw), -std::cos(yaw)) * (7.0f / 60.0f);
+                glm::vec2 to(state.position.x + step.x, state.position.z + step.y);
+                if (blocked && blocked(to)) to.x = state.position.x;
+                if (blocked && blocked(to)) to = glm::vec2(state.position.x, state.position.z);
+                state.position = glm::vec3(to.x, 0.0f, to.y);
+            }
+        }
+    };
+}
+
+// A walker that goes round whatever holds it must not hide one that snags (the review of the 2026-11-22
+// G19 fix): the verdict bounds its longest still stretch, its share of ticks detouring and its longest
+// confined stretch (net::WalkerSnagFailures, in JudgeBot for vortex_bot and vortex_server). One hold is
+// one detour, however many legs aside it takes, and every tick of it counts; ticks held by the collider
+// gate are counted in each stretch.
+TEST(Pilot, TheSnagGatesFailAStillOrDetouringWalkerAndPassAFreeOne) {
+    net::PilotSettings ps;
+    ps.waypoints = {{100.0f, 0.0f}, {-100.0f, 0.0f}};
+    ps.loopWaypoints = true;
+    ps.jumps = false;
+    net::BotGates gates;
+    gates.maxStillSeconds = net::kWalkerMaxStillSeconds;
+    gates.maxDetourShare = net::kWalkerMaxDetourShare;
+    gates.maxConfinedSeconds = net::kWalkerMaxConfinedSeconds;
+    const double tick = 1.0 / 60.0;
+
+    // Free: it runs to and fro, never still, never detouring.
+    PlaneWalk free(ps);
+    free.Run(60 * 120);
+    EXPECT_GE(free.pilot.WaypointsReached(), 3u);
+    EXPECT_EQ(free.pilot.WaypointsGivenUp(), 0u);
+    EXPECT_EQ(free.pilot.Detours(), 0u);
+    EXPECT_EQ(free.pilot.DetourTicks(), 0u);
+    EXPECT_EQ(free.pilot.WalkTicks(), 60u * 120u);
+    EXPECT_LE(free.pilot.LongestStill().ticks, 20u);     // a turn at a waypoint: out and back within 1 m
+    EXPECT_LE(free.pilot.LongestConfined().ticks, 75u);  // and within 4 m: 8 m out and back at 7 m/s
+    EXPECT_EQ(free.pilot.LongestConfined().heldTicks, 0u);
+    EXPECT_TRUE(net::WalkerSnagFailures(free.pilot, gates, tick).empty());
+
+    // Held in place (its feet never move): 25 s still at the start, every waypoint given up after 5 s and
+    // all but the first 45 ticks of each spent detouring (85 %). Both gates fail, each with its own phrase.
+    PlaneWalk held(ps);
+    held.state.position = glm::vec3(3.0f, 1.0f, 2.0f);
+    held.Run(60 * 25, false);
+    EXPECT_EQ(held.pilot.LongestStill().ticks, 60u * 25u);
+    EXPECT_EQ(held.pilot.LongestStill().startTick, 1u);
+    EXPECT_EQ(held.pilot.LongestStill().at, glm::vec3(3.0f, 1.0f, 2.0f));
+    EXPECT_EQ(held.pilot.LongestStill().heldTicks, 60u * 25u);          // every tick held (Run: not moving)
+    EXPECT_EQ(held.pilot.LongestConfined().heldTicks, 60u * 25u);
+    EXPECT_EQ(held.pilot.WaypointsGivenUp(), 4u);
+    EXPECT_EQ(held.pilot.Detours(), 5u);                 // one per waypoint held, the fifth going on
+    const std::vector<std::string> both = net::WalkerSnagFailures(held.pilot, gates, tick);
+    ASSERT_EQ(both.size(), 2u);                          // 25 s confined is under 45 s
+    EXPECT_NE(both[0].find("it stood still 25.0 s at (3.0, 1.0, 2.0) from pilot tick 1"), std::string::npos) << both[0];
+    EXPECT_NE(both[1].find("detouring"), std::string::npos) << both[1];
+    // Each gate alone, and 0 = not judged.
+    net::BotGates stillOnly = gates;
+    stillOnly.maxDetourShare = 0.0f;
+    EXPECT_EQ(net::WalkerSnagFailures(held.pilot, stillOnly, tick).size(), 1u);
+    net::BotGates lax = gates;
+    lax.maxStillSeconds = 30.0f;
+    lax.maxDetourShare = 0.9f;
+    EXPECT_TRUE(net::WalkerSnagFailures(held.pilot, lax, tick).empty());
+
+    // Still under the bound (15 s), then free: no still failure; and the stretch ends with a metre moved.
+    PlaneWalk paused(ps);
+    paused.Run(60 * 15, false);
+    paused.Run(60 * 120);
+    EXPECT_GE(paused.pilot.LongestStill().ticks, 60u * 15u);
+    EXPECT_LE(paused.pilot.LongestStill().ticks, 60u * 15u + 12u);  // and the first steps that stay within 1 m
+    net::BotGates stillGate = gates;
+    stillGate.maxDetourShare = 0.0f;
+    EXPECT_TRUE(net::WalkerSnagFailures(paused.pilot, stillGate, tick).empty());
+
+    // A wall across its line (x 10 to 11 m, z under 1.5 m): it goes round by one detour, whichever side it
+    // tries first, and loses only a small share of its ticks to it.
+    net::PilotSettings once = ps;
+    once.loopWaypoints = false;
+    once.waypoints = {{100.0f, 0.0f}};
+    PlaneWalk wall(once);
+    wall.blocked = [](glm::vec2 p) { return p.x > 10.0f && p.x < 11.0f && p.y < 1.5f; };
+    wall.Run(60 * 30);
+    EXPECT_EQ(wall.pilot.WaypointsReached(), 1u);
+    EXPECT_EQ(wall.pilot.WaypointsGivenUp(), 0u);
+    EXPECT_EQ(wall.pilot.Detours(), 1u);
+    EXPECT_GE(wall.pilot.DetourTicks(), 30u);
+    EXPECT_LE(wall.pilot.LongestStill().ticks, 60u);
+    EXPECT_LE(wall.pilot.LongestConfined().ticks, 60u * 5u);
+    EXPECT_TRUE(net::WalkerSnagFailures(wall.pilot, gates, tick).empty());
+    std::printf("[ snag ] wall: %u detour, %u of %u walking ticks detouring, longest still %u ticks, within 4 m %u ticks\n",
+                wall.pilot.Detours(), wall.pilot.DetourTicks(), wall.pilot.WalkTicks(), wall.pilot.LongestStill().ticks,
+                wall.pilot.LongestConfined().ticks);
+
+    // In a pit (it cannot leave 3 m round where it stands) for 75 s, then free for 10 minutes: each step
+    // aside of its detours carries it over 1 m, so the still stretch keeps starting again (under 20 s),
+    // and 75 s of detours are under 15 % of the run; only the confined stretch (within 4 m) fails it.
+    PlaneWalk pit(ps);
+    pit.blocked = [](glm::vec2 p) { return glm::length(p) > 3.0f; };
+    pit.Run(60 * 75);
+    EXPECT_GE(pit.pilot.WaypointsGivenUp(), 12u);        // about one every 5 s (13 measured: detours restart the clock)
+    pit.blocked = nullptr;
+    pit.Run(60 * 600);
+    EXPECT_LE(pit.pilot.LongestStill().ticks, 60u * 20u);
+    EXPECT_GE(pit.pilot.LongestConfined().ticks, 60u * 75u);
+    EXPECT_LE(pit.pilot.LongestConfined().ticks, 60u * 75u + 75u);   // and the first steps out
+    EXPECT_EQ(pit.pilot.LongestConfined().startTick, 1u);
+    EXPECT_EQ(pit.pilot.LongestConfined().heldTicks, 0u);
+    const std::vector<std::string> shuffled = net::WalkerSnagFailures(pit.pilot, gates, tick);
+    ASSERT_EQ(shuffled.size(), 1u) << shuffled[0];
+    EXPECT_NE(shuffled[0].find("it stayed within 4 m 75."), std::string::npos) << shuffled[0];
+    EXPECT_NE(shuffled[0].find("from pilot tick 1 (over 45 s; 0.0 s of it held)"), std::string::npos) << shuffled[0];
+    net::BotGates noConfined = gates;
+    noConfined.maxConfinedSeconds = 0.0f;
+    EXPECT_TRUE(net::WalkerSnagFailures(pit.pilot, noConfined, tick).empty());
+    std::printf("[ snag ] pit: %u given up, %u of %u walking ticks detouring (%.1f %%), longest still %u ticks, within 4 m %u ticks\n",
+                pit.pilot.WaypointsGivenUp(), pit.pilot.DetourTicks(), pit.pilot.WalkTicks(),
+                100.0 * pit.pilot.DetourTicks() / pit.pilot.WalkTicks(), pit.pilot.LongestStill().ticks, pit.pilot.LongestConfined().ticks);
 }
 
 // The relay shapes real UDP below ENet (wall clock; registered RUN_SERIAL): a 256 kB/s downlink with 50 ms

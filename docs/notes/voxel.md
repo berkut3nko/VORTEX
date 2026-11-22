@@ -548,7 +548,7 @@ rejected - the codec is order-dependent), `Hash.cpp` (every hash changes: wire f
 ## 5. Verifying a change here
 
 Gates G1 and G2 first. Binary: `build/engine/tests/VortexCoreTests` (gtest; ctest discovers the tests as
-`Suite.Name`).
+`<Suite>.<Name>`).
 
 ```
 ctest --test-dir build -R '^(Chunk|ChunkStore|ChunkHash|World|WorldHash|QuantizedEdits|Region|Terrain|Trace|Bvh)\.'

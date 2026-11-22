@@ -1,13 +1,13 @@
 # VORTEX
 
+[[../00 Docs Map|Docs map]] · [[docs/README|docs index]] · [[docs/design/networking|networking]] · [[docs/design/shred|shred]] · [[docs/design/worldgen|worldgen]] · [[docs/notes/voxel|voxel notes]] · [[docs/notes/net|net notes]]
+
 A voxel engine for large, editable worlds rendered by ray marching (Vulkan 1.3, C++20 modules), with a GPU-free
 simulation and a session protocol for destructible multiplayer worlds.
 
 - [docs/README.md](docs/README.md) - the document index: what to read for a task, stage IDs, history
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - how the engine is built and the contracts between its parts
 - [docs/ROADMAP.md](docs/ROADMAP.md) - what works today, what comes next, measured numbers
-
-[[../00 Docs Map|Docs map]] · [[docs/README|docs index]] · [[docs/design/networking|networking]] · [[docs/design/shred|shred]] · [[docs/design/worldgen|worldgen]] · [[docs/notes/voxel|voxel notes]] · [[docs/notes/net|net notes]]
 
 ## Libraries
 

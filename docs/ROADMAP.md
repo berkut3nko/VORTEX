@@ -14,18 +14,49 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
 
 ## Now
 
-- **[wp-2] `tools/verify.sh` + `tools/doc-check.sh`.** Fewer regressions reach playtests: CLAUDE.md's gates become
-  assertions with exit codes (quick / full / soak), game scripts exit 3 on a failed expectation. 2-3 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP2".
+- **[nat-R0] NAT probe and pair test.** The owner's home server (no public IPv4) learns whether players can reach it:
+  STUN, the NAT class, hole punching on ENet's socket, a pair test with no Worker; no wire change.
+  [design/rendezvous.md](design/rendezvous.md), "Stages" R0. 3-4 d (e).
 - **Owner: M1 acceptance: LAN run on stage 8 commits** (engine `430fde0` / game `10197d2`), windowed, Linux host and
   Windows laptop, the short soak as its pre-check: two-PC guide
   ([section 6.5](../../docs/two-pc-test-windows.md)).
 
+**[wp-2] `tools/verify.sh` + `tools/doc-check.sh`: done (2026-11-22).** Fewer regressions reach playtests: CLAUDE.md's
+gates are assertions with exit codes. `tools/verify.sh quick|full|soak` (game `docs/verify.md` "tools/verify.sh") runs
+G1-G19 one after another from a copy of the build (one `Build:` line for every process), judges each gate's "Must"
+from its logs (`tools/lib/verify-gates.sh`: exit codes, required and forbidden lines, numbers with their bounds such
+as G10's load > cut, G12's 11 s and 150 MiB, G13's store slots and walk), ends with a PASS / FAIL table naming the
+failing gate, its log and line, writes a history CSV outside `build/` and exits 0 only when every gate passed; `--ci`
+adds the -Werror build. Headless game runs exit 3 on a failed expectation of their own script (`Expectation failed:`;
+a session client's `Session: replication not shown:`), and 1 / 2 win over 3. `tools/session-check.sh` judges G16's
+bound (at most 6 corrections, under 0.5 m, 0 snaps, provisional) and the one-build rule itself; G12 and G16 run alone
+(a machine "alone" lock that soaks, builds and verify runs hold shared). `tools/doc-check.sh` checks links, wiki
+links, nav lines, stage IDs (documents and code comments), the anchor table, citations in code, append-only history,
+test names, this page's test count and the gate table. Each judge has a self-test with planted faults
+(`Tools.VerifyAssertions`, `Tools.SessionCheckVerdict`, `Tools.DocCheckSelftest`); the seeded fault of the review
+(`--test-skip-beam-cut`: no "Beam cut" line) fails quick's G3 with exit 3. Not taken from the review's scope (us, the
+owner may veto): `vortex_server` folding `freed[]`, the walk and preload limits into its exit code (verify asserts
+the lines instead: the engine changes only in documents), JUnit output (no CI yet), a `slow` ctest label, doc-check
+of the protocol number, flags and `*.md:<line>` references. The review's sixteen findings are fixed (game
+`docs/history/wp2/plan-2026-11-21.md` "Review dispositions"): session-check fails a log without a `Build:` line, G10
+checks its voxel sizes, gates are stopped with their whole session, an alone-lock timeout fails its gate instead of
+the run, worktree builds reuse the main checkout's sources, `tools/ctest.sh` runs G2 by hand under the locks, and
+doc-check's citations, wiki links (Obsidian's table pipe, nested headings; `newLinkFormat` relative), reference
+definitions and code spans are exact, with reviewed history exceptions. After the fixes `verify.sh full --ci` passed
+every gate but G12, whose preload took 11.74 s straight after G2's 5 minutes of ctest on every core (9.72 s and 8.22
+s alone minutes later): G12 in `full` stays known-marginal while the CPU is hot; a cool-down before it is open.
+Before the fixes every gate passed on the final tree (2026-11-22: `verify.sh full --ci`,
+then `verify.sh soak` with G19 `PASS` for both regions).
+Plan and review: game [docs/history/wp2/plan-2026-11-21.md](../../docs/history/wp2/plan-2026-11-21.md). Commits: engine `...`, game `...`.
+
 **[wp-3] Document rewrite: done (2026-11-18), ahead of [wp-1] / [wp-2]** (it changes no code, so it collides with
 neither; the order is otherwise the review's). Current documents describe the system as it is, history is moved
 verbatim to `history/`; the plan and checks are in [../../docs/history/REWRITE-PLAN.md](../../docs/history/REWRITE-PLAN.md).
-Its acceptance is still open and waits for [wp-2]: `tools/doc-check.sh` passes, and a fresh reader checks
-[../../docs/history/claude-md/rule-mapping.md](../../docs/history/claude-md/rule-mapping.md). Commits: engine `a23af7a`,
-game `1c45cd2`.
+Acceptance (with [wp-2], 2026-11-22): `tools/doc-check.sh` passes (ctest `Tools.DocCheck`; its first run found 18
+faults in current documents, fixed: aliases quoted as headings in the anchor table, a stage-ID placeholder, a misplaced nav line,
+a test name placeholder); the fresh reader's check of
+[../../docs/history/claude-md/rule-mapping.md](../../docs/history/claude-md/rule-mapping.md) is part of WP2's review
+and recorded with it. Commits: engine `a23af7a`, game `1c45cd2`.
 
 **[wp-1] Safety, hygiene and the stuck-at-the-edge fix: done (built 2026-11-19, every gate 2026-11-21).** The edge bug was real: a player who walked
 about 12 m past the play bounds touched a chunk outside the server's fixed window and `StepPlayer`'s gate held it for
@@ -52,50 +83,47 @@ recheck's fixes included), 2026-11-21: G1-G19 (G6 at 0.1 and 0.15 m, G10 at W = 
 on the walking client, max error 0.18 / 0.00 / 0.23 m; G19 `PASS` for both regions, the game client's hashes equal.
 G16 had corrections before WP1 too; they are the walking client's late inputs (measured values, 2026-11-19 and
 2026-11-21, from the new `Client: correction` log line); its bound is provisional. Since the recheck: check children
-close the output-folder lock (fd 6), `tools/build.sh` checks `DEPS_FROM` pins under the locks. `tools/session-check.sh`'s
-same-`Build:`-line verdict has no automated test, and G16's correction bound is read from the client logs by hand
-(WP2). Commits: engine `be1a2ca`, game `0a99568`.
+close the output-folder lock (fd 6), `tools/build.sh` checks `DEPS_FROM` pins under the locks. Since [wp-2]:
+`tools/session-check.sh`'s same-`Build:`-line verdict and G16's correction bound are automatic and tested
+(`Tools.SessionCheckVerdict`). Commits: engine `be1a2ca`, game `0a99568`.
 
 ## Next
 
 In this order:
 
-1. **[nat-R0] NAT probe and pair test.** The owner's home server (no public IPv4) learns whether players can reach it:
-   STUN, the NAT class, hole punching on ENet's socket, a pair test with no Worker; no wire change.
-   [design/rendezvous.md](design/rendezvous.md), "Stages" R0. 3-4 d (e).
-2. **[nat-R1] Rendezvous.** Testers outside the house join by an invite: a Cloudflare Worker + D1 (free tier) as the
+1. **[nat-R1] Rendezvous.** Testers outside the house join by an invite: a Cloudflare Worker + D1 (free tier) as the
    meeting point, `--rendezvous` / `--join`, gate G20. [design/rendezvous.md](design/rendezvous.md), "Stages" R1.
    6-8 d (e). [nat-R2] (a relay) waits for R0's pair results.
-3. **[wp-4] Frame-rate block A + settings.** A steadier, faster frame; settings in game; every playtest leaves
+2. **[wp-4] Frame-rate block A + settings.** A steadier, faster frame; settings in game; every playtest leaves
    numbers. [design/perf.md](design/perf.md) stages 1-3 (M0, P1, G1 + G2), a HUD settings page. 3-4 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP4".
-4. **[wp-5] Visible play boundary + moving window on small regions.** You see where the play area ends; the
+3. **[wp-5] Visible play boundary + moving window on small regions.** You see where the play area ends; the
    playground shows 88 m instead of 56 m. 1-2 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP5".
-5. **[wp-6] Rules seam + net split.** No player change yet: spells and modes then come without growing `net::Server`.
+4. **[wp-6] Rules seam + net split.** No player change yet: spells and modes then come without growing `net::Server`.
    A GPU-free `sim` rules seam, then `Server.cpp` / `Client.cpp` split; no behaviour or wire change. 6-9 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP6".
-6. **[wp-7] M2a "first fight".** The sandbox becomes a PvP game: hurt, die, respawn, win a round (M2 below). The only
+5. **[wp-7] M2a "first fight".** The sandbox becomes a PvP game: hurt, die, respawn, win a round (M2 below). The only
    protocol bump in WP4-WP8. 8-12 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP7".
-7. **[wp-8] Fight measurement + fx-budget 1-2 + 10 clients.** Fights stay playable on the UHD 620: `--stress-fx`, a
+6. **[wp-8] Fight measurement + fx-budget 1-2 + 10 clients.** Fights stay playable on the UHD 620: `--stress-fx`, a
    10-bot session at 10 casts/s with measured clients, then [design/fx-budget.md](design/fx-budget.md) stages 1-2.
    5-8 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP8".
-8. **[mech-1] Door and gate.** E opens doors, a lever runs a gate, crates move to Q.
+7. **[mech-1] Door and gate.** E opens doors, a lever runs a gate, crates move to Q.
    [design/mechanisms.md](design/mechanisms.md), "Stages" row 1. Its own protocol bump, after M2a's; after WP8 so its
    yard is measured inside a known fight budget. 9-10 d (e).
-9. **[mag-1] Siege core in sim, headless only.** The spell system's first four spells, Siege Cannon, Barricade Wave,
+8. **[mag-1] Siege core in sim, headless only.** The spell system's first four spells, Siege Cannon, Barricade Wave,
    Shockwave and Updraft (breach, cover, knock off, climb), with only what they use: the Pierce operator, the Burst
    strip, Plume's single column, `CarveCapsule` / `MapMask` / `MapShape` as sim ops, knit iron that blasts chip, with
    server-scheduled expiries, the spawn guard, Impulse and Lift zones in `sim::StepPlayer` (`kPlayerRuleRevision` 2);
    no wire change. [design/magic.md](design/magic.md), "Stages". 6-9 d (e).
-10. **[mag-2] First playable spells.** The same four spells in offline practice and in sessions: the one magic
+9. **[mag-2] First playable spells.** The same four spells in offline practice and in sessions: the one magic
     protocol bump (it reserves every value the later magic stages need), zone events with a 0.4 s lead, the spell bar
     and the attune menu on the HUD; the owner's Felling-duel taste check. [design/magic.md](design/magic.md), "Stages".
     6-9 d (e).
-11. **[si-2] Impacts with crush damage** (with the `NeckCheck` split and a chunk-source interface first). A falling
+10. **[si-2] Impacts with crush damage** (with the `NeckCheck` split and a chunk-source interface first). A falling
     tower cracks walls and kills. [design/shred.md](design/shred.md), "SI-2 - impacts (inertial contact)". 7-11 d (e).
-12. **[fog-1] Fog stage 1.** Haze toward the sun, low mist and blast dust puffs, without losing frame rate.
+11. **[fog-1] Fog stage 1.** Haze toward the sun, low mist and blast dust puffs, without losing frame rate.
     [design/fog.md](design/fog.md), "Stages" 1. About 4 d (e).
-13. **[spread-S1] Fire offline.** A burning house that falls, offline only, no wire change (its smoke feeds fog later).
+12. **[spread-S1] Fire offline.** A burning house that falls, offline only, no wire change (its smoke feeds fog later).
     [design/spread.md](design/spread.md), "Stages" S1. Large (e).
-14. **[wg-W1] Stamped village.** The first real map, with towers worth felling. Soak tier (nightly) first.
+13. **[wg-W1] Stamped village.** The first real map, with towers worth felling. Soak tier (nightly) first.
     [design/worldgen.md](design/worldgen.md), "W1: a stamped village, offline". About 1.5 weeks (e).
 
 Placement of [mech-1] and [spread-S1] was decided by us under the owner's rules; the owner may veto it. Mechanisms
@@ -178,9 +206,10 @@ never been measured.
 
 ## State
 
-Tests: **742** in ctest: 739 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
-game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts) and `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
-none needing a GPU (the ENet and relay ones use UDP on 127.0.0.1). The owner's windowed checks and their results: [owner checks](../../docs/owner-checks.md).
+Tests: **748** in ctest: 741 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
+game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts), `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
+`Tools.DocCheck`, `Tools.DocCheckSelftest`, `Tools.SessionCheckVerdict` and `Tools.VerifyAssertions` (WP2's checks
+and their self-tests), none needing a GPU (the ENet and relay ones use UDP on 127.0.0.1). The owner's windowed checks and their results: [owner checks](../../docs/owner-checks.md).
 
 | Area | State | Gaps |
 |---|---|---|
@@ -199,7 +228,7 @@ none needing a GPU (the ENet and relay ones use UDP on 127.0.0.1). The owner's w
 | Renderer | Ray-marched G-buffer, ray-traced sun shadows, AO, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping; headless screenshots; validation-clean on the UHD 620. | perf.md not started ([wp-4]); reflections, bloom, shadowed particles. |
 | Editor | `vortex.editor` (F1): fly camera, selection with translate / rotate gizmo, inspector, terrain brush, primitives, `.vox` / glTF import, environment / render / profiler / world panels; tool logic unit tested. | Editor list under Later. |
 | Simulation | `sim::Simulation`: world, physics, terrain colliders and scene on a numbered fixed tick; `sim::WorldOp` / `ApplyOp`; `sim::Blast`; no renderer or window. | Gameplay rules live in `net::Server` ([wp-6]). |
-| Sessions (M1) | Networking stages 0-8 built, reviewed and committed ([design/networking.md](design/networking.md), "Stages"). `vortex.net` over ENet: server-authoritative terrain operations, predicted movement, replicated bodies with NetIds (2 new per tick, 64 awake, 256 live), joins by chunk sync, a moving client window on regions wider than 48 chunks, hash and entity checks with repair, server terrain mode; `vortex_server`, `vortex_bot`, `tools/soak.sh`, `tools/session-check.sh`. Owner LAN run 2026-11-17 (stage 7b's commits): "seamless". | M1 acceptance (owner's LAN run on stage 8 or a later pair); an invisible wall at the play bounds ([wp-5] shows it); 56 m on the playground ([wp-5]); 5v5 never run; the arena walker's 1.49 s quiet p99 unexplained; pacer on a slow lossy link (M6); re-sent chunks for a walker (memory); bodies frozen awake count against the cap; Windows build not reproducible. |
+| Sessions (M1) | Networking stages 0-8 built, reviewed and committed ([design/networking.md](design/networking.md), "Stages"). `vortex.net` over ENet: server-authoritative terrain operations, predicted movement, replicated bodies with NetIds (2 new per tick, 64 awake, 256 live), joins by chunk sync, a moving client window on regions wider than 48 chunks, hash and entity checks with repair, server terrain mode; `vortex_server`, `vortex_bot`, `tools/soak.sh`, `tools/session-check.sh`. Owner LAN run 2026-11-17 (stage 7b's commits): "seamless". | M1 acceptance (owner's LAN run on stage 8 or a later pair); an invisible wall at the play bounds ([wp-5] shows it); 56 m on the playground ([wp-5]); 5v5 never run; the arena walker's 1.49 s quiet p99 unexplained; the arena walker's 150 s still stretch in G19 of 2026-11-22 unexplained (trees on its line were only a contributing weakness; the walk line now names the next one's surroundings, and the walker's verdict fails one over 20 s); pacer on a slow lossy link (M6); re-sent chunks for a walker (memory); bodies frozen awake count against the cap; Windows build not reproducible. |
 
 ## Performance and measured values
 
@@ -209,6 +238,7 @@ on describe today's renderer. (m) measured, (e) estimate. Where to save frame ti
 
 | Date | Measure | Value | Source |
 |---|---|---|---|
+| 2026-11-22 | `tools/verify.sh full --ci`, WP2 tree | every gate passed: G12 preload 10.10 s, 48.5 MiB RLE; G11 join p99 9 ticks; G13 store at most 5457 slots, walk -118.1 to 122.0 m; G16 0 and 1 corrections, max error 0.000 / 0.070 m; G2 ran 740 tests (746 less the 6 disabled); `verify.sh soak`: G19 `PASS` (23 min) (m). On battery power the same day, G12's preload took 12.9-13.6 s in 3 runs: G12 is measured on AC | [wp-2]: game [history/wp2/plan-2026-11-21.md](../../docs/history/wp2/plan-2026-11-21.md) |
 | 2026-11-21 | G16 corrections, WP1 final tree | alone, 3 runs: 2, 0, 5 corrections (walking client only), max error 0.179 / 0.004 / 0.229 m, server 3-6 late inputs a run (m). Beside G19 (the 35-minute soak sharing the 8 cores), 1 run: 2 corrections, max error 0.500 m, 42 late inputs: the walk's first ticks reached the server late (0.50 m, eight ticks' walk, along the walking direction on flat ground). Run G16 alone. | WP1 gate run |
 | 2026-11-19 | G16 corrections (`tools/session-check.sh`, 2 clients each run) | stage 8 (`430fde0` / `10197d2`, 5 runs): per run 2, 3, 2, 2, 3 corrections in all, max error 0.073-0.207 m; WP1 (walls, 12 runs): 4, 2, 2, 5, 2, 2, 1, 3, 3, 2, 3, 2, max 0.063-0.353 m; always one client of the two, 0 snaps (m). The gate was never "0 corrections" in practice. Cause (WP1 runs with the `Client: correction` line): only the walking client (slot 0), 27-37 m inside the play area, no wall met; an input that reached the server late (one run's server `Players:` line: 4 late inputs, 13 ticks that repeated a movement) leaves the server a tick behind: 0.063 m (one tick at 3.8 m/s) on flat ground, often at the walk's first ticks while the clock margin settles, up to a step (0.33-0.35 m vertical) where the path crosses a crater rim of its own casts. G16's bound: under 0.5 m, provisional. | WP1 review recheck |
 | 2026-11-17 | GPU frame, session plaza (game client) | gbuffer 10.37, lighting 8.96, composite 1.38, TAA 0.64, present 0.42 = 21.8 ms (46 fps ceiling) (m). Replaces CLAUDE.md's "about 21 ms (gbuffer ~8, lighting ~10, rest ~2.5)" and this page's "~9-11 / ~9-10 / ~2.5". | review section 1 (`live.log`) |

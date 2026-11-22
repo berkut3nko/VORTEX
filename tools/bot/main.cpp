@@ -441,6 +441,11 @@ int main(int argc, char** argv) {
     gates.minPilotShare = 0.5f;
     gates.maxRejectedCastShare = 0.2f;
     gates.minWalkShare = 0.8f;
+    // A walker that snags fails even when its detours carry it on (net::WalkerSnagFailures; the bounds:
+    // the game's docs/verify.md "vortex_bot and the soak", net::kWalkerMaxStillSeconds).
+    gates.maxStillSeconds = net::kWalkerMaxStillSeconds;
+    gates.maxDetourShare = net::kWalkerMaxDetourShare;
+    gates.maxConfinedSeconds = net::kWalkerMaxConfinedSeconds;
     const net::BotVerdict v = net::JudgeBot(bot, gates);
     Log::Info("Checks: bot {}: {}{}", id, net::DescribeChecks(client), v.checksNote);
     Log::Info("Terrain: bot {}: {}", id, net::DescribeTerrainMode(client));

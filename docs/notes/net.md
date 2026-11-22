@@ -70,7 +70,19 @@ Paths are relative to `engine/`. Code is cited by file and symbol; search for th
 - `src/net/Drill.cppm`, `internal/Drill.cpp` - `BlastDrill`: mushroom / bar / neck tower per step, sites of 100 x 100
   voxels in the play bounds, a crate in each blast and one per site in the margin, `KeepSites`; `RunDrillStep` (clear
   the site's bodies, build, crates, cast); `BotPilot` / `PilotSettings`: seeded controls of a bot player
-  (`crateEveryTicks`: the E key).
+  (`crateEveryTicks`: the E key). Waypoint mode (`--walk-across`) goes round what holds it (`detourAfterTicks`,
+  `detourTicks`: aside at right angles, to one side then the other for longer, between straight tries;
+  `Pilot.AWalkerGoesRoundATreeAndAWallOnItsLine`), records where it gave a waypoint up (`GiveUps`), counts detours
+  (one per hold) and their ticks, and keeps its longest still stretch (`LongestStill`: within 1 m while it headed
+  for a waypoint). G19 of 2026-11-22 failed (17 reached, 43 given up): trees on the arena's middle z held a straight
+  pusher now and then, a contributing weakness only; about 30 of the give-ups came from one 150 s stretch in which
+  the walker stood still for a reason not yet known (another bot's cast, a resting replicated body - Dynamic is in
+  `kSessionCharacterLayers` -, the capsule wedged in a canopy after a jump). The detour would hide such a snag, so
+  `net::WalkerSnagFailures` (in `JudgeBot`; `vortex_bot` and `vortex_server` set `kWalkerMaxStillSeconds` 20 s and
+  `kWalkerMaxDetourShare` 15 %) fails a walker that stood still longer or detoured more
+  (`Pilot.TheSnagGatesFailAStillOrDetouringWalkerAndPassAFreeOne`), and the walk line names the longest stretch with
+  what was at the capsule 1 s in (nearest replicated object, the materials under the feet and above the head; a
+  `walk: still for 10 s` line stamps when one begins) so the next one names its cause.
 - `src/sim/Player.cppm`, `internal/Player.cpp` - `PlayerInput` / `PlayerState` / `PlayerTuning`, `PlayerButton`,
   `StepPlayer`, `PlayerReach`, `kSessionCharacterLayers`, the quantisers (the movement rule of server, client and
   offline game).
@@ -357,9 +369,10 @@ Players and the client clock [net-4, net-5]
 
 Exit rules of a session client
 - **A headless game client** (`--connect --headless`) drains at exit (applied == the server's opSeq, held 1 s, at most
-  5 s) and exits 1 when it cannot: the hash it logs is then comparable with the server's last one. It also exits 1
-  when its own checks found a mismatch, a check came out of its stream position, or it played in server terrain mode
-  without `--other-terrain` (`net::ClientCheckFailures`, called from `../src/Session.cpp`). `vortex_bot` applies the
+  5 s) and exits 3 when it cannot (`Session: replication not shown: ...`): the hash it logs is then comparable with
+  the server's last one. It also exits 3 when its hash is incomplete, its own checks found a mismatch, a check came out
+  of its stream position, or it played in server terrain mode without `--other-terrain` (`net::ClientCheckFailures`,
+  called from `../src/Session.cpp`). Exit 1 stays a connection that was refused, lost or failed. `vortex_bot` applies the
   same failures through `net::JudgeBot`, plus the `BotGates` (it predicted, cast, dropped crates and walked as told).
 
 ## 3. Traps
@@ -613,7 +626,9 @@ Regions, templates and tests
 - G16 (`tools/session-check.sh` in the game repository): `vortex_server` on 127.0.0.1 with a fresh token and two
   headless game clients; `PASS` only when all three exit 0, both clients' drained hashes and entity lines equal the
   server's at the same opSeq, and both clients' `Checks:` lines report HashChecks compared, 0 hash and entity
-  mismatches and 0 checks out of order (logs and screenshots in `build/session-check/`: look at them).
+  mismatches and 0 checks out of order, and each client's corrections stay within G16's bound (logs and screenshots
+  in `build/session-check/`: look at them). The game repository's `tools/verify.sh` runs G11-G19 and asserts each
+  gate's lines (its `docs/verify.md` "tools/verify.sh" lists them): a reworded line here breaks its judge.
 - G17 / G18 / G19 (the soak, `tools/soak.sh` in the game repository): each bot is a `vortex_bot` process behind its own
   `UdpRelay`; its `Latency:` line needs the server's `--timeline` file (one host). `GAME_CLIENT=1` adds a headless game
   client that joins once the bots are ready to leave (compared like a bot; look at `game.png`); `TERRAIN=1` (default of

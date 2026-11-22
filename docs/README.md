@@ -165,7 +165,8 @@ Also: [owner-questions-2026-11-11.md](history/view-distance/owner-questions-2026
 ### Work packages ([ROADMAP.md](ROADMAP.md#now) "Now" / "Next")
 
 The project review of 2026-11-17 (game repository, `docs/history/reviews/project-review-2026-11-17.md`, section 4)
-defines them: `[wp-1]` safety and the stuck-at-the-edge fix; `[wp-2]` `tools/verify.sh`; `[wp-3]` the document
+defines them: `[wp-1]` safety and the stuck-at-the-edge fix; `[wp-2]` `tools/verify.sh` (its plan, critic findings, as-built notes and review: game repository,
+`docs/history/wp2/plan-2026-11-21.md`); `[wp-3]` the document
 rewrite; `[wp-4]` frame-rate block A + settings (`[perf-A]`); `[wp-5]` visible play boundary; `[wp-6]` rules seam +
 net split; `[wp-7]` M2a "first fight"; `[wp-8]` fight measurement (`[fx-1]`, `[fx-2]`); `[wp-9]` = `[si-2]`;
 `[wp-10]` = `[fog-1]`; `[wp-11]` = `[wg-W1]`. History: [m1-stage-log.md](history/roadmap/m1-stage-log.md) (M1's stage
@@ -173,7 +174,11 @@ log), [drafts-2026-11-12.md](history/roadmap/drafts-2026-11-12.md).
 
 ## Anchors cited from code
 
-Code comments quote document names, headings and numbered items. Each must resolve. Regenerate the list with
+Code comments quote document names, headings and numbered items. Each must resolve. `tools/doc-check.sh` (game
+repository; ctest `Tools.DocCheck`) verifies this table: every quoted "..." in a row is a heading (or failing that
+text) of the files the row names (its links and bare `name.md` names); unquoted text is an alias it does not check.
+It also checks that every `name.md` a code comment names exists and that a `name.md "Quoted"` there is a heading of
+that document or a quoted entry of this table. Regenerate the list with
 
 ```
 grep -rnoE '[A-Za-z/-]+\.md[^)]{0,60}' engine/src engine/tests engine/tools engine/shaders src tools
@@ -189,30 +194,30 @@ two-pc-test-windows.md 1) and the second 761 stage tokens.
 |---|---|
 | networking.md "Time and ticks", "Transport", "World operations" (and its numbered items), "Chunk sync", "Player movement" (and its bold bullet "The play area"), "Entity replication", "Region start-up" / "Region start-up and terrain agreement", "Known risks of terrain agreement after stage 0", "Server world without a camera", "Testing" | [design/networking.md](design/networking.md) (headings kept) |
 | networking.md R5 (the cast work budget) | networking.md "Time and ticks", and shred.md Part 2 R5 |
-| networking.md "owner decision 6" (the replicated threshold) | networking.md "Owner decisions" 6 (and 7, its 2026-11-16 answer) |
-| networking.md "stage N" with no section name; "networking stage 7" (before the split into 7a / 7b) | networking.md "Stages" row `[net-N]`; stage 7 = `[net-7a]` + `[net-7b]` |
+| networking.md owner decision 6 (the replicated threshold) | networking.md "Owner decisions" 6 (and 7, its 2026-11-16 answer) |
+| networking.md stage N with no section name; networking stage 7 (before the split into 7a / 7b) | networking.md "Stages" row `[net-<N>]`; stage 7 = `[net-7a]` + `[net-7b]` |
 | networking.md "the tick-rate scale" | networking.md "Architecture" (`Engine::SetTickSource`); history [stage-1.md](history/networking/stage-1.md), [stage-5.md](history/networking/stage-5.md) |
 | networking.md "stage 0" | [stage-0-starting-point.md](history/networking/stage-0-starting-point.md); networking.md "Known risks of terrain agreement after stage 0" |
 | networking.md "Stage 1 as built" | [history/networking/stage-1.md](history/networking/stage-1.md) |
-| networking.md stage 2 (world operations, crumbs, "Changed by shred.md ...") | [history/networking/stage-2.md](history/networking/stage-2.md) |
+| networking.md stage 2 (world operations, crumbs, "Changed by shred.md" ...) | [history/networking/stage-2.md](history/networking/stage-2.md) |
 | networking.md "Stage 3 as built", "Review of stage 3" | [history/networking/stage-3.md](history/networking/stage-3.md) |
 | networking.md "Stage 4 as built", "Review of stage 4" | [history/networking/stage-4.md](history/networking/stage-4.md) |
 | networking.md "Stage 5 as built", "Review of stage 5" | [history/networking/stage-5.md](history/networking/stage-5.md) |
 | networking.md "Stage 6 as built", "Review of stage 6" | [history/networking/stage-6.md](history/networking/stage-6.md) |
-| networking.md "Stage 7a plan" (its amendments 1-12, "The moving client window", milestone M-b), "stage 7a M-b" ("M-b as built"), "Review of stage 7a", "Recheck of stage 7a" | [history/networking/stage-7a.md](history/networking/stage-7a.md) |
+| networking.md "Stage 7a plan" (its amendments 1-12, "The moving client window", milestone M-b), stage 7a M-b ("M-b as built"), "Review of stage 7a", "Recheck of stage 7a" | [history/networking/stage-7a.md](history/networking/stage-7a.md) |
 | networking.md "Stage 7b plan" (its choices, amendments, Tests, "`HashCheck`: server", "`HashCheck`: client", "Wire `EntityCheck`"), "stage 7b M-b" ("Stage 7b M-b as built"), "Review of stage 7b", "Recheck of stage 7b" | [history/networking/stage-7b.md](history/networking/stage-7b.md) |
 | networking.md "Stage 8", "Stage 8 as built" (items 9 and 13; O1-O11, e.g. O2 / O3 / O4 / O5), "Stage 8 measurements", plan amendments (A1-A16), "Review of stage 8" (R1-R20), "Recheck of stage 8" | [history/networking/stage-8.md](history/networking/stage-8.md) |
 | networking.md stage 9 | networking.md "Stages" row `[net-9]` |
 | shred.md Part 2 R1-R7 | [design/shred.md](design/shred.md) "Part 2 - Rules every later stage follows" |
-| shred.md stage 1 rules 1-9 ("rule 6", "stage 1, rule 7") | shred.md "Fix: prove face-touching components by an outward flood (stage 1)" |
+| shred.md stage 1 rules 1-9 ("rule 6", stage 1, rule 7) | shred.md "Fix: prove face-touching components by an outward flood (stage 1)" |
 | shred.md Part 4 ("largest and lowest first", `serverBodiesPerTick`, at most 2 new server bodies per tick) | shred.md "Part 4 - Structural updates after destruction" |
-| shred.md Part 4b, "The rule, exactly", "The narrowest plane", steps and phases ("step 2", "step 4", "phase 3b"), "Work bound per cast", failure modes ("failure mode 3") | shred.md "Part 4b - Weak necks (load check)" (headings and numbering kept) |
+| shred.md Part 4b, "The rule, exactly", "The narrowest plane", steps and phases ("step 2", "step 4", "phase 3b"), "Work bound per cast", failure modes ("failure mode 3") | shred.md "Part 4b - Weak necks (load check)" (headings and numbering kept); phase 3b and failure mode 3 as built: [history/shred/stage-4b.md](history/shred/stage-4b.md) |
 | shred.md "Other causes checked", "Tests for stage 1", stage 0 / 1 / 1b / 1c / 1d / 1e, "Stages 1d-1e as built" | [history/shred/stage-0-1e.md](history/shred/stage-0-1e.md) |
 | shred.md "open question 7" (`Blast.cppm`, `kNeckFlowWorkBudget`) | Part 4b's question 7 (the flow budget): [history/shred/owner-questions.md](history/shred/owner-questions.md) item 7; decided in shred.md header "Decided" (Us, 2026-11-13, in [net-3]). Not shred.md's current "Open questions for the owner" item 7 |
 | shred.md stage 4, "Stage 4 as built" | [history/shred/stage-4.md](history/shred/stage-4.md); row `[shred-4]` |
 | shred.md "Stage 4b review" (= "Review of stage 4b"), stage 4b | [history/shred/stage-4b.md](history/shred/stage-4b.md); row `[shred-4b]` |
 | shred.md "stage 7, owner" | shred.md "Stages" row `[shred-7]`; [history/shred/stage-4.md](history/shred/stage-4.md) "Optional later: load flow" |
-| view-distance.md "Stage 1 as built", "as built", "stage 1 gates", stage 1 | [history/view-distance/stage-1.md](history/view-distance/stage-1.md); row `[vd-1]` |
+| view-distance.md "Stage 1 as built", "as built", stage 1 gates, stage 1 | [history/view-distance/stage-1.md](history/view-distance/stage-1.md); row `[vd-1]` |
 | view-distance.md stage 2 (voxel preview, `--probe`) | [history/view-distance/stage-2.md](history/view-distance/stage-2.md); row `[vd-2]` |
 | view-distance.md stage 3 | [history/view-distance/stage-3.md](history/view-distance/stage-3.md); row `[vd-3]` |
 | collapse.md (node merging, `SupportCell`, connectivity claim) | [design/collapse.md](design/collapse.md) "How it works" (body kept) |
