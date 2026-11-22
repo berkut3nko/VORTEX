@@ -12,6 +12,12 @@ module;
 #endif
 #endif
 #include <enet/enet.h>
+#if defined(_WIN32)
+#include <mswsock.h>
+#ifndef SIO_UDP_CONNRESET
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+#endif
+#endif
 
 #include <algorithm>
 #include <array>
@@ -23,6 +29,7 @@ module;
 #include <deque>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <thread>
 #include <functional>
@@ -85,6 +92,25 @@ namespace vortex::net {
             }
         }
 
+        Endpoint ToEndpoint(const ENetAddress& a) { return {ENET_NET_TO_HOST_32(a.host), a.port}; }
+        ENetAddress ToEnet(Endpoint e) {
+            ENetAddress a{};
+            a.host = ENET_HOST_TO_NET_32(e.ip);
+            a.port = e.port;
+            return a;
+        }
+
+        /// rendezvous.md "The engine side": on Windows one ICMP "port unreachable" (a dead LAN candidate
+        /// punched) would make the socket's next receive fail with WSAECONNRESET and end ENet's receive
+        /// loop early; SIO_UDP_CONNRESET off stops that. Linux reports nothing on an unconnected socket.
+        void IgnoreConnectionResets([[maybe_unused]] ENetSocket socket) {
+#if defined(_WIN32)
+            BOOL report = FALSE;
+            DWORD returned = 0;
+            WSAIoctl(socket, SIO_UDP_CONNRESET, &report, sizeof(report), nullptr, 0, &returned, nullptr, nullptr);
+#endif
+        }
+
         std::string FormatAddress(const ENetAddress& a) {
             char text[64] = {};
             if (enet_address_get_host_ip(&a, text, sizeof(text)) != 0) return {};
@@ -120,8 +146,23 @@ namespace vortex::net {
             return ref;
         }
 
-        /// The receive-loss emulation: called by ENet for every datagram before it parses it.
+        /// Called by ENet for every datagram before it parses it: the receive-loss emulation, then STUN
+        /// answers and punch datagrams (TakeRaw), then a client host's filter.
         static int ENET_CALLBACK Intercept(ENetHost* host, ENetEvent*);
+
+        /// rendezvous.md: raw datagrams the intercept took, the STUN requests this host sent, and a
+        /// client host's server (Open: none until ConnectTo).
+        std::deque<Datagram> raw;
+        std::array<StunTransaction, 16> stunSent{};
+        size_t stunSentCount = 0;
+        bool clientHost = false;
+        std::optional<ENetAddress> server;
+
+        bool SentStun(const StunTransaction& t) const {
+            for (size_t i = 0; i < std::min(stunSentCount, stunSent.size()); ++i)
+                if (stunSent[i] == t) return true;
+            return false;
+        }
 
         void Handle(const ENetEvent& e) {
             auto* info = static_cast<PeerInfo*>(e.peer != nullptr ? e.peer->data : nullptr);
@@ -191,20 +232,70 @@ namespace vortex::net {
     };
 
     namespace {
-        /// Hosts whose transport emulates loss (ENet's host has no user pointer). Main thread only.
-        std::unordered_map<ENetHost*, EnetTransport::Impl*> g_LossyHosts;
+        /// Every transport's host (ENet's host has no user pointer): the intercept finds its transport
+        /// here. Transports may live on different threads (tests, bots), so the map has a lock.
+        std::mutex g_HostsMutex;
+        std::unordered_map<ENetHost*, EnetTransport::Impl*> g_Hosts;
+
+        EnetTransport::Impl* FindHost(ENetHost* host) {
+            std::lock_guard lock(g_HostsMutex);
+            const auto it = g_Hosts.find(host);
+            return it != g_Hosts.end() ? it->second : nullptr;
+        }
     }
 
     int ENET_CALLBACK EnetTransport::Impl::Intercept(ENetHost* host, ENetEvent*) {
-        const auto it = g_LossyHosts.find(host);
-        if (it == g_LossyHosts.end()) return 0;
-        Impl& s = *it->second;
-        const double u = static_cast<double>(s.rng.NextU32()) * (1.0 / 4294967296.0);
-        if (u < s.settings.receiveLoss) {
-            ++s.stats.datagramsDropped;
-            return 1;   // consumed: ENet never sees it (it resends what was reliable)
+        Impl* found = FindHost(host);
+        if (found == nullptr) return 0;
+        Impl& s = *found;
+        if (s.settings.receiveLoss > 0.0) {
+            const double u = static_cast<double>(s.rng.NextU32()) * (1.0 / 4294967296.0);
+            if (u < s.settings.receiveLoss) {
+                ++s.stats.datagramsDropped;
+                return 1;   // consumed: ENet never sees it (it resends what was reliable)
+            }
+        }
+        const std::span<const uint8_t> bytes(host->receivedData, host->receivedDataLength);
+        if (s.settings.interceptRaw) {
+            StunTransaction t{};
+            // A punch datagram, or an answer to a STUN request this host sent: never ENet's.
+            if (HasPunchMagic(bytes) || (LooksLikeStun(bytes, &t) && s.SentStun(t))) {
+                if (s.raw.size() >= kMaxRawWaiting) {
+                    ++s.stats.rawDropped;
+                } else {
+                    s.raw.push_back({ToEndpoint(host->receivedAddress), std::vector<uint8_t>(bytes.begin(), bytes.end())});
+                    ++s.stats.rawTaken;
+                }
+                return 1;
+            }
+        }
+        // A client host takes ENet traffic from its server only (none before ConnectTo).
+        if (s.clientHost && (!s.server || s.server->host != host->receivedAddress.host || s.server->port != host->receivedAddress.port)) {
+            ++s.stats.strangersDropped;
+            return 1;
         }
         return 0;
+    }
+
+    namespace {
+        /// Makes the host of a transport: SIO_UDP_CONNRESET off, the intercept always installed.
+        ENetHost* CreateHost(EnetTransport::Impl& impl, const ENetAddress* address, size_t peers) {
+            ENetHost* host = enet_host_create(address, peers, kChannelCount, 0, 0);
+            if (host == nullptr) return nullptr;
+            IgnoreConnectionResets(host->socket);
+            host->intercept = &EnetTransport::Impl::Intercept;
+            std::lock_guard lock(g_HostsMutex);
+            g_Hosts[host] = &impl;
+            return host;
+        }
+
+        void DestroyHost(ENetHost* host) {
+            {
+                std::lock_guard lock(g_HostsMutex);
+                g_Hosts.erase(host);
+            }
+            enet_host_destroy(host);
+        }
     }
 
     EnetTransport::EnetTransport(std::unique_ptr<Impl> impl) : m_Impl(std::move(impl)) {}
@@ -223,15 +314,11 @@ namespace vortex::net {
             return nullptr;
         }
         auto impl = std::make_unique<Impl>(settings);
-        impl->host = enet_host_create(&address, std::max<uint32_t>(1, settings.maxPeers), kChannelCount, 0, 0);
+        impl->host = CreateHost(*impl, &address, std::max<uint32_t>(1, settings.maxPeers));
         if (impl->host == nullptr) {
             ReleaseEnet();
             if (error) *error = "could not listen on UDP port " + std::to_string(port) + " (in use, or not allowed)";
             return nullptr;
-        }
-        if (settings.receiveLoss > 0.0) {
-            impl->host->intercept = &Impl::Intercept;
-            g_LossyHosts[impl->host] = impl.get();
         }
         // A stranger's messages are reassembled by ENet before any token is checked: a listening
         // transport takes only what a client sends (under 1 KiB) with room to spare.
@@ -241,42 +328,79 @@ namespace vortex::net {
     }
 
     std::unique_ptr<EnetTransport> EnetTransport::Connect(const std::string& host, uint16_t port, EnetSettings settings, std::string* error) {
+        Endpoint server;
+        if (!ResolveEndpoint(host, port, server, error)) return nullptr;
+        server.port = port;
+        std::unique_ptr<EnetTransport> transport = Open({}, 0, settings, error);
+        if (!transport || !transport->ConnectTo(server, error)) return nullptr;
+        return transport;
+    }
+
+    std::unique_ptr<EnetTransport> EnetTransport::Open(const std::string& bindAddress, uint16_t port, EnetSettings settings, std::string* error) {
         if (!AcquireEnet()) {
             if (error) *error = "ENet could not be initialised";
             return nullptr;
         }
         ENetAddress address{};
-        if (enet_address_set_host(&address, host.c_str()) != 0) {
+        address.host = ENET_HOST_ANY;
+        address.port = port;
+        if (!bindAddress.empty() && bindAddress != "0.0.0.0" && enet_address_set_host_ip(&address, bindAddress.c_str()) != 0) {
             ReleaseEnet();
-            if (error) *error = "'" + host + "' does not resolve to an IPv4 address";
+            if (error) *error = "'" + bindAddress + "' is not an IPv4 address to bind";
             return nullptr;
         }
-        address.port = port;
         auto impl = std::make_unique<Impl>(settings);
-        impl->host = enet_host_create(nullptr, 1, kChannelCount, 0, 0);
+        impl->clientHost = true;
+        // Bound now (not at the first send): STUN and lan candidates need the port before anything goes out.
+        impl->host = CreateHost(*impl, &address, 1);
         if (impl->host == nullptr) {
             ReleaseEnet();
-            if (error) *error = "could not open a UDP socket";
+            if (error) *error = "could not open a UDP socket" + (port != 0 ? " on port " + std::to_string(port) : std::string());
             return nullptr;
-        }
-        if (settings.receiveLoss > 0.0) {
-            impl->host->intercept = &Impl::Intercept;
-            g_LossyHosts[impl->host] = impl.get();
         }
         // A client takes what the server it chose sends (ENet's defaults unless set).
         impl->LimitIncoming(settings.maxIncomingMessageBytes, settings.maxIncomingWaitingBytes);
-        ENetPeer* peer = enet_host_connect(impl->host, &address, kChannelCount, 0);
-        if (peer == nullptr) {
-            g_LossyHosts.erase(impl->host);
-            enet_host_destroy(impl->host);
-            ReleaseEnet();
-            if (error) *error = "could not start a connection";
-            return nullptr;
+        return std::unique_ptr<EnetTransport>(new EnetTransport(std::move(impl)));
+    }
+
+    bool EnetTransport::ConnectTo(Endpoint server, std::string* error) {
+        Impl& s = *m_Impl;
+        if (!s.clientHost || s.server) {
+            if (error) *error = "this transport cannot start a connection (not made by Open, or connected already)";
+            return false;
         }
-        PeerInfo& info = impl->Adopt(peer);
+        const ENetAddress address = ToEnet(server);
+        ENetPeer* peer = enet_host_connect(s.host, &address, kChannelCount, 0);
+        if (peer == nullptr) {
+            if (error) *error = "could not start a connection";
+            return false;
+        }
+        s.server = address;
+        PeerInfo& info = s.Adopt(peer);
         info.outgoing = true;
         info.connectStartMs = enet_time_get();
-        return std::unique_ptr<EnetTransport>(new EnetTransport(std::move(impl)));
+        return true;
+    }
+
+    void EnetTransport::SendRaw(Endpoint to, std::span<const uint8_t> bytes) {
+        Impl& s = *m_Impl;
+        StunTransaction t{};
+        if (ParseStunBindingRequest(bytes, t)) {
+            s.stunSent[s.stunSentCount % s.stunSent.size()] = t;
+            ++s.stunSentCount;
+        }
+        const ENetAddress address = ToEnet(to);
+        ENetBuffer buffer;
+        buffer.data = const_cast<uint8_t*>(bytes.data());
+        buffer.dataLength = bytes.size();
+        if (enet_socket_send(s.host->socket, &address, &buffer, 1) < 0) ++s.stats.sendFailures;
+    }
+
+    std::vector<Datagram> EnetTransport::TakeRaw() {
+        Impl& s = *m_Impl;
+        std::vector<Datagram> out(std::make_move_iterator(s.raw.begin()), std::make_move_iterator(s.raw.end()));
+        s.raw.clear();
+        return out;
     }
 
     EnetTransport::~EnetTransport() {
@@ -301,10 +425,9 @@ namespace vortex::net {
                 if (enet_host_service(s.host, &e, 10) > 0) s.Handle(e);
             }
         }
-        g_LossyHosts.erase(s.host);
         // Destroying the host resets the remaining peers and releases their packets: the records
         // they point to must still exist until then.
-        enet_host_destroy(s.host);
+        DestroyHost(s.host);
         s.peers.clear();
         ReleaseEnet();
     }
@@ -640,6 +763,28 @@ namespace vortex::net {
     void UdpRelay::AddOutage(double from, double to) {
         std::lock_guard lock(m_Impl->statsMutex);   // Admit reads the outages under it
         m_Impl->settings.outages.emplace_back(from, to);
+    }
+
+    bool ResolveEndpoint(const std::string& text, uint16_t defaultPort, Endpoint& out, std::string* error) {
+        std::string host;
+        uint16_t port = defaultPort;
+        if (!ParseEndpoint(text, defaultPort, host, port)) {
+            if (error) *error = "'" + text + "' is not HOST or HOST:PORT";
+            return false;
+        }
+        if (!AcquireEnet()) {
+            if (error) *error = "ENet could not be initialised";
+            return false;
+        }
+        ENetAddress address{};
+        const bool ok = enet_address_set_host(&address, host.c_str()) == 0;
+        ReleaseEnet();
+        if (!ok) {
+            if (error) *error = "'" + host + "' does not resolve to an IPv4 address";
+            return false;
+        }
+        out = {ENET_NET_TO_HOST_32(address.host), port};
+        return true;
     }
 
     bool ParseEndpoint(const std::string& text, uint16_t defaultPort, std::string& host, uint16_t& port) {

@@ -9,6 +9,15 @@
 //                 [--client-window N] [--walk-across] [--precasts N] [--memory] [--max-join-p99-ticks N]
 //                 [--bot-broken-chunk N[:X,Y,Z]] [--bot-broken-generator N] [--timeline FILE] [--broken-chunk-candidate]
 //                 [--terrain-bulk-ceiling KIB] [--bulk-window-floor KIB] [--pacer-delivery-interval S]
+//   vortex_server --nat-probe [--stun HOST:PORT ...] [--bind ADDR] [--listen PORT]
+//   vortex_server --punch-test --token HEX [--stun HOST:PORT ...] [--candidates KINDS] [--public A.B.C.D:PORT]
+//                 [--bind ADDR] [--listen PORT]
+//
+// NAT (engine/docs/design/rendezvous.md [nat-R0]): --nat-probe prints this machine's outside address
+// and NAT class from two STUN servers (exit 0); --punch-test is the server side of the pair test: it
+// prints a line to paste into `Shredborne --punch-test`, reads that program's line from stdin and
+// punches until it reached the client or 5 minutes passed (exit 0 once the client's ENet connected over
+// the punched path, else 1). Neither needs --session.
 //
 // Starts the server from a session file (token, region, template; see sessions/*.session), loads its
 // whole window and applies the template.
@@ -180,8 +189,12 @@ int main(int argc, char** argv) {
     }
     Log::Init();
     Log::Info("Build: {}", DescribeBuild());
+    // rendezvous.md [nat-R0]: --nat-probe, and --punch-test --token HEX (the pair test's server side);
+    // no session is loaded for either.
+    if (net::WantsNatTool(argc, argv)) return net::RunNatTool(argc, argv, net::PunchRole::Server);
     const std::optional<std::string> sessionPath = args.Get("--session");
     if (!sessionPath) {
+        std::fprintf(stderr, "usage: vortex_server --nat-probe | --punch-test --token HEX [--stun HOST:PORT] [--candidates KINDS] [--public A.B.C.D:PORT]\n");
         std::fprintf(stderr, "usage: vortex_server --session <file> [--listen [PORT]] [--bind ADDR] [--seconds S] [--exit-when-empty] "
                              "[--token HEX | --new-token] [--ticks N] [--drill N] [--clients N] [--enet] [--join-step K] [--loss P] "
                              "[--delay-ms D] [--jitter-ms J] "
