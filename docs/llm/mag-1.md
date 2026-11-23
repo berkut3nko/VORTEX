@@ -10,7 +10,7 @@
 | Depends on | `[wp-6]` (rules seam, `vortex.sim:rules`), `[wp-7]` (`vortex.sim:combat`: health, teams, charges, spawns), `[wp-8]` (fight baseline), `[mech-1]` (committed before this stage on the ROADMAP order) |
 | Cards | 12 |
 | Effort | 6-9 d (e) |
-| Changes | wire: **no** (`kProtocolVersion` stays; the three op kinds are sim values only). Movement rule: **yes**, `sim::kPlayerRuleRevision` 1 -> 2 in card 9 only. `buildHash`: through `MaterialTableHash` only (card 3 adds `knit_iron`); `SpellTableHash` and `TurningTableHash` are computed here and join `buildHash` in `[mag-2]`. Gates: **G22** (`--siege-matrix`, card 11) |
+| Changes | wire: **no** (`kProtocolVersion` stays; the three op kinds are sim values only). Movement rule: **yes**, `sim::kPlayerRuleRevision` 1 -> 2 in card 9 only. `buildHash`: through `MaterialTableHash` only (card 3 adds `knit_iron`); `SpellTableHash` and `TurningTableHash` are computed here and join `buildHash` in `[mag-2]`. Gates: **G23** (`--siege-matrix`, card 11) |
 
 ## Before you start
 
@@ -59,7 +59,7 @@ Settled here (us; the owner may veto). Each is binding for every card.
 
 1. **Numbers.** `WorldOpKind::MapShape = 7`, `MapMask = 8`, `CarveCapsule = 9` (sim values in this stage; they go on
    the wire in `[mag-2]`, which then records them in the registry). Palette id 21 `knit_iron`. `MaterialFlag_Conjured
-   = 1u << 4`. `kPlayerRuleRevision = 2` (card 9). Gate G22 = `--siege-matrix` (card 11). If a value is taken when
+   = 1u << 4`. `kPlayerRuleRevision = 2` (card 9). Gate G23 = `--siege-matrix` (card 11). If a value is taken when
    your card lands, take the next free one and say so.
 2. **Shapes live in voxel.** `voxel::ShapeQ` sits in `World.cppm` beside `SphereQ`; `sim::WorldOp` gains `map`,
    `shape` and `axis` fields. `CarveCapsule` uses `shape` (kind capsule) and `power`; `MapMask` uses `min` (origin),
@@ -1426,14 +1426,14 @@ wall, `ctx.walls = WindowWalls(world)`, team spawn areas at chosen places)
   expiry, no zone, no band).
 - `nextZoneId` wraps at 65535 -> 1, never 0; skip an id still present in `Zones()`.
 
-## Card 11: Headless: --spell-demo NAME, --siege-matrix (4 rows) as gate G22, Magic: cost lines, the screenshot
+## Card 11: Headless: --spell-demo NAME, --siege-matrix (4 rows) as gate G23, Magic: cost lines, the screenshot
 
 | | |
 |---|---|
 | Goal | The owner (and verify.sh) can see each spell work in the real game, headless, with its cost |
 | Depends on | card 10 |
 | Effort | 1 d (e) |
-| Touches | game (`src/main.cpp`), engine (`PresentBlast`: the bore's particles), tools (verify gate G22, judge, fixture, self-test), docs. Wire: no |
+| Touches | game (`src/main.cpp`), engine (`PresentBlast`: the bore's particles), tools (verify gate G23, judge, fixture, self-test), docs. Wire: no |
 
 **Read first** (about 45 KiB)
 - `src/main.cpp`: `UpdateNeckBlast` (whole), `SetNeckBlast`, the flag parsing block (`grep -n 'neck-blast'`),
@@ -1448,8 +1448,8 @@ wall, `ctx.walls = WindowWalls(world)`, team spawn areas at chosen places)
 - change `engine/src/sim/internal/Blast.cpp` `PresentBlast`: treat `CarveCapsule` like `CarveSphere` (debris from
   `edits`); ignore `MapShape`/`MapMask` (no picture yet; `[mag-2]` adds `PresentSpell`).
 - change `tools/verify.sh`, `tools/lib/verify-gates.sh`, `tools/selftest-verify.sh`; new
-  `tools/tests/fixtures/verify/G22.log`.
-- change `CLAUDE.md` section 2 (the G22 row), `docs/verify.md` (the flags, lines and the quick tier list).
+  `tools/tests/fixtures/verify/G23.log`.
+- change `CLAUDE.md` section 2 (the G23 row), `docs/verify.md` (the flags, lines and the quick tier list).
 
 **Steps**
 1. The game owns `sim::SpellTable m_Spells = sim::BuildSpellTable(voxelSize, ids)` and `sim::CastContext m_Magic`
@@ -1480,11 +1480,11 @@ wall, `ctx.walls = WindowWalls(world)`, team spawn areas at chosen places)
    - `Magic: refused <name>: <refusal>` for any refusal (an Expect failure).
 5. `--camera siege-matrix`: a fixed pose framing the tower and the barricade spot (pick it, print it in the report).
    `--siege-matrix` in a session (`--connect`) is refused with a warning (exit 2 as other script flags).
-6. Gate G22 (tier quick): `G --frames 1500 --siege-matrix --camera siege-matrix --screenshot g22.png`, then `G
+6. Gate G23 (tier quick): `G --frames 1500 --siege-matrix --camera siege-matrix --screenshot g23.png`, then `G
    --frames 200 --spell-demo siege-cannon --voxel-size 0.1` and `0.15`. Judge: exit 0; `Magic: 4 spells, 0
    failed`; the four check lines; `Magic: all conjured matter gone`; at 0.1 and 0.15 `Cannon: .* roof AIR` and
-   `World: generation .* voxel 0.100 m` / `0.150 m` (as `judge_G10`). Fixture `G22.log` from a real run (cut to the
-   judged lines plus 20 lines of context). Self-test: `case_ok "G22 passes"`, `case_bad` with `0 failed` changed to
+   `World: generation .* voxel 0.100 m` / `0.150 m` (as `judge_G10`). Fixture `G23.log` from a real run (cut to the
+   judged lines plus 20 lines of context). Self-test: `case_ok "G23 passes"`, `case_bad` with `0 failed` changed to
    `1 failed`.
 
 **Tests**
@@ -1492,16 +1492,16 @@ wall, `ctx.walls = WindowWalls(world)`, team spawn areas at chosen places)
 
 **Log lines and flags**
 - `--spell-demo NAME`, `--siege-matrix`, `--camera siege-matrix`; the `Magic:`, `Cannon:`, `Barricade:`, `Updraft:`,
-  `Shockwave:` lines above (read by `judge_G22`).
+  `Shockwave:` lines above (read by `judge_G23`).
 
 **Checks**
 1. Build. 2. `./build/Shredborne --headless --validation --frames 1500 --siege-matrix --camera siege-matrix
-   --screenshot /tmp/<scratch>/g22.png` (use your scratch dir) - exit 0, the lines; look at the screenshot.
-3. `tools/ctest.sh`. 4. doc-check (CLAUDE.md's G22 row against `verify.sh --list`).
-5. `VERIFY_SLOT=1 tools/verify.sh quick` - PASS with G22; look at `g22.png`.
+   --screenshot /tmp/<scratch>/g23.png` (use your scratch dir) - exit 0, the lines; look at the screenshot.
+3. `tools/ctest.sh`. 4. doc-check (CLAUDE.md's G23 row against `verify.sh --list`).
+5. `VERIFY_SLOT=1 tools/verify.sh quick` - PASS with G23; look at `g23.png`.
 
 **Docs**
-- `CLAUDE.md` section 2: the G22 row. `docs/verify.md`: the flags, the lines, G22 in the quick tier.
+- `CLAUDE.md` section 2: the G23 row. `docs/verify.md`: the flags, the lines, G23 in the quick tier.
 
 **Must not break**
 - "Verification": a log line a judge reads changes with its judge and fixture; each judge has a planted fault.
@@ -1543,7 +1543,7 @@ wall, `ctx.walls = WindowWalls(world)`, team spawn areas at chosen places)
 3. `engine/docs/notes/net.md` section 2: `WorldOpKind` 7 `MapShape`, 8 `MapMask`, 9 `CarveCapsule` as **sim values,
    on the wire from `[mag-2]`**; the next free op kind is 10.
 4. magic.md "Stages" row `[mag-1]`: State **Built** with the engine and game commits of the stage's cards; the
-   design's "Status" line: `[mag-1]` built. Gate numbers in magic.md "Headless flags and gates": G22 is
+   design's "Status" line: `[mag-1]` built. Gate numbers in magic.md "Headless flags and gates": G23 is
    `--siege-matrix` (the design said G21; the plan moved it), G23 the spell drill.
 5. ROADMAP: "Next"'s `[mag-1]` item -> state Built (move it per ROADMAP's own convention), "State" test count, measured values
    from the `Magic:` lines (work and ms of each spell after `--after-fill`, labelled (m)) under "Performance and
@@ -1561,5 +1561,5 @@ wall, `ctx.walls = WindowWalls(world)`, team spawn areas at chosen places)
 - `sim::kPlayerRuleRevision` 2. World-palette id 21 `knit_iron`. `MaterialFlags` bit 4 `Conjured`.
 - Map numbers 1-15 (`voxel::TurningMapId`) and `SpellId` 0-17, `Form` and `Element` orders, `ZoneKind` 1-7, shape
   kinds 0-3: fixed here, wire values from `[mag-2]`.
-- Gate G22 (`--siege-matrix`, tier quick).
+- Gate G23 (`--siege-matrix`, tier quick).
 - Planned for `[mag-2]`: `buildHash` += `SpellTableHash`, `TurningTableHash`.
