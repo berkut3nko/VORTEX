@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| Status | Designed, nothing built or measured for it. |
+| Status | Stages 1-3 built in `[wp-4]` (2026-11-23; M0, P1, G1, G2, measured below; the windowed P1 result is the owner's check 18); stages 4-7 designed. |
 | Decided | - Us, in the project review of 2026-11-17 (section 6.2; the owner may veto), questions 1 and 3-5: `FIFO_RELAXED` preferred with a FIFO fallback; G3 only after a fight measurement; H1 after L1; target a stable 16.7 ms on the near view and under 20 ms far.<br>- Us, same review (section 4, WP4): block A = stages 1-3 here (M0, P1, G1 + G2) plus a HUD settings page (render scale preset 0.5 / 0.6 / 0.75, vsync, sensitivity, FOV); block B (L1, H1) later.<br>- Owner, 2026-11-12, at a windowed 0.125 m peak view (27 fps windowed): the 92 m view radius is "the sweet spot" on the UHD 620; frame rate comes before more distance there. |
-| Next | [perf-A] ([perf-M0], [perf-P1], [perf-G1], [perf-G2]: stages 1-3) = ROADMAP "Next" [wp-4] "frame-rate block A + settings". [perf-B] ([perf-L1] = lod.md stage 1 = view-distance [vd-4], [perf-H1]) is in ROADMAP "Later". |
+| Next | [perf-B] ([perf-L1] = lod.md stage 1 = view-distance [vd-4], [perf-H1]), in ROADMAP "Later". [perf-A] ([perf-M0], [perf-P1], [perf-G1], [perf-G2]: stages 1-3) was ROADMAP's [wp-4] "frame-rate block A + settings": built. |
 | Open | Question 2 (render scale 0.5 as the integrated-GPU default): the owner's look call from a 0.5 / 0.6 screenshot pair; 0.6 stays the default until then. |
 | History | [before-rewrite-2026-11-18.md](../history/perf/before-rewrite-2026-11-18.md): the original header ("draft for the owner") and every section this rewrite changed |
 | Marks | **(m)** measured (quoted, with its source), **(e)** estimate; every saving is an estimate unless it cites a measurement, and each item names the measurement that confirms or kills it. Code `file:line` references were read at the working tree of 2026-11-12, committed as engine `0388a78` (shaders and `src/graphics` had no uncommitted changes then); they are not updated. Machine: i7-8650U, 4 cores / 8 threads, 15 W shared with the UHD 620 (max GPU clock 1150 MHz, `/sys/class/drm/card*/gt_max_freq_mhz`). |
@@ -38,7 +38,13 @@ Destruction spikes are in [shred.md](shred.md) (same folder); effect costs in fi
 | Far: peak over the valley, `--camera=-1,61,65,-0.241,-0.55` | 12.20-12.21 ms | 7.28-7.38 ms | 1.24-1.40 ms | view-distance history [stage-2.md](../history/view-distance/stage-2.md) "Measured" (0.125 m column), re-checked in [stage-3.md](../history/view-distance/stage-3.md) "Measured" |
 | Near: `--camera probe` | 6.23 ms | 8.88-9.33 ms | 1.83-2.15 ms | the same two tables |
 | HUD | 0.01 ms | | | ROADMAP "Performance and measured values"; [game-ui.md](game-ui.md) "Rendering and cost" |
+| Far, 2026-11-23 (`[wp-4]` card 2 baseline) | 12.18-12.19 ms | 6.63 ms | 1.00-1.01 ms | (m) headless, 1200 frames, medians of the last 120 after window filled (frame 274), two runs; taa 0.52-0.53, present 0.42, upload 0.00 ms; build engine `ea41341` + game `58d7b87` with cards 1-2 (uncommitted), GPU at 1150 MHz all run |
+| Near, 2026-11-23 (`[wp-4]` card 2 baseline) | 6.22-6.23 ms | 8.85-8.88 ms | 1.58-1.60 ms | (m) the same runs (window filled at frame 266-271); taa 0.56-0.58, present 0.42, upload 0.00 ms |
 
+- CPU of the same runs (the `Perf:` line, whole run including the first 270 frames of streaming): far p50 20.83-20.84
+  ms, p99 22.91-23.12 ms, max 129-159 ms (start-up), 2 frames over 25 ms and 1 over 33 ms; near p50 17.71-17.74 ms, p99
+  19.55-20.03 ms, 1-2 over 25 ms, 1 over 33 ms. Headless, the CPU frame is mostly the fence wait for the GPU (p50 about
+  18 ms of the 20 in a 200-frame run): headless runs are GPU bound (m).
 - TAA + present are not timed separately here; "composite, TAA, present ~2.5 ms" (ROADMAP of 2026-11-12) puts them at
   about 1 ms (e). Far total about 21.5 ms = 46 fps of GPU time. (Measured since, on the session plaza, 2026-11-17:
   TAA 0.64 ms, present 0.42 ms; ROADMAP "Performance and measured values".)
@@ -63,6 +69,15 @@ Destruction spikes are in [shred.md](shred.md) (same folder); effect costs in fi
 3. **CPU and GPU in series**: the fence wait sits inside `RenderFrame` after all CPU work (`Renderer.cpp:1585`), and
    14 CPU-bound threads compete for 8 logical CPUs: the world `JobSystem` takes hw-1 = 7 (`core/internal/
    Jobs.cpp:60-63`), Jolt another 7 (`physics/internal/PhysicsWorld.cpp:430-433`).
+   Measured at `[wp-4]` card 8 (m, headless, 1200 frames, two runs each; `--job-threads` / `--physics-threads`):
+   A (defaults, 7 + 7) against B (6 job workers, 2 Jolt threads). The GPU medians are equal (far gbuffer 10.62 /
+   10.62 ms, lighting 5.73 / 5.71; near 5.96 / 5.96, 8.64-8.65 / 8.63-8.66), and so is the CPU frame (far p50 18.19-18.25
+   / 18.19-18.23 ms, near p50 17.24 / 17.22-17.24; a headless frame is GPU bound). B fills the window later: far frame
+   283 / 274 against 321-323 (5.0-5.4 s against 5.9-6.0 s), near 267-272 against 310-311. `--fly --frames 1200` and
+   `--climb` pass both ways (0 unfilled columns inside 0.85 R, 0 unloads); the simulation section's p99 is lower with
+   2 Jolt threads (fly 2.89 -> 1.65 ms, climb 2.88 -> 0.36 ms, p50 0.01-0.08 ms either way) and frames over 25 ms are
+   alike (climb 33 / 41, fly 3 / 2). No default changed (T1b waits for a fight measurement). The windowed result
+   (hypotheses 1-2 against this one) is the owner's check 18.
 4. **Streaming**, as above (+1.3 to +2.4 ms GPU).
 
 Consequence for ranking: under FIFO, a GPU saving shows on screen only if it crosses 16.7 ms (or if vsync is off).
@@ -132,7 +147,8 @@ the owner reads the same line after a windowed session.
 
 **P1 Present path** (new, windowed only). `--no-vsync` in `EngineConfig::ApplyCommandLine` (`Engine.cpp:22-36`) and
 a vsync checkbox in F3 (`src/main.cpp:454-458`); `FIFO_RELAXED` as an option (no tearing when on time); submit wait
-at `COLOR_ATTACHMENT_OUTPUT` with the swapchain transition's source stage to match (`Renderer.cpp:1649, 1674`,
+at `COLOR_ATTACHMENT_OUTPUT` on a second batch that holds only the present, HUD and ImGui passes (a wait holds back its
+whole batch at that stage), with the swapchain transition's source stage to match (`Renderer.cpp:1649, 1674`,
 `Resources.cpp:31-33`); `set_desired_min_image_count(3)` (`Swapchain.cpp:136-151`). Measured by the owner: F3 fps and
 the `Swapchain:` log line (image count, mode) with vsync on / relaxed / off. Validation on the windowed path.
 
@@ -142,7 +158,9 @@ Pass `tMax = R / (voxelSize * max(length(rd.xz), 1e-6))` when `jitter.w > 0`: a 
 at once for it (`lighting.frag:61-62`), and no shadow or AO ray is traced. About 28 % of the 192 m window lies outside
 the 92 m circle (e), and the rays going there are the longest grazing ones. Risk: the sky path
 (`composite.frag:237-242`) may differ from `SkyColor` (sun disc) and particles beyond R are no longer hidden by
-terrain; check the far screenshot at low sun. Measured: far medians, far screenshot diff; near unchanged.
+terrain; check the far screenshot at low sun. Measured: far medians, far screenshot diff; near unchanged. Built in `[wp-4]` card 4 (`VxEdgeFogTMax`); measured: far gbuffer 12.18 -> 11.27 ms, lighting 6.63 -> 5.82 ms,
+composite 1.00 -> 0.87 ms; near gbuffer 6.22 -> 6.12 ms, lighting 8.86 -> 8.81 ms (-0.6 to -1.6 %); far and near
+screenshots equal (4 pixels of 921 600 differ, by at most 4 / 255) (m, headless, two runs each).
 
 **G3 AO any-hit** (new; re-estimated after review). `lighting.frag:178` passes `anyHit = !emissive`. In
 `VxTraceScene` that flag changes one thing: after a world hit, any-hit returns before `VxTraceInstances`
@@ -166,7 +184,12 @@ Recommended as a preset for integrated GPUs until C5. Measured: far and near med
 several ALU ops each on Gen9, e). Compute `phase = ((gridMin % gridSize) + gridSize) % gridSize` once before the loop
 and use `w = phase + cc; w -= (w >= gridSize) ? gridSize : 0` (exact because `cc` stays in `[0, gridSize)`). The file
 is shared with C++, so `ViewDistance.ColumnSkipMatchesTheTraversalWithoutIt`, `World.WindowSizeNeedNotBePowerOfTwo`
-and the `Trace.*` tests cover it. Measured: medians, `INTEL_DEBUG=fs` instruction count.
+and the `Trace.*` tests cover it. Measured: medians, `INTEL_DEBUG=fs` instruction count. Built in `[wp-4]` card 5
+(guarded by `World.RaycastAfterAWindowMoveMatchesTheReference`, which passed before and after); measured: far gbuffer
+11.27 -> 10.62 ms, lighting 5.82 -> 5.72 ms; near gbuffer 6.12 -> 5.96 ms, lighting 8.81 -> 8.64 ms (m, two runs
+each, on top of G1); instructions (SIMD8, static) `gbuffer_world` 870 -> 879, lighting 3863 -> 3891 (the phase
+before the loop is counted once, the saving is inside the loop: Mesa's cycle estimate 177 876 -> 176 284 and 952 987
+-> 948 095), spills unchanged (0 and 9:3); screenshots equal to those before G1.
 
 **T1a Worker priority and cave throttle** (new; keeps the CLAUDE.md lesson that 2 jobs per worker starved
 streaming). World workers at lower priority (`SCHED_BATCH` / `setpriority` in `WorkerLoop`); after `World: surface
@@ -249,9 +272,9 @@ that log and fx-budget's `--stress-fx 10` exist; U1 is sized from them.
 
 | # | Built | Accepted when | Effort (e) |
 |---|---|---|---|
-| 1 | M0 measurement | Headless far / near runs print CPU p50 / p99 / max, GPU sum, frames over 25 / 33 ms, upload ms; numbers recorded in this doc | 0.5 d |
-| 2 | P1 present path | Owner: windowed fps with vsync on / relaxed / off recorded with the `Swapchain:` line; validation clean | 0.5 d |
-| 3 | G1 + G2 | Far median at least -1.5 ms in total, near unchanged within 5 %; far and near screenshots equal; `Trace.*`, `ViewDistance.*` green; both headless runs exit 0 | 0.5-1 d |
+| 1 | M0 measurement. **Built** (`[wp-4]` cards 1-2): the `Perf:` line, the fence wait timer, `GPU upload`, `GPU clock:`, `--debug-view`, the per-run log file; baselines in "Where the frame goes today" | Headless far / near runs print CPU p50 / p99 / max, GPU sum, frames over 25 / 33 ms, upload ms; numbers recorded in this doc. Met (m): far CPU p50 20.83 ms, p99 22.91-23.12, GPU sum 20.8 ms (18.2 ms after G1 + G2), upload 0.00 ms; the owner's windowed `Perf:` line is check 18 | 0.5 d |
+| 2 | P1 present path. **Built** (`[wp-4]` card 3): `PresentPreference` (FIFO_RELAXED default, `--present`, `--no-vsync`), 3 images, the acquire wait at colour output, `TransitionAcquiredImage`. Review fix: a semaphore wait holds back every command of its batch at its stage, so one batch still made the offscreen passes' colour writes wait; the frame is now two batches in one `vkQueueSubmit2` (uploads through TAA wait for nothing; present, HUD, ImGui and the screenshot copy wait for the image at colour output and signal `renderFinished`; the fence covers both). The acquire stays before recording (CPU side) | Owner: windowed fps with vsync on / relaxed / off recorded with the `Swapchain:` line; validation clean. Waiting for owner check 18 (headless cannot present) | 0.5 d |
+| 3 | G1 + G2. **Built** (`[wp-4]` cards 4-5) | Far median at least -1.5 ms in total, near unchanged within 5 %; far and near screenshots equal; `Trace.*`, `ViewDistance.*` green; both headless runs exit 0. Met (m): far gbuffer 12.18 -> 10.62 ms, lighting 6.63 -> 5.72, composite 1.00 -> 0.87 (-2.6 ms in total); near gbuffer 6.22 -> 5.96 (-4 %), lighting 8.86 -> 8.64 (-2.5 %); screenshots equal (4 of 921 600 far pixels differ, by at most 4 / 255; near none); the suites and validation runs green | 0.5-1 d |
 | 4 | S1 preset + T1a | Scale 0.5 offered as the integrated-GPU default (owner decides); `--fly` and `--climb` gates pass, GPU medians during the climb within +0.5 ms of a filled window | 0.5 d |
 | 5 | L1 = lod.md stage 1 (its debris threshold made presentation-only, shred.md Part 3) | lod.md's criteria (lighting -2 ms facing a hillside, no change near) | 2 d |
 | 6 | H1 half-resolution lighting | Far frame <= 16.7 ms GPU at scale 0.6; near lighting -3 ms; screenshots reviewed by the owner | 3-5 d |
@@ -294,7 +317,7 @@ answers; the owner may veto. Question 2 is the owner's look call.
    with a FIFO fallback.*
 2. **Render scale 0.5 as the integrated-GPU default until TAA upsampling exists?** Recommendation: yes, after you look
    at a 0.5 vs 0.6 screenshot pair; keep 0.6 for the GTX 1650. *Open: the owner decides from the screenshot pair;
-   0.6 stays the default until then.*
+   0.6 stays the default until then.* Screenshot pair taken at `[wp-4]` card 2 (far view, 0.5 / 0.6); the owner's look decides.
 3. **Accept the slight emissive change of G3** (glow seen through a rubble piece)? Recommendation: decide only after
    the fight measurement; on the idle view it saves 0-0.3 ms (e), which is not worth a visible change. It is visible
    only next to emitters. *Decided by us (review 2026-11-17): G3 only after a fight measurement.*

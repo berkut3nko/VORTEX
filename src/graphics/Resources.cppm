@@ -65,6 +65,10 @@ export namespace vortex::graphics {
     void TransitionImage(VkCommandBuffer cmd, Image& image, VkImageLayout newLayout);
     /// @brief Same for an image the engine does not wrap (swapchain images).
     void TransitionImage(VkCommandBuffer cmd, VkImage image, VkImageAspectFlags aspect, VkImageLayout oldLayout, VkImageLayout newLayout);
+    /// @brief The first transition of an acquired swapchain image: UNDEFINED -> COLOR_ATTACHMENT_OPTIMAL with
+    /// COLOR_ATTACHMENT_OUTPUT as its source stage, so it is ordered after the image-acquired semaphore wait
+    /// (which the submit performs at COLOR_ATTACHMENT_OUTPUT).
+    void TransitionAcquiredImage(VkCommandBuffer cmd, VkImage image);
 
     /**
      * @brief Deferred destruction. Resources that a frame in flight may still use are destroyed

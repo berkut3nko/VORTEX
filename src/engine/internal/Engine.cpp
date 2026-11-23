@@ -11,9 +11,14 @@ module;
 #include <cstdint>
 #include <filesystem>
 #include <format>
+#include <fstream>
 #include <functional>
+#include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
+#include <system_error>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -36,6 +41,55 @@ namespace vortex {
         if (args.Has("--no-emissive")) render.emissiveLighting = false;
         if (args.Has("--no-taa")) render.taa = false;
         if (args.Has("--no-checkerboard")) render.checkerboardLighting = false;
+        // perf.md P1: --no-vsync is immediate (else mailbox, else FIFO), for measuring; --present wins over it.
+        if (args.Has("--no-vsync")) render.present = graphics::PresentPreference::Immediate;
+        if (const std::optional<std::string> name = args.Get("--present")) {
+            if (!graphics::ParsePresentPreference(*name, render.present))
+                Log::Warn("--present expects fifo, relaxed or immediate: '{}' ignored", *name);
+        }
+        // perf.md T1b: thread counts for measuring (0 = the default, hardware - 1 each).
+        for (auto [flag, field] : {std::pair{"--job-threads", &jobThreads}, std::pair{"--physics-threads", &physicsThreads}}) {
+            if (!args.Has(flag)) continue;
+            const int n = args.GetInt(flag, 0);
+            if (n < 0) Log::Warn("{} expects a count (0 = default): {} ignored", flag, n);
+            else *field = static_cast<unsigned>(n);
+        }
+        if (const std::optional<std::string> name = args.Get("--debug-view")) {
+            // In graphics::DebugView order.
+            constexpr std::string_view kNames[] = {"none", "albedo", "normal", "depth", "lighting", "steps", "motion", "material"};
+            const auto* found = std::find(std::begin(kNames), std::end(kNames), std::string_view(*name));
+            if (found != std::end(kNames)) render.debugView = static_cast<graphics::DebugView>(found - std::begin(kNames));
+            else Log::Warn("--debug-view expects none, albedo, normal, depth, lighting, steps, motion or material: '{}' ignored", *name);
+        }
+    }
+
+    namespace {
+        /// The GPU's actual clock file (Intel: gt_act_freq_mhz) of the first /sys/class/drm/card<N>, sorted by path;
+        /// empty if there is none. Connectors (card0-eDP-1) are skipped.
+        std::filesystem::path FindGpuClockFile() {
+            std::error_code ec;
+            std::vector<std::filesystem::path> cards;
+            for (std::filesystem::directory_iterator it("/sys/class/drm", ec), end; !ec && it != end; it.increment(ec)) {
+                const std::string name = it->path().filename().string();
+                if (name.size() <= 4 || name.compare(0, 4, "card") != 0) continue;
+                if (!std::all_of(name.begin() + 4, name.end(), [](char c) { return c >= '0' && c <= '9'; })) continue;
+                cards.push_back(it->path());
+            }
+            std::sort(cards.begin(), cards.end());
+            for (const std::filesystem::path& card : cards) {
+                const std::filesystem::path file = card / "gt_act_freq_mhz";
+                if (std::filesystem::exists(file, ec) && !ec) return file;
+            }
+            return {};
+        }
+
+        /// One integer from a sysfs file; nullopt if it cannot be read.
+        std::optional<long> ReadInteger(const std::filesystem::path& file) {
+            std::ifstream in(file);
+            long value = 0;
+            if (!(in >> value)) return std::nullopt;
+            return value;
+        }
     }
 
     struct Engine::Impl {
@@ -43,8 +97,16 @@ namespace vortex {
 
         /// The simulation of an offline game: the engine's own settings, everything else default.
         static sim::SimulationConfig SimulationConfigFor(const EngineConfig& c) {
-            if (c.simulation) return *c.simulation;   // a session's: the world and steps are the server's
+            if (c.simulation) {
+                // A session's: the world and steps are the server's; thread counts only when asked for.
+                sim::SimulationConfig config = *c.simulation;
+                if (c.jobThreads != 0) config.jobThreads = c.jobThreads;
+                if (c.physicsThreads != 0) config.physics.threads = c.physicsThreads;
+                return config;
+            }
             sim::SimulationConfig config;
+            config.jobThreads = c.jobThreads;
+            config.physics.threads = c.physicsThreads;
             config.chunkCapacity = c.chunkCapacity;
             config.maxParticles = c.maxParticles;
             config.fixedTimeStep = c.fixedTimeStep;
@@ -76,6 +138,13 @@ namespace vortex {
         std::function<uint32_t(double, uint32_t)> tickSource;
         bool tickSourceOverReported = false;
         bool initialized = false;
+        // Run-wide statistics for the `Perf:` exit line (perf.md M0).
+        PerfSummary perf;
+        uint64_t lastTimingSerial = 0;
+        // The GPU clock, read every 60 frames (perf.md M0: an integrated GPU's clock explains its timings).
+        std::filesystem::path gpuClockFile;
+        bool gpuClockChecked = false;
+        RunStats gpuClock;
     };
 
     Engine::Engine(const EngineConfig& config) : m_Impl(std::make_unique<Impl>(config)) {}
@@ -94,6 +163,7 @@ namespace vortex {
         Impl& s = *m_Impl;
         Log::Init();
         if (!s.sim.Initialize(std::move(generator))) return false;
+        Log::Info("Jobs: {} worker thread(s)", s.sim.Jobs().ThreadCount());   // beside Jolt's "Physics initialized" line
 
         graphics::Window* window = nullptr;
         if (!s.config.headless) {
@@ -218,8 +288,14 @@ namespace vortex {
         // Streaming progress, logged once each (view-distance.md stage 1 gates).
         bool surfaceFilled = false, windowFilled = false;
         const double streamStart = NowSeconds();
+        if (!s.gpuClockChecked) {
+            s.gpuClockChecked = true;
+            s.gpuClockFile = FindGpuClockFile();
+            if (s.gpuClockFile.empty()) Log::Info("GPU clock: not available");
+        }
 
         while (!s.exitRequested) {
+            const double frameStart = NowSeconds();
             ProfileScope frameScope("CPU: frame");
             if (!s.config.headless) {
                 s.window.PollEvents();
@@ -242,6 +318,7 @@ namespace vortex {
 
             // --- streaming -------------------------------------------------------------------
             {
+                const double worldStart = NowSeconds();
                 ProfileScope scope("CPU: world");
                 // The world window follows the camera, and the camera keeps the ground around
                 // the player. Bodies ask for their own colliders and are frozen while they have
@@ -263,10 +340,12 @@ namespace vortex {
                     generationAtFill = world.Stats();
                     generationSeconds = NowSeconds() - generationStart;
                 }
+                s.perf.cpuWorld.Add((NowSeconds() - worldStart) * 1000.0);
             }
 
             // --- fixed-step simulation -------------------------------------------------------
             {
+                const double simulationStart = NowSeconds();
                 ProfileScope scope("CPU: simulation");
                 sim.Scene().BeginFrame();   // what was drawn last frame becomes "previous"
                 if (s.tickSource) {
@@ -300,6 +379,7 @@ namespace vortex {
                     if (steps == 4) accumulator = 0.0;   // do not spiral when the frame is too slow
                 }
                 s.stepAlpha = static_cast<float>(std::min(accumulator / fixedDt, 1.0));
+                s.perf.cpuSimulation.Add((NowSeconds() - simulationStart) * 1000.0);
             }
 
             app.OnUpdate(*this, dt);
@@ -338,6 +418,15 @@ namespace vortex {
             const bool lastFrame = s.config.exitAfterFrames != 0 && frame >= s.config.exitAfterFrames;
             if (lastFrame && !s.config.screenshotPath.empty()) s.renderer.RequestScreenshot(s.config.screenshotPath);
             s.renderer.RenderFrame(in);
+            {
+                const graphics::RenderStats& rs = s.renderer.Stats();
+                s.perf.fenceWait.Add(rs.fenceWaitMs);
+                // The pass times of a frame slot arrive once (two frames later): count each reading once.
+                if (rs.timingSerial != s.lastTimingSerial) {
+                    s.lastTimingSerial = rs.timingSerial;
+                    for (const graphics::PassTiming& p : rs.passes) s.perf.GpuPass(p.name).Add(p.milliseconds);
+                }
+            }
 
             // Lifetimes and light fades advance after the frame was drawn, so a flash is seen
             // at full intensity on its first frame.
@@ -345,7 +434,15 @@ namespace vortex {
             sim.Scene().SetViewer(camera.position);
             sim.UpdateLifetimes(dt);
 
+            if (frame % 60 == 0 && !s.gpuClockFile.empty()) {
+                if (const std::optional<long> mhz = ReadInteger(s.gpuClockFile)) {
+                    Log::Info("GPU clock: {} MHz (frame {})", *mhz, frame);
+                    s.gpuClock.Add(static_cast<double>(*mhz));
+                }
+            }
+
             Profiler::EndFrame();
+            s.perf.cpuFrame.Add((NowSeconds() - frameStart) * 1000.0);
             if (lastFrame) break;
         }
 
@@ -404,6 +501,13 @@ namespace vortex {
             }
             Log::Info("HUD: {} quads drawn on the last frame", s.renderer.Stats().hudQuads);
         }
+        // Every run, windowed included, leaves its numbers (docs/verify.md "Game (offline, headless)", the `Perf:` line).
+        Log::Info("{}", FormatPerfLine(s.perf, s.renderer.PresentModeLabel()));
+        if (s.gpuClock.Count() > 0) {
+            const std::optional<long> maxMhz = ReadInteger(s.gpuClockFile.parent_path() / "gt_max_freq_mhz");
+            Log::Info("GPU clock: {} samples, p50 {:.0f} MHz, min {:.0f}, max {:.0f}{}", s.gpuClock.Count(), s.gpuClock.Percentile(50),
+                      s.gpuClock.Percentile(0), s.gpuClock.Max(), maxMhz ? std::format(", gt_max {} MHz", *maxMhz) : std::string());
+        }
         const uint32_t errors = s.device.ValidationErrorCount();
         if (errors > 0) Log::Error("{} Vulkan validation error(s) were reported during the run", errors);
         return errors > 0 ? 2 : 0;
@@ -452,4 +556,26 @@ namespace vortex {
     bool Engine::WindowFocused() const { return !m_Impl->config.headless && m_Impl->window.IsFocused(); }
     void Engine::SetImGuiInput(bool enabled) { m_Impl->ui.SetInputEnabled(enabled); }
     scene::Scene& Engine::Scene() { return m_Impl->sim.Scene(); }
+
+    void Engine::ApplySettings(const GameSettings& settings, const GameSettings& previous) {
+        graphics::RenderSettings& rs = m_Impl->renderer.Settings();
+        if (settings.renderScale != previous.renderScale) rs.renderScale = std::clamp(settings.renderScale, 0.25f, 1.0f);
+        if (settings.vsync != previous.vsync)
+            rs.present = settings.vsync ? graphics::PresentPreference::FifoRelaxed : graphics::PresentPreference::Immediate;
+        if (settings.fovDegrees != previous.fovDegrees)
+            camera.fovY = glm::radians(static_cast<float>(std::clamp(settings.fovDegrees, 50, 110)));
+    }
+
+    Engine::LivePerf Engine::LivePerformance() const {
+        LivePerf perf;
+        for (const Profiler::Timer& timer : Profiler::SnapshotTimers()) {
+            if (timer.name == "CPU: frame") {
+                perf.cpuFrameMs = timer.avgMs;
+                break;
+            }
+        }
+        for (const graphics::PassTiming& pass : m_Impl->renderer.Stats().passes)
+            if (pass.name != "upload") perf.gpuMs += pass.milliseconds;
+        return perf;
+    }
 }

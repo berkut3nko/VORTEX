@@ -8,7 +8,9 @@ module;
 #include <cstdint>
 #include <iterator>
 #include <limits>
+#include <span>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <vector>
 
@@ -72,11 +74,51 @@ namespace vortex::graphics {
         }
     }
 
+    VkPresentModeKHR ChoosePresentMode(PresentPreference preference, std::span<const VkPresentModeKHR> available) {
+        static constexpr VkPresentModeKHR kFifo[] = {VK_PRESENT_MODE_FIFO_KHR};
+        static constexpr VkPresentModeKHR kRelaxed[] = {VK_PRESENT_MODE_FIFO_RELAXED_KHR, VK_PRESENT_MODE_FIFO_KHR};
+        static constexpr VkPresentModeKHR kImmediate[] = {VK_PRESENT_MODE_IMMEDIATE_KHR, VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_FIFO_KHR};
+        std::span<const VkPresentModeKHR> order = kFifo;
+        if (preference == PresentPreference::FifoRelaxed) order = kRelaxed;
+        else if (preference == PresentPreference::Immediate) order = kImmediate;
+        for (VkPresentModeKHR mode : order) {
+            if (std::find(available.begin(), available.end(), mode) != available.end()) return mode;
+        }
+        return VK_PRESENT_MODE_FIFO_KHR;   // the spec guarantees it
+    }
+
+    const char* PresentModeName(VkPresentModeKHR mode) {
+        switch (mode) {
+            case VK_PRESENT_MODE_FIFO_KHR: return "fifo";
+            case VK_PRESENT_MODE_FIFO_RELAXED_KHR: return "fifo-relaxed";
+            case VK_PRESENT_MODE_IMMEDIATE_KHR: return "immediate";
+            case VK_PRESENT_MODE_MAILBOX_KHR: return "mailbox";
+            default: return "other";
+        }
+    }
+
+    const char* PresentPreferenceName(PresentPreference preference) {
+        switch (preference) {
+            case PresentPreference::Fifo: return "fifo";
+            case PresentPreference::FifoRelaxed: return "relaxed";
+            case PresentPreference::Immediate: return "immediate";
+        }
+        return "fifo";
+    }
+
+    bool ParsePresentPreference(std::string_view text, PresentPreference& out) {
+        if (text == "fifo") out = PresentPreference::Fifo;
+        else if (text == "relaxed") out = PresentPreference::FifoRelaxed;
+        else if (text == "immediate") out = PresentPreference::Immediate;
+        else return false;
+        return true;
+    }
+
     Swapchain::~Swapchain() {
         Destroy();
     }
 
-    bool Swapchain::Create(Device& device, uint32_t width, uint32_t height, bool vsync) {
+    bool Swapchain::Create(Device& device, uint32_t width, uint32_t height, PresentPreference present) {
         if (!device.IsInitialized() || device.Surface() == VK_NULL_HANDLE) {
             Log::Error("Swapchain::Create needs an initialised device with a window surface");
             return false;
@@ -86,10 +128,10 @@ namespace vortex::graphics {
             Destroy();
         }
         m_Device = &device;
-        return Recreate(width, height, vsync);
+        return Recreate(width, height, present);
     }
 
-    bool Swapchain::Recreate(uint32_t width, uint32_t height, bool vsync) {
+    bool Swapchain::Recreate(uint32_t width, uint32_t height, PresentPreference present) {
         if (m_Device == nullptr || !m_Device->IsInitialized() || m_Device->Surface() == VK_NULL_HANDLE) {
             Log::Error("Swapchain::Recreate called without a device (Create has to succeed first)");
             return false;
@@ -131,6 +173,22 @@ namespace vortex::graphics {
             return false;
         }
 
+        // The mode is chosen here from the surface's list and handed over alone: vk-bootstrap would fall back to
+        // FIFO silently (perf.md P1).
+        std::vector<VkPresentModeKHR> modes;
+        uint32_t modeCount = 0;
+        VkResult modesResult = vkGetPhysicalDeviceSurfacePresentModesKHR(physical, surface, &modeCount, nullptr);
+        if (modesResult == VK_SUCCESS && modeCount > 0) {
+            modes.resize(modeCount);
+            modesResult = vkGetPhysicalDeviceSurfacePresentModesKHR(physical, surface, &modeCount, modes.data());
+            modes.resize(modeCount);
+        }
+        if ((modesResult != VK_SUCCESS && modesResult != VK_INCOMPLETE) || modes.empty()) {
+            Log::Error("Failed to query the surface's present modes (VkResult {}): FIFO used", static_cast<int>(modesResult));
+            modes = {VK_PRESENT_MODE_FIFO_KHR};
+        }
+        const VkPresentModeKHR chosen = ChoosePresentMode(present, modes);
+
         // --- build ------------------------------------------------------------------------
         const uint32_t queueFamily = m_Device->GraphicsQueueFamily();
         vkb::SwapchainBuilder builder(physical, device, surface, queueFamily, queueFamily);
@@ -142,13 +200,9 @@ namespace vortex::graphics {
         for (const VkSurfaceFormatKHR& fallback : kSurfaceFormats) {
             if (fallback.format != surfaceFormat.format) builder.add_fallback_format(fallback);
         }
-        if (vsync) {
-            builder.set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR);
-        } else {
-            // vk-bootstrap falls back to FIFO (always available) when neither is supported.
-            builder.set_desired_present_mode(VK_PRESENT_MODE_MAILBOX_KHR)
-                .add_fallback_present_mode(VK_PRESENT_MODE_IMMEDIATE_KHR);
-        }
+        builder.set_desired_present_mode(chosen);
+        // Three images: the GPU can start the next frame while one is shown and one waits (the driver may give more).
+        builder.set_desired_min_image_count(3);
 
         auto built = builder.build();
 
@@ -212,6 +266,7 @@ namespace vortex::graphics {
         m_Extent = swapchain.extent;
         m_Images = std::move(images.value());
         m_Views = std::move(views);
+        m_PresentMode = swapchain.present_mode;
 
         for (size_t i = 0; i < m_Images.size(); ++i) {
             const std::string name = "Swapchain image " + std::to_string(i);
@@ -219,8 +274,9 @@ namespace vortex::graphics {
             m_Device->SetDebugName(VK_OBJECT_TYPE_IMAGE_VIEW, reinterpret_cast<uint64_t>(m_Views[i]), name);
         }
 
-        Log::Info("Swapchain: {}x{}, {} images, format {}, present mode {}", m_Extent.width, m_Extent.height,
-                  m_Images.size(), static_cast<int>(m_Format), static_cast<int>(swapchain.present_mode));
+        // What was built, never the preference.
+        Log::Info("Swapchain: {}x{}, {} images, format {}, present mode {} (asked {})", m_Extent.width, m_Extent.height,
+                  m_Images.size(), static_cast<int>(m_Format), PresentModeName(m_PresentMode), PresentPreferenceName(present));
         return true;
     }
 

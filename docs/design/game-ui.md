@@ -6,7 +6,7 @@
 |---|---|
 | Status | Built. Sections marked **Deviation** say where the build differs from the first version of this design and why. Windowed behaviour (pointer lock on Wayland / X11, focus, menu clicks, the ImGui overlay with Alt) is confirmed only by the owner: headless runs cannot exercise it. The checks and their results are in the game's [docs/owner-checks.md](../../../docs/owner-checks.md). |
 | Decided | - Owner's request: "rework interface, make lock mouse at center on play mode (at least at wayland). Leave ImGui for debugging and map editor."<br>- Us (this design, built with networking stage 1, 2026-11-11): the game interface is a HUD drawn by the engine without ImGui; ImGui only for the F3 debug overlay and the editor ("Goals"). |
-| Next | None in this document. A HUD settings page is part of ROADMAP "Next" WP4 (frame-rate block A + settings); M2a's HUD (health, team, score, timer, kill feed) is WP7. |
+| Next | None in this document. M2a's HUD (health, team, score, timer, kill feed) is WP7; `[wp-5]` adds its boundary toggle to the settings page (id 6, before Back). |
 | Open | none |
 | History | [before-rewrite-2026-11-18.md](../history/game-ui/before-rewrite-2026-11-18.md): the original header and the owner checks as they stood here (now in the game's `docs/owner-checks.md`) |
 | Marks | Measured = a headless run on the UHD 620 (1280x720 output, median of 120 frames), stated where it appears; the CPU cost of building the HUD is an estimate. |
@@ -15,7 +15,7 @@
 
 - Play mode: cursor locked and hidden the whole time (`GLFW_CURSOR_DISABLED` + raw motion when
   supported). Mouse look without holding a button. Works on Wayland and X11.
-- Escape opens a pause menu (Resume / Quit) and releases the cursor; it no longer quits.
+- Escape opens a pause menu (Resume / Settings / Quit) and releases the cursor; it no longer quits.
 - A game interface without ImGui: crosshair, small HUD (walk / fly, view, tool placeholder, FPS,
   key hints), pause menu. Drawn by a tiny engine-side screen-space layer.
 - ImGui only for debugging (F3 overlay, hidden by default) and the map editor (F1). In play with
@@ -104,6 +104,7 @@ in different polls (X11 click-to-focus, Wayland keyboard / pointer objects), so 
 | Playing | Escape | Paused | released, menu shown |
 | Paused | Escape (menu Back) or Resume | Playing | captured |
 | Paused | Quit | exit | - |
+| Paused | Settings | Paused, settings page shown | free; Escape / Back returns to the pause menu ("Settings") |
 | Paused | click outside the menu items | stays Paused | free |
 | Playing | focus lost | Playing (waiting) | released |
 | Playing (waiting) | focus gained (a click into the window gives it) and pointer over the window | Playing | captured; clicks blocked until the button is up and 0.15 s passed |
@@ -173,6 +174,35 @@ in different polls (X11 click-to-focus, Wayland keyboard / pointer objects), so 
   submitted and `UiLayer::Draw` returns early (`TotalVtxCount == 0`).
 - The former "Shredborne" ImGui window is the F3 debug overlay ("Debug (F3)"), hidden by default.
 
+## Settings
+
+Built in `[wp-4]` (2026-11-23). `vortex::GameSettings`, its file and the HUD `SettingsPage` are engine code
+(`vortex.core:settings`, GPU-free, tested); the game loads, applies and saves them.
+
+- **The page.** Esc, Settings (the pause menu's middle item; a session's is Resume / Settings / Leave the session)
+  replaces the pause menu with a `Menu` titled `SETTINGS`: Render scale, VSync, Mouse speed, Field of view, Back
+  (item ids 1-5; a later item goes before Back, which stays last). Enter, Space or a click on an item changes it to
+  the next preset and wraps: render scale 0.5 -> 0.6 -> 0.75, vsync on / off, mouse speed 0.5, 0.75, 1.0, 1.25, 1.5,
+  2.0, field of view 60, 70, 80, 90, 100 degrees. The next preset is the first one above the current value (+ 0.001
+  for floats), else the first: a value from the file that is no preset goes to the smallest. Escape or Back returns
+  to the pause menu, still paused; Resume closes both. The Enter that opens the page is not also an input of the page
+  (its input starts the next frame). It draws as the pause menu does (`Menu::Draw`, the backdrop dim in present).
+- **Applied at once** (`Engine::ApplySettings`, only the fields that changed): render scale (`RenderSettings::renderScale`, the targets are
+  recreated), vsync (`RenderSettings::present`: on = `FifoRelaxed`, off = `Immediate`; the swapchain is recreated and
+  its `Swapchain:` line logged), field of view (`Camera::fovY`). Mouse speed multiplies the game's own look
+  sensitivity (0.0025 rad per unit of motion), offline and in a session.
+- **The file**, saved on every change: `$XDG_CONFIG_HOME/shredborne/settings.txt`, else
+  `$HOME/.config/shredborne/settings.txt`; on Windows `%APPDATA%/Shredborne/settings.txt`; `--settings FILE`
+  replaces the path. `key = value` lines: `render_scale` (0.25..1.0), `vsync` (`on` / `off`), `sensitivity`
+  (0.25..4.0), `fov` (integer, 50..110); `#` comments and blank lines are skipped, unknown keys are skipped (a newer
+  file stays readable). A bad line makes the whole file count as absent (`Settings: PATH: line N: ...` warning) and
+  the defaults are used (0.6, on, 1.0, 60). **Headless runs never read or write it**: gates see the defaults.
+  Command-line flags win over it (`--scale`, `--no-vsync`, `--present`) until the player changes that same setting
+  on the page: a change applies only the field that changed, so changing the field of view keeps `--no-vsync`. The
+  page shows (and saves) the file's values, not a flag's.
+- **Session corner text**: the top right of a session shows `N fps   cpu X ms   gpu Y ms` (`Engine::LivePerformance`:
+  the `CPU: frame` profiler average and the last GPU pass sum without upload). Offline keeps `N fps` (F3 has the rest).
+
 ## Rendering and cost
 
 **Deviation (quads with cell bits instead of vertices + font texture).** A `HudQuad` is
@@ -235,17 +265,22 @@ for the engine has no licence question.
   click that starts it (held, or pressed a frame later) is not a shot.
 - Graphics contract: `u_Hud` binding, `hud` pipeline resources, `hud.frag` writes one float colour,
   `VxHudQuad` layout == `HudQuad`, `VX_HUD_CELLS_X/Y` == font grid.
+- `GameSettings.RoundTripsAndRefusesBadValues` (format, parse, each bad value refused with `line N:` and nothing
+  changed, the file saved into a new folder and read back), `GameSettings.UnknownKeysAndCommentsAreSkipped`,
+  `SettingsPage.ActivatingCyclesThePresets`, `SettingsPage.BackClosesThePage`.
 - Headless: the game run logs `HUD: N quads drawn on the last frame` (149 in the default run) and
   its screenshot shows the HUD; `--pause-menu` starts with the menu open (screenshot of the
-  menu); `--no-hud` draws nothing (`HUD: 0 quads`, screenshot differs).
+  menu: Resume, Settings, Quit); `--settings-menu` with the settings page open; `--no-hud` draws nothing
+  (`HUD: 0 quads`, screenshot differs).
 
 ## Out of scope
 
-- Textured / skinned widgets, TTF fonts, Unicode, localisation, gamepad navigation, settings menu
-  (key rebinding, sensitivity slider: later, sensitivity stays a constant), scaling DPI beyond the
-  integer scale, in-game chat (M1 networking), confined (not locked) cursor modes.
+- Textured / skinned widgets, TTF fonts, Unicode, localisation, gamepad navigation, key rebinding and sliders
+  (the settings page cycles presets), scaling DPI beyond the integer scale, in-game chat (M1 networking), confined
+  (not locked) cursor modes.
 
 ## Owner checks
 
-The windowed checks (1-14: the cursor lock, the pause menu, the editor and overlay, the network session) and their
+The windowed checks (1-15 and 18-19: the cursor lock, the pause menu, the editor and overlay, the network session,
+the present path and the settings page) and their
 results live in the game's [docs/owner-checks.md](../../../docs/owner-checks.md); an assistant cannot run them.

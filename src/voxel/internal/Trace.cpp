@@ -92,6 +92,11 @@ namespace vortex::voxel {
         return out;
     }
 
+    float EdgeFogTMax(const glm::vec3& direction, float radiusMetres, float voxelSize) {
+        static const TraceScene kNoScene{};
+        return kernel::TraceKernel{kNoScene}.VxEdgeFogTMax(direction, radiusMetres, voxelSize);
+    }
+
     RayHit TraceChunk(const ChunkStore& store, uint32_t slot, const glm::vec3& origin, const glm::vec3& direction,
                       float tMin, float tMax, const glm::ivec3& boundsMin, const glm::ivec3& boundsMax) {
         RayHit out;

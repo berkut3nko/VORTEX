@@ -11,6 +11,7 @@ module;
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -62,11 +63,13 @@ namespace vortex::graphics {
         constexpr VkDeviceSize kMinGridBytes = 64;                                              // never bind a zero-sized buffer
 
         // Present, Hud and Imgui are three intervals inside the one rendering scope of the backbuffer.
-        enum class Pass : uint32_t { GBuffer, Lighting, Composite, Particles, Taa, Present, Hud, Imgui, Count };
+        // Upload is the chunk / grid / material copies of SyncVoxelData at the start of the frame (perf.md M0).
+        enum class Pass : uint32_t { GBuffer, Lighting, Composite, Particles, Taa, Present, Hud, Imgui, Upload, Count };
         constexpr uint32_t kPassCount = static_cast<uint32_t>(Pass::Count);
         constexpr uint32_t kQueryCount = kPassCount * 2;
         constexpr std::array<const char*, kPassCount> kPassNames = {"gbuffer", "lighting", "composite", "particles",
-                                                                    "taa",     "present",  "hud",       "imgui"};
+                                                                    "taa",     "present",  "hud",       "imgui",
+                                                                    "upload"};
 
         enum class PipelineId : size_t {
             GBufferWorld, GBufferObjectFront, GBufferObjectInside, Lighting, Composite, Particles, Taa, Present, Hud, Count
@@ -281,6 +284,11 @@ namespace vortex::graphics {
         /// Everything owned by one frame in flight.
         struct FrameContext {
             VkCommandPool commandPool = VK_NULL_HANDLE;
+            // Two submit batches a frame (perf.md P1): `offscreenCmd` (uploads, gbuffer .. TAA) waits for nothing,
+            // `presentCmd` (present, HUD, ImGui, screenshot copy) waits for the acquired image. `cmd` is the one
+            // being recorded; every pass records into it.
+            VkCommandBuffer offscreenCmd = VK_NULL_HANDLE;
+            VkCommandBuffer presentCmd = VK_NULL_HANDLE;
             VkCommandBuffer cmd = VK_NULL_HANDLE;
             VkFence fence = VK_NULL_HANDLE;
             VkSemaphore imageAcquired = VK_NULL_HANDLE;
@@ -386,7 +394,7 @@ namespace vortex::graphics {
         Swapchain swapchain;
         std::vector<VkSemaphore> renderFinished;   // one per swapchain image
         bool swapchainDirty = false;
-        bool appliedVsync = true;
+        PresentPreference appliedPresent = PresentPreference::FifoRelaxed;
         VkFormat backbufferFormat = kHeadlessFormat;
         VkExtent2D outputExtent{0, 0};
 
@@ -522,8 +530,11 @@ namespace vortex::graphics {
                 allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
                 allocInfo.commandPool = frame.commandPool;
                 allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-                allocInfo.commandBufferCount = 1;
-                if (vkAllocateCommandBuffers(dev, &allocInfo, &frame.cmd) != VK_SUCCESS) return false;
+                allocInfo.commandBufferCount = 2;
+                std::array<VkCommandBuffer, 2> buffers{};
+                if (vkAllocateCommandBuffers(dev, &allocInfo, buffers.data()) != VK_SUCCESS) return false;
+                frame.offscreenCmd = buffers[0];
+                frame.presentCmd = buffers[1];
 
                 if (!CreateSyncObjects(frame)) return false;
 
@@ -596,6 +607,8 @@ namespace vortex::graphics {
                 frame.fence = VK_NULL_HANDLE;
                 frame.commandPool = VK_NULL_HANDLE;
                 frame.cmd = VK_NULL_HANDLE;
+                frame.offscreenCmd = VK_NULL_HANDLE;
+                frame.presentCmd = VK_NULL_HANDLE;
                 frame.queriesPending = false;
             }
         }
@@ -629,6 +642,7 @@ namespace vortex::graphics {
                 stats.passes[i].milliseconds = ms;
                 Profiler::AddSample(profilerNames[i], ms);
             }
+            ++stats.timingSerial;
         }
 
         void BeginPass(FrameContext& frame, Pass pass) {
@@ -779,8 +793,8 @@ namespace vortex::graphics {
             device->WaitIdle();
             const glm::ivec2 size = window->FramebufferSize();
             if (size.x <= 0 || size.y <= 0) return false;
-            if (!swapchain.Recreate(static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y), settings.vsync)) return false;
-            appliedVsync = settings.vsync;
+            if (!swapchain.Recreate(static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y), settings.present)) return false;
+            appliedPresent = settings.present;
             outputExtent = swapchain.Extent();
             if (!CreateRenderFinished()) return false;
 
@@ -801,7 +815,7 @@ namespace vortex::graphics {
                 const glm::ivec2 size = window->FramebufferSize();
                 if (size.x <= 0 || size.y <= 0 || window->IsMinimized()) return false;
                 const bool resized = window->ConsumeResized();
-                if (resized || swapchainDirty || !swapchain.IsValid() || settings.vsync != appliedVsync) {
+                if (resized || swapchainDirty || !swapchain.IsValid() || settings.present != appliedPresent) {
                     RecreateSurface();
                     return false;
                 }
@@ -1574,7 +1588,7 @@ namespace vortex::graphics {
                 if (ReportOnce("frame-input")) Log::Error("Renderer: FrameInput::store and FrameInput::materials are required");
                 return false;
             }
-            ProfileScope profile("Renderer::RenderFrame");
+            stats.fenceWaitMs = 0.0f;   // a skipped frame reports no wait
             if (!PrepareSurface()) return false;
 
             const VkDevice dev = device->Handle();
@@ -1582,10 +1596,16 @@ namespace vortex::graphics {
             if (frame.fence == VK_NULL_HANDLE || frame.imageAcquired == VK_NULL_HANDLE) {
                 if (!CreateSyncObjects(frame)) return false;
             }
-            if (vkWaitForFences(dev, 1, &frame.fence, VK_TRUE, std::numeric_limits<uint64_t>::max()) != VK_SUCCESS) {
+            // The wait for the GPU is timed on its own (perf.md M0): the RenderFrame scope below is CPU work only.
+            const auto waitStart = std::chrono::steady_clock::now();
+            const VkResult waited = vkWaitForFences(dev, 1, &frame.fence, VK_TRUE, std::numeric_limits<uint64_t>::max());
+            stats.fenceWaitMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - waitStart).count();
+            Profiler::AddSample("Renderer: fence wait", stats.fenceWaitMs);
+            if (waited != VK_SUCCESS) {
                 Log::Error("Renderer: waiting for the frame fence failed");
                 return false;
             }
+            ProfileScope profile("Renderer::RenderFrame");
             // Nothing recorded by this slot is in use any more.
             frame.deletions.Flush();
             CollectTimings(frame);
@@ -1598,11 +1618,12 @@ namespace vortex::graphics {
             VkCommandBufferBeginInfo beginInfo{};
             beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
             beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-            if (vkBeginCommandBuffer(frame.cmd, &beginInfo) != VK_SUCCESS) {
+            if (vkBeginCommandBuffer(frame.offscreenCmd, &beginInfo) != VK_SUCCESS) {
                 Log::Error("Renderer: beginning the command buffer failed");
                 return false;
             }
-            const VkCommandBuffer cmd = frame.cmd;
+            frame.cmd = frame.offscreenCmd;
+            VkCommandBuffer cmd = frame.cmd;
 
             // Acquire after everything that can fail without side effects: an unsubmitted command
             // buffer is simply reset next time, an acquired image would have to be presented.
@@ -1614,7 +1635,9 @@ namespace vortex::graphics {
 
             if (frame.queryPool != VK_NULL_HANDLE) vkCmdResetQueryPool(cmd, frame.queryPool, 0, kQueryCount);
 
+            BeginPass(frame, Pass::Upload);
             SyncVoxelData(frame, input);
+            EndPass(frame, Pass::Upload);
             if (targets.needsClear) ClearHistoryTargets(cmd);
 
             const Camera camera = SanitizeCamera(input.camera);
@@ -1626,7 +1649,7 @@ namespace vortex::graphics {
             PassParticles(frame, data);
             PassTaa(frame);
 
-            // --- present pass + screenshot ---------------------------------------------------------
+            // --- present pass + screenshot: the second batch, the only one that waits for the image ---
             Buffer readback;
             if (screenshotRequested) {
                 readback = CreateBuffer(*device, static_cast<VkDeviceSize>(targets.output.width) * targets.output.height * 4, 0,
@@ -1636,6 +1659,13 @@ namespace vortex::graphics {
                     screenshotRequested = false;
                 }
             }
+            if (vkEndCommandBuffer(cmd) != VK_SUCCESS || vkBeginCommandBuffer(frame.presentCmd, &beginInfo) != VK_SUCCESS) {
+                Log::Error("Renderer: ending the offscreen command buffer or beginning the present one failed");
+                RecoverFailedSubmit(frame, input, readback);
+                return false;
+            }
+            frame.cmd = frame.presentCmd;
+            cmd = frame.cmd;
             if (headless) {
                 TransitionImage(cmd, targets.backbuffer, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
                 PassPresent(frame, data, targets.backbuffer.view);
@@ -1646,7 +1676,7 @@ namespace vortex::graphics {
             } else {
                 const VkImage image = swapchain.Image(imageIndex);
                 VkImageLayout layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-                TransitionImage(cmd, image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, layout);
+                TransitionAcquiredImage(cmd, image);   // after the image-acquired wait (submit, colour output)
                 PassPresent(frame, data, swapchain.View(imageIndex));
                 if (readback) {
                     TransitionImage(cmd, image, VK_IMAGE_ASPECT_COLOR_BIT, layout, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
@@ -1662,33 +1692,42 @@ namespace vortex::graphics {
                 RecoverFailedSubmit(frame, input, readback);
                 return false;
             }
-            VkCommandBufferSubmitInfo commandInfo{};
-            commandInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
-            commandInfo.commandBuffer = cmd;
+            std::array<VkCommandBufferSubmitInfo, 2> commandInfo{};
+            commandInfo[0].sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+            commandInfo[0].commandBuffer = frame.offscreenCmd;
+            commandInfo[1].sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO;
+            commandInfo[1].commandBuffer = frame.presentCmd;
 
-            // The whole command buffer waits for the image: its first use is a layout transition,
-            // which is not tied to the colour attachment stage.
+            // Two batches (perf.md P1). A semaphore wait holds back every command of its batch at the wait's stage,
+            // so the offscreen passes (uploads, gbuffer, lighting, composite, particles, TAA) go in a first batch
+            // that waits for nothing and run while the image is still being acquired; only the second batch
+            // (present, HUD, ImGui, screenshot copy) waits for it, at colour output. The image's first transition is
+            // ordered after that wait (TransitionAcquiredImage); barriers in the second batch see the first one's
+            // writes (submission order). The fence covers both.
             VkSemaphoreSubmitInfo waitInfo{};
             waitInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
             waitInfo.semaphore = frame.imageAcquired;
-            waitInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            waitInfo.stageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
             VkSemaphoreSubmitInfo signalInfo{};
             signalInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO;
             signalInfo.semaphore = headless ? VK_NULL_HANDLE : renderFinished[imageIndex];
             signalInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
 
-            VkSubmitInfo2 submit{};
-            submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
-            submit.commandBufferInfoCount = 1;
-            submit.pCommandBufferInfos = &commandInfo;
+            std::array<VkSubmitInfo2, 2> submits{};
+            for (uint32_t i = 0; i < 2; ++i) {
+                submits[i].sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2;
+                submits[i].commandBufferInfoCount = 1;
+                submits[i].pCommandBufferInfos = &commandInfo[i];
+            }
             if (!headless) {
-                submit.waitSemaphoreInfoCount = 1;
-                submit.pWaitSemaphoreInfos = &waitInfo;
-                submit.signalSemaphoreInfoCount = 1;
-                submit.pSignalSemaphoreInfos = &signalInfo;
+                submits[1].waitSemaphoreInfoCount = 1;
+                submits[1].pWaitSemaphoreInfos = &waitInfo;
+                submits[1].signalSemaphoreInfoCount = 1;
+                submits[1].pSignalSemaphoreInfos = &signalInfo;
             }
             vkResetFences(dev, 1, &frame.fence);
-            const VkResult submitted = vkQueueSubmit2(device->GraphicsQueue(), 1, &submit, frame.fence);
+            const VkResult submitted = vkQueueSubmit2(device->GraphicsQueue(), static_cast<uint32_t>(submits.size()),
+                                                      submits.data(), frame.fence);
             if (submitted != VK_SUCCESS) {
                 Log::Error("Renderer: queue submission failed (VkResult {})", static_cast<int>(submitted));
                 RecoverFailedSubmit(frame, input, readback);
@@ -1765,11 +1804,11 @@ namespace vortex::graphics {
                 const glm::ivec2 size = win->FramebufferSize();
                 const uint32_t w = size.x > 0 ? static_cast<uint32_t>(size.x) : width;
                 const uint32_t h = size.y > 0 ? static_cast<uint32_t>(size.y) : height;
-                if (w == 0 || h == 0 || !swapchain.Create(dev, w, h, settings.vsync)) {
+                if (w == 0 || h == 0 || !swapchain.Create(dev, w, h, settings.present)) {
                     Log::Error("Renderer::Initialize: the swapchain could not be created");
                     return false;
                 }
-                appliedVsync = settings.vsync;
+                appliedPresent = settings.present;
                 outputExtent = swapchain.Extent();
                 backbufferFormat = swapchain.Format();
                 if (!CreateRenderFinished()) return false;
@@ -1871,6 +1910,12 @@ namespace vortex::graphics {
     }
 
     bool Renderer::ReloadShaders() { return m_Impl->ReloadShaders(); }
+
+    const char* Renderer::PresentModeLabel() const {
+        const Impl& s = *m_Impl;
+        if (s.headless || !s.swapchain.IsValid()) return "headless";
+        return PresentModeName(s.swapchain.PresentMode());
+    }
 
     VkFormat Renderer::BackbufferFormat() const { return m_Impl->backbufferFormat; }
 

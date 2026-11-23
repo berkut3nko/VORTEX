@@ -754,7 +754,8 @@ namespace vortex::editor {
         graphics::RenderSettings& rs = engine.Renderer().Settings();
         if (ImGui::CollapsingHeader("Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::SliderFloat("Render scale", &rs.renderScale, 0.25f, 1.0f, "%.2f");
-            ImGui::Checkbox("VSync", &rs.vsync);
+            bool vsync = rs.present != graphics::PresentPreference::Immediate;
+            if (ImGui::Checkbox("VSync", &vsync)) rs.present = vsync ? graphics::PresentPreference::FifoRelaxed : graphics::PresentPreference::Immediate;
             ImGui::Checkbox("TAA", &rs.taa);
             ImGui::Checkbox("Sun shadows", &rs.sunShadows);
             ImGui::Checkbox("Ambient occlusion", &rs.ambientOcclusion);

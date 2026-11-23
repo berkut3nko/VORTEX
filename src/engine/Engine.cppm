@@ -34,6 +34,10 @@ export namespace vortex {
         std::string screenshotPath;         ///< Written on the last frame when exitAfterFrames > 0.
         uint32_t chunkCapacity = 8192;
         uint32_t maxParticles = 32768;
+        /// Worker threads of the world's job system and of Jolt (0 = the engine's default: hardware - 1 each).
+        /// perf.md T1b measures them; a session takes them only when non-zero.
+        unsigned jobThreads = 0;
+        unsigned physicsThreads = 0;
         float fixedTimeStep = 1.0f / 60.0f;
         /// Metres of terrain collision kept around the camera. Moving bodies get the colliders
         /// they need wherever they are (physics::TerrainColliders), so this is only what the
@@ -64,7 +68,10 @@ export namespace vortex {
         bool windowFollowsCamera = true;
 
         /// @brief Applies --headless --validation --frames N --screenshot F --width W --height H --scale S
-        /// --ao-distance M --no-shadows --no-ao --no-emissive --no-taa.
+        /// --ao-distance M --no-shadows --no-ao --no-emissive --no-taa --no-checkerboard --debug-view NAME
+        /// (none albedo normal depth lighting steps motion material; anything else is a warning and ignored)
+        /// --no-vsync (= --present immediate) --present fifo|relaxed|immediate (wins over --no-vsync)
+        /// --job-threads N --physics-threads N (0 = default; a negative value is a warning and ignored).
         void ApplyCommandLine(const CommandLine& args);
     };
 
@@ -154,6 +161,20 @@ export namespace vortex {
         void SetImGuiInput(bool enabled);
         /// @brief The entities of the game: voxel objects, lights, lifetimes (see scene::Scene).
         scene::Scene& Scene();
+
+        /// @brief Applies a change of the player's settings: only the fields that differ from `previous` (render
+        /// scale, present preference from vsync, camera field of view), so a command-line flag (`--scale`,
+        /// `--no-vsync`, `--present`) stays in effect until the player changes that same setting. Sensitivity is the
+        /// game's (it scales its own mouse look).
+        void ApplySettings(const GameSettings& settings, const GameSettings& previous);
+
+        /// @brief What the session HUD shows: CPU frame (profiler average over its history, ms) and the GPU
+        /// passes' last measured sum (ms, upload excluded).
+        struct LivePerf {
+            float cpuFrameMs = 0.0f;
+            float gpuMs = 0.0f;
+        };
+        LivePerf LivePerformance() const;
 
         graphics::Camera camera;
         graphics::SunLight sun;

@@ -12,4 +12,6 @@ export import :paths;
 export import :args;
 export import :input;
 export import :hud;
+export import :runstats;
+export import :settings;
 export import :build;

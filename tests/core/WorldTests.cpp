@@ -603,3 +603,44 @@ TEST(World, WindowSizeNeedNotBePowerOfTwo) {
     f.world->LoadBlocking(glm::dvec3(-37.0 + 16.0 * 7, 20.0, 91.0));
     EXPECT_EQ(f.world->Stats().denseChunks, 6u * 12u);
 }
+
+// perf.md G1: a ray limited by EdgeFogTMax (voxel units; World::Raycast takes metres) hits ground
+// inside the horizontal radius and misses ground beyond it, along x and along z.
+TEST(World, EdgeFogLimitEndsRaysAtTheHorizontalRadius) {
+    Fixture f;   // voxel 0.5 m, ground at y = 20 m, window 128 m
+    f.world->LoadBlocking(glm::dvec3(0.0, 20.0, 0.0));
+    const glm::dvec3 origin(0.0, 30.0, 0.0);   // 10 m above the ground
+    for (const glm::vec3 raw : {glm::vec3(1.0f, -10.0f / 40.0f, 0.0f), glm::vec3(0.0f, -10.0f / 40.0f, 1.0f)}) {
+        const glm::vec3 dir = glm::normalize(raw);   // meets the ground 40 m away horizontally
+        const WorldRayHit inside = f.world->Raycast(origin, dir, EdgeFogTMax(dir, 50.0f, 0.5f) * 0.5f);
+        EXPECT_TRUE(inside.hit);
+        if (inside.hit) EXPECT_NEAR(inside.position.y, 20.0, 1.0e-3);
+        const WorldRayHit beyond = f.world->Raycast(origin, dir, EdgeFogTMax(dir, 35.0f, 0.5f) * 0.5f);
+        EXPECT_FALSE(beyond.hit);
+    }
+}
+
+// perf.md G2: after the window moved in x and z across chunk coordinates that are no multiple of
+// its size (the toroidal phase is not zero), the traversal still matches the reference march.
+TEST(World, RaycastAfterAWindowMoveMatchesTheReference) {
+    Fixture f({}, {6, 5, 12}, 512);
+    f.world->LoadBlocking(glm::dvec3(-37.0, 20.0, 91.0));
+    const glm::dvec3 centre(-37.0 + 16.0 * 7, 20.0, 91.0 - 16.0 * 5);
+    f.world->LoadBlocking(centre);
+    ASSERT_EQ(f.world->Stats().pendingChunks, 0u);
+    Rng rng(23);
+    int hits = 0;
+    for (int i = 0; i < 400; ++i) {
+        const glm::dvec3 origin(centre.x + rng.Range(-20.0f, 20.0f), 20.0 + rng.Range(1.0f, 15.0f), centre.z + rng.Range(-40.0f, 40.0f));
+        const glm::vec3 dir = glm::normalize(glm::vec3(rng.Range(-1.0f, 1.0f), rng.Range(-1.0f, -0.2f), rng.Range(-1.0f, 1.0f)));
+        const WorldRayHit hit = f.world->Raycast(origin, dir, 30.0f);
+        double refT = 0.0;
+        const bool ref = ReferenceMarch(*f.world, origin, glm::dvec3(dir), 30.0, refT);
+        ASSERT_EQ(hit.hit, ref) << "ray " << i;
+        if (hit.hit) {
+            ++hits;
+            EXPECT_NEAR(hit.distance, refT, 0.05);
+        }
+    }
+    EXPECT_GT(hits, 200);
+}

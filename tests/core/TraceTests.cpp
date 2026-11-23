@@ -376,3 +376,12 @@ TEST(Trace, AnyHitAgreesWithClosestHit) {
         EXPECT_EQ(Trace(scene, origin, dir, 0.0f, 100.0f, false).hit, Trace(scene, origin, dir, 0.0f, 100.0f, true).hit);
     }
 }
+
+// perf.md G1: the primary ray ends where it has gone the edge-fog radius horizontally (shared
+// trace.glsl VxEdgeFogTMax, in voxel units); a steep ray goes far, edge fog off means no limit.
+TEST(Trace, EdgeFogTMaxIsTheHorizontalRadius) {
+    EXPECT_FLOAT_EQ(EdgeFogTMax(glm::vec3(1.0f, 0.0f, 0.0f), 92.0f, 0.125f), 736.0f);
+    EXPECT_NEAR(EdgeFogTMax(glm::vec3(0.6f, 0.8f, 0.0f), 92.0f, 0.125f), 1226.667f, 1.0e-3f);
+    EXPECT_NEAR(EdgeFogTMax(glm::vec3(0.0f, 1.0f, 0.0f), 92.0f, 0.125f), 7.36e8f, 1.0e3f);
+    EXPECT_EQ(EdgeFogTMax(glm::vec3(1.0f, 0.0f, 0.0f), 0.0f, 0.125f), 1.0e9f);
+}

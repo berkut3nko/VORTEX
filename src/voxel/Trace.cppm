@@ -68,6 +68,11 @@ export namespace vortex::voxel {
     RayHit TraceWorld(const TraceScene& scene, const glm::vec3& origin, const glm::vec3& direction,
                       float tMin, float tMax);
 
+    /// @brief The primary-ray end of perf.md G1, in voxel units: the ray parameter at which a ray of unit
+    /// `direction` reaches the horizontal distance `radiusMetres`; 1.0e9 when radiusMetres <= 0
+    /// (shaders/shared/trace.glsl VxEdgeFogTMax compiled as C++).
+    float EdgeFogTMax(const glm::vec3& direction, float radiusMetres, float voxelSize);
+
     /// @brief Ray against a single chunk, in chunk-local voxel units, restricted to [boundsMin, boundsMax).
     RayHit TraceChunk(const ChunkStore& store, uint32_t slot, const glm::vec3& origin, const glm::vec3& direction,
                       float tMin, float tMax, const glm::ivec3& boundsMin = glm::ivec3(0),

@@ -60,12 +60,14 @@ Threading
   (`src/voxel/Store.cppm`) and has no locks: chunk edits must not run concurrently.
 
 Order inside `RenderFrame` - keep it
-1. `PrepareSurface`: minimised / resize / vsync change / dirty swapchain skip the frame; a render-scale change
-   recreates the targets (device idle) and the frame goes on.
-2. wait fence -> flush deletions -> `CollectTimings` -> reset pools -> begin command buffer.
+1. `PrepareSurface`: minimised / resize / present change (`RenderSettings::present`) / dirty swapchain skip the
+   frame; a render-scale change recreates the targets (device idle) and the frame goes on.
+2. wait fence (timed alone: `RenderStats::fenceWaitMs`) -> flush deletions -> `CollectTimings` -> reset pools ->
+   begin command buffer.
 3. acquire the swapchain image *after* everything that can fail without side effects.
 4. `SyncVoxelData` (materials, budgeted chunks, then grid) -> `ClearHistoryTargets` if needed -> `BuildFrameData` ->
-   gbuffer, lighting, composite, particles, taa, present (+ HUD, + UI) -> screenshot copy.
+   gbuffer, lighting, composite, particles, taa (offscreen command buffer) -> present (+ HUD, + UI) -> screenshot
+   copy (present command buffer).
 5. submit, present, blocking screenshot write, then swap `parity`, advance `frameSlot`, `++frameIndex`.
    An early `return false` leaves `parity`, `frameSlot`, `frameIndex`, `prevCamera` untouched.
 - Between the swapchain acquire and the submit there must be no plain `return`: commands that were recorded but not
@@ -95,6 +97,11 @@ The grid mirror [vd-1]
   lighting history (`lighting.frag`) skip taps with that alpha; they read the normal anyway, so the test costs no
   fetch (a separate `u_LightCount` fetch per tap was measured slower). Without it ground next to a pending cell
   averaged in its zero lighting (dark halos while streaming).
+- The primary world ray of `gbuffer_world.frag` ends at the edge-fog radius R (perf.md G1, `VxEdgeFogTMax` in the
+  shared `trace.glsl`, `voxel::EdgeFogTMax` on the CPU): `tMax` is where the ray has gone R metres *horizontally*
+  (R = `u_Frame.jitter.w`, 0 when edge fog or fog is off or there is no world: then 1e9). Past R composite showed
+  `SkyColor` anyway, so the picture is the same. Objects, shadow, AO and light rays keep their ranges: never apply
+  it to `VxTraceScene` in `lighting.frag`.
 
 Spaces, units, ranges
 - Render space = world metres minus `World::WindowOrigin()` (double subtraction: `Rebase`, the camera and the lights
@@ -172,7 +179,9 @@ Spaces, units, ranges
   backbuffer is UNORM and the shader applies the sRGB curve; never pick an sRGB swapchain format
   (`ChooseSurfaceFormat` accepts only two UNORM formats).
 - Pass timers: results belong to the frame this slot submitted two frames ago (`CollectTimings`). Timestamps are
-  taken at `BOTTOM_OF_PIPE`; `SyncVoxelData` copies and `ClearHistoryTargets` are outside every interval. `present`,
+  taken at `BOTTOM_OF_PIPE`; the `SyncVoxelData` copies (chunks, grid pages, materials) are the `upload` interval
+  (`Pass::Upload`, the last of the enum, timed at the start of the command buffer); `ClearHistoryTargets` is outside
+  every interval. `present`,
   `hud` and `imgui` are three intervals *inside* the one backbuffer rendering scope (`PassPresent`); a new draw there
   gets its own `Pass` or goes into one of them, never between them. `kPassNames` must stay in `Pass` enum order; the
   engine finds the median by the profiler name `"GPU: <name>"` (`Engine::Run`, exit statistics).
@@ -181,7 +190,19 @@ Spaces, units, ranges
   `tables + one chunk`, so raising the budget above ~200 does nothing by itself.
 - Descriptor pool per frame (`CreateFrames`): 32 sets, 32 UBO, 160 SSBO, 96 samplers. Each of the nine pipelines binds
   one set per frame. A new pass fits; a loop that binds per object does not.
-- Resize / vsync change skip that frame (`PrepareSurface` returns false); a render-scale change does not. A pending
+- A frame is two submit batches in one `vkQueueSubmit2` (perf.md P1), each with its own command buffer of the
+  frame slot (`FrameContext::offscreenCmd`, `presentCmd`; `FrameContext::cmd` is the one being recorded): uploads,
+  gbuffer, lighting, composite, particles and TAA wait for nothing; present, HUD, ImGui and the screenshot copy wait
+  for the image-acquired semaphore at `COLOR_ATTACHMENT_OUTPUT`, signal `renderFinished` and, with the first batch,
+  the fence. One batch would not do: a semaphore wait holds back every command of its batch at the wait's stage, so
+  the offscreen passes' colour writes would wait for the image too. Barriers in the second batch see the first
+  batch's writes (submission order). The swapchain image's first transition is `TransitionAcquiredImage` (source
+  stage `COLOR_ATTACHMENT_OUTPUT`, chained to that wait); a transition with a `NONE` source stage would run before
+  the acquire. A failure between the two command buffers goes through `RecoverFailedSubmit` like any after the
+  acquire. The present mode is chosen by `ChoosePresentMode` from the
+  surface's list and handed to vk-bootstrap alone (it falls back to FIFO silently); the `Swapchain:` line prints the
+  mode that was built.
+- Resize / present change skip that frame (`PrepareSurface` returns false); a render-scale change does not. A pending
   screenshot stays requested until a frame is actually rendered, but the engine asks for it only once, on the last
   frame (`Engine::Run`), and does not check the result of `RenderFrame`.
 - HUD: one `vkCmdDraw(6, hudCount)` with no vertex buffer; nothing is drawn (both timestamps still written) when the
@@ -277,9 +298,14 @@ F. Change temporal accumulation or the checkerboard
 - Start-up line `Renderer: headless mode, output WxH, render WxH, N chunk slots, X MiB GPU memory` (`Initialize`)
   confirms sizes; `Screenshot saved: file (WxH)` confirms the readback.
 - End-of-run lines `GPU <pass> a ms (median b ms over n frames)` for gbuffer, lighting, composite, particles, taa,
-  present, hud, imgui (always 0 headless: no ImGui backend), then `HUD: N quads drawn on the last frame` (G3 needs
+  present, hud, imgui (always 0 headless: no ImGui backend), upload, then `HUD: N quads drawn on the last frame` (G3 needs
   N > 0): compare medians before and after. Reference values are in ROADMAP "Performance". All zero means timestamps
   are unsupported or too few frames ran.
+- The `Perf:` line (every run, windowed included, after the lines above when `--frames` is given): whole-run
+  percentiles of the CPU frame, the world and simulation sections, the fence wait and the per-pass GPU p50
+  (`vortex::PerfSummary`, filled by `Engine::Run`; a pass reading is counted once per `RenderStats::timingSerial`).
+  The fence wait is its own profiler timer `"Renderer: fence wait"` (`RenderStats::fenceWaitMs`); the
+  `"Renderer::RenderFrame"` scope starts after it, so it is CPU work only.
 - Measure GPU passes as CLAUDE.md's measuring rules say: timings while the world streams are inflated (the generation
   threads take the UHD 620's shared power budget); compare runs with a fixed `--camera` once the log says
   `World: window filled`.

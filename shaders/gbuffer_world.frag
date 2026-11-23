@@ -15,7 +15,10 @@ void main() {
     vec3 rd = VxCameraRay(v_Uv);
 
     VxHit hit = VxMiss();
-    if (!VxTraceWorld(u_Frame.cameraPosVoxel.xyz, rd, 0.0, 1.0e9, hit)) {
+    // perf.md G1: past the edge-fog radius composite shows SkyColor anyway; such a ray is not traced there.
+    // jitter.w is the radius R in metres or 0 (edge fog off); cameraPosVoxel.w is the voxel size.
+    float tMax = VxEdgeFogTMax(rd, u_Frame.jitter.w, u_Frame.cameraPosVoxel.w);
+    if (!VxTraceWorld(u_Frame.cameraPosVoxel.xyz, rd, 0.0, tMax, hit)) {
         discard;
     }
 

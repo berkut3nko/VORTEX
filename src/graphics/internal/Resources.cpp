@@ -326,4 +326,32 @@ namespace vortex::graphics {
         dependency.pImageMemoryBarriers = &barrier;
         vkCmdPipelineBarrier2(cmd, &dependency);
     }
+
+    void TransitionAcquiredImage(VkCommandBuffer cmd, VkImage image) {
+        if (cmd == VK_NULL_HANDLE || image == VK_NULL_HANDLE) return;
+        // The source stage is the one the submit waits for the image-acquired semaphore at, so the layout change
+        // is ordered after the acquire (a NONE source would let it run before the image is ours).
+        VkImageMemoryBarrier2 barrier{};
+        barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+        barrier.srcStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        barrier.srcAccessMask = VK_ACCESS_2_NONE;
+        barrier.dstStageMask = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        barrier.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+        barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.image = image;
+        barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        barrier.subresourceRange.baseMipLevel = 0;
+        barrier.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
+        barrier.subresourceRange.baseArrayLayer = 0;
+        barrier.subresourceRange.layerCount = VK_REMAINING_ARRAY_LAYERS;
+
+        VkDependencyInfo dependency{};
+        dependency.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        dependency.imageMemoryBarrierCount = 1;
+        dependency.pImageMemoryBarriers = &barrier;
+        vkCmdPipelineBarrier2(cmd, &dependency);
+    }
 }

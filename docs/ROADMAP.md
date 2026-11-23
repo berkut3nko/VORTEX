@@ -14,9 +14,20 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
 
 ## Now
 
-- **[wp-4] Frame-rate block A + settings.** A steadier, faster frame; settings in game; every playtest leaves
-  numbers. [design/perf.md](design/perf.md) stages 1-3 (M0, P1, G1 + G2), a HUD settings page. 3-4 d (e).
-  [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP4".
+- **[wp-4] Frame-rate block A + settings: built, not committed or reviewed** (2026-11-23). The far view's GPU frame
+  is 2.6 ms shorter with the same picture (gbuffer 12.18 -> 10.62 ms, lighting 6.63 -> 5.72: G1 ends primary rays at
+  the edge-fog radius, G2 takes the grid's modulo once per ray), the windowed game presents FIFO_RELAXED with 3 images
+  and submits a frame as two batches so only present / HUD / ImGui wait for the swapchain image (P1; `--present`,
+  `--no-vsync`), every run ends with a
+  `Perf:` line (CPU p50 / p99 / max, fence wait, frames over 25 / 33 ms, GPU per pass, `GPU upload`, `GPU clock:`)
+  and a windowed run leaves `build/logs/shredborne-*.log`; Esc, Settings sets render scale, vsync, mouse speed and
+  field of view, kept in `~/.config/shredborne/settings.txt`; a session's corner shows `fps / cpu / gpu`. New gate G21
+  (the per-machine GPU baseline, tier `full`, alone). [design/perf.md](design/perf.md) stages 1-3;
+  [design/game-ui.md](design/game-ui.md) "Settings". Not run: `verify.sh full --ci` and the soak (the owner's rule
+  for this pack: proportionate checks).
+- **Owner: [wp-4]'s windowed checks** (owner checks 18 and 19, [owner checks](../../docs/owner-checks.md)): the three
+  present modes with their `Swapchain:` and `Perf:` lines, the settings page with a real mouse, and the look of the
+  0.5 / 0.6 render-scale pair (perf.md "Open questions" 2).
 - **[nat-R1] built, not reviewed** (2026-11-23): a tester types `Shredborne --join <token>` (with `rendezvous.url`
   beside the game, or `--rendezvous URL`) and plays on the owner's home server, with no address and no port: the
   server (`vortex_server --listen PORT --token HEX --rendezvous`) registers its room on the rendezvous Worker
@@ -207,14 +218,14 @@ Engine backlog (no order):
 
 ## Not a game yet
 
-No health, damage, death, respawn, teams, rounds or score (M2a); no audio; no settings menu (mouse sensitivity is a
-constant, FOV fixed); no character animation (one static figure model); no visible play boundary (an invisible wall at the play bounds
+No health, damage, death, respawn, teams, rounds or score (M2a); no audio; settings are only render scale, vsync, mouse
+speed and FOV (no key rebinding); no character animation (one static figure model); no visible play boundary (an invisible wall at the play bounds
 stands until [wp-5]); a playground session sees 56 m. A 5v5 has never run (the most so far: 4 bots and a game client in the soak); the GTX 1650 has
 never been measured.
 
 ## State
 
-Tests: **775** in ctest: 767 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
+Tests: **787** in ctest: 779 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
 game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts), `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
 `Tools.DocCheck`, `Tools.DocCheckSelftest`, `Tools.SessionCheckVerdict` and `Tools.VerifyAssertions` (WP2's checks
 and their self-tests), `Tools.RendezvousWorker` (the rendezvous Worker under `node --test`, registered when `node` is
@@ -224,7 +235,7 @@ found), none needing a GPU (the ENet and relay ones use UDP on 127.0.0.1). The o
 |---|---|---|
 | Build | Pinned dependencies, Vulkan headers fetched, shaders compiled to SPIR-V at build time; presets dev / debug / release / ci (-Werror on engine and game); `tools/build.sh` under build locks; `VORTEX_GRAPHICS=OFF` builds the GPU-free part without a Vulkan loader; BuildInfo (`Build:` line, `--version`); start-up CPU check (exit 4); live server from `tools/install-live.sh`'s copy. | Only Clang tested; no CI; the Windows CPU-check path unverified. |
 | Core | Logging, job system, profiler, input state, RNG, command line. | |
-| Game UI | Play mode locks the mouse (pointer lock on Wayland, grab on X11) and looks without a button; Esc pause menu. HUD without ImGui (`vortex.core:hud`, one instanced draw after tone mapping, 5 x 9 bitmap font): crosshair, mode, tool, frame rate, key hints, menu, session panel. ImGui only for F3 and F1. | Windowed behaviour confirmed only by the owner; no settings menu, key rebinding, gamepad, TTF text, chat. |
+| Game UI | Play mode locks the mouse (pointer lock on Wayland, grab on X11) and looks without a button; Esc pause menu. HUD without ImGui (`vortex.core:hud`, one instanced draw after tone mapping, 5 x 9 bitmap font): crosshair, mode, tool, frame rate, key hints, menu, session panel (`fps / cpu / gpu`). Settings page from the pause menu (`[wp-4]`, `vortex.core:settings`): render scale, vsync, mouse speed, field of view, kept in `~/.config/shredborne/settings.txt`. ImGui only for F3 and F1. | Windowed behaviour (the settings page with a real mouse included) confirmed only by the owner; no key rebinding, gamepad, TTF text, chat. |
 | Voxel world | Streaming window of sparse 32^3 chunks; generation on workers; edits with material hardness; region files for the offline game and editor (record the voxel size, refuse another). Full-height window -48..128 m that follows x / z; column pass for sky and rock; buried chunks Packed (RLE, no slot); build ceiling at 128 m. | Chunks dense (37 KiB); no background saving. |
 | Terrain | Built-in generator (hills, mountains, beaches, sea, caves, trees), `IWorldGenerator` for custom ones; voxel size a world setting, 0.125 m default (`--voxel-size` previews 0.1-0.15 m offline); content and debris thresholds keep their metre size. | Biomes, structures, ore veins (worldgen.md). |
 | Ray queries | One traversal for GPU and CPU (`shaders/shared/trace.glsl`), world + objects through a BVH. | |
@@ -234,7 +245,7 @@ found), none needing a GPU (the ENet and relay ones use UDP on 127.0.0.1). The o
 | Import | MagicaVoxel `.vox` read / write, glTF voxelisation. | |
 | Physics | Jolt behind an engine interface, fixed step, character moved by `sim::StepPlayer` (restorable for replays); terrain colliders streamed and requested by moving bodies; bodies without a ready (or not yet re-cooked) collider frozen with their velocity; a parked body woken when its edited ground gets a collider. | Guard gaps under Later. |
 | Particles | CPU pool with emitters, voxel collision, presets. | Pool of 32 768 sorted every frame; fight cost unmeasured ([wp-8]). |
-| Renderer | Ray-marched G-buffer, ray-traced sun shadows, AO, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping; headless screenshots; validation-clean on the UHD 620. | perf.md not started ([wp-4]); reflections, bloom, shadowed particles. |
+| Renderer | Ray-marched G-buffer (primary rays end at the edge-fog radius), ray-traced sun shadows, AO, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping; headless screenshots; validation-clean on the UHD 620. Present mode FIFO_RELAXED / FIFO / IMMEDIATE by preference, 3 images; per-pass GPU timers with `upload`, the `Perf:` line. | perf.md stages 1-3 built: M0, P1, G1, G2; block B next (L1, H1); P1's windowed result is the owner's; reflections, bloom, shadowed particles. |
 | Editor | `vortex.editor` (F1): fly camera, selection with translate / rotate gizmo, inspector, terrain brush, primitives, `.vox` / glTF import, environment / render / profiler / world panels; tool logic unit tested. | Editor list under Later. |
 | Simulation | `sim::Simulation`: world, physics, terrain colliders and scene on a numbered fixed tick; `sim::WorldOp` / `ApplyOp`; `sim::Blast`; no renderer or window. | Gameplay rules live in `net::Server` ([wp-6]). |
 | Sessions (M1) | Networking stages 0-8 built, reviewed and committed ([design/networking.md](design/networking.md), "Stages"). `vortex.net` over ENet: server-authoritative terrain operations, predicted movement, replicated bodies with NetIds (2 new per tick, 64 awake, 256 live), joins by chunk sync, a moving client window on regions wider than 48 chunks, hash and entity checks with repair, server terrain mode; `vortex_server`, `vortex_bot`, `tools/soak.sh`, `tools/session-check.sh`. Owner LAN run 2026-11-17 (stage 7b's commits): "seamless". | M1 acceptance (owner's LAN run on stage 8 or a later pair); an invisible wall at the play bounds ([wp-5] shows it); 56 m on the playground ([wp-5]); 5v5 never run; the arena walker's 1.49 s quiet p99 unexplained; the arena walker's 150 s still stretch in G19 of 2026-11-22 unexplained (trees on its line were only a contributing weakness; the walk line now names the next one's surroundings, and the walker's verdict fails one over 20 s); pacer on a slow lossy link (M6); re-sent chunks for a walker (memory); bodies frozen awake count against the cap; Windows build not reproducible. |
@@ -242,11 +253,16 @@ found), none needing a GPU (the ENet and relay ones use UDP on 127.0.0.1). The o
 ## Performance and measured values
 
 UHD 620 laptop (8 threads), 1280x720 output, 768x432 internal, optimised `dev` build (-O2 -g; CPU timings before
-2026-11-12 are -O0). No shader or `src/graphics` commit since engine `5cda1c2` (2026-11-12), so GPU rows from that date
-on describe today's renderer. (m) measured, (e) estimate. Where to save frame time: [design/perf.md](design/perf.md).
+2026-11-12 are -O0). GPU rows from 2026-11-12 to 2026-11-22 describe the renderer
+before `[wp-4]` (2026-11-23: G1 + G2 took 2.6 ms off the far view, 0.4 ms off the near one). (m) measured, (e) estimate. Where to save frame time: [design/perf.md](design/perf.md).
 
 | Date | Measure | Value | Source |
 |---|---|---|---|
+| 2026-11-23 | GPU, far (`--camera=-1,61,65,-0.241,-0.55`), before / after `[wp-4]` G1 + G2 | gbuffer 12.18 -> 10.62, lighting 6.63 -> 5.72, composite 1.00 -> 0.87, TAA 0.52-0.53, present 0.42, upload 0.00 ms: GPU sum 20.8 -> 18.2 ms (m, headless, 1200 frames, medians of the last 120 after the window filled at frame 272-283, two runs each, GPU at 1150 MHz) | [wp-4]: [design/perf.md](design/perf.md) "Stages" |
+| 2026-11-23 | GPU, near (`--camera probe`), before / after G1 + G2 | gbuffer 6.22 -> 5.96, lighting 8.86 -> 8.64, composite 1.58-1.60 -> 1.53-1.59 ms (m, same runs) | same |
+| 2026-11-23 | CPU frame (`Perf:` line, whole run, headless) | far p50 20.83 -> 18.19-18.25 ms, p99 22.91-23.12 -> 20.4-26.2; near p50 17.71 -> 17.24, p99 19.0-20.0; 1-17 frames over 25 ms and 1 over 33 ms per 1200-frame run (start-up and the window filling) (m). Headless the frame is GPU bound (fence wait p50 about 18 ms in 20) | same |
+| 2026-11-23 | Thread split, A defaults (7 job workers + 7 Jolt) / B `--job-threads 6 --physics-threads 2` | GPU medians and CPU p50 equal; window filled far at frame 274-283 / 321-323 (5.0-5.4 / 5.9-6.0 s), near 267-272 / 310-311; `--fly` and `--climb` 0 unfilled columns and 0 unloads both; simulation p99 fly 2.89 / 1.65, climb 2.88 / 0.36 ms (m). Defaults unchanged (perf.md T1b) | same, "Why the windowed game can show 27 fps" item 3 |
+| 2026-11-23 | G21 GPU medians, run to run (4 runs) | gbuffer and lighting within 0.05 ms; TAA 0.51-0.66 and composite 0.85-0.96 ms vary by up to 0.15 ms between runs (m): G21 judges them by +5 % **and** +0.10 ms, so a baseline recorded on a low run can fail a later one | [wp-4] card 7 |
 | 2026-11-22 | `tools/verify.sh full --ci`, WP2 tree | every gate passed: G12 preload 10.10 s, 48.5 MiB RLE; G11 join p99 9 ticks; G13 store at most 5457 slots, walk -118.1 to 122.0 m; G16 0 and 1 corrections, max error 0.000 / 0.070 m; G2 ran 740 tests (746 less the 6 disabled); `verify.sh soak`: G19 `PASS` (23 min) (m). On battery power the same day, G12's preload took 12.9-13.6 s in 3 runs: G12 is measured on AC | [wp-2]: game [history/wp2/plan-2026-11-21.md](../../docs/history/wp2/plan-2026-11-21.md) |
 | 2026-11-21 | G16 corrections, WP1 final tree | alone, 3 runs: 2, 0, 5 corrections (walking client only), max error 0.179 / 0.004 / 0.229 m, server 3-6 late inputs a run (m). Beside G19 (the 35-minute soak sharing the 8 cores), 1 run: 2 corrections, max error 0.500 m, 42 late inputs: the walk's first ticks reached the server late (0.50 m, eight ticks' walk, along the walking direction on flat ground). Run G16 alone. | WP1 gate run |
 | 2026-11-19 | G16 corrections (`tools/session-check.sh`, 2 clients each run) | stage 8 (`430fde0` / `10197d2`, 5 runs): per run 2, 3, 2, 2, 3 corrections in all, max error 0.073-0.207 m; WP1 (walls, 12 runs): 4, 2, 2, 5, 2, 2, 1, 3, 3, 2, 3, 2, max 0.063-0.353 m; always one client of the two, 0 snaps (m). The gate was never "0 corrections" in practice. Cause (WP1 runs with the `Client: correction` line): only the walking client (slot 0), 27-37 m inside the play area, no wall met; an input that reached the server late (one run's server `Players:` line: 4 late inputs, 13 ticks that repeated a movement) leaves the server a tick behind: 0.063 m (one tick at 3.8 m/s) on flat ground, often at the walk's first ticks while the clock margin settles, up to a step (0.33-0.35 m vertical) where the path crosses a crater rim of its own casts. G16's bound: under 0.5 m, provisional. | WP1 review recheck |

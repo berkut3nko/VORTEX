@@ -78,6 +78,15 @@ vec3 VxSafeDirection(vec3 d) {
     return r;
 }
 
+// perf.md G1: the ray parameter, in voxel units, at which a ray of unit direction `rd` has gone
+// `radiusMetres` horizontally; 1.0e9 for radiusMetres <= 0 (edge fog off). The edge fog is a
+// horizontal distance: dividing by the full ray length would cut steep rays short.
+float VxEdgeFogTMax(vec3 rd, float radiusMetres, float voxelSize) {
+    if (radiusMetres <= 0.0f) return 1.0e9f;
+    float horizontal = max(sqrt(rd.x * rd.x + rd.z * rd.z), 1.0e-6f);
+    return radiusMetres / (voxelSize * horizontal);
+}
+
 // Index of the smallest component.
 int VxMinAxis(vec3 v) {
     if (v.x <= v.y && v.x <= v.z) return 0;
@@ -213,14 +222,20 @@ bool VxTraceWorld(vec3 ro, vec3 rdIn, float tMin, float tMax, VX_INOUT(VxHit) hi
     vec3 stepPos = vec3(rd.x >= 0.0f ? 1.0f : 0.0f, rd.y >= 0.0f ? 1.0f : 0.0f, rd.z >= 0.0f ? 1.0f : 0.0f);
     ivec3 stepDir = ivec3(rd.x >= 0.0f ? 1 : -1, rd.y >= 0.0f ? 1 : -1, rd.z >= 0.0f ? 1 : -1);
     ivec3 gridMin = VX_GRID_MIN_CHUNK;
+    // The toroidal phase of the window, once per ray: cell cc (always in [0, gridSize)) lives at
+    // phase + cc, wrapped once (perf.md G2; the old form took six modulos per grid step).
+    ivec3 phase = ((gridMin % gridSize) + gridSize) % gridSize;
     int contentTop = int(VX_GRID_CONTENT_TOP);
 
     for (int i = 0; i < VX_MAX_GRID_STEPS; ++i) {
         hit.steps += 1;
 
         // The grid is addressed toroidally, so moving the window never copies entries.
-        // (Positive modulo rather than a mask: the window size need not be a power of two.)
-        ivec3 w = (((gridMin + cc) % gridSize) + gridSize) % gridSize;
+        // (The phase is a positive modulo, not a mask: the window size need not be a power of two.)
+        ivec3 w = phase + cc;
+        w.x -= (w.x >= gridSize.x) ? gridSize.x : 0;
+        w.y -= (w.y >= gridSize.y) ? gridSize.y : 0;
+        w.z -= (w.z >= gridSize.z) ? gridSize.z : 0;
         int columnTop = int(VX_GRID_COLUMN_TOP(uint(w.x + w.z * gridSize.x)));
 
         if (cc.y >= columnTop) {

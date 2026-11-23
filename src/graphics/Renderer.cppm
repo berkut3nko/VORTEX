@@ -16,12 +16,15 @@ import :device;
 import :window;
 import :ui;
 import :frame;
+import :swapchain;
 
 export namespace vortex::graphics {
 
     struct RenderSettings {
         float renderScale = 0.6f;            ///< Internal resolution as a fraction of the output (0.25 .. 1).
-        bool vsync = true;
+        /// Windowed only: FIFO_RELAXED (FIFO where the surface lacks it) by default; `Immediate` (IMMEDIATE, else
+        /// MAILBOX, else FIFO) is `--no-vsync`, for measuring (perf.md P1). A change recreates the swapchain.
+        PresentPreference present = PresentPreference::FifoRelaxed;
         bool taa = true;
         bool sunShadows = true;
         bool ambientOcclusion = true;
@@ -61,6 +64,8 @@ export namespace vortex::graphics {
         uint32_t hudQuads = 0;               ///< HUD quads drawn this frame.
         uint64_t gpuMemoryBytes = 0;         ///< Buffers + images owned by the renderer.
         uint64_t frameIndex = 0;
+        float fenceWaitMs = 0.0f;            ///< CPU wait for this frame slot's fence (0 for a skipped frame).
+        uint64_t timingSerial = 0;           ///< +1 each time CollectTimings read new pass times
         std::vector<PassTiming> passes;
     };
 
@@ -103,6 +108,9 @@ export namespace vortex::graphics {
         void RequestScreenshot(const std::filesystem::path& file);
         /// @brief Reloads SPIR-V from disk and rebuilds every pipeline. Keeps the old ones if anything fails.
         bool ReloadShaders();
+
+        /// @brief The present mode in use: "headless" (no swapchain), else PresentModeName of the swapchain's mode.
+        const char* PresentModeLabel() const;
 
         VkFormat BackbufferFormat() const;
         uint32_t BackbufferImageCount() const;
