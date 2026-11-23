@@ -33,6 +33,11 @@ export namespace vortex::net {
         uint32_t chunkCapacity = 0;
         bool packHidden = true;           ///< `pack_hidden`: buried chunks keep only their RLE bytes (memory only).
         uint16_t port = 0;                ///< `port`: UDP port (stage 5; unused on a loopback).
+        /// [wp-7] The fight (docs/design/fight.md "Rules"): `mode`, `team_spawn_1`, `team_spawn_2`, `score_limit`,
+        /// `round_seconds`, `respawn_ticks`, `charge_ticks`, `max_charges`, `min_players`, `countdown_ticks`,
+        /// `end_ticks`, `tower_1`, `tower_2`, `end_session`. A sandbox session (the default) is sim::SandboxRules()
+        /// whatever the other keys say.
+        sim::FightRules fight = sim::SandboxRules();
     };
 
     /// @brief Parses a session file's text. Unknown keys and malformed values are errors (`error`

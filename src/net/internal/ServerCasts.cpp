@@ -41,6 +41,15 @@ namespace vortex::net {
 
     void Server::Impl::CaptureCast(Peer& p, const sim::PlayerInput& input, const sim::PlayerState& at, bool late) {
         const sim::PlayerTuning& t = settings.player;
+        // [wp-7] fight.md "Rules": dead -> Dead; no charge -> NoCharge (Countdown, Live and Ended; the warmup's
+        // casts are free). A charge is spent at capture and never refunded.
+        if (RefuseDeadCast(p, input.tick)) return;
+        if (Fighting() && round.phase != sim::RoundPhase::Warmup && !sim::SpendCharge(fighters[p.slot], Rules(), Tick())) {
+            ++stats.castsRefusedNoCharge;
+            p.player->lastCastTick = input.tick;
+            p.player->castRejected = CastRejection::NoCharge;
+            return;
+        }
         QueuedCast q;
         q.ray = true;
         q.request.player = static_cast<uint8_t>(p.slot + 1);
@@ -122,7 +131,10 @@ namespace vortex::net {
         aim.hit = true;
         aim.sphere = q.sphere;
         aim.power = q.power;
-        const sim::RulesContext context{settings.player, {}, tick};
+        // [wp-7] Blast damage while a fight's round is Live (fight.md "Damage"); the views are taken now.
+        const bool hurts = Fighting() && round.phase == sim::RoundPhase::Live && q.request.player != 0;
+        const std::vector<sim::PlayerView> views = hurts ? PlayerViews() : std::vector<sim::PlayerView>{};
+        const sim::RulesContext context{settings.player, views, tick, hurts ? Rules().blast : sim::BlastDamageRule{}};
         sim::ActionOutcome outcome = sim::ResolveAction(*simulation, context, q.request, aim);
         const sim::BlastResult& r = outcome.blasts.front();
         const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
@@ -146,6 +158,9 @@ namespace vortex::net {
         }
         // The objects it changed or made, and every despawn it caused (stage 6).
         EmitObjectEvents(r);
+        // Then its damage, in the outcome's order (fight.md "Damage": the one entry, DealDamage).
+        if (!failed)
+            for (const sim::DamageEvent& d : outcome.damage) DealDamage(d);
         rec.eventBytes = static_cast<uint32_t>(creditBefore - eventCredit);
         rec.work = sim::CastWorkOf(r);
         rec.islands = r.IslandCount();

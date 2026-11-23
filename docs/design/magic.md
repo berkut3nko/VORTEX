@@ -138,7 +138,7 @@ carries no contradiction. The owner confirms the colours windowed (question 23).
 - **RMB, the selected spell.** Keys **1-4** pick the form (FLOW, PLUME, PIERCE, BURST); the mouse wheel cycles forms.
   **R** swaps between the two attuned elements. The selection is the client's, sent in every input
   (`PlayerInput::spell`).
-- **Attunement: 2 of the 4 elements per life**, chosen on the respawn screen (M2a's 5 s). Keys 1-4 toggle elements
+- **Attunement: 2 of the 4 elements per life**, chosen on the respawn screen (M2a's 3 s). Keys 1-4 toggle elements
   there; exactly 2 must be on; Ready or the timer confirms; the default is the last choice (Metal + Pressure on a
   first life). Q (crate) and E (use) stay mechanisms'.
 
@@ -220,7 +220,7 @@ Ranked by how much fun they are:
 ### Time to kill, against M2a
 
 M2a: 100 HP; a blast does 60 at its centre and 0 at 1.2 m (a near miss at 0.4 m is 40); 3 charges plus one per
-1.2 s; burst limit 0.25 s; 5 s respawn.
+1.2 s; burst limit 0.25 s; 3 s respawn.
 
 | Case | Casts | Time (c, every hit lands) |
 |---|---|---|

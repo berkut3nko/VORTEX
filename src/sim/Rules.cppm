@@ -82,12 +82,12 @@ export namespace vortex::sim {
     /// `atBody`, `sphere`); returns None, Missed or Outside.
     ActionRefusal AimAction(Simulation& simulation, const ActionRequest& request, const AimRules& rules, ActionAim& out);
 
-    /// @brief Health taken from a player ([wp-7] fills; empty in [wp-6]).
+    /// @brief Health taken from a player (docs/design/fight.md "Damage"; [wp-7]).
     struct DamageEvent {
         uint8_t target = 0;                  ///< slot + 1
         uint8_t source = 0;                  ///< slot + 1 of the actor; 0 = none
         int16_t amount = 0;
-        uint8_t cause = 0;                   ///< [wp-7] sim::DamageCause
+        uint8_t cause = 0;                   ///< sim::DamageCause
     };
     /// @brief A velocity change of a player, cm/s per axis ([mag-1] fills; empty until then).
     struct PlayerImpulse {
@@ -113,7 +113,7 @@ export namespace vortex::sim {
         std::vector<EffectCue> effects;
     };
 
-    /// @brief A player as the rules see it ([wp-7] fills the list; empty in [wp-6]).
+    /// @brief A player as the rules see it (the session server fills the list in a fight mode; [wp-7]).
     struct PlayerView {
         uint8_t player = 0;                  ///< slot + 1
         TeamId team = kNoTeam;
@@ -124,6 +124,7 @@ export namespace vortex::sim {
     struct BlastDamageRule {
         int16_t centre = 0;
         uint16_t zeroMm = 0;
+        friend bool operator==(const BlastDamageRule&, const BlastDamageRule&) = default;
     };
     /// @brief What ResolveAction may read besides the world.
     struct RulesContext {
@@ -132,8 +133,9 @@ export namespace vortex::sim {
         uint32_t tick = 0;
         BlastDamageRule blastDamage{};
     };
-    /// @brief Applies the action: a Blast slot runs sim::Blast(aim.sphere, aim.power) and adds its effect cue.
-    /// `aim.hit` false: refusal Missed, nothing applied.
+    /// @brief Applies the action: a Blast slot runs sim::Blast(aim.sphere, aim.power) and adds its effect cue; with
+    /// `context.blastDamage.centre` > 0 every living enemy of the actor in `context.players` (span order) within the
+    /// rule's reach gets a DamageEvent (fight.md "Damage"). `aim.hit` false: refusal Missed, nothing applied.
     ActionOutcome ResolveAction(Simulation& simulation, const RulesContext& context, const ActionRequest& request, const ActionAim& aim);
 
     /// @brief The cue of a CarveSphere operation (a client's view of a cast it applied).

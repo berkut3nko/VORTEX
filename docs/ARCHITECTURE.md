@@ -1141,6 +1141,12 @@ the tests. The wire values (message types, event kinds, refusals, enums) and
   queue reaches it and resolves it in `RunCast`; the offline click calls both and `Engine::PresentOutcome`. A client
   never resolves: it presents the cue of each `CarveSphere` it applied (`sim::BlastCueOf`). See
   [rules.md](design/rules.md).
+* **Fight.** Health, damage, death, respawn, charges, teams and the round are the session server's alone
+  (`[wp-7]`): the rules live in `vortex.sim:combat` (`sim::FightRules`, `FighterState`, `BlastDamageAt`, `ApplyDamage`,
+  `sim::Round`), the server holds one `FighterState` per slot and one round (`ServerFight.cpp`), every damage enters
+  through `Server::Impl::DealDamage`, and clients only show what the owner block, the remote record and the `Roster`,
+  `RoundUpdate` and `KillNotice` messages say. A dead player is not stepped; a respawn is a server teleport that the
+  client takes without a correction (a new `lifeSeq`). See [fight.md](design/fight.md).
 * **Client.** `net::Client` does not own a simulation: once `Welcomed`, the owner builds one from
   `MakeSimulationConfig` / `MakeGenerator` and gives it to `Attach`, which checks it against the
   session, loads the region window, checks that the store held it and that the probe chunks are its

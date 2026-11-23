@@ -238,6 +238,8 @@ namespace vortex::net {
         }
     }
     using namespace detail;
+    /// [wp-7] The `Fight:` line of a server's stats (fight.md "Rules"; G22 reads it).
+    std::string FightLineOf(const ServerStats& st);
 
     struct Server::Impl {
         Impl(ServerSettings s, ITransport& t);
@@ -552,5 +554,48 @@ namespace vortex::net {
         void TrimBacklog();
 
         void CheckStore();
+
+        // --- the fight ([wp-7], docs/design/fight.md; ServerFight.cpp) ---------------------------------------
+        // Fight order per tick (Server::Tick): StepPlayers (the dead are not stepped, their cast edges refused
+        // Dead; the living take environment damage after their step while Live), CaptureCast (a charge per cast
+        // in Countdown / Live / Ended, else NoCharge), RunCasts (blast damage through DealDamage while Live),
+        // StepFight (charges, respawns, the round), SendSnapshots (owner block and remote record).
+        std::array<sim::FighterState, 256> fighters{};      // by slot
+        sim::Round round;
+        std::array<uint32_t, 2> teamSpawnCount{};
+        struct Crown {
+            glm::ivec3 min{0}, max{0};
+            uint32_t voxels = 0;
+        };
+        std::array<Crown, 2> crowns{};                       // Felling: each team's crown box
+        std::array<bool, 2> felled{};
+        bool sessionOver = false;                            // the Ended phase ran out
+        bool endNow = false;                                 // ... with end_session: disconnect every peer after this tick's Flush
+        sim::RoundPhase loggedPhase = sim::RoundPhase::Warmup;
+        const sim::FightRules& Rules() const { return settings.session.fight; }
+        bool Fighting() const { return settings.session.fight.Active(); }
+        /// The team a joiner gets (fewer players, ties to 1; kNoTeam in a sandbox).
+        sim::TeamId JoinTeam(uint8_t slot);
+        void FightJoin(Peer& p);                             // log, RoundUpdate + Roster to the joiner, Roster to the others
+        void FightLeave(uint8_t slot);
+        void DealDamage(const sim::DamageEvent& event);      // decision 16: the one damage entry
+        void EnvironmentDamage(uint8_t slot, const sim::PlayerState& before, const sim::PlayerState& after);
+        void Respawn(uint8_t slot);
+        void StepFight();                                    // charges, respawns, round; after RunCasts
+        std::vector<sim::PlayerView> PlayerViews();          // slot ascending, joined players
+        std::array<uint32_t, 2> TeamPlayers();
+        void SendToJoined(const std::vector<uint8_t>& bytes);
+        Roster MakeRoster();
+        RoundUpdate MakeRoundUpdate() const;
+        void SendRoster();
+        void SendRound();
+        void SendKill(const KillNotice& kill);
+        void LogRound();
+        /// A dead player's cast edge: refused Dead (fight.md "Rules"). True when it was refused.
+        bool RefuseDeadCast(Peer& p, uint32_t inputTick);
+        Snapshot::Fight OwnerFightOf(uint8_t slot) const;
+        uint8_t RemoteFightOf(uint8_t slot) const;
+        void BuildFellingTowers();
+        void CheckCrowns();
     };
 }

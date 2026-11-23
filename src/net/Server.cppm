@@ -10,6 +10,7 @@ module;
 #include <memory>
 #include <optional>
 #include <utility>
+#include <string>
 #include <vector>
 
 export module vortex.net:server;
@@ -293,6 +294,14 @@ export namespace vortex::net {
         /// missing jump; review of stage 4).
         uint32_t jumpsFromLateInputs = 0;
         uint64_t snapshots = 0, snapshotBytes = 0;
+        // [wp-7] The fight (docs/design/fight.md "Rules"; the `Fight:` line).
+        uint32_t kills = 0;               ///< credited kills
+        uint32_t deaths = 0;
+        uint32_t damageEvents = 0;        ///< DealDamage calls that took health
+        uint32_t damageTotal = 0;         ///< health taken in all
+        uint32_t castsRefusedDead = 0;    ///< cast edges of a dead player (CastRejection::Dead)
+        uint32_t castsRefusedNoCharge = 0;///< cast edges without a charge (CastRejection::NoCharge)
+        uint32_t respawns = 0;            ///< lives started (the round's start counts every player)
 
         // Replicated objects (stage 6).
         uint32_t objectSpawns = 0;        ///< EntitySpawn of objects with a NetId (template objects, crates, object pieces)
@@ -414,6 +423,13 @@ export namespace vortex::net {
         /// @brief Admin: puts the player of `slot` at `feet`, standing still (the owner is corrected by
         /// the next snapshot). false without such a player or for a non-finite position.
         bool TeleportPlayer(uint8_t slot, const glm::vec3& feet);
+        /// @brief [wp-7] The fight (docs/design/fight.md): the round, one player's fight state, and whether the
+        /// round's Ended phase ran out (with `end_session` every peer was then disconnected).
+        const sim::Round& RoundState() const;
+        const sim::FighterState& Fighter(uint8_t slot) const;
+        bool SessionOver() const;
+        /// @brief The `Fight: kills K, deaths D, ...` line (fight.md "Rules"; G22 reads it).
+        std::string FightLine() const;
 
         uint32_t TickNumber() const;      ///< The tick that runs next.
         uint32_t LastOpSeq() const;       ///< 0 before the first event.

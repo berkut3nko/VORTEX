@@ -28,7 +28,9 @@ export namespace vortex::net {
     /// protocol 8 was ever committed). 9: stage 7b (HashCheck, EntityCheck, EntityListRequest,
     /// EntityList, TerrainAck; ChunkRequest::reason; WindowUpdate::kTerrainMode accepted). 10: review
     /// of stage 7b (a TerrainAck codes the entering cells only, in ForEachEnteringChunk order).
-    inline constexpr uint16_t kProtocolVersion = 10;
+    /// 11: [wp-7] (fight: Welcome fight fields, owner block +7, remote record +1, Roster 21, RoundUpdate 22,
+    /// KillNotice 23, CastRejection NoCharge 4 / Dead 5).
+    inline constexpr uint16_t kProtocolVersion = 11;
 
     /// @brief First byte of every message. Wire format.
     enum class MessageType : uint8_t {
@@ -54,6 +56,10 @@ export namespace vortex::net {
         EntityCheck = 18,   ///< server -> client, events channel: the replicated objects' count and hashes at asOfOpSeq
         EntityListRequest = 19, ///< client -> server, events channel: an EntityCheck at asOfOpSeq did not match
         EntityList = 20,    ///< server -> client, events channel: every replicated object's NetId and model hash at asOfOpSeq
+        // [wp-7] the fight (docs/design/fight.md "Wire"): taken on receipt, not by opSeq.
+        Roster = 21,        ///< server -> client, events channel: every player's team, kills and deaths
+        RoundUpdate = 22,   ///< server -> client, events channel: the round's phase, score and result
+        KillNotice = 23,    ///< server -> client, events channel: one death (the kill feed)
     };
 
     using Token = std::array<uint8_t, 16>;
@@ -108,7 +114,18 @@ export namespace vortex::net {
         /// The stream position the joiner starts after (J): no event at or before it is ever sent to it.
         uint32_t joinOpSeq = 0;
         std::vector<ProbeHash> probes;    ///< Hashes of pristine chunks chosen from the seed (ProbeChunks).
+        /// [wp-7] The fight fields (7 B after the probes; fight.md "Wire"): mode, maxHealth, maxCharges,
+        /// chargeTicks, respawnTicks. A sandbox session sends mode 0, max charges 0.
+        struct Fight {
+            sim::GameMode mode = sim::GameMode::Sandbox;
+            uint8_t maxHealth = 100;
+            uint8_t maxCharges = 0;
+            uint16_t chargeTicks = 0;
+            uint16_t respawnTicks = 0;
+            friend bool operator==(const Fight&, const Fight&) = default;
+        } fight;
     };
+    using WelcomeFight = Welcome::Fight;
 
     /// @brief A run of consecutive events, opSeq `firstOpSeq`, `firstOpSeq + 1`, ... made on server
     /// tick `tick`. Header 11 bytes (type, opSeq, tick, count).
@@ -143,6 +160,9 @@ export namespace vortex::net {
         glm::vec3 position{0.0f};         ///< feet
         uint16_t yaw = 0;                 ///< of its last input
         uint8_t flags = 0;                ///< sim::PlayerFlag
+        /// [wp-7] bits 0-6 health (at most 127), bit 7 dead. A sandbox session sends 100.
+        uint8_t fight = 100;
+        static constexpr uint8_t kDeadBit = 0x80;
         friend bool operator==(const RemotePlayer&, const RemotePlayer&) = default;
     };
 
@@ -165,8 +185,10 @@ export namespace vortex::net {
         Cooldown = 1,   ///< the cooldown at the input's tick had not run out
         Missed = 2,     ///< the ray from the eye met no terrain within PlayerTuning::castRange (cast at dequeue)
         Outside = 3,    ///< the hit is outside the play bounds or the window's rows (sim::CastFitsRegion)
+        NoCharge = 4,   ///< [wp-7] no cast charge left at the input's tick (fight.md "Rules")
+        Dead = 5,       ///< [wp-7] the player was dead at the input's tick
     };
-    inline constexpr uint8_t kMaxCastRejection = 3;
+    inline constexpr uint8_t kMaxCastRejection = 5;
     const char* ToString(CastRejection rejection);
     /// @brief The rejection a snapshot reports for a refusal of the rules seam (values are equal; [wp-6]).
     CastRejection RejectionOf(sim::ActionRefusal refusal);
@@ -176,8 +198,8 @@ export namespace vortex::net {
     /// Header (type, tick, lastOpSeq, ackInputTick, marginTick, inputMargin, owner flag, player
     /// count, body count), owner state, one other player and one body, in bytes.
     inline constexpr size_t kSnapshotHeaderBytes = 22;
-    inline constexpr size_t kSnapshotOwnerBytes = 32;
-    inline constexpr size_t kSnapshotPlayerBytes = 16;
+    inline constexpr size_t kSnapshotOwnerBytes = 39;
+    inline constexpr size_t kSnapshotPlayerBytes = 17;
     inline constexpr size_t kSnapshotBodyBytes = 31;
     /// A snapshot is at most this large (networking.md "Entity replication": 1200 B hold about 36
     /// bodies after the players); bodies that do not fit wait for a later one (priority).
@@ -207,10 +229,75 @@ export namespace vortex::net {
         /// player (0 = none yet) and, if it was not run, why. A cast still queued is None.
         uint32_t lastCastTick = 0;
         CastRejection castRejected = CastRejection::None;
+        /// [wp-7] The owner's fight (7 B after castRejected; fight.md "Wire"). `chargeTicks` and `respawnTicks`
+        /// are ticks left (255 at most).
+        struct Fight {
+            uint8_t health = 100;
+            uint8_t charges = 0;
+            uint8_t chargeTicks = 0;      ///< until the next charge (0 = full)
+            uint8_t flags = 0;
+            uint8_t respawnTicks = 0;     ///< dead: until the respawn
+            uint8_t lifeSeq = 0;          ///< +1 per spawn: a new value is a respawn (never a correction)
+            uint8_t hits = 0;             ///< damage events this player dealt to enemies, wrapping (hit marker)
+            static constexpr uint8_t kDead = 1, kProtected = 2, kSpectator = 4;
+            friend bool operator==(const Fight&, const Fight&) = default;
+        } fight;
         std::vector<RemotePlayer> others;
         /// Awake replicated bodies, by the server's priority for this client (stage 6). At most 255.
         std::vector<BodySample> bodies;
     };
+
+    using OwnerFight = Snapshot::Fight;
+
+    // --- the fight ([wp-7], docs/design/fight.md "Wire") -------------------------------------------
+
+    /// Most players a Roster holds.
+    inline constexpr uint32_t kMaxRosterPlayers = 64;
+    struct RosterEntry {
+        uint8_t slot = 0;
+        sim::TeamId team = 0;             ///< 0 (sandbox), 1 or 2
+        uint16_t kills = 0, deaths = 0;
+        friend bool operator==(const RosterEntry&, const RosterEntry&) = default;
+    };
+    /// @brief Every joined player's team, kills and deaths (slot ascending; count u8, 6 B each).
+    struct Roster {
+        std::vector<RosterEntry> players;
+        friend bool operator==(const Roster&, const Roster&) = default;
+    };
+    /// @brief The round (16 B with the type byte): sent on every change and to a joiner.
+    struct RoundUpdate {
+        sim::GameMode mode = sim::GameMode::Sandbox;
+        sim::RoundPhase phase = sim::RoundPhase::Warmup;
+        uint32_t phaseEndTick = 0;
+        std::array<uint16_t, 2> score{};
+        uint16_t scoreLimit = 0;
+        uint8_t winner = 0;               ///< 0 none, 1, 2, sim::kDraw
+        sim::RoundEnd end = sim::RoundEnd::None;
+        bool overtime = false;
+        friend bool operator==(const RoundUpdate&, const RoundUpdate&) = default;
+    };
+    inline constexpr size_t kRoundUpdateBytes = 16;
+    /// @brief One death (9 B with the type byte). `victim` is a slot, `killer` slot + 1 (0 = none).
+    struct KillNotice {
+        uint32_t tick = 0;
+        uint8_t victim = 0;
+        uint8_t killer = 0;
+        sim::DamageCause cause = sim::DamageCause::Blast;
+        uint8_t flags = 0;
+        static constexpr uint8_t kCredited = 1;
+        friend bool operator==(const KillNotice&, const KillNotice&) = default;
+    };
+    inline constexpr size_t kKillNoticeBytes = 9;
+
+    std::vector<uint8_t> Encode(const Roster& m);
+    std::vector<uint8_t> Encode(const RoundUpdate& m);
+    std::vector<uint8_t> Encode(const KillNotice& m);
+    /// @brief Refuses more than kMaxRosterPlayers, a team over 2, duplicate slots.
+    bool Decode(std::span<const uint8_t> bytes, Roster& out);
+    /// @brief Refuses a mode over 2, a phase over 3, a winner not 0, 1, 2 or 255, an end over 4, overtime over 1.
+    bool Decode(std::span<const uint8_t> bytes, RoundUpdate& out);
+    /// @brief Refuses a cause of 0 or over 5, flags over 1, a killer that is the victim.
+    bool Decode(std::span<const uint8_t> bytes, KillNotice& out);
 
     // --- chunk sync (stage 7a) -------------------------------------------------------------------
 

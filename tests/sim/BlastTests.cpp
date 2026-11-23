@@ -687,3 +687,36 @@ TEST(Rules, OutsideThePlayBoundsRefuses) {
     EXPECT_EQ(aim.sphere.radius, 192);   // 1.2 m / 0.1 m x 16
     EXPECT_EQ(aim.power, voxel::QuantizePower(6.0f));
 }
+
+// docs/design/fight.md "Damage" ([wp-7]): a blast's outcome lists the damage of the living enemies of its actor in
+// reach, in span order: not the actor, not its team mates, not the dead, nobody beyond 1.2 m of the capsule.
+TEST(Rules, ABlastDamagesEnemiesInRangeOnly) {
+    Arena a;
+    ASSERT_TRUE(a.initialized);
+    sim::ActionRequest request;
+    request.player = 1;
+    sim::ActionAim aim;
+    aim.hit = true;
+    aim.sphere = voxel::SphereQ{glm::ivec3(8, kGroundVoxels * 16, 8), 12 * 16};   // at the ground's top, 1.2 m
+    aim.power = 96;
+    const glm::vec3 centre(0.05f, 8.0f, 0.05f);                                    // the sphere's centre in metres
+    const std::array<sim::PlayerView, 5> views = {{
+        {1, 1, centre + glm::vec3(3.0f, 0.0f, 0.0f), true},   // the caster
+        {2, 2, centre, true},                                 // an enemy at the centre
+        {3, 1, centre, true},                                 // a team mate at the centre
+        {4, 2, centre + glm::vec3(5.0f, 0.0f, 0.0f), true},   // an enemy 5 m away
+        {5, 2, centre, false},                                // a dead enemy at the centre
+    }};
+    sim::PlayerTuning tuning;
+    const sim::RulesContext context{tuning, views, 0, {60, 1200}};
+    const sim::ActionOutcome got = sim::ResolveAction(a.simulation, context, request, aim);
+    ASSERT_EQ(got.damage.size(), 1u);
+    EXPECT_EQ(got.damage[0].target, 2);
+    EXPECT_EQ(got.damage[0].source, 1);
+    EXPECT_EQ(got.damage[0].amount, 60);
+    EXPECT_EQ(got.damage[0].cause, static_cast<uint8_t>(sim::DamageCause::Blast));
+    Arena b;
+    ASSERT_TRUE(b.initialized);
+    const sim::RulesContext none{tuning, views, 0, {0, 1200}};
+    EXPECT_TRUE(sim::ResolveAction(b.simulation, none, request, aim).damage.empty());
+}

@@ -127,7 +127,7 @@ namespace vortex::net {
     }
 
     BotPilot::BotPilot(const sim::RegionDesc& region, uint64_t seed, PilotSettings settings)
-        : m_Settings(settings), m_Rng(seed, 0x9e3779b97f4a7c15ull) {
+        : m_Settings(settings), m_Rng(seed, 0x9e3779b97f4a7c15ull), m_Seed(seed) {
         const float chunk = static_cast<float>(voxel::kChunkSize) * region.terrain.voxelSize;
         m_Min = glm::vec2(region.playMinChunk) * chunk + glm::vec2(settings.edgeMargin);
         m_Max = glm::vec2(region.playMaxChunk) * chunk - glm::vec2(settings.edgeMargin);
@@ -222,6 +222,7 @@ namespace vortex::net {
             }
             return in;
         }
+        if (m_Settings.fight && FightStep(state, in)) return in;
         if (m_SegmentLeft == 0) {
             m_SegmentLeft = 20 + m_Rng.NextBounded(61);
             m_Yaw = static_cast<uint16_t>(m_Rng.NextU32());
@@ -260,5 +261,71 @@ namespace vortex::net {
             if (phase == 1) ++m_Crates;
         }
         return in;
+    }
+
+    bool BotPilot::FightStep(const sim::PlayerState& state, sim::PlayerInput& in) {
+        // fight.md "Bots": the nearest living enemy (x / z, ties: the lower slot), kept while it is listed.
+        const glm::vec2 feet(state.position.x, state.position.z);
+        const PilotTarget* target = nullptr;
+        if (m_HasTarget)
+            for (const PilotTarget& t : m_Targets)
+                if (t.slot == m_TargetSlot) target = &t;
+        if (target == nullptr) {
+            float best = 0.0f;
+            for (const PilotTarget& t : m_Targets) {
+                const float d = glm::length(glm::vec2(t.feet.x, t.feet.z) - feet);
+                if (target == nullptr || d < best || (d == best && t.slot < target->slot)) {
+                    target = &t;
+                    best = d;
+                }
+            }
+            m_HasTarget = target != nullptr;
+            m_TargetSlot = target != nullptr ? target->slot : 0;
+            m_TargetHeld = 0;
+        }
+        if (target == nullptr) {
+            m_CastDown = false;
+            return false;                 // no enemy: it wanders
+        }
+        ++m_TargetHeld;
+        const glm::vec2 to = glm::vec2(target->feet.x, target->feet.z) - feet;
+        const float d = glm::length(to);
+        // Aim at the target's feet (0.1 m up) from the eye; the look is also the frame the movement is in.
+        const glm::vec3 eye = state.position + glm::vec3(0.0f, sim::PlayerTuning{}.eyeHeight, 0.0f);
+        sim::AimAngles(target->feet + glm::vec3(0.0f, 0.1f, 0.0f) - eye, in.yaw, in.pitch);
+        if (d > m_Settings.keepDistance + 4.0f) {
+            in.moveZ = 127;
+            in.buttons = sim::PlayerButton_Run;
+        } else if (d < m_Settings.keepDistance - 4.0f) {
+            in.moveZ = -127;
+        } else {
+            const uint32_t phase = m_Tick / std::max(1u, m_Settings.strafeTicks);
+            const bool right = ((phase + static_cast<uint32_t>(m_Seed & 1u)) % 2u) == 0;
+            in.moveX = static_cast<int8_t>(right ? 127 : -127);
+        }
+        // Near the edge of the play bounds: back to the middle (the aim stays on the target).
+        if (feet.x < m_Min.x || feet.y < m_Min.y || feet.x > m_Max.x || feet.y > m_Max.y) {
+            const glm::vec2 home = 0.5f * (m_Min + m_Max) - feet;
+            const glm::vec2 fwd(-std::sin(sim::YawRadians(in.yaw)), -std::cos(sim::YawRadians(in.yaw)));
+            const glm::vec2 right(std::cos(sim::YawRadians(in.yaw)), -std::sin(sim::YawRadians(in.yaw)));
+            const glm::vec2 h = glm::length(home) > 0.0f ? glm::normalize(home) : glm::vec2(0.0f);
+            in.moveZ = sim::QuantizeAxis(glm::dot(h, fwd));
+            in.moveX = sim::QuantizeAxis(glm::dot(h, right));
+        }
+        if (m_Settings.jumps && m_Tick >= m_NextJump) {
+            in.buttons |= sim::PlayerButton_Jump;               // held for two ticks: one edge
+            if (m_Tick >= m_NextJump + 1) {
+                m_NextJump = m_Tick + 60 + m_Rng.NextBounded(61);
+                ++m_Jumps;
+            }
+        }
+        const bool cast = m_CanCast && d <= m_Settings.fightRange && m_TargetHeld >= m_Settings.reactionTicks && !m_CastDown;
+        if (cast) {
+            in.buttons |= sim::PlayerButton_Cast;
+            ++m_FightCasts;
+            ++m_Casts;
+        }
+        m_CastDown = cast;
+        return true;
     }
 }

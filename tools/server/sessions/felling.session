@@ -1,0 +1,26 @@
+# [wp-7] The Felling duel on the playground (docs/design/fight.md "Rules"): each team has a tower; releasing the enemy's crown wins at once.
+#   vortex_server --session felling.session --clients 2 --ticks 600
+# A public test token, published with the engine and used by tests and gates; the live server never uses it
+# (the game's tools/install-live.sh starts it with --new-token).
+token = 7a3f19c2e4b80d5661a2c3e4f5061728
+template = playground
+seed = 1337
+play_min = -12 -12
+play_max = 12 12
+height = -48 128
+voxel_size = 0.125
+generator = terrain
+terrain_seed = 1337
+max_clients = 16
+chunk_capacity = 0
+pack_hidden = 1
+mode = felling
+team_spawn_1 = -30 0
+team_spawn_2 = 30 0
+min_players = 2
+score_limit = 15
+round_seconds = 480
+countdown_ticks = 120
+end_ticks = 120
+tower_1 = -38 0
+tower_2 = 38 0

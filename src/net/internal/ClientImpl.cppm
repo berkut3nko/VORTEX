@@ -193,6 +193,17 @@ namespace vortex::net {
         net::RemotePlayers remotes;
         PredictionStats prediction;
         Client::CastStatus lastCast;
+        // [wp-7] The fight (fight.md "Wire"): taken on receipt (not by opSeq), the owner block from the newest snapshot.
+        FightView fight;
+        Roster roster;
+        RoundUpdate roundState;
+        std::deque<KillNotice> kills;
+        bool lifeKnown = false;           ///< a lifeSeq was seen
+        uint32_t lifeStartTick = 0;       ///< the snapshot tick of the current life (older snapshots are not compared)
+        /// The owner block of a new snapshot: a death stops the prediction (the owner's state is taken), a new
+        /// lifeSeq is a respawn (the owner's state taken and the inputs since replayed: never a correction).
+        void OnOwnerFight(const Snapshot& snap);
+        void Respawned(const Snapshot& snap);
         bool syncHeld = false;              // the reach holds a chunk that is not current: not moved
         bool needResume = false;            // replay the inputs after `lastTaken` once current again
         uint32_t lastTaken = 0;

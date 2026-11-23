@@ -116,7 +116,72 @@ namespace vortex::net {
         Log::Info("Client: predicting from server tick {} ({} ticks ahead)", snap.tick, nextTick - 1 - snap.tick);
     }
 
+    void Client::Impl::OnOwnerFight(const Snapshot& snap) {
+        const Snapshot::Fight& f = snap.fight;
+        const bool wasDead = fight.dead;
+        fight.health = f.health;
+        fight.charges = f.charges;
+        fight.chargeTicks = f.chargeTicks;
+        fight.dead = (f.flags & Snapshot::Fight::kDead) != 0;
+        fight.protectedNow = (f.flags & Snapshot::Fight::kProtected) != 0;
+        fight.spectator = (f.flags & Snapshot::Fight::kSpectator) != 0;
+        fight.respawnTicks = f.respawnTicks;
+        fight.hits = f.hits;
+        fight.tick = snap.tick;
+        const bool newLife = lifeKnown && f.lifeSeq != fight.lifeSeq;
+        fight.lifeSeq = f.lifeSeq;
+        if (!lifeKnown) {
+            lifeKnown = true;
+            lifeStartTick = snap.tick;
+            return;
+        }
+        if (!predicting || !simulation) {
+            if (newLife) lifeStartTick = snap.tick;
+            return;
+        }
+        if (newLife && !fight.dead) {
+            Respawned(snap);
+        } else if (fight.dead && !wasDead) {
+            // A death (fight.md "Rules"): the server froze the player where it died; so does the prediction.
+            ++prediction.deathsSeen;
+            Restore(snap.owner);
+            for (HistoryEntry& h : history) h.valid = false;
+            offset = glm::vec3(0.0f);
+            blendLeft = 0;
+            Log::Info("Client: died at tick {} (life {})", snap.tick, f.lifeSeq);
+        }
+    }
+
+    void Client::Impl::Respawned(const Snapshot& snap) {
+        // The server's teleport (decision 7): its state at S is taken and the inputs after S replayed as Reconcile
+        // replays them; no correction, no snap and no blend (the camera cuts).
+        ++prediction.respawns;
+        const uint32_t t = snap.tick;
+        lifeStartTick = t;
+        Restore(snap.owner);
+        offset = glm::vec3(0.0f);
+        blendLeft = 0;
+        if (t >= nextTick) {
+            nextTick = t + 1;
+            history[t % kHistoryTicks] = {true, t, sim::PlayerInput{}, player};
+        } else {
+            history[t % kHistoryTicks].valid = true;
+            history[t % kHistoryTicks].tick = t;
+            history[t % kHistoryTicks].state = player;
+            for (uint32_t k = t + 1; k < nextTick; ++k) {
+                HistoryEntry& e = history[k % kHistoryTicks];
+                if (!e.valid || e.tick != k) continue;
+                FreshColliders();
+                sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, e.input, welcome.player, playArea, Dt());
+                e.state = player;
+            }
+        }
+        Log::Info("Client: respawned at tick {} (life {})", t, fight.lifeSeq);
+    }
+
     void Client::Impl::Reconcile(const Snapshot& snap) {
+        // [wp-7] A dead player is not predicted, and a snapshot of an earlier life is not compared (fight.md "Rules").
+        if (fight.dead || (snap.fight.flags & Snapshot::Fight::kDead) != 0 || snap.tick < lifeStartTick) return;
         ++prediction.compared;
         const uint32_t t = snap.tick;
         if (t >= nextTick) {
@@ -237,6 +302,7 @@ namespace vortex::net {
             }
             lastCast = {snap.lastCastTick, snap.castRejected};
         }
+        OnOwnerFight(snap);
         // Both are ticks of inputs this client made: never at or past the tick it predicts next
         // (a forged one would stop its sends or blind its clock for good).
         if (predicting && snap.ackInputTick < nextTick) ackTick = std::max(ackTick, snap.ackInputTick);

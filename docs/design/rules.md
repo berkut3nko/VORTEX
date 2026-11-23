@@ -6,7 +6,7 @@
 |---|---|
 | Status | Built ([wp-6], 2026-11-23; the owner's review pending) |
 | Decided | Us, 2026-11-22 (the owner may veto): decisions 1-12 of the [wp-6] task pack |
-| Next | [wp-7] (damage), [mag-1] (spells) |
+| Next | [mag-1] (spells); [wp-7] fills the damage ([fight.md](fight.md) "Damage") |
 | Open | none |
 | History | - |
 | Marks | code names from engine `ed409ee` plus [wp-6] |
@@ -92,7 +92,7 @@ quantised from the hit point (`voxel::QuantizeSphere`, fractional voxels), the p
 
 - `blasts`: one `sim::BlastResult` per blast, its applied operations in order; the server emits them (`EmitOp`),
   offline they are presented.
-- `damage`: empty in [wp-6]; [wp-7] fills it from `RulesContext::players` and `RulesContext::blastDamage`.
+- `damage`: from `RulesContext::players` and `RulesContext::blastDamage` ([wp-7], fight.md "Damage"): every living enemy of the actor in reach, span order; empty when `blastDamage.centre` is 0 (the offline click, a sandbox server, a round not `Live`).
 - `impulses`: empty until [mag-1] (the push, `kPlayerRuleRevision` 2).
 - `effects`: one `EffectKind::Blast` cue per blast. A client never resolves; its presentation takes the same cue
   from the operation it applied (`sim::BlastCueOf`).

@@ -4,6 +4,7 @@ module;
 
 #include <cstdint>
 #include <array>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -245,6 +246,8 @@ export namespace vortex::net {
         uint32_t clockJumps = 0, clockJumpTicks = 0;
         uint32_t hardResyncs = 0, resyncHoldTicks = 0;
         uint32_t castsRejected = 0;       ///< Casts the server reported it did not run (Snapshot::castRejected, stage 5)
+        uint64_t respawns = 0;            ///< [wp-7] lives started after the first (a new lifeSeq): never a correction
+        uint64_t deathsSeen = 0;          ///< [wp-7] deaths of the own player (the owner block said dead)
         uint64_t bleedTicks = 0;          ///< Ticks run while the clock bled a surplus
         uint64_t catchUpTicks = 0;        ///< Ticks run while the clock made up a deficit
         /// Chunk sync (stage 7a): ticks the own player was held because a chunk of its reach was not
@@ -257,6 +260,18 @@ export namespace vortex::net {
         double CorrectionsPerMinute(double tickSeconds) const {
             return ticks == 0 ? 0.0 : static_cast<double>(corrections) * 60.0 / (static_cast<double>(ticks) * tickSeconds);
         }
+    };
+
+    /// @brief [wp-7] The own player's fight as the server's owner block and Welcome say it (fight.md "Wire").
+    struct FightView {
+        sim::GameMode mode = sim::GameMode::Sandbox;
+        uint8_t health = 100, maxHealth = 100, charges = 0, maxCharges = 0, chargeTicks = 0;
+        uint16_t chargeTicksFull = 0;           ///< Welcome chargeTicks (for the pip's fill)
+        uint16_t respawnTicksFull = 0;          ///< Welcome respawnTicks
+        bool dead = false, protectedNow = false, spectator = false;
+        uint8_t respawnTicks = 0, lifeSeq = 0, hits = 0;
+        uint32_t tick = 0;                      ///< the snapshot it is from
+        bool Active() const { return mode != sim::GameMode::Sandbox; }
     };
 
     /**
@@ -325,6 +340,14 @@ export namespace vortex::net {
             CastRejection rejected = CastRejection::None;
         };
         CastStatus LastCast() const;
+        /// @brief [wp-7] The fight (fight.md "Wire"): the own player's (newest snapshot), the roster and the round
+        /// (newest message), and the kill notices since the last call (arrival order, at most 32 kept).
+        const FightView& Fight() const;
+        const Roster& RosterOf() const;
+        const RoundUpdate& RoundOf() const;
+        std::vector<KillNotice> TakeKillNotices();
+        /// @brief The roster's team of `slot` (0 when it is not listed).
+        sim::TeamId TeamOf(uint8_t slot) const;
         /// @brief The session's player tuning (from Welcome).
         const sim::PlayerTuning& Tuning() const;
         const PredictionStats& Prediction() const;

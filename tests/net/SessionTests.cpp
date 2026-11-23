@@ -206,10 +206,63 @@ TEST(SessionFile, RoundTripsAndNamesItsErrors) {
     EXPECT_FALSE(net::ParseSession("token = 00112233\n", back, error));
 
     // The example sessions of vortex_server parse.
-    for (const char* name : {"drill", "arena250", "playground"}) {
+    for (const char* name : {"drill", "arena250", "playground", "duel", "felling"}) {
         const std::filesystem::path path = std::filesystem::path(VORTEX_TEST_SOURCE_DIR) / "tools/server/sessions" / (std::string(name) + ".session");
         EXPECT_TRUE(net::LoadSessionFile(path, back, error)) << error;
     }
+}
+
+// [wp-7] fight.md "Rules": the fight keys format and parse back; a sandbox is SandboxRules() whatever the keys say;
+// every refusal names its key.
+TEST(SessionFile, FightKeysRoundTrip) {
+    net::SessionConfig config;
+    config.token = TestToken();
+    config.region = DrillRegion();
+    sim::FightRules& f = config.fight;
+    f = sim::FightRules{};
+    f.mode = sim::GameMode::Felling;
+    f.teamSpawns = {glm::vec2(-10.5f, 2.25f), glm::vec2(7.5f, -2.25f)};
+    f.towers = {glm::vec2(-12.0f, 0.0f), glm::vec2(8.0f, 0.5f)};
+    f.scoreLimit = 7;
+    f.roundTicks = 300 * 60;
+    f.respawnTicks = 150;
+    f.chargeTicks = 60;
+    f.maxCharges = 4;
+    f.minPlayers = 4;
+    f.countdownTicks = 120;
+    f.endTicks = 90;
+    f.endSession = false;
+    const std::string text = net::FormatSession(config);
+    net::SessionConfig back;
+    std::string error;
+    ASSERT_TRUE(net::ParseSession(text, back, error)) << error << "\n" << text;
+    EXPECT_TRUE(back.fight == config.fight) << text;
+    // A sandbox session: the sandbox's rules whatever the other keys say; no fight key is written.
+    net::SessionConfig sandbox = config;
+    sandbox.fight = sim::SandboxRules();
+    const std::string plain = net::FormatSession(sandbox);
+    EXPECT_EQ(plain.find("mode"), std::string::npos);
+    ASSERT_TRUE(net::ParseSession(plain + "score_limit = 3\nmax_charges = 5\n", back, error)) << error;
+    EXPECT_TRUE(back.fight == sim::SandboxRules());
+    // The refusals name their key.
+    const std::string base = net::FormatSession(sandbox);
+    const auto refused = [&](const std::string& extra, const char* key) {
+        net::SessionConfig out;
+        std::string why;
+        EXPECT_FALSE(net::ParseSession(base + extra, out, why)) << extra;
+        EXPECT_NE(why.find(key), std::string::npos) << extra << " -> " << why;
+    };
+    const std::string dm = "mode = deathmatch\n";
+    refused(dm + "team_spawn_1 = 0 0\n", "team_spawn_2");
+    refused(dm + "team_spawn_2 = 0 0\n", "team_spawn_1");
+    refused(dm + "team_spawn_1 = 0 0\nteam_spawn_2 = 1000 0\n", "team_spawn_2");
+    refused("mode = felling\nteam_spawn_1 = -5 0\nteam_spawn_2 = 5 0\ntower_1 = -8 0\n", "tower_2");
+    refused(dm + "team_spawn_1 = -5 0\nteam_spawn_2 = 5 0\ntower_1 = 1000 0\n", "tower_1");
+    refused(dm + "max_charges = 10\n", "max_charges");
+    refused(dm + "team_spawn_1 = -5 0\nteam_spawn_2 = 5 0\ncharge_ticks = 0\n", "charge_ticks");
+    refused(dm + "round_seconds = 0\n", "round_seconds");
+    refused(dm + "round_seconds = 3601\n", "round_seconds");
+    refused("mode = brawl\n", "mode");
 }
 
 TEST(SessionFile, RegionValidationRefusesWhatCannotBeBuilt) {

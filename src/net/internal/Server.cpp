@@ -94,6 +94,10 @@ namespace vortex::net {
     std::vector<glm::dvec3> Server::Impl::ColliderFocus() const {
         std::vector<glm::dvec3> focus = PlayerFocus();
         focus.push_back(glm::dvec3(tmpl.spawn));
+        // [wp-7] The team spawns too: a join or a respawn finds their ground built.
+        if (settings.session.fight.Active())
+            for (const glm::vec2& at : settings.session.fight.teamSpawns)
+                focus.push_back(glm::dvec3(at.x, static_cast<double>(tmpl.spawn.y), at.y));
         return focus;
     }
 
@@ -392,6 +396,14 @@ namespace vortex::net {
         for (const sim::WorldOp& op : s.tmpl.ops) ApplyOp(op);
         s.stats.templateOps = static_cast<uint32_t>(s.tmpl.ops.size());
         if (s.failed) return false;
+        // [wp-7] Felling: each team's tower, stream operations after the template's (team 1's, then team 2's).
+        s.BuildFellingTowers();
+        if (s.failed) return false;
+        if (s.settings.session.fight.Active())
+            Log::Info("Fight: mode {}, score limit {}, round {} s, respawn {} ticks, {} charges every {} ticks, {} players to start",
+                      sim::ToString(s.settings.session.fight.mode), s.settings.session.fight.scoreLimit, s.settings.session.fight.roundTicks / 60,
+                      s.settings.session.fight.respawnTicks, s.settings.session.fight.maxCharges, s.settings.session.fight.chargeTicks,
+                      s.settings.session.fight.minPlayers);
         for (const sim::TemplateLight& light : s.tmpl.lights) {
             EntitySpawn spawn;
             spawn.netId = sim::AllocateNetId(*s.simulation);
@@ -426,14 +438,18 @@ namespace vortex::net {
         Impl& s = *m_Impl;
         if (!s.started) return;
         if (s.failed) return s.ReceiveFailed();
+        // [wp-7] A session whose round ended with end_session is over: nobody joins it again, nothing runs.
+        if (s.sessionOver && s.settings.session.fight.endSession) return s.ReceiveFailed();
         const auto start = std::chrono::steady_clock::now();
         s.tickEvents = 0;
         s.tickFlushCooks = 0;
         s.Receive();
         const std::vector<glm::dvec3> focus = s.ColliderFocus();
         s.simulation->UpdateStreaming(focus);
+        // Fight order per tick (fight.md "Rules"; ServerImpl.cppm): StepPlayers, the casts, StepFight, snapshots.
         s.StepPlayers();
         s.RunCasts();
+        s.StepFight();
         const uint32_t tick = s.Tick();
         s.simulation->StepPhysics();
         s.steppedTick = tick;
@@ -443,6 +459,14 @@ namespace vortex::net {
         if (!s.failed) s.TrackBodies(tick);
         s.Flush();
         if (tick % 2 == 0 && !s.failed) s.SendSnapshots(tick);
+        if (s.endNow) {
+            // [wp-7] One round per session (fight.md "Decision"): the last RoundUpdate went with this Flush; every
+            // peer is disconnected and nobody joins this session again.
+            s.endNow = false;
+            std::vector<PeerId> ids;
+            for (const auto& [id, p] : s.peers) ids.push_back(id);
+            for (const PeerId id : ids) s.DropPeer(id);
+        }
         // World::Stats walks every cell (about 0.3 ms for a 250 m region): twice a second is enough,
         // an edit that found no slot is caught at once by CheckOp.
         if (tick % 30 == 0) s.CheckStore();

@@ -1009,3 +1009,38 @@ TEST(Relay, ShapesRealUdpTraffic) {
     EXPECT_GT(downLoss, 0.02);
     EXPECT_LT(downLoss, 0.09);
 }
+
+// [wp-7] fight.md "Bots": a fighting pilot holds the nearest enemy, aims its eye at the enemy's feet, waits
+// reactionTicks before its first cast and casts on edges only (one tick down, then up); not while it may not cast.
+TEST(Bot, FightPilotAimsAtTheNearestEnemyAndCastsOnEdges) {
+    sim::RegionDesc region;
+    region.playMinChunk = {-8, -8};
+    region.playMaxChunk = {8, 8};
+    region.terrain.voxelSize = 0.125f;
+    net::PilotSettings ps;
+    ps.fight = true;
+    ps.jumps = false;
+    net::BotPilot pilot(region, 5, ps);
+    sim::PlayerState state;
+    state.position = glm::vec3(0.0f, 10.0f, 0.0f);
+    const std::array<net::PilotTarget, 2> targets = {{{3, glm::vec3(0.0f, 10.0f, -20.0f)}, {2, glm::vec3(10.0f, 10.0f, 0.0f)}}};
+    pilot.SetTargets(targets);
+    pilot.SetCanCast(true);
+    std::vector<uint32_t> castTicks;
+    for (uint32_t t = 1; t <= 40; ++t) {
+        const sim::PlayerInput in = pilot.Next(state);
+        if (t == 1) {
+            EXPECT_EQ(pilot.TargetSlot(), 2);
+            const glm::vec3 eye = state.position + glm::vec3(0.0f, sim::PlayerTuning{}.eyeHeight, 0.0f);
+            const glm::vec3 want = glm::normalize(glm::vec3(10.0f, 10.1f, 0.0f) - eye);
+            EXPECT_GT(glm::dot(sim::LookDirection(in.yaw, in.pitch), want), std::cos(glm::radians(1.0f)));
+        }
+        if ((in.buttons & sim::PlayerButton_Cast) != 0) castTicks.push_back(t);
+    }
+    ASSERT_FALSE(castTicks.empty());
+    EXPECT_GE(castTicks.front(), ps.reactionTicks);
+    for (size_t i = 1; i < castTicks.size(); ++i) EXPECT_GT(castTicks[i], castTicks[i - 1] + 1) << "two ticks down in a row";
+    pilot.SetCanCast(false);
+    for (int t = 0; t < 30; ++t) EXPECT_EQ(pilot.Next(state).buttons & sim::PlayerButton_Cast, 0);
+    EXPECT_EQ(pilot.FightCasts(), castTicks.size());
+}

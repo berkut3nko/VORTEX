@@ -138,7 +138,7 @@ namespace vortex::net {
                 const double gap = static_cast<double>(tick - t.samples.back().tick);
                 t.interval += (std::min(gap, 60.0) - t.interval) / 8.0;
             }
-            t.samples.push_back({tick, p.position, p.yaw, p.flags});
+            t.samples.push_back({tick, p.position, p.yaw, p.flags, p.fight});
             while (t.samples.size() > kSamples) t.samples.pop_front();
         }
     }
@@ -157,12 +157,14 @@ namespace vortex::net {
                 v.position = first.position;
                 v.yaw = first.yaw;
                 v.flags = first.flags;
+                v.fight = first.fight;
             } else if (at >= static_cast<double>(last.tick)) {
                 // Extrapolate along the last motion for up to one update interval, then hold.
                 v.position = last.position;
                 v.yaw = last.yaw;
                 v.flags = last.flags;
-                if (t.samples.size() >= 2) {
+                v.fight = last.fight;
+                if (t.samples.size() >= 2 && ((t.samples[t.samples.size() - 2].fight ^ last.fight) & 0x80) == 0) {
                     const RemoteSample& prev = t.samples[t.samples.size() - 2];
                     const double span = static_cast<double>(last.tick - prev.tick);
                     const double ahead = std::min(at - static_cast<double>(last.tick), t.interval);
@@ -174,9 +176,12 @@ namespace vortex::net {
                     if (static_cast<double>(b.tick) < at) continue;
                     const RemoteSample& a = t.samples[i - 1];
                     const float f = static_cast<float>((at - static_cast<double>(a.tick)) / static_cast<double>(b.tick - a.tick));
-                    v.position = glm::mix(a.position, b.position, f);
+                    // [wp-7] Across a death or a respawn (a teleport) nothing is blended.
+                    const bool cut = ((a.fight ^ b.fight) & 0x80) != 0;
+                    v.position = cut ? (f < 0.5f ? a.position : b.position) : glm::mix(a.position, b.position, f);
                     v.yaw = f < 0.5f ? a.yaw : b.yaw;
                     v.flags = f < 0.5f ? a.flags : b.flags;
+                    v.fight = f < 0.5f ? a.fight : b.fight;
                     break;
                 }
             }

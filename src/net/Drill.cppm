@@ -5,6 +5,7 @@ module;
 #include <glm/glm.hpp>
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -109,6 +110,19 @@ export namespace vortex::net {
         uint32_t detourTicks = 30;
         /// Stage 8: after the last waypoint start again from the first (never Done).
         bool loopWaypoints = false;
+        /// [wp-7] Fight mode (fight.md "Bots"; `vortex_server --fight`, `vortex_bot --fight`): with a target
+        /// (BotPilot::SetTargets) it keeps its distance to the nearest enemy, strafes, aims at its feet and casts
+        /// on edges; without one it wanders as above.
+        bool fight = false;               ///< aim and cast at enemies (PilotTarget) instead of the ground ahead
+        float fightRange = 30.0f;         ///< metres: casts only at targets this near
+        float keepDistance = 12.0f;       ///< metres: closes in beyond +4, backs off under -4, strafes between
+        uint32_t strafeTicks = 60;        ///< ticks per strafe direction
+        uint32_t reactionTicks = 20;      ///< ticks between seeing a new target and the first cast at it
+    };
+    /// @brief [wp-7] An enemy a fighting pilot may aim at (feet, world metres).
+    struct PilotTarget {
+        uint8_t slot = 0;
+        glm::vec3 feet{0.0f};
     };
 
     /**
@@ -123,6 +137,14 @@ export namespace vortex::net {
         BotPilot(const sim::RegionDesc& region, uint64_t seed, PilotSettings settings = {});
         /// @brief The controls for the next tick of a player now in `state` (its predicted state).
         sim::PlayerInput Next(const sim::PlayerState& state);
+        /// @brief [wp-7] Fight mode: the living enemies (slot ascending) and whether it may cast now (alive, a
+        /// charge, cooldown 0); set before each Next.
+        void SetTargets(std::span<const PilotTarget> enemies) { m_Targets.assign(enemies.begin(), enemies.end()); }
+        void SetCanCast(bool canCast) { m_CanCast = canCast; }
+        /// @brief Cast edges made at targets (fight mode).
+        uint32_t FightCasts() const { return m_FightCasts; }
+        /// @brief The slot of the enemy it holds now (fight mode); -1 for none.
+        int32_t TargetSlot() const { return m_HasTarget ? static_cast<int32_t>(m_TargetSlot) : -1; }
         uint32_t Casts() const { return m_Casts; }
         uint32_t Crates() const { return m_Crates; }
         uint32_t Jumps() const { return m_Jumps; }
@@ -166,6 +188,7 @@ export namespace vortex::net {
     private:
         PilotSettings m_Settings;
         Rng m_Rng;
+        uint64_t m_Seed = 0;
         glm::vec2 m_Min{0.0f}, m_Max{0.0f};   ///< play bounds shrunk by edgeMargin, metres (x, z)
         uint32_t m_Tick = 0;
         uint32_t m_SegmentLeft = 0;
@@ -183,5 +206,14 @@ export namespace vortex::net {
         uint32_t m_DetourTicks = 0, m_Detours = 0, m_WalkTicks = 0;
         bool m_InDetour = false;
         StillStretch m_Still, m_LongestStill, m_Confined, m_LongestConfined;
+        // [wp-7] fight mode
+        bool FightStep(const sim::PlayerState& state, sim::PlayerInput& in);
+        std::vector<PilotTarget> m_Targets;
+        bool m_CanCast = true;
+        bool m_HasTarget = false;
+        uint8_t m_TargetSlot = 0;
+        uint32_t m_TargetHeld = 0;        ///< ticks the current target was held
+        bool m_CastDown = false;          ///< the Cast bit of its last input
+        uint32_t m_FightCasts = 0;
     };
 }

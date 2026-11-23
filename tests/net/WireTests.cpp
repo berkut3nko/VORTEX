@@ -438,8 +438,8 @@ TEST(Wire, MessagesRoundTripAndRefuseTrailingOrMissingBytes) {
         EXPECT_EQ(sback.bodies[0].velocity, net::QuantizeVelocity(body.velocity));
         EXPECT_FALSE(net::Decode(std::span(sb).first(sb.size() - 1), sback));
         {
-            std::vector<uint8_t> bad = sb;                       // an unknown rejection is refused
-            bad[net::kSnapshotHeaderBytes - 2 + net::kSnapshotOwnerBytes - 1] = 4;
+            std::vector<uint8_t> bad = sb;                       // an unknown rejection is refused (5 Dead is the last, [wp-7])
+            bad[net::kSnapshotHeaderBytes - 2 + 31] = 6;
             EXPECT_FALSE(net::Decode(bad, sback));
         }
         {
@@ -712,7 +712,29 @@ TEST(Wire, CheckAndTerrainMessagesRoundTripAtTheirSizes) {
         longer.push_back(0);
         return !net::Decode(shorter, decoded) && !net::Decode(longer, decoded);
     };
-    EXPECT_EQ(net::kProtocolVersion, 10u);
+    EXPECT_EQ(net::kProtocolVersion, 11u);
+
+    // [wp-7] The fight's messages round-trip and refuse a byte too few or too many (FightWire.* for the values).
+    {
+        net::Roster roster;
+        roster.players = {{1, 2, 3, 4}};
+        net::Roster r;
+        ASSERT_TRUE(net::Decode(net::Encode(roster), r));
+        EXPECT_EQ(r, roster);
+        EXPECT_TRUE(refusedCut(net::Encode(roster), net::Roster{}));
+        net::RoundUpdate round;
+        round.phase = sim::RoundPhase::Live;
+        round.score = {2, 1};
+        net::RoundUpdate u2;
+        ASSERT_TRUE(net::Decode(net::Encode(round), u2));
+        EXPECT_EQ(u2, round);
+        EXPECT_TRUE(refusedCut(net::Encode(round), net::RoundUpdate{}));
+        const net::KillNotice kill{5, 0, 2, sim::DamageCause::Fall, 0};
+        net::KillNotice k;
+        ASSERT_TRUE(net::Decode(net::Encode(kill), k));
+        EXPECT_EQ(k, kill);
+        EXPECT_TRUE(refusedCut(net::Encode(kill), net::KillNotice{}));
+    }
 
     // WindowUpdate accepts the terrain-mode bit (the server decides what it means).
     net::WindowUpdate u;

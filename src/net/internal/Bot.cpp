@@ -188,7 +188,22 @@ namespace vortex::net {
             m_Predicted = m_Predicted || c.Predicting();
             m_WantedTicks += wanted && m_Predicted ? 1u : 0u;
             m_ActedTicks += act ? 1u : 0u;
-            const sim::PlayerInput controls = act ? m_Pilot->Next(c.Player()) : sim::PlayerInput{};
+            // [wp-7] A fighting pilot sees the living enemies and whether it may cast (fight.md "Bots"); a dead
+            // bot sends neutral inputs.
+            const bool dead = c.Fight().dead;
+            if (act && m_Settings.pilot.fight && !dead) {
+                const sim::TeamId own = c.TeamOf(c.Slot());
+                std::vector<PilotTarget> enemies;
+                for (const RemotePlayerView& o : c.RemotePlayers()) {
+                    const sim::TeamId team = c.TeamOf(o.slot);
+                    if (team == sim::kNoTeam || team == own || o.Dead()) continue;
+                    enemies.push_back({o.slot, o.position});
+                }
+                m_Pilot->SetTargets(enemies);
+                const FightView& f = c.Fight();
+                m_Pilot->SetCanCast((f.charges > 0 || f.maxCharges == 0) && c.Player().cooldownTicks == 0);
+            }
+            const sim::PlayerInput controls = act && !dead ? m_Pilot->Next(c.Player()) : sim::PlayerInput{};
             if (act && m_Settings.walkAcross && m_Simulation) NoteStill();
             const sim::PlayerStepResult r = c.RunTick(controls);
             m_Casts += r.cast ? 1u : 0u;

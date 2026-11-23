@@ -149,6 +149,7 @@ export namespace vortex::net {
         glm::vec3 position{0.0f};
         uint16_t yaw = 0;
         uint8_t flags = 0;
+        uint8_t fight = 100;              ///< [wp-7] RemotePlayer::fight
     };
 
     /// @brief Another player as this client draws it: interpolated in the past.
@@ -157,6 +158,10 @@ export namespace vortex::net {
         glm::vec3 position{0.0f};
         uint16_t yaw = 0;
         uint8_t flags = 0;
+        /// [wp-7] bits 0-6 health, bit 7 dead (RemotePlayer::fight). A death or a respawn is never blended:
+        /// the sample on its side of the change is drawn whole.
+        uint8_t fight = 100;
+        bool Dead() const { return (fight & 0x80) != 0; }
     };
 
     /**

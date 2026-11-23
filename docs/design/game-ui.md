@@ -6,7 +6,7 @@
 |---|---|
 | Status | Built. Sections marked **Deviation** say where the build differs from the first version of this design and why. Windowed behaviour (pointer lock on Wayland / X11, focus, menu clicks, the ImGui overlay with Alt) is confirmed only by the owner: headless runs cannot exercise it. The checks and their results are in the game's [docs/owner-checks.md](../../../docs/owner-checks.md). |
 | Decided | - Owner's request: "rework interface, make lock mouse at center on play mode (at least at wayland). Leave ImGui for debugging and map editor."<br>- Us (this design, built with networking stage 1, 2026-11-11): the game interface is a HUD drawn by the engine without ImGui; ImGui only for the F3 debug overlay and the editor ("Goals"). |
-| Next | None in this document. M2a's HUD (health, team, score, timer, kill feed) is WP7. `[wp-5]` (built 2026-11-23) added the Play bounds row to the settings page (id 6, before Back) and the session's edge hint ("Settings"). |
+| Next | None in this document. M2a's HUD: [fight.md](fight.md) "HUD" (built in [wp-7]). `[wp-5]` (built 2026-11-23) added the Play bounds row to the settings page (id 6, before Back) and the session's edge hint ("Settings"). |
 | Open | none |
 | History | [before-rewrite-2026-11-18.md](../history/game-ui/before-rewrite-2026-11-18.md): the original header and the owner checks as they stood here (now in the game's `docs/owner-checks.md`) |
 | Marks | Measured = a headless run on the UHD 620 (1280x720 output, median of 120 frames), stated where it appears; the CPU cost of building the HUD is an estimate. |

@@ -10,6 +10,7 @@
 //                 [--bot-broken-chunk N[:X,Y,Z]] [--bot-broken-generator N] [--timeline FILE] [--broken-chunk-candidate]
 //                 [--terrain-bulk-ceiling KIB] [--bulk-window-floor KIB] [--pacer-delivery-interval S]
 //                 [--rendezvous [URL]] [--stun HOST:PORT ...] [--candidates KINDS] [--public A.B.C.D:PORT]
+//                 [--fight] [--until-round-end] [--require-winner]
 //   vortex_server --nat-probe [--stun HOST:PORT ...] [--bind ADDR] [--listen PORT]
 //   vortex_server --punch-test --token HEX [--stun HOST:PORT ...] [--candidates KINDS] [--public A.B.C.D:PORT]
 //                 [--bind ADDR] [--listen PORT]
@@ -40,6 +41,13 @@
 // gives another or --new-token makes a random one (printed at start); a server that listens on more
 // than the loopback with the file's token warns loudly: the example session files are in the
 // repository, so their tokens keep nobody out.
+//
+// The fight ([wp-7], engine/docs/design/fight.md): a session file with `mode = deathmatch | felling` runs teams,
+// damage, respawns and one round; --fight makes every in-process bot fight (aim and cast at enemies),
+// --until-round-end runs until the round ends (--ticks is then the cap: not over by then is exit 1), then drains
+// and compares as after --ticks; --require-winner fails a draw. A listening server whose round ended with
+// end_session (the default for a fight) exits 0 (a live install's wrapper starts the next session). Logs Round:,
+// Kill: and Fight: lines (docs/verify.md).
 //
 // In-process bots: N clients (--clients N; the first joins at once, the others after step K of the
 // drill) each with its own sim::Simulation built from the server's Welcome. By default they talk to
@@ -300,6 +308,11 @@ int main(int argc, char** argv) {
     pilotSettings.castEveryTicks = static_cast<uint32_t>(Number(args, "--bot-casts", 0));
     pilotSettings.casts = pilotSettings.castEveryTicks > 0;
     pilotSettings.crateEveryTicks = static_cast<uint32_t>(Number(args, "--bot-crates", 0));
+    // [wp-7] --fight: every in-process bot fights (fight.md "Bots"); --until-round-end: the run lasts until the round
+    // ends (a winner or a draw), --ticks stays the cap; --require-winner: a draw fails the run.
+    pilotSettings.fight = args.Has("--fight");
+    const bool untilRoundEnd = args.Has("--until-round-end");
+    const bool requireWinner = args.Has("--require-winner");
     // Stage 7a M-b: the bots' window, the walk across the region, casts before anyone joins.
     const int32_t clientWindow = static_cast<int32_t>(Number(args, "--client-window", 0));
     if (clientWindow < 0 || clientWindow > net::kMaxClientWindowChunks) {
@@ -362,6 +375,8 @@ int main(int argc, char** argv) {
     net::ImpairedTransport serverLink(serverBase, impairment, 0x5e7e7u, now);
     net::ServerSettings settings;
     settings.session = session;
+    // [wp-7] In-process bots drain after the round (the hashes are compared then): the session is not ended under them.
+    if (untilRoundEnd) settings.session.fight.endSession = false;
     settings.simulation.jobThreads = threads;
     // The drill report reads every drill cast (review of stage 8: players' casts and the precasts share the
     // record; a limit of the drill's steps alone dropped the oldest drill casts in a 10-minute soak and the
@@ -785,6 +800,8 @@ int main(int argc, char** argv) {
             pass();
             if (seconds > 0.0 && wallNow() >= seconds) break;
             if (exitWhenEmpty && mostClients > 0 && server.ClientCount() == 0) break;
+            // [wp-7] One round per session: with end_session the server ended it (every peer disconnected).
+            if (server.SessionOver() && server.RoundState().phase == sim::RoundPhase::Ended && session.fight.endSession) break;
         }
     } else {
         // --walk-across: the run lasts until the walker is done too (at most 20 simulated minutes).
@@ -792,7 +809,10 @@ int main(int argc, char** argv) {
             return walkAcross && !bots.empty() && (!bots[0].bot || !bots[0].bot->Pilot() || !bots[0].bot->Pilot()->Done()) &&
                    server.TickNumber() < 72000;
         };
-        while ((server.TickNumber() < ticks || walking()) && !g_Stop) {
+        // [wp-7] --until-round-end: until the round's Ended phase (the drain below then lets every bot catch up).
+        auto roundOver = [&] { return server.RoundState().phase == sim::RoundPhase::Ended; };
+        while ((untilRoundEnd ? !roundOver() : (server.TickNumber() < ticks || walking())) && !g_Stop) {
+            if (untilRoundEnd && server.TickNumber() >= ticks) break;
             pass();
             if (server.Failed()) break;          // the session has ended (logged); report and exit 1
         }
@@ -1122,6 +1142,24 @@ int main(int argc, char** argv) {
         std::ofstream file(*out);
         file << hashes << "\n";
     }
+    // [wp-7] The fight (fight.md "Rules"): what it did, and --until-round-end / --require-winner.
+    bool fightOk = true;
+    if (session.fight.Active()) {
+        Log::Info("{}", server.FightLine());
+        const sim::Round& round = server.RoundState();
+        if (untilRoundEnd && round.phase != sim::RoundPhase::Ended) {
+            Log::Error("Round: not over after {} ticks", ticks);
+            fightOk = false;
+        } else if (requireWinner && round.winner != 1 && round.winner != 2) {
+            Log::Error("Round: no winner ({}) and --require-winner", round.winner == sim::kDraw ? "a draw" : "not decided");
+            fightOk = false;
+        }
+        for (size_t i = 0; i < bots.size(); ++i)
+            if (bots[i].bot && bots[i].bot->Pilot())
+                Log::Info("Fight: bot {} (slot {}, team {}): {} casts at enemies, {} kills, {} deaths", i, bots[i].bot->GetClient().Slot(),
+                          server.Fighter(bots[i].bot->GetClient().Slot()).team, bots[i].bot->Pilot()->FightCasts(),
+                          server.Fighter(bots[i].bot->GetClient().Slot()).kills, server.Fighter(bots[i].bot->GetClient().Slot()).deaths);
+    }
     Log::Info("Session: {} ({})", ok ? "hashes equal" : "FAILED", hashes);
-    return ok ? 0 : 1;
+    return ok && fightOk ? 0 : 1;
 }

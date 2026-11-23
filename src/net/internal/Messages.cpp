@@ -4,6 +4,7 @@ module;
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -37,6 +38,8 @@ namespace vortex::net {
             case CastRejection::Cooldown: return "cooldown";
             case CastRejection::Missed: return "out of range";
             case CastRejection::Outside: return "outside the play area";
+            case CastRejection::NoCharge: return "no charge";
+            case CastRejection::Dead: return "dead";
         }
         return "unknown";
     }
@@ -125,6 +128,12 @@ namespace vortex::net {
             w.I32(p.chunk.z);
             w.U64(p.hash);
         }
+        // [wp-7] the fight fields (7 B).
+        w.U8(static_cast<uint8_t>(m.fight.mode));
+        w.U8(m.fight.maxHealth);
+        w.U8(m.fight.maxCharges);
+        w.U16(m.fight.chargeTicks);
+        w.U16(m.fight.respawnTicks);
         return w.Take();
     }
 
@@ -154,6 +163,8 @@ namespace vortex::net {
             w.U8(o.lastButtons);
             w.U32(m.lastCastTick);
             w.U8(static_cast<uint8_t>(m.castRejected));
+            const Snapshot::Fight& f = m.fight;
+            for (const uint8_t b : {f.health, f.charges, f.chargeTicks, f.flags, f.respawnTicks, f.lifeSeq, f.hits}) w.U8(b);
         }
         w.U8(static_cast<uint8_t>(std::min<size_t>(m.others.size(), 255)));
         for (size_t i = 0; i < std::min<size_t>(m.others.size(), 255); ++i) {
@@ -164,6 +175,7 @@ namespace vortex::net {
             w.F32(p.position.z);
             w.U16(p.yaw);
             w.U8(p.flags);
+            w.U8(p.fight);
         }
         const size_t bodies = std::min<size_t>(m.bodies.size(), 255);
         w.U8(static_cast<uint8_t>(bodies));
@@ -248,7 +260,14 @@ namespace vortex::net {
             p.hash = in.U64();
             out.probes.push_back(p);
         }
-        return !in.Failed() && End(in);
+        const uint8_t mode = in.U8();
+        out.fight.maxHealth = in.U8();
+        out.fight.maxCharges = in.U8();
+        out.fight.chargeTicks = in.U16();
+        out.fight.respawnTicks = in.U16();
+        if (in.Failed() || mode > sim::kMaxGameMode || out.fight.maxHealth == 0) return false;
+        out.fight.mode = static_cast<sim::GameMode>(mode);
+        return End(in);
     }
 
     bool Decode(std::span<const uint8_t> bytes, EventBatch& out) {
@@ -300,6 +319,7 @@ namespace vortex::net {
         out.owner = sim::PlayerState{};
         out.lastCastTick = 0;
         out.castRejected = CastRejection::None;
+        out.fight = Snapshot::Fight{};
         if (out.hasOwner) {
             sim::PlayerState& o = out.owner;
             for (float* f : {&o.position.x, &o.position.y, &o.position.z, &o.velocity.x, &o.velocity.y, &o.velocity.z}) *f = in.F32();
@@ -310,6 +330,9 @@ namespace vortex::net {
             const uint8_t rejected = in.U8();
             if (in.Failed() || rejected > kMaxCastRejection) return false;
             out.castRejected = static_cast<CastRejection>(rejected);
+            Snapshot::Fight& f = out.fight;
+            for (uint8_t* b : {&f.health, &f.charges, &f.chargeTicks, &f.flags, &f.respawnTicks, &f.lifeSeq, &f.hits}) *b = in.U8();
+            if (in.Failed() || f.flags > 7) return false;
             if (!Finite(o.position) || !Finite(o.velocity)) return false;
         }
         const uint32_t count = in.U8();
@@ -323,6 +346,7 @@ namespace vortex::net {
             p.position.z = in.F32();
             p.yaw = in.U16();
             p.flags = in.U8();
+            p.fight = in.U8();
             if (!Finite(p.position)) return false;
             out.others.push_back(p);
         }
@@ -711,6 +735,102 @@ namespace vortex::net {
             previous = e.netId;
             out.entries.push_back(e);
         }
+        return End(in);
+    }
+
+    // --- the fight ([wp-7], docs/design/fight.md "Wire") -------------------------------------------
+
+    std::vector<uint8_t> Encode(const Roster& m) {
+        ByteWriter w;
+        w.U8(static_cast<uint8_t>(MessageType::Roster));
+        const size_t count = std::min<size_t>(m.players.size(), kMaxRosterPlayers);
+        w.U8(static_cast<uint8_t>(count));
+        for (size_t i = 0; i < count; ++i) {
+            const RosterEntry& e = m.players[i];
+            w.U8(e.slot);
+            w.U8(e.team);
+            w.U16(e.kills);
+            w.U16(e.deaths);
+        }
+        return w.Take();
+    }
+
+    bool Decode(std::span<const uint8_t> bytes, Roster& out) {
+        ByteReader in(bytes);
+        if (!Begin(in, MessageType::Roster)) return false;
+        const uint32_t count = in.U8();
+        if (in.Failed() || count > kMaxRosterPlayers || in.Remaining() != static_cast<size_t>(count) * 6) return false;
+        out.players.clear();
+        std::array<bool, 256> seen{};
+        for (uint32_t i = 0; i < count; ++i) {
+            RosterEntry e;
+            e.slot = in.U8();
+            e.team = in.U8();
+            e.kills = in.U16();
+            e.deaths = in.U16();
+            if (in.Failed() || e.team > sim::kTeamCount || seen[e.slot]) return false;
+            seen[e.slot] = true;
+            out.players.push_back(e);
+        }
+        return End(in);
+    }
+
+    std::vector<uint8_t> Encode(const RoundUpdate& m) {
+        ByteWriter w;
+        w.U8(static_cast<uint8_t>(MessageType::RoundUpdate));
+        w.U8(static_cast<uint8_t>(m.mode));
+        w.U8(static_cast<uint8_t>(m.phase));
+        w.U32(m.phaseEndTick);
+        w.U16(m.score[0]);
+        w.U16(m.score[1]);
+        w.U16(m.scoreLimit);
+        w.U8(m.winner);
+        w.U8(static_cast<uint8_t>(m.end));
+        w.U8(m.overtime ? 1 : 0);
+        return w.Take();
+    }
+
+    bool Decode(std::span<const uint8_t> bytes, RoundUpdate& out) {
+        ByteReader in(bytes);
+        if (!Begin(in, MessageType::RoundUpdate)) return false;
+        const uint8_t mode = in.U8(), phase = in.U8();
+        out.phaseEndTick = in.U32();
+        out.score[0] = in.U16();
+        out.score[1] = in.U16();
+        out.scoreLimit = in.U16();
+        out.winner = in.U8();
+        const uint8_t end = in.U8(), overtime = in.U8();
+        if (in.Failed() || mode > sim::kMaxGameMode || phase > sim::kMaxRoundPhase || end > sim::kMaxRoundEnd || overtime > 1) return false;
+        if (out.winner != 0 && out.winner != 1 && out.winner != 2 && out.winner != sim::kDraw) return false;
+        out.mode = static_cast<sim::GameMode>(mode);
+        out.phase = static_cast<sim::RoundPhase>(phase);
+        out.end = static_cast<sim::RoundEnd>(end);
+        out.overtime = overtime != 0;
+        return End(in);
+    }
+
+    std::vector<uint8_t> Encode(const KillNotice& m) {
+        ByteWriter w;
+        w.U8(static_cast<uint8_t>(MessageType::KillNotice));
+        w.U32(m.tick);
+        w.U8(m.victim);
+        w.U8(m.killer);
+        w.U8(static_cast<uint8_t>(m.cause));
+        w.U8(m.flags);
+        return w.Take();
+    }
+
+    bool Decode(std::span<const uint8_t> bytes, KillNotice& out) {
+        ByteReader in(bytes);
+        if (!Begin(in, MessageType::KillNotice)) return false;
+        out.tick = in.U32();
+        out.victim = in.U8();
+        out.killer = in.U8();
+        const uint8_t cause = in.U8();
+        out.flags = in.U8();
+        if (in.Failed() || cause == 0 || cause > sim::kMaxDamageCause || out.flags > 1) return false;
+        if (out.killer != 0 && out.killer == out.victim + 1u) return false;
+        out.cause = static_cast<sim::DamageCause>(cause);
         return End(in);
     }
 }

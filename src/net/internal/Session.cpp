@@ -3,6 +3,7 @@ module;
 #include <glm/glm.hpp>
 
 #include <algorithm>
+#include <array>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
@@ -87,6 +88,10 @@ namespace vortex::net {
     bool ParseSession(std::string_view text, SessionConfig& out, std::string& error) {
         SessionConfig config;
         bool tokenSet = false;
+        // [wp-7] The fight keys are read into `fight`, then checked against the region and the mode.
+        sim::FightRules fight;
+        std::array<bool, 2> spawnSet{}, towerSet{};
+        bool endSessionSet = false;
         int lineNumber = 0;
         while (!text.empty()) {
             const size_t eol = text.find('\n');
@@ -144,6 +149,51 @@ namespace vortex::net {
                 ok = Bool(value, config.packHidden);
             } else if (key == "port") {
                 ok = Number(value, config.port);
+            } else if (key == "mode") {
+                if (value == "sandbox") fight.mode = sim::GameMode::Sandbox;
+                else if (value == "deathmatch") fight.mode = sim::GameMode::Deathmatch;
+                else if (value == "felling") fight.mode = sim::GameMode::Felling;
+                else ok = false;
+            } else if (key == "team_spawn_1" || key == "team_spawn_2" || key == "tower_1" || key == "tower_2") {
+                float v[2];
+                ok = Numbers(value, v, 2) && std::isfinite(v[0]) && std::isfinite(v[1]);
+                const size_t i = key.back() == '1' ? 0 : 1;
+                if (ok && key.starts_with("team")) {
+                    fight.teamSpawns[i] = glm::vec2(v[0], v[1]);
+                    spawnSet[i] = true;
+                } else if (ok) {
+                    fight.towers[i] = glm::vec2(v[0], v[1]);
+                    towerSet[i] = true;
+                }
+            } else if (key == "score_limit") {
+                ok = Number(value, fight.scoreLimit) && fight.scoreLimit >= 1;
+            } else if (key == "round_seconds") {
+                uint32_t seconds = 0;
+                ok = Number(value, seconds);
+                if (ok && (seconds == 0 || seconds > 3600)) {
+                    error = std::format("line {}: 'round_seconds' must be 1..3600: '{}'", lineNumber, value);
+                    return false;
+                }
+                fight.roundTicks = seconds * 60;
+            } else if (key == "respawn_ticks") {
+                ok = Number(value, fight.respawnTicks);
+            } else if (key == "charge_ticks") {
+                ok = Number(value, fight.chargeTicks);
+            } else if (key == "max_charges") {
+                ok = Number(value, fight.maxCharges);
+                if (ok && fight.maxCharges > 9) {
+                    error = std::format("line {}: 'max_charges' must be 0..9: '{}'", lineNumber, value);
+                    return false;
+                }
+            } else if (key == "min_players") {
+                ok = Number(value, fight.minPlayers) && fight.minPlayers >= 1;
+            } else if (key == "countdown_ticks") {
+                ok = Number(value, fight.countdownTicks);
+            } else if (key == "end_ticks") {
+                ok = Number(value, fight.endTicks);
+            } else if (key == "end_session") {
+                ok = Bool(value, fight.endSession);
+                endSessionSet = ok;
             } else {
                 error = std::format("line {}: unknown key '{}'", lineNumber, key);
                 return false;
@@ -161,6 +211,41 @@ namespace vortex::net {
         if (!sim::IsValid(config.region, &why)) {
             error = "invalid region: " + why;
             return false;
+        }
+        // [wp-7] fight.md "Rules": a fight needs both team spawns (and Felling both towers), each at least 4 m
+        // inside the play bounds; a sandbox session is the sandbox's rules whatever the other keys say.
+        if (fight.mode == sim::GameMode::Sandbox) {
+            config.fight = sim::SandboxRules();
+        } else {
+            const sim::RegionDesc& r = config.region;
+            const float chunk = static_cast<float>(voxel::kChunkSize) * r.terrain.voxelSize;
+            const glm::vec2 lo = glm::vec2(r.playMinChunk) * chunk + glm::vec2(4.0f), hi = glm::vec2(r.playMaxChunk) * chunk - glm::vec2(4.0f);
+            auto inside = [&](const glm::vec2& p) { return p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y; };
+            for (size_t i = 0; i < 2; ++i) {
+                const std::string spawnKey = std::format("team_spawn_{}", i + 1), towerKey = std::format("tower_{}", i + 1);
+                if (!spawnSet[i]) {
+                    error = std::format("mode {} needs '{}'", sim::ToString(fight.mode), spawnKey);
+                    return false;
+                }
+                if (!inside(fight.teamSpawns[i])) {
+                    error = std::format("'{}' must be at least 4 m inside the play bounds", spawnKey);
+                    return false;
+                }
+                if (fight.mode == sim::GameMode::Felling && !towerSet[i]) {
+                    error = std::format("mode felling needs '{}'", towerKey);
+                    return false;
+                }
+                if (towerSet[i] && !inside(fight.towers[i])) {
+                    error = std::format("'{}' must be at least 4 m inside the play bounds", towerKey);
+                    return false;
+                }
+            }
+            if (fight.maxCharges > 0 && fight.chargeTicks == 0) {
+                error = "'charge_ticks' must not be 0 while 'max_charges' is above 0";
+                return false;
+            }
+            if (!endSessionSet) fight.endSession = true;
+            config.fight = fight;
         }
         out = config;
         return true;
@@ -199,6 +284,23 @@ namespace vortex::net {
         s += std::format("chunk_capacity = {}\n", c.chunkCapacity);
         s += std::format("pack_hidden = {}\n", c.packHidden ? 1 : 0);
         s += std::format("port = {}\n", c.port);
+        // [wp-7] The fight keys, for a fight mode only (a sandbox session is SandboxRules()).
+        const sim::FightRules& f = c.fight;
+        if (f.Active()) {
+            s += std::format("mode = {}\n", sim::ToString(f.mode));
+            for (size_t i = 0; i < 2; ++i) s += std::format("team_spawn_{} = {} {}\n", i + 1, f.teamSpawns[i].x, f.teamSpawns[i].y);
+            if (f.mode == sim::GameMode::Felling || f.towers[0] != glm::vec2(0.0f) || f.towers[1] != glm::vec2(0.0f))
+                for (size_t i = 0; i < 2; ++i) s += std::format("tower_{} = {} {}\n", i + 1, f.towers[i].x, f.towers[i].y);
+            s += std::format("score_limit = {}\n", f.scoreLimit);
+            s += std::format("round_seconds = {}\n", f.roundTicks / 60);
+            s += std::format("respawn_ticks = {}\n", f.respawnTicks);
+            s += std::format("charge_ticks = {}\n", f.chargeTicks);
+            s += std::format("max_charges = {}\n", f.maxCharges);
+            s += std::format("min_players = {}\n", f.minPlayers);
+            s += std::format("countdown_ticks = {}\n", f.countdownTicks);
+            s += std::format("end_ticks = {}\n", f.endTicks);
+            s += std::format("end_session = {}\n", f.endSession ? 1 : 0);
+        }
         return s;
     }
 

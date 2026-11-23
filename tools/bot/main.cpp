@@ -159,6 +159,7 @@ int main(int argc, char** argv) {
     bs.pilot.castEveryTicks = static_cast<uint32_t>(Number(args, "--casts", 0));
     bs.pilot.casts = bs.pilot.castEveryTicks > 0;
     bs.pilot.crateEveryTicks = static_cast<uint32_t>(Number(args, "--crates", 0));
+    bs.pilot.fight = args.Has("--fight");          // [wp-7] fight.md "Bots": aim and cast at the enemies
     bs.walkAcross = args.Has("--walk-across");
     bs.pilot.loopWaypoints = args.Has("--loop");
     if (const std::optional<std::string> b = args.Get("--broken-chunk")) {

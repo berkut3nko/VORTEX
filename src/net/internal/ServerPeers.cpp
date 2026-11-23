@@ -47,6 +47,7 @@ namespace vortex::net {
             if (const scene::Entity e = EntityOf(netId); e != scene::kNoEntity) sim::Despawn(*simulation, e, scene::DespawnReason::Destroyed);
         simulation->Physics().DestroyCharacter(p.player->character);
         p.player.reset();
+        if (p.joined) FightLeave(p.slot);   // [wp-7] its place on its team is free (never rebalanced mid-round)
     }
 
     std::vector<std::pair<PeerId, Peer*>> Server::Impl::PlayersBySlot() {
@@ -96,10 +97,12 @@ namespace vortex::net {
                 // (a cast in it is captured once), derived against the levels the repeats kept.
                 ++stats.inputsLate;
                 const uint8_t pressed = sim::PressButtons(pl.state, in.buttons);
-                if ((pressed & sim::PlayerButton_Cast) != 0) LateCast(p, in, now);
-                if ((pressed & sim::PlayerButton_Crate) != 0) PlayerCrate(p, in, pl.state);
+                // [wp-7] A dead player's late edges do nothing but refuse its cast (fight.md "Rules").
+                const bool dead = Fighting() && fighters[p.slot].dead;
+                if ((pressed & sim::PlayerButton_Cast) != 0 && !RefuseDeadCast(p, in.tick)) LateCast(p, in, now);
+                if ((pressed & sim::PlayerButton_Crate) != 0 && !dead) PlayerCrate(p, in, pl.state);
                 // A jump edge is not spent here without a jump: the next step makes it.
-                if ((pressed & sim::PlayerButton_Jump) != 0 && !pl.lateJump) {
+                if ((pressed & sim::PlayerButton_Jump) != 0 && !pl.lateJump && !dead) {
                     pl.lateJump = true;
                     ++stats.jumpsFromLateInputs;
                 }
@@ -157,6 +160,17 @@ namespace vortex::net {
             }
             pl.queue.erase(pl.queue.begin(), pl.queue.upper_bound(now));
             input.tick = now;
+            if (Fighting() && fighters[peer->slot].dead) {
+                // [wp-7] A dead player is not stepped (fight.md "Rules", decision 7: no change to StepPlayer): it
+                // stays where it died; its input is consumed, a cast edge in it refused Dead.
+                const uint8_t levels = static_cast<uint8_t>(input.buttons & sim::kPlayerButtonMask);
+                if ((levels & sim::PlayerButton_Cast) != 0 && (pl.state.lastButtons & sim::PlayerButton_Cast) == 0) RefuseDeadCast(*peer, now);
+                pl.state.lastButtons = levels;
+                pl.lateJump = false;
+                pl.Store(now);
+                continue;
+            }
+            const sim::PlayerState before = pl.state;
             // The colliders this step can touch hold every edit made so far (never a worker's timing).
             tickFlushCooks += simulation->Terrain().FlushBox(sim::PlayerReach(pl.state.position, settings.player));
             const uint8_t levels = input.buttons;
@@ -171,6 +185,7 @@ namespace vortex::net {
                                                             settings.player, playArea, dt);
             if (lateJump) pl.state.lastButtons = static_cast<uint8_t>(levels & sim::kPlayerButtonMask);
             stats.heldTicks += r.held ? 1u : 0u;
+            EnvironmentDamage(peer->slot, before, pl.state);   // [wp-7] falls, lava, the void (Live only)
             pl.Store(now);
             if (r.cast) CaptureCast(*peer, input, pl.state, false);
             else if ((r.pressed & sim::PlayerButton_Cast) != 0) RejectCast(*peer, now);
@@ -192,9 +207,11 @@ namespace vortex::net {
             snap.owner = peer->player->state;
             snap.lastCastTick = peer->player->lastCastTick;
             snap.castRejected = peer->player->castRejected;
+            snap.fight = OwnerFightOf(peer->slot);
             for (const auto& [otherId, other] : players) {
                 if (otherId == id) continue;
-                snap.others.push_back({other->slot, other->player->state.position, other->player->last.yaw, other->player->state.flags});
+                snap.others.push_back({other->slot, other->player->state.position, other->player->last.yaw, other->player->state.flags,
+                                       RemoteFightOf(other->slot)});
             }
             // Bodies by priority: what was left out longest, nearest first, as many as fit.
             const size_t fixed = kSnapshotHeaderBytes + kSnapshotOwnerBytes + snap.others.size() * kSnapshotPlayerBytes;
@@ -266,6 +283,18 @@ namespace vortex::net {
         welcome.tick = Tick();
         welcome.region = region;
         welcome.spawn = tmpl.spawn;
+        // [wp-7] In a fight a joiner starts at its team's spawn (fight.md "Rules", decision 13).
+        fighters[slot] = sim::FighterState{};
+        if (Fighting()) {
+            fighters[slot].team = JoinTeam(slot);
+            welcome.spawn = sim::TeamSpawnFeet(*simulation, Rules(), region, fighters[slot].team, teamSpawnCount[fighters[slot].team - 1]++,
+                                               glm::dvec3(tmpl.spawn));
+            welcome.fight.mode = Rules().mode;
+            welcome.fight.maxHealth = static_cast<uint8_t>(std::clamp<int>(Rules().maxHealth, 1, 255));
+            welcome.fight.maxCharges = Rules().maxCharges;
+            welcome.fight.chargeTicks = Rules().chargeTicks;
+            welcome.fight.respawnTicks = Rules().respawnTicks;
+        }
         welcome.player = settings.player;
         welcome.tickSeconds = simulation->FixedTimeStep();
         welcome.gravity = simulation->Config().physics.gravity;
@@ -282,7 +311,7 @@ namespace vortex::net {
         p.join = JoinRecord{};
         p.join.joinTick = Tick();
         p.join.joinOpSeq = welcome.joinOpSeq;
-        QueueBaseline(p, glm::dvec3(tmpl.spawn));
+        QueueBaseline(p, welcome.spawn);
         // Its player stands at the spawn point; the ground under every player gets its collider
         // before the next step (a gate that held the player here would hold it for another
         // number of ticks than its client's): the spawn is a permanent collider focus (built at
@@ -292,9 +321,10 @@ namespace vortex::net {
         // in the owner's run, the first join after the spawn's colliders were dropped).
         p.player = std::make_unique<Player>();
         p.player->joinTick = Tick();          // Receive runs at the start of the tick that steps it first
-        p.player->state.position = glm::vec3(tmpl.spawn);
+        p.player->state.position = glm::vec3(welcome.spawn);
         p.player->character = simulation->Physics().CreateCharacter(sim::PlayerCharacterDesc(p.player->state.position, settings.player));
         tickEvents |= kTickHello;
+        FightJoin(p);
         ++stats.clientsJoined;
         Log::Info("Server: client {} joined at tick {} (slot {}, join point opSeq {}, {} entities in its baseline, {} modified chunks)",
                   peer, Tick(), slot, LastOpSeq(), p.baseline.size(), modified.size());

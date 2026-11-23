@@ -95,8 +95,21 @@ namespace vortex::sim {
                 outcome.effects.push_back(EffectCue{EffectKind::Blast, aim.sphere.center, aim.sphere.radius});
                 break;
         }
-        // Damage: [wp-7] reads context.players and context.blastDamage here (rules.md "Outcome").
-        (void)context;
+        // Damage (fight.md "Damage"): every living enemy of the actor within the rule's reach, in span order.
+        if (context.blastDamage.centre > 0 && request.player != 0 && request.slot == ActionSlot::Blast) {
+            const PlayerView* actor = nullptr;
+            for (const PlayerView& v : context.players)
+                if (v.player == request.player) actor = &v;
+            if (actor != nullptr) {
+                const float voxelSize = simulation.World().VoxelSize();
+                for (const PlayerView& v : context.players) {
+                    if (!v.alive || v.player == request.player) continue;
+                    if (actor->team != kNoTeam && v.team == actor->team) continue;
+                    const int16_t amount = BlastDamageAt(context.blastDamage, aim.sphere.center, voxelSize, v.feet, context.tuning);
+                    if (amount > 0) outcome.damage.push_back(DamageEvent{v.player, request.player, amount, static_cast<uint8_t>(DamageCause::Blast)});
+                }
+            }
+        }
         return outcome;
     }
 

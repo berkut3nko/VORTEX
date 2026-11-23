@@ -88,7 +88,8 @@ Paths are relative to `engine/`. Code is cited by file and symbol; search for th
 - `src/net/Messages.cppm`, `internal/Messages.cpp` - `MessageType`, message structs, `Encode` / `Decode`,
   `EncodeBatch` (events already encoded), `kProtocolVersion` (its comment lists what each version changed);
   `InputBatch`, `Snapshot`, `RemotePlayer`, `Welcome::player` [net-4]; `ChunkRequestReason`, `TerrainCode`,
-  `TerrainRun`, `TerrainAck` [net-7b].
+  `TerrainRun`, `TerrainAck` [net-7b]; `Roster`, `RoundUpdate`, `KillNotice`, `Welcome::Fight`, `Snapshot::Fight`
+  [wp-7].
 - `src/net/Prediction.cppm`, `internal/Prediction.cpp` - `TickClock` (the client clock: jumps, bleed, catch-up,
   holds), `ServerTime` (the server tick other players are drawn at; only moves forward), `RemotePlayers` (other
   players drawn in the past) and `RemoteBodies` [net-6] (replicated bodies drawn in the past, the rest rule).
@@ -106,7 +107,8 @@ Paths are relative to `engine/`. Code is cited by file and symbol; search for th
 - `src/net/Server.cppm`, `internal/ServerImpl.cppm` (partition `:server_impl`: `Server::Impl`, its types),
   `internal/Server.cpp` (the public methods, the tick loop, emit, transport), `ServerPeers.cpp` (join, inputs, player
   steps, snapshots, baseline), `ServerCasts.cpp` (the cast queue through `vortex.sim:rules`), `ServerSync.cpp` (chunk
-  sync and bulk), `ServerChecks.cpp` (hash, entity checks), `ServerEntities.cpp` (replicated bodies, crates) -
+  sync and bulk), `ServerChecks.cpp` (hash, entity checks), `ServerEntities.cpp` (replicated bodies, crates), `ServerFight.cpp`
+  (the fight: teams, `DealDamage`, respawns, the round, Felling's towers; [wp-7]) -
   `ServerSettings`, `CastRecord`, `ServerStats`, `net::Server` (event backlog, peers with send cursors, the modified
   map, per-peer bulk queues and pacers, the entity baseline, cast queue and the credits; `Impl::EmitOp`,
   `Impl::ColliderFocus`, `SendChecks`, `RefreshHashes`, `PruneQueue`, `SortChunks`). [wp-6]
@@ -183,7 +185,14 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
 - **Message types** (`MessageType`): 1 `Hello`, 2 `Welcome`, 3 `Refuse`, 4 `EventBatch`, (5 retired: `ServerStatus`),
   6 `Inputs`, 7 `Snapshot`; [net-7a] chunk sync 8 `WindowUpdate`, 9 `WindowAck`, 10 `ChunkData`, 11 `ChunkRequest`,
   12 `ModelRequest`, 13 `BaselineEntity`, 14 `BaselineEnd`, 15 `BaselineNear`; [net-7b] checks and terrain mode 16
-  `TerrainAck`, 17 `HashCheck`, 18 `EntityCheck`, 19 `EntityListRequest`, 20 `EntityList`.
+  `TerrainAck`, 17 `HashCheck`, 18 `EntityCheck`, 19 `EntityListRequest`, 20 `EntityList`; [wp-7] the fight 21
+  `Roster`, 22 `RoundUpdate`, 23 `KillNotice` (events channel, taken on receipt, not by opSeq). Protocol 11.
+- **The fight** [wp-7] (fight.md "Wire"): `CastRejection` 4 `NoCharge`, 5 `Dead`; `sim::DamageCause` 1 `Blast`, 2
+  `Fall`, 3 `Lava`, 4 `Void`, 5 `Crush` (reserved for [si-2]); `sim::GameMode` 0 `Sandbox`, 1 `Deathmatch`, 2
+  `Felling`; `sim::RoundPhase` 0 `Warmup`, 1 `Countdown`, 2 `Live`, 3 `Ended`; `sim::RoundEnd` 0 `None`, 1 `Score`, 2
+  `Time`, 3 `Felled`, 4 `Forfeit`; `RoundUpdate::winner` 0 none, 1, 2, 255 draw; owner-block fight flags 1 `kDead`, 2
+  `kProtected`, 4 `kSpectator`; `RemotePlayer::fight` bit 7 dead; `KillNotice::kCredited` 1. `kSnapshotOwnerBytes`
+  39, `kSnapshotPlayerBytes` 17, `Welcome` +7 B.
 - **`ChunkRequestReason`** [net-7b]: 0 `Sync` (the ring no longer covered the chunk's base, or a slot freed for an
   Unsynced one), 1 `Repair` (a HashCheck found the chunk different).
 - **`TerrainCode`** [net-7b], one per entering cell of a `TerrainAck`, sent as `TerrainRun`s: 0 `NotInAck`, 1 `Data`
@@ -197,7 +206,7 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
 - Also wire format: `WindowUpdate::kTerrainMode` (2) and `kReset`, `EntityKind` (1 `Light`, 2 `Object`),
   `scene::DespawnReason` (1 `Destroyed`, 2 `ToRubble`, 3 `Broken`), `PlayerButton` (1 `Jump`, 2 `Run`, 4 `Cast`, 8
   `Crate`), `RegionGenerator` (0 `Terrain`, 1 `Flat`), `RegionTemplateId` (0 `Empty`, 1 `Playground`),
-  `RefuseReason` (1 `Protocol`, 2 `Build`, 3 `Token`, 4 `Full`, 5 `Malformed`; 6 retired), `CastRejection` (0-3).
+  `RefuseReason` (1 `Protocol`, 2 `Build`, 3 `Token`, 4 `Full`, 5 `Malformed`; 6 retired), `CastRejection` (0-5).
 
 Ordering, the base rule and sync
 - **Integers on the wire decide voxels.** Everything a client applies is a `sim::WorldOp`'s integers; floats travel
@@ -663,7 +672,7 @@ Regions, templates and tests
   `kProtocolVersion` + 1 (and its comment), the client's `Apply` / `ApplyEntity`, and `MaskVoxels` in `Server.cpp` if
   it carries a volume (the batch decoder's voxel budget). A terrain op also goes through `Server::Impl::EmitOp`, gets a
   correct `sim::OpChunkRange` and a `CastWorkOf` weight, and is covered by the base rule and the ring like the others.
-- New message: a value after 20 in `MessageType`, `Encode` / `Decode` with a size check in `WireTests.cpp`,
+- New message: a value after 23 in `MessageType`, `Encode` / `Decode` with a size check in `WireTests.cpp`,
   `kProtocolVersion` + 1. A check-like message rides the events channel and is processed at its opSeq.
 - New kind of server body (a thrown object, a spell's matter): create it, `sim::Replicate(simulation, entity, piece)`,
   then the server's `EmitObjectSpawn`; it is then in snapshots, rests, despawns and the entity check like a crate. A

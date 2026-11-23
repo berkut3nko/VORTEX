@@ -9,3 +9,4 @@ export import :blast;
 export import :region;
 export import :player;
 export import :rules;
+export import :combat;

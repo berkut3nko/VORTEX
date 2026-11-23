@@ -84,6 +84,13 @@ namespace vortex::net {
                 return Fail("malformed Welcome: a probe chunk outside the region's window");
         welcome = std::move(w);
         playArea = sim::PlayAreaOf(welcome.region, welcome.player);
+        // [wp-7] The session's fight (fight.md "Wire").
+        fight.mode = welcome.fight.mode;
+        fight.maxHealth = welcome.fight.maxHealth;
+        fight.maxCharges = welcome.fight.maxCharges;
+        fight.chargeTicksFull = welcome.fight.chargeTicks;
+        fight.respawnTicksFull = welcome.fight.respawnTicks;
+        roundState.mode = welcome.fight.mode;
         // Terrain agreement: the probe chunks from this client's own generator.
         const std::shared_ptr<voxel::IWorldGenerator> generator = Generator();
         ownProbes = RehashProbes(welcome.probes, *generator);
@@ -259,6 +266,16 @@ namespace vortex::net {
                         EntityList list;
                         if (!Decode(e.data, list)) return Fail("malformed EntityList");
                         pending.push_back(std::move(list));
+                    } else if (*type == MessageType::Roster) {
+                        // [wp-7] The fight's messages are taken on receipt (fight.md "Wire"), not by opSeq.
+                        if (!Decode(e.data, roster)) return Fail("malformed Roster");
+                    } else if (*type == MessageType::RoundUpdate) {
+                        if (!Decode(e.data, roundState)) return Fail("malformed RoundUpdate");
+                    } else if (*type == MessageType::KillNotice) {
+                        KillNotice kill;
+                        if (!Decode(e.data, kill)) return Fail("malformed KillNotice");
+                        kills.push_back(kill);
+                        while (kills.size() > 32) kills.pop_front();
                     } else if (*type == MessageType::TerrainAck) {
                         // Only for a terrain-mode WindowUpdate (stage 7b M-b).
                         if (!terrainMode) return Fail("a TerrainAck for a window this client did not send in terrain mode");
@@ -321,7 +338,14 @@ namespace vortex::net {
         if (!s.predicting || s.state != ClientState::Playing || !s.simulation) return {};
         sim::PlayerStepResult r;
         s.syncHeld = !s.ReachCurrent();
-        if (s.syncHeld) {
+        if (s.fight.dead) {
+            // [wp-7] Dead (fight.md "Rules"): the input is kept and sent as today, the player is not stepped (the
+            // server does not step it either); a respawn replays the inputs after the server's teleport.
+            sim::PlayerInput input = controls;
+            input.tick = s.nextTick;
+            s.history[s.nextTick % kHistoryTicks] = {true, s.nextTick, input, s.player};
+            ++s.nextTick;
+        } else if (s.syncHeld) {
             // A chunk of its reach has no base (plan amendment 7): the player is not moved, the input
             // is kept and sent (the server moves its player), snapshots are taken as they are.
             sim::PlayerInput input = controls;
@@ -383,6 +407,19 @@ namespace vortex::net {
     }
     const sim::PlayerTuning& Client::Tuning() const { return m_Impl->welcome.player; }
     Client::CastStatus Client::LastCast() const { return m_Impl->lastCast; }
+    const FightView& Client::Fight() const { return m_Impl->fight; }
+    const Roster& Client::RosterOf() const { return m_Impl->roster; }
+    const RoundUpdate& Client::RoundOf() const { return m_Impl->roundState; }
+    std::vector<KillNotice> Client::TakeKillNotices() {
+        std::vector<KillNotice> out(m_Impl->kills.begin(), m_Impl->kills.end());
+        m_Impl->kills.clear();
+        return out;
+    }
+    sim::TeamId Client::TeamOf(uint8_t slot) const {
+        for (const RosterEntry& e : m_Impl->roster.players)
+            if (e.slot == slot) return e.team;
+        return sim::kNoTeam;
+    }
     const PredictionStats& Client::Prediction() const { return m_Impl->prediction; }
     const TickClock& Client::Clock() const { return m_Impl->clock; }
 
