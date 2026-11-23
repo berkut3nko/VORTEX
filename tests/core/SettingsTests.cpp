@@ -22,15 +22,15 @@ namespace {
 }
 
 TEST(GameSettings, RoundTripsAndRefusesBadValues) {
-    const GameSettings custom{0.75f, false, 1.5f, 90};
+    const GameSettings custom{0.75f, false, 1.5f, 90, false};
     GameSettings parsed;
     std::string error;
     ASSERT_TRUE(ParseGameSettings(FormatGameSettings(custom), parsed, &error)) << error;
     EXPECT_EQ(parsed, custom);
     EXPECT_EQ(FormatGameSettings(GameSettings{}),
-              "# Shredborne settings (key = value)\nrender_scale = 0.60\nvsync = on\nsensitivity = 1.00\nfov = 60\n");
+              "# Shredborne settings (key = value)\nrender_scale = 0.60\nvsync = on\nsensitivity = 1.00\nfov = 60\nplay_bounds = on\n");
 
-    for (const char* bad : {"render_scale = 2", "render_scale = abc", "vsync = yes", "sensitivity = 0.1", "fov = 49", "fov = 70.5", "fov 70"}) {
+    for (const char* bad : {"render_scale = 2", "render_scale = abc", "vsync = yes", "sensitivity = 0.1", "fov = 49", "fov = 70.5", "fov 70", "play_bounds = 1"}) {
         GameSettings s = custom;
         error.clear();
         EXPECT_FALSE(ParseGameSettings(bad, s, &error)) << bad;
@@ -92,6 +92,12 @@ TEST(SettingsPage, ActivatingCyclesThePresets) {
         EXPECT_TRUE(Press(page, MenuInput{.activate = true}).changed);
         EXPECT_EQ(page.Settings().fovDegrees, want);
     }
+    // Play bounds ([wp-5]) toggles.
+    Press(page, MenuInput{.down = true});
+    EXPECT_TRUE(Press(page, MenuInput{.activate = true}).changed);
+    EXPECT_FALSE(page.Settings().playBounds);
+    EXPECT_TRUE(Press(page, MenuInput{.activate = true}).changed);
+    EXPECT_TRUE(page.Settings().playBounds);
 
     GameSettings odd;
     odd.renderScale = 0.9f;   // a value from the file that is no preset
@@ -113,7 +119,7 @@ TEST(SettingsPage, BackClosesThePage) {
     EXPECT_EQ(page.Settings(), start);
 
     page.Open(start);
-    for (int i = 0; i < 4; ++i) Press(page, MenuInput{.down = true});
+    for (int i = 0; i < 5; ++i) Press(page, MenuInput{.down = true});
     r = Press(page, MenuInput{.activate = true});
     EXPECT_TRUE(r.closed);
     EXPECT_FALSE(r.changed);

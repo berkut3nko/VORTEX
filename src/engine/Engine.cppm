@@ -159,6 +159,9 @@ export namespace vortex {
         /// (graphics::UiLayer::SetInputEnabled). Default true; play mode turns it off so that a
         /// locked cursor never hovers an ImGui window. Takes effect from the next frame.
         void SetImGuiInput(bool enabled);
+        /// @brief The play bounds the renderer draws (the curtain of [wp-5]); std::nullopt or an unbounded
+        /// area: none. A session sets sim::PlayBoundsOf(region) once it has joined.
+        void SetPlayBounds(const std::optional<sim::PlayArea>& bounds);
         /// @brief The entities of the game: voxel objects, lights, lifetimes (see scene::Scene).
         scene::Scene& Scene();
 

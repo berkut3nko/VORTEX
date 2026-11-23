@@ -111,6 +111,10 @@ export namespace vortex::sim {
         }
         friend bool operator==(const PlayArea&, const PlayArea&) = default;
     };
+    /// @brief Metres from `feet` (x, z) to the nearest edge of `area`: the smallest of the four
+    /// distances, negative outside the area, +infinity for an unbounded area (offline). Presentation
+    /// only (the HUD hint of [wp-5]): never an input of StepPlayer.
+    float DistanceToPlayAreaEdge(const PlayArea& area, const glm::vec2& feet);
     /**
      * @brief Puts the walls of `area` into `physics` (PhysicsWorld::SetCharacterWalls at the area
      * grown by the capsule's radius: the play bounds), or removes them for an unbounded area. A

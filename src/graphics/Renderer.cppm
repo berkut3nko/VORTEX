@@ -34,6 +34,7 @@ export namespace vortex::graphics {
         /// Fade surfaces to the sky colour over the last 15 % of the world's horizontal view
         /// radius (voxel::World::ViewRadius), so the edge of the loaded window is never a cut.
         bool edgeFog = true;
+        bool playBounds = true;              ///< Draw the session's play bounds (the curtain, composite pass; [wp-5]).
         bool spatialFilter = true;
         bool checkerboardLighting = true;    ///< Trace lighting rays for half of the pixels each frame.
         float ambientDistance = 6.0f;        ///< Length of ambient occlusion rays in metres.

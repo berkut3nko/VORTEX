@@ -80,6 +80,9 @@ namespace vortex {
                 int v = 0;
                 ok = ParseWhole(value, v) && v >= 50 && v <= 110;
                 if (ok) s.fovDegrees = v;
+            } else if (key == "play_bounds") {
+                ok = value == "on" || value == "off";
+                if (ok) s.playBounds = value == "on";
             }
             // Any other key is skipped: a newer game's file stays readable.
             if (!ok) {
@@ -92,8 +95,9 @@ namespace vortex {
     }
 
     std::string FormatGameSettings(const GameSettings& settings) {
-        return std::format("# Shredborne settings (key = value)\nrender_scale = {:.2f}\nvsync = {}\nsensitivity = {:.2f}\nfov = {}\n",
-                           settings.renderScale, settings.vsync ? "on" : "off", settings.sensitivity, settings.fovDegrees);
+        return std::format("# Shredborne settings (key = value)\nrender_scale = {:.2f}\nvsync = {}\nsensitivity = {:.2f}\nfov = {}\nplay_bounds = {}\n",
+                           settings.renderScale, settings.vsync ? "on" : "off", settings.sensitivity, settings.fovDegrees,
+                           settings.playBounds ? "on" : "off");
     }
 
     std::filesystem::path DefaultSettingsPath() {
@@ -164,6 +168,7 @@ namespace vortex {
         m_Menu.AddItem(std::format("VSync          {}", m_Settings.vsync ? "on" : "off"), kVsync);
         m_Menu.AddItem(std::format("Mouse speed    {:.2f}", m_Settings.sensitivity), kSensitivity);
         m_Menu.AddItem(std::format("Field of view  {}", m_Settings.fovDegrees), kFov);
+        m_Menu.AddItem(std::format("Play bounds    {}", m_Settings.playBounds ? "on" : "off"), kPlayBounds);
         m_Menu.AddItem("Back", kBack);
         m_Menu.SetFocus(focus);
     }
@@ -182,6 +187,7 @@ namespace vortex {
         switch (event.id) {
             case kRenderScale: m_Settings.renderScale = NextPreset({0.5f, 0.6f, 0.75f}, m_Settings.renderScale); break;
             case kVsync: m_Settings.vsync = !m_Settings.vsync; break;
+            case kPlayBounds: m_Settings.playBounds = !m_Settings.playBounds; break;
             case kSensitivity: m_Settings.sensitivity = NextPreset({0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f}, m_Settings.sensitivity); break;
             case kFov: {
                 int next = 60;

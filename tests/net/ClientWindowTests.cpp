@@ -31,16 +31,17 @@ using namespace vortex;
 // --- the window ------------------------------------------------------------------------------------
 
 TEST(ClientWindow, ARegionThatFitsKeepsTheFixedWindow) {
-    // The pure functions: a region that fits keeps its window; a wide one gets the client's, which
+    // The pure functions: a region whose window is exactly the client's keeps its window; any other gets the client's, which
     // World places where ClientWindowMinChunk says.
     const sim::RegionDesc small = SmallRegion(), wide = WideRegion();
     EXPECT_FALSE(sim::ClientWindowMoves(small, 0));
-    EXPECT_FALSE(sim::ClientWindowMoves(small, 48));
+    EXPECT_TRUE(sim::ClientWindowMoves(small, 48));
+    EXPECT_FALSE(sim::ClientWindowMoves(small, 13));
     EXPECT_FALSE(sim::ClientWindowMoves(wide, 0));
     EXPECT_FALSE(sim::ClientWindowMoves(wide, 46));
     EXPECT_TRUE(sim::ClientWindowMoves(wide, 45));
-    EXPECT_EQ(sim::ClientWorldConfig(small, 48).windowSize, sim::RegionWorldConfig(small).windowSize);
-    EXPECT_EQ(sim::ClientChunkCapacity(small, 48), sim::RegionChunkCapacity(small));
+    EXPECT_EQ(sim::ClientWorldConfig(small, 13).windowSize, sim::RegionWorldConfig(small).windowSize);
+    EXPECT_EQ(sim::ClientChunkCapacity(small, 13), sim::RegionChunkCapacity(small));
     EXPECT_EQ(sim::ClientWorldConfig(wide, kWindow).windowSize, glm::ivec3(kWindow, 1, kWindow));
     EXPECT_TRUE(sim::ClientWorldConfig(wide, kWindow).reportLoads);
     EXPECT_FALSE(sim::ClientWorldConfig(wide, kWindow).keepUnloadedEdits);
@@ -60,7 +61,7 @@ TEST(ClientWindow, ARegionThatFitsKeepsTheFixedWindow) {
     Field f(Settings(small), Lossy());
     ASSERT_TRUE(f.started);
     net::ClientSettings cs;
-    cs.windowChunks = 48;
+    cs.windowChunks = 13;
     Field::Bot& bot = f.AddBot(Walk(small, {{8.0f, 8.0f}, {-8.0f, 6.0f}}), cs);
     ASSERT_TRUE(f.Join());
     EXPECT_FALSE(bot.client->WindowMoves());
@@ -72,6 +73,49 @@ TEST(ClientWindow, ARegionThatFitsKeepsTheFixedWindow) {
     ASSERT_TRUE(f.Drain());
     EXPECT_EQ(bot.client->Stats().windowUpdates, 1u);
     EXPECT_EQ(f.server.Stats().windowUpdates, 1u);
+    f.ExpectSameWorld(bot);
+}
+
+TEST(ClientWindow, ASmallRegionsClientWindowMovesAndSees88m) {
+    // [wp-5]: a region whose window is smaller than the client's (the playground: 24 x 24 chunks of
+    // play, a 30-chunk window) gets the client's moving window, which reaches beyond the server's.
+    sim::RegionDesc pg = WideRegion();
+    pg.playMinChunk = {-12, -12};
+    pg.playMaxChunk = {12, 12};
+    EXPECT_TRUE(sim::ClientWindowMoves(pg, 48));
+    EXPECT_FALSE(sim::ClientWindowMoves(pg, 30));
+    EXPECT_EQ(sim::ClientWorldConfig(pg, 48).windowSize, glm::ivec3(48, 1, 48));
+    EXPECT_EQ(sim::ClientWorldConfig(pg, 48).recenterSlackChunks, sim::kClientWindowSlackChunks);
+    {
+        voxel::ChunkStore store(2048);
+        JobSystem jobs(1);
+        voxel::World moving(sim::ClientWorldConfig(pg, 48), store, jobs, sim::MakeRegionGenerator(pg, DefaultIds()));
+        EXPECT_DOUBLE_EQ(moving.ViewRadius(), 88.0);   // (24 - 1 - 1) x 4 m
+    }
+    {
+        voxel::ChunkStore store(2048);
+        JobSystem jobs(1);
+        voxel::World fixed(sim::RegionWorldConfig(pg), store, jobs, sim::MakeRegionGenerator(pg, DefaultIds()));
+        EXPECT_DOUBLE_EQ(fixed.ViewRadius(), 56.0);    // (15 - 1 - 0) x 4 m
+    }
+
+    // A session: a 20-chunk client window over the 13-chunk region window follows the player and
+    // holds the server's whole window wherever the player stands inside the play bounds.
+    const sim::RegionDesc small = SmallRegion();
+    Field f(Settings(small), Lossy());
+    ASSERT_TRUE(f.started);
+    net::ClientSettings cs;
+    cs.windowChunks = 20;
+    Field::Bot& bot = f.AddBot(Walk(small, {{8.0f, 8.0f}, {-8.0f, 6.0f}}), cs);
+    ASSERT_TRUE(f.Join());
+    EXPECT_TRUE(bot.client->WindowMoves());
+    EXPECT_EQ(bot.simulation->World().WindowSize(), sim::ClientWindowSize(small, 20));
+    EXPECT_EQ(bot.client->SyncWindow(), net::RegionSyncBox(small));
+    f.Crater(2.0, 2.0);
+    f.Passes(400);
+    ASSERT_TRUE(f.Drain());
+    EXPECT_GE(bot.client->Stats().windowUpdates, 2u);
+    EXPECT_LT(bot.simulation->World().WindowMinChunk().x, net::RegionSyncBox(small).min.x);
     f.ExpectSameWorld(bot);
 }
 

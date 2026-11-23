@@ -229,9 +229,11 @@ measurements").
 - Full store: a failed install or an operation that finds no slot marks the chunk Unsynced: logged, counted, left out
   of checks, not requested again until a slot is free (each once; the free-slot count leaves room for content still
   to come). Client capacity is the game's GPU store (12 288 slots; `--client-window` runs keep 2048 free).
-- Moving window: on a region wider than the client's window (`sim::ClientWindowMoves`; the game's is 48 chunks) the
-  window follows the player with one chunk of slack (`sim::kClientWindowSlackChunks`), and `World::ViewRadius` leaves
-  the slack out. On smaller regions the window is the region's (fixed).
+- Moving window: on a region whose window is not exactly the client's (`sim::ClientWindowMoves`; the game's is 48
+  chunks) the window follows the player with one chunk of slack (`sim::kClientWindowSlackChunks`), and
+  `World::ViewRadius` leaves the slack out; on a smaller region it reaches beyond the server's window, whose columns the
+  client generates (pristine for good) ([wp-5]: the playground sees 88 m). `windowChunks` 0 keeps the region's fixed
+  window.
 - Join: the modified chunks of the window and the entity baseline arrive on paced bulk; the player starts once the
   chunks within 32 m are current and the baseline's entities within 32 m of the spawn are in (`BaselineNear`);
   `Client::Synced()` needs every chunk current and `BaselineEnd`. Bulk installs are bounded per `Poll`
@@ -307,7 +309,9 @@ stops generating the server's terrain:
   along it and falls down a crater wall that crosses it, as against any wall. What float rounding leaves past the edge
   is taken back along that axis with the outward velocity zeroed (`pushedBack`); a move is never undone. Its reach
   (`PlayerReach`) stays more than a chunk inside the server's window at 0.1-0.15 m, so the gate never meets a chunk
-  outside it. Offline `sim::PlayArea{}` is unbounded. Any change to what `StepPlayer` returns for the same inputs
+  outside it. Offline `sim::PlayArea{}` is unbounded. The client draws the play bounds (`sim::PlayBoundsOf`,
+  `Engine::SetPlayBounds`, a grid curtain in the composite pass, `shaders/shared/bounds.glsl`) and shows `EDGE OF THE
+  FIELD` within 3 m of the feet area's edge (`sim::DistanceToPlayAreaEdge`, presentation only) ([wp-5]). Any change to what `StepPlayer` returns for the same inputs
   bumps `sim::kPlayerRuleRevision`, which is in `buildHash`: builds that would move a player differently refuse each
   other ("another build") instead of correcting each other. The play area added no wire byte (`kProtocolVersion`
   unchanged); it is player rule revision 1, so a server of revision 0 and a client of revision 1 refuse each other.

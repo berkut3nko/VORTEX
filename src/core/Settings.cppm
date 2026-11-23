@@ -19,13 +19,14 @@ export namespace vortex {
         bool vsync = true;          ///< true: PresentPreference::FifoRelaxed, false: Immediate
         float sensitivity = 1.0f;   ///< Multiplier of the game's look sensitivity; file 0.25..4.0
         int fovDegrees = 60;        ///< Vertical field of view; file 50..110
+        bool playBounds = true;     ///< RenderSettings::playBounds: draw a session's play bounds ([wp-5])
         friend bool operator==(const GameSettings&, const GameSettings&) = default;
     };
 
     /// @brief Parses `text`. On success writes `out` and returns true; on the first bad line returns false,
     /// leaves `out` unchanged and, if `error` is given, writes "line N: ...".
     bool ParseGameSettings(std::string_view text, GameSettings& out, std::string* error);
-    /// @brief The file text: a comment line, then render_scale, vsync, sensitivity, fov.
+    /// @brief The file text: a comment line, then render_scale, vsync, sensitivity, fov, play_bounds.
     std::string FormatGameSettings(const GameSettings& settings);
     /// @brief The default file path: `%APPDATA%/Shredborne/settings.txt` on Windows, else
     /// `$XDG_CONFIG_HOME/shredborne/settings.txt` or `$HOME/.config/shredborne/settings.txt`; empty when no home
@@ -39,7 +40,7 @@ export namespace vortex {
     /// @brief The HUD settings page shown from the pause menu: one item per setting, Enter / click cycles it.
     class SettingsPage {
     public:
-        enum Item : int { kRenderScale = 1, kVsync = 2, kSensitivity = 3, kFov = 4, kBack = 5 };
+        enum Item : int { kRenderScale = 1, kVsync = 2, kSensitivity = 3, kFov = 4, kBack = 5, kPlayBounds = 6 };
         struct Result {
             bool changed = false;   ///< A setting changed this frame (apply and save it).
             bool closed = false;    ///< Back or Escape: show the pause menu again.

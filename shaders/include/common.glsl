@@ -55,6 +55,7 @@ layout(set = 0, binding = 0, std140) uniform FrameUniforms {
     ivec4 gridMinChunk;          // xyz = absolute chunk coordinate of the window minimum
     ivec4 counts;                // x = instance count, y = BVH node count, z = light count, w = frame index
     ivec4 settings;              // x = feature flags (VX_FEATURE_*), y = debug view (VX_DEBUG_*), z = front-face draw count, w = HUD backdrop dim (0..255, present pass)
+    vec4 playBounds;             // xy = min x / z, zw = max x / z of the session's play bounds (render space, m); zw <= xy: none (offline)
 } u_Frame;
 
 const int VX_FEATURE_SUN_SHADOWS      = 1;

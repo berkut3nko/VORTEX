@@ -109,6 +109,14 @@ namespace vortex::sim {
         return area;
     }
 
+    PlayArea PlayBoundsOf(const RegionDesc& region) {
+        const double chunkMetres = static_cast<double>(voxel::kChunkSize) * static_cast<double>(region.terrain.voxelSize);
+        PlayArea b;
+        b.min = glm::vec2(static_cast<float>(region.playMinChunk.x * chunkMetres), static_cast<float>(region.playMinChunk.y * chunkMetres));
+        b.max = glm::vec2(static_cast<float>(region.playMaxChunk.x * chunkMetres), static_cast<float>(region.playMaxChunk.y * chunkMetres));
+        return b;
+    }
+
     glm::ivec3 RegionWindowSize(const RegionDesc& region) {
         const glm::ivec2 s = region.playMaxChunk - region.playMinChunk + glm::ivec2(2 * kServerWindowMarginChunks);
         return glm::ivec3(s.x, 1, s.y);
@@ -172,7 +180,7 @@ namespace vortex::sim {
     bool ClientWindowMoves(const RegionDesc& region, int32_t windowChunks) {
         if (windowChunks <= 0) return false;
         const glm::ivec3 size = RegionWindowSize(region);
-        return size.x > windowChunks || size.z > windowChunks;
+        return size.x != windowChunks || size.z != windowChunks;
     }
 
     glm::ivec3 ClientWindowSize(const RegionDesc& region, int32_t windowChunks) {

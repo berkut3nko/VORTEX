@@ -80,6 +80,10 @@ export namespace vortex::sim {
      * chunk outside the window.
      */
     PlayArea PlayAreaOf(const RegionDesc& region, const PlayerTuning& tuning);
+    /// @brief The play bounds of `region` in world metres, x and z: playMinChunk / playMaxChunk x chunk
+    /// metres (32 x the voxel size), computed in doubles then rounded to floats as PlayAreaOf does. What
+    /// the client draws ([wp-5]); PlayAreaOf (the feet area) is these less PlayerTuning::radius.
+    PlayArea PlayBoundsOf(const RegionDesc& region);
     /// @brief The chunk rows [x, y) of the region's full-height window (World's rounding).
     glm::ivec2 RegionRows(const RegionDesc& region);
     glm::ivec3 RegionWindowSize(const RegionDesc& region);
@@ -112,15 +116,17 @@ export namespace vortex::sim {
     // --- a session client's window (docs/design/networking.md "Stage 7a plan", "The moving client
     // window (M-b)") ------------------------------------------------------------------------------
 
-    /// @brief True when a client whose window may be `windowChunks` wide (x and z) cannot hold the
-    /// region's whole window: its window then follows its player. False for `windowChunks` 0 (the
-    /// region's window, fixed) and for every region that fits.
+    /// @brief True when a client whose window is `windowChunks` wide (x and z) is not exactly the
+    /// region's window: its window then follows its player, and on a region smaller than it reaches
+    /// beyond the server's window (those columns are pristine for good). False for `windowChunks` 0
+    /// (the region's window, fixed) and for a region whose window is exactly windowChunks x windowChunks.
     bool ClientWindowMoves(const RegionDesc& region, int32_t windowChunks);
     /// @brief The follow hysteresis of a moving client window (WorldConfig::recenterSlackChunks).
     inline constexpr int32_t kClientWindowSlackChunks = 1;
     /**
-     * @brief A session client's world: RegionWorldConfig when the region fits in `windowChunks`
-     * (ClientWindowMoves false), else a `windowChunks` x the region's rows x `windowChunks` window
+     * @brief A session client's world: RegionWorldConfig when the region's window is exactly
+     * `windowChunks` wide or `windowChunks` is 0 (ClientWindowMoves false), else a `windowChunks` x
+     * the region's rows x `windowChunks` window
      * that follows the player and is never clamped to the region (columns beyond the server's window
      * are pristine for good), with `recenterSlackChunks` = kClientWindowSlackChunks (it moves once
      * the player is more than that from its centre chunk: review of stage 7a). Always `reportLoads`

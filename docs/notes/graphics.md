@@ -28,7 +28,7 @@ the symbol. The text before this rewrite, with its line numbers and measurements
 | `shaders/hud.vert`, `shaders/hud.frag` | game HUD: instanced quads from `u_Hud` (binding 10), 5 x 9 cell bits, premultiplied, after tone mapping |
 | `shaders/include/common.glsl` | `FrameUniforms` block, buffer binding table 0..10 (textures from 16), G-buffer packing, camera helpers, the `VX_GRID_*` accessors |
 | `shaders/include/gbuffer_object.glsl` | shared body of the two object fragment shaders (`VX_OBJECT_FRONT` switch) |
-| `shaders/shared/*.glsl`, `vx_cpp.h` | code compiled as GLSL and C++ (`trace`, `shading`, `cube`) |
+| `shaders/shared/*.glsl`, `vx_cpp.h` | code compiled as GLSL and C++ (`trace`, `shading`, `cube`, `bounds`: the play-bounds curtain of [wp-5], tested as `PlayBounds.*`) |
 | `shaders/*.vert, *.frag` | 13 entry points, 9 pipelines (`PipelineId`, `MakePipelineDescs` in `R.cpp`): gbuffer world / object front / object inside, lighting, composite, particles, taa, present, hud |
 | `cmake/VortexShaders.cmake` | glslang build step, `vortex_deploy_assets` |
 | `tests/graphics/ContractTests.cpp` | shader <-> C++ contract (bindings, layouts, outputs, proxy cube, reverse-Z) |
@@ -147,6 +147,13 @@ Spaces, units, ranges
   with R = `World::ViewRadius()`), read by `composite.frag`, which mixes surfaces towards `SkyColor(rd)` (the sky +
   atmospheric fog a sky pixel gets) by horizontal distance only; sky pixels are unchanged [vd-1]. The previous
   frame's jitter it used to hold was never read.
+- `playBounds` (the last member, [wp-5]): a session's play bounds in render space (min x, min z, max x, max z), zero
+  when there are none (offline, or `RenderSettings::playBounds` off), recomputed every frame from
+  `FrameInput::playBounds` (world metres, `Engine::SetPlayBounds`) because a moving window moves the render origin.
+  `composite.frag` draws the curtain (`shared/bounds.glsl`, `VxPlayBoundsCurtain`) after the edge fog, and over the sky
+  at `VX_SKY_DISTANCE`; never in the debug views. With the camera inside the bounds (a session, always) it tests only
+  the wall the ray leaves through (the same branch for every pixel): four wall tests per pixel cost +0.17 ms on the
+  UHD 620 at a wall 10 m ahead, the one-wall path +0.09-0.12 ms (budget 0.15 ms, L6).
 - Spare fields, written but read by no shader: `settings.z` (front count). `outputSize` is read by `hud.vert`
   (pixels -> NDC) and `settings.w` by `present.frag` (HUD backdrop dim, 0..255). `FrameInput::deltaTime` is not read
   by the renderer. Reuse spare fields before adding new ones.
@@ -242,8 +249,8 @@ A. Add a field to `FrameUniforms`
 1. Prefer a spare component (see traps). Otherwise append a vec4 / ivec4 at the same position in `Frame.cppm`
    (`FrameUniforms`) and `common.glsl` (the `FrameUniforms` block), and fix the `static_assert` size.
 2. Fill it in `BuildFrameData`.
-3. `tests/graphics/ContractTests.cpp` `LayoutContract.FrameUniformsMatchTheGlslBlock`: member count (24), one
-   `VX_EXPECT_FRAME_MEMBER` line, and the "last member is `settings`" check if you append after it.
+3. `tests/graphics/ContractTests.cpp` `LayoutContract.FrameUniformsMatchTheGlslBlock`: member count (25), one
+   `VX_EXPECT_FRAME_MEMBER` line, and the "last member is `playBounds`" check if you append after it.
 4. Update the table comment in `common.glsl` and ARCHITECTURE 5 if the meaning is a contract.
 
 B. Add a feature toggle

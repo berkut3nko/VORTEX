@@ -14,6 +14,19 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
 
 ## Now
 
+- **[wp-5] Visible play boundary + moving window on small regions: built, not reviewed** (2026-11-23). A session
+  client gets the game's moving 48-chunk window on every region whose window is not exactly 48 chunks
+  (`sim::ClientWindowMoves`), so the playground shows terrain to 88 m instead of 56 m (the columns beyond the server's
+  window are the client's own, pristine for good). The play bounds are visible: a faint cyan grid curtain drawn in the
+  composite pass where the view ray crosses a bound in front of the scene (`shaders/shared/bounds.glsl`, compiled as
+  GLSL and C++, `FrameUniforms::playBounds`, `Engine::SetPlayBounds`, `sim::PlayBoundsOf`), full up to 6 m, gone at
+  24 m and 9 m above / below the eye; `EDGE OF THE FIELD` in amber within 3 m of the feet area's edge
+  (`sim::DistanceToPlayAreaEdge`); Esc, Settings, Play bounds on / off (`play_bounds` in the settings file);
+  offline `--play-bounds minX,minZ,maxX,maxZ` for screenshots. No wire, movement-rule or `buildHash` change.
+  [design/networking.md](design/networking.md) "Chunk sync" and "Player movement"; [design/game-ui.md](design/game-ui.md)
+  "Settings". Not run: `verify.sh full --ci` and the soak (the batch runs them at its end).
+- **Owner: [wp-5]'s look** (owner check 15, [owner checks](../../docs/owner-checks.md)): the curtain from 1, 5 and
+  20 m (steady, no shimmer or ghost trail), the hint at the edge, the settings toggle, the playground's 88 m.
 - **[wp-4] Frame-rate block A + settings: built, not committed or reviewed** (2026-11-23). The far view's GPU frame
   is 2.6 ms shorter with the same picture (gbuffer 12.18 -> 10.62 ms, lighting 6.63 -> 5.72: G1 ends primary rays at
   the edge-fog radius, G2 takes the grid's modulo once per ray), the windowed game presents FIFO_RELAXED with 3 images
@@ -115,34 +128,32 @@ close the output-folder lock (fd 6), `tools/build.sh` checks `DEPS_FROM` pins un
 
 In this order:
 
-1. **[wp-5] Visible play boundary + moving window on small regions.** You see where the play area ends; the
-   playground shows 88 m instead of 56 m. 1-2 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP5".
-2. **[wp-6] Rules seam + net split.** No player change yet: spells and modes then come without growing `net::Server`.
+1. **[wp-6] Rules seam + net split.** No player change yet: spells and modes then come without growing `net::Server`.
    A GPU-free `sim` rules seam, then `Server.cpp` / `Client.cpp` split; no behaviour or wire change. 6-9 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP6".
-3. **[wp-7] M2a "first fight".** The sandbox becomes a PvP game: hurt, die, respawn, win a round (M2 below). The only
+2. **[wp-7] M2a "first fight".** The sandbox becomes a PvP game: hurt, die, respawn, win a round (M2 below). The only
    protocol bump in WP4-WP8. 8-12 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP7".
-4. **[wp-8] Fight measurement + fx-budget 1-2 + 10 clients.** Fights stay playable on the UHD 620: `--stress-fx`, a
+3. **[wp-8] Fight measurement + fx-budget 1-2 + 10 clients.** Fights stay playable on the UHD 620: `--stress-fx`, a
    10-bot session at 10 casts/s with measured clients, then [design/fx-budget.md](design/fx-budget.md) stages 1-2.
    5-8 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP8".
-5. **[mech-1] Door and gate.** E opens doors, a lever runs a gate, crates move to Q.
+4. **[mech-1] Door and gate.** E opens doors, a lever runs a gate, crates move to Q.
    [design/mechanisms.md](design/mechanisms.md), "Stages" row 1. Its own protocol bump, after M2a's; after WP8 so its
    yard is measured inside a known fight budget. 9-10 d (e).
-6. **[mag-1] Siege core in sim, headless only.** The spell system's first four spells, Siege Cannon, Barricade Wave,
+5. **[mag-1] Siege core in sim, headless only.** The spell system's first four spells, Siege Cannon, Barricade Wave,
    Shockwave and Updraft (breach, cover, knock off, climb), with only what they use: the Pierce operator, the Burst
    strip, Plume's single column, `CarveCapsule` / `MapMask` / `MapShape` as sim ops, knit iron that blasts chip, with
    server-scheduled expiries, the spawn guard, Impulse and Lift zones in `sim::StepPlayer` (`kPlayerRuleRevision` 2);
    no wire change. [design/magic.md](design/magic.md), "Stages". 6-9 d (e).
-7. **[mag-2] First playable spells.** The same four spells in offline practice and in sessions: the one magic
+6. **[mag-2] First playable spells.** The same four spells in offline practice and in sessions: the one magic
     protocol bump (it reserves every value the later magic stages need), zone events with a 0.4 s lead, the spell bar
     and the attune menu on the HUD; the owner's Felling-duel taste check. [design/magic.md](design/magic.md), "Stages".
     6-9 d (e).
-8. **[si-2] Impacts with crush damage** (with the `NeckCheck` split and a chunk-source interface first). A falling
+7. **[si-2] Impacts with crush damage** (with the `NeckCheck` split and a chunk-source interface first). A falling
     tower cracks walls and kills. [design/shred.md](design/shred.md), "SI-2 - impacts (inertial contact)". 7-11 d (e).
-9. **[fog-1] Fog stage 1.** Haze toward the sun, low mist and blast dust puffs, without losing frame rate.
+8. **[fog-1] Fog stage 1.** Haze toward the sun, low mist and blast dust puffs, without losing frame rate.
     [design/fog.md](design/fog.md), "Stages" 1. About 4 d (e).
-10. **[spread-S1] Fire offline.** A burning house that falls, offline only, no wire change (its smoke feeds fog later).
+9. **[spread-S1] Fire offline.** A burning house that falls, offline only, no wire change (its smoke feeds fog later).
     [design/spread.md](design/spread.md), "Stages" S1. Large (e).
-11. **[wg-W1] Stamped village.** The first real map, with towers worth felling. Soak tier (nightly) first.
+10. **[wg-W1] Stamped village.** The first real map, with towers worth felling. Soak tier (nightly) first.
     [design/worldgen.md](design/worldgen.md), "W1: a stamped village, offline". About 1.5 weeks (e).
 
 Placement of [mech-1] and [spread-S1] was decided by us under the owner's rules; the owner may veto it. Mechanisms
@@ -219,13 +230,12 @@ Engine backlog (no order):
 ## Not a game yet
 
 No health, damage, death, respawn, teams, rounds or score (M2a); no audio; settings are only render scale, vsync, mouse
-speed and FOV (no key rebinding); no character animation (one static figure model); no visible play boundary (an invisible wall at the play bounds
-stands until [wp-5]); a playground session sees 56 m. A 5v5 has never run (the most so far: 4 bots and a game client in the soak); the GTX 1650 has
+speed, FOV and the play-bounds curtain (no key rebinding); no character animation (one static figure model). A 5v5 has never run (the most so far: 4 bots and a game client in the soak); the GTX 1650 has
 never been measured.
 
 ## State
 
-Tests: **787** in ctest: 779 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
+Tests: **792** in ctest: 784 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
 game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts), `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
 `Tools.DocCheck`, `Tools.DocCheckSelftest`, `Tools.SessionCheckVerdict` and `Tools.VerifyAssertions` (WP2's checks
 and their self-tests), `Tools.RendezvousWorker` (the rendezvous Worker under `node --test`, registered when `node` is
@@ -235,7 +245,7 @@ found), none needing a GPU (the ENet and relay ones use UDP on 127.0.0.1). The o
 |---|---|---|
 | Build | Pinned dependencies, Vulkan headers fetched, shaders compiled to SPIR-V at build time; presets dev / debug / release / ci (-Werror on engine and game); `tools/build.sh` under build locks; `VORTEX_GRAPHICS=OFF` builds the GPU-free part without a Vulkan loader; BuildInfo (`Build:` line, `--version`); start-up CPU check (exit 4); live server from `tools/install-live.sh`'s copy. | Only Clang tested; no CI; the Windows CPU-check path unverified. |
 | Core | Logging, job system, profiler, input state, RNG, command line. | |
-| Game UI | Play mode locks the mouse (pointer lock on Wayland, grab on X11) and looks without a button; Esc pause menu. HUD without ImGui (`vortex.core:hud`, one instanced draw after tone mapping, 5 x 9 bitmap font): crosshair, mode, tool, frame rate, key hints, menu, session panel (`fps / cpu / gpu`). Settings page from the pause menu (`[wp-4]`, `vortex.core:settings`): render scale, vsync, mouse speed, field of view, kept in `~/.config/shredborne/settings.txt`. ImGui only for F3 and F1. | Windowed behaviour (the settings page with a real mouse included) confirmed only by the owner; no key rebinding, gamepad, TTF text, chat. |
+| Game UI | Play mode locks the mouse (pointer lock on Wayland, grab on X11) and looks without a button; Esc pause menu. HUD without ImGui (`vortex.core:hud`, one instanced draw after tone mapping, 5 x 9 bitmap font): crosshair, mode, tool, frame rate, key hints, menu, session panel (`fps / cpu / gpu`). Settings page from the pause menu (`[wp-4]`, `vortex.core:settings`): render scale, vsync, mouse speed, field of view, play bounds (`[wp-5]`), kept in `~/.config/shredborne/settings.txt`. ImGui only for F3 and F1. | Windowed behaviour (the settings page with a real mouse included) confirmed only by the owner; no key rebinding, gamepad, TTF text, chat. |
 | Voxel world | Streaming window of sparse 32^3 chunks; generation on workers; edits with material hardness; region files for the offline game and editor (record the voxel size, refuse another). Full-height window -48..128 m that follows x / z; column pass for sky and rock; buried chunks Packed (RLE, no slot); build ceiling at 128 m. | Chunks dense (37 KiB); no background saving. |
 | Terrain | Built-in generator (hills, mountains, beaches, sea, caves, trees), `IWorldGenerator` for custom ones; voxel size a world setting, 0.125 m default (`--voxel-size` previews 0.1-0.15 m offline); content and debris thresholds keep their metre size. | Biomes, structures, ore veins (worldgen.md). |
 | Ray queries | One traversal for GPU and CPU (`shaders/shared/trace.glsl`), world + objects through a BVH. | |
@@ -248,7 +258,7 @@ found), none needing a GPU (the ENet and relay ones use UDP on 127.0.0.1). The o
 | Renderer | Ray-marched G-buffer (primary rays end at the edge-fog radius), ray-traced sun shadows, AO, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping; headless screenshots; validation-clean on the UHD 620. Present mode FIFO_RELAXED / FIFO / IMMEDIATE by preference, 3 images; per-pass GPU timers with `upload`, the `Perf:` line. | perf.md stages 1-3 built: M0, P1, G1, G2; block B next (L1, H1); P1's windowed result is the owner's; reflections, bloom, shadowed particles. |
 | Editor | `vortex.editor` (F1): fly camera, selection with translate / rotate gizmo, inspector, terrain brush, primitives, `.vox` / glTF import, environment / render / profiler / world panels; tool logic unit tested. | Editor list under Later. |
 | Simulation | `sim::Simulation`: world, physics, terrain colliders and scene on a numbered fixed tick; `sim::WorldOp` / `ApplyOp`; `sim::Blast`; no renderer or window. | Gameplay rules live in `net::Server` ([wp-6]). |
-| Sessions (M1) | Networking stages 0-8 built, reviewed and committed ([design/networking.md](design/networking.md), "Stages"). `vortex.net` over ENet: server-authoritative terrain operations, predicted movement, replicated bodies with NetIds (2 new per tick, 64 awake, 256 live), joins by chunk sync, a moving client window on regions wider than 48 chunks, hash and entity checks with repair, server terrain mode; `vortex_server`, `vortex_bot`, `tools/soak.sh`, `tools/session-check.sh`. Owner LAN run 2026-11-17 (stage 7b's commits): "seamless". | M1 acceptance (owner's LAN run on stage 8 or a later pair); an invisible wall at the play bounds ([wp-5] shows it); 56 m on the playground ([wp-5]); 5v5 never run; the arena walker's 1.49 s quiet p99 unexplained; the arena walker's 150 s still stretch in G19 of 2026-11-22 unexplained (trees on its line were only a contributing weakness; the walk line now names the next one's surroundings, and the walker's verdict fails one over 20 s); pacer on a slow lossy link (M6); re-sent chunks for a walker (memory); bodies frozen awake count against the cap; Windows build not reproducible. |
+| Sessions (M1) | Networking stages 0-8 built, reviewed and committed ([design/networking.md](design/networking.md), "Stages"). `vortex.net` over ENet: server-authoritative terrain operations, predicted movement, replicated bodies with NetIds (2 new per tick, 64 awake, 256 live), joins by chunk sync, a moving 48-chunk client window on every region whose window is not exactly 48 chunks (the playground sees 88 m, [wp-5]), the play bounds drawn as a curtain with an edge hint ([wp-5]), hash and entity checks with repair, server terrain mode; `vortex_server`, `vortex_bot`, `tools/soak.sh`, `tools/session-check.sh`. Owner LAN run 2026-11-17 (stage 7b's commits): "seamless". | M1 acceptance (owner's LAN run on stage 8 or a later pair); the play-bounds curtain's look confirmed only by the owner (owner check 15); 5v5 never run; the arena walker's 1.49 s quiet p99 unexplained; the arena walker's 150 s still stretch in G19 of 2026-11-22 unexplained (trees on its line were only a contributing weakness; the walk line now names the next one's surroundings, and the walker's verdict fails one over 20 s); pacer on a slow lossy link (M6); re-sent chunks for a walker (memory); bodies frozen awake count against the cap; Windows build not reproducible. |
 
 ## Performance and measured values
 
@@ -258,6 +268,8 @@ before `[wp-4]` (2026-11-23: G1 + G2 took 2.6 ms off the far view, 0.4 ms off th
 
 | Date | Measure | Value | Source |
 |---|---|---|---|
+| 2026-11-23 | GPU composite, the play-bounds curtain 10 m ahead (`--camera 0,14,0,0,-0.15`, without / with `--play-bounds -48,-10,48,48`) | first version (four wall tests per pixel): 1.06 / 1.23 and 1.08 / 1.25 ms (+0.17, over the 0.15 ms budget); with the inside-camera path (the ray leaves through one wall): 1.05 / 1.17 and 1.07 / 1.16 ms, **+0.09 to +0.12 ms** (m, headless, 700 frames, medians of the last 120, two runs each, on AC). Off (offline, or far camera without bounds): far-view composite 0.94 ms against G21's baseline 0.96 | [wp-5] card 3 |
+| 2026-11-23 | Playground session view radius | 88.0 m (48 x 44 x 48 moving window; 56 m with the region's 30-chunk window before [wp-5]); store 5140 / 12 288 slots at the join (m, G16, both clients); G16 corrections 1 and 0, max error 0.102 m | [wp-5] card 1 |
 | 2026-11-23 | GPU, far (`--camera=-1,61,65,-0.241,-0.55`), before / after `[wp-4]` G1 + G2 | gbuffer 12.18 -> 10.62, lighting 6.63 -> 5.72, composite 1.00 -> 0.87, TAA 0.52-0.53, present 0.42, upload 0.00 ms: GPU sum 20.8 -> 18.2 ms (m, headless, 1200 frames, medians of the last 120 after the window filled at frame 272-283, two runs each, GPU at 1150 MHz) | [wp-4]: [design/perf.md](design/perf.md) "Stages" |
 | 2026-11-23 | GPU, near (`--camera probe`), before / after G1 + G2 | gbuffer 6.22 -> 5.96, lighting 8.86 -> 8.64, composite 1.58-1.60 -> 1.53-1.59 ms (m, same runs) | same |
 | 2026-11-23 | CPU frame (`Perf:` line, whole run, headless) | far p50 20.83 -> 18.19-18.25 ms, p99 22.91-23.12 -> 20.4-26.2; near p50 17.71 -> 17.24, p99 19.0-20.0; 1-17 frames over 25 ms and 1 over 33 ms per 1200-frame run (start-up and the window filling) (m). Headless the frame is GPU bound (fence wait p50 about 18 ms in 20) | same |

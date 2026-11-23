@@ -1167,6 +1167,15 @@ namespace vortex::graphics {
                                          historyValid ? 1.0f : 0.0f, static_cast<float>(std::fmod(input.time, 3600.0)));
             u.gridSize = world != nullptr ? glm::ivec4(world->WindowSize(), 0) : glm::ivec4(0);
             u.gridMinChunk = world != nullptr ? glm::ivec4(world->WindowMinChunk(), 0) : glm::ivec4(0);
+            // [wp-5]: the session's play bounds in render space (x / z); zero = none. Recomputed every
+            // frame: a moving window moves the render origin by whole chunks.
+            u.playBounds = glm::vec4(0.0f);
+            const glm::dvec4 pb = input.playBounds;
+            if (settings.playBounds && std::isfinite(pb.x) && std::isfinite(pb.y) && std::isfinite(pb.z) && std::isfinite(pb.w) &&
+                pb.z > pb.x && pb.w > pb.y) {
+                u.playBounds = glm::vec4(static_cast<float>(pb.x - origin.x), static_cast<float>(pb.y - origin.z),
+                                         static_cast<float>(pb.z - origin.x), static_cast<float>(pb.w - origin.z));
+            }
 
             // --- instances -----------------------------------------------------------------------
             const uint32_t paletteCount = input.materials->PaletteCount();

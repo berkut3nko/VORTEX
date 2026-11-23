@@ -5,6 +5,7 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <numbers>
 #include <string>
 
@@ -15,6 +16,11 @@ import vortex.math;
 import vortex.physics;
 
 namespace vortex::sim {
+
+    float DistanceToPlayAreaEdge(const PlayArea& area, const glm::vec2& feet) {
+        if (!area.Bounded()) return std::numeric_limits<float>::infinity();
+        return std::min(std::min(feet.x - area.min.x, area.max.x - feet.x), std::min(feet.y - area.min.y, area.max.y - feet.y));
+    }
 
     namespace {
         constexpr double kTwoPi = 2.0 * std::numbers::pi;

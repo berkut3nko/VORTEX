@@ -6,7 +6,7 @@
 |---|---|
 | Status | Built. Sections marked **Deviation** say where the build differs from the first version of this design and why. Windowed behaviour (pointer lock on Wayland / X11, focus, menu clicks, the ImGui overlay with Alt) is confirmed only by the owner: headless runs cannot exercise it. The checks and their results are in the game's [docs/owner-checks.md](../../../docs/owner-checks.md). |
 | Decided | - Owner's request: "rework interface, make lock mouse at center on play mode (at least at wayland). Leave ImGui for debugging and map editor."<br>- Us (this design, built with networking stage 1, 2026-11-11): the game interface is a HUD drawn by the engine without ImGui; ImGui only for the F3 debug overlay and the editor ("Goals"). |
-| Next | None in this document. M2a's HUD (health, team, score, timer, kill feed) is WP7; `[wp-5]` adds its boundary toggle to the settings page (id 6, before Back). |
+| Next | None in this document. M2a's HUD (health, team, score, timer, kill feed) is WP7. `[wp-5]` (built 2026-11-23) added the Play bounds row to the settings page (id 6, before Back) and the session's edge hint ("Settings"). |
 | Open | none |
 | History | [before-rewrite-2026-11-18.md](../history/game-ui/before-rewrite-2026-11-18.md): the original header and the owner checks as they stood here (now in the game's `docs/owner-checks.md`) |
 | Marks | Measured = a headless run on the UHD 620 (1280x720 output, median of 120 frames), stated where it appears; the CPU cost of building the HUD is an estimate. |
@@ -180,26 +180,31 @@ Built in `[wp-4]` (2026-11-23). `vortex::GameSettings`, its file and the HUD `Se
 (`vortex.core:settings`, GPU-free, tested); the game loads, applies and saves them.
 
 - **The page.** Esc, Settings (the pause menu's middle item; a session's is Resume / Settings / Leave the session)
-  replaces the pause menu with a `Menu` titled `SETTINGS`: Render scale, VSync, Mouse speed, Field of view, Back
-  (item ids 1-5; a later item goes before Back, which stays last). Enter, Space or a click on an item changes it to
+  replaces the pause menu with a `Menu` titled `SETTINGS`: Render scale, VSync, Mouse speed, Field of view, Play
+  bounds ([wp-5]), Back (item ids 1-6, Play bounds 6; a later item goes before Back, which stays last). Enter, Space or a click on an item changes it to
   the next preset and wraps: render scale 0.5 -> 0.6 -> 0.75, vsync on / off, mouse speed 0.5, 0.75, 1.0, 1.25, 1.5,
-  2.0, field of view 60, 70, 80, 90, 100 degrees. The next preset is the first one above the current value (+ 0.001
+  2.0, field of view 60, 70, 80, 90, 100 degrees, play bounds on / off. The next preset is the first one above the current value (+ 0.001
   for floats), else the first: a value from the file that is no preset goes to the smallest. Escape or Back returns
   to the pause menu, still paused; Resume closes both. The Enter that opens the page is not also an input of the page
   (its input starts the next frame). It draws as the pause menu does (`Menu::Draw`, the backdrop dim in present).
 - **Applied at once** (`Engine::ApplySettings`, only the fields that changed): render scale (`RenderSettings::renderScale`, the targets are
   recreated), vsync (`RenderSettings::present`: on = `FifoRelaxed`, off = `Immediate`; the swapchain is recreated and
-  its `Swapchain:` line logged), field of view (`Camera::fovY`). Mouse speed multiplies the game's own look
+  its `Swapchain:` line logged), field of view (`Camera::fovY`), play bounds (`RenderSettings::playBounds`: a
+  session's curtain at its play bounds, [wp-5]). Mouse speed multiplies the game's own look
   sensitivity (0.0025 rad per unit of motion), offline and in a session.
 - **The file**, saved on every change: `$XDG_CONFIG_HOME/shredborne/settings.txt`, else
   `$HOME/.config/shredborne/settings.txt`; on Windows `%APPDATA%/Shredborne/settings.txt`; `--settings FILE`
   replaces the path. `key = value` lines: `render_scale` (0.25..1.0), `vsync` (`on` / `off`), `sensitivity`
-  (0.25..4.0), `fov` (integer, 50..110); `#` comments and blank lines are skipped, unknown keys are skipped (a newer
+  (0.25..4.0), `fov` (integer, 50..110), `play_bounds` (`on` / `off`, [wp-5]); `#` comments and blank lines are skipped, unknown keys are skipped (a newer
   file stays readable). A bad line makes the whole file count as absent (`Settings: PATH: line N: ...` warning) and
-  the defaults are used (0.6, on, 1.0, 60). **Headless runs never read or write it**: gates see the defaults.
+  the defaults are used (0.6, on, 1.0, 60, on). **Headless runs never read or write it**: gates see the defaults.
   Command-line flags win over it (`--scale`, `--no-vsync`, `--present`) until the player changes that same setting
   on the page: a change applies only the field that changed, so changing the field of view keeps `--no-vsync`. The
   page shows (and saves) the file's values, not a flag's.
+- **Edge hint** ([wp-5]): while a session's predicted feet are within 3 m (`kEdgeHintMetres` in `src/Session.cpp`) of
+  the feet area's edge (`sim::DistanceToPlayAreaEdge` against `sim::PlayAreaOf`, where the walls stop the player),
+  `EDGE OF THE FIELD` is drawn centred 40 px x text scale above the screen centre, amber (255, 214, 120), its alpha
+  rising from 120 to 255 as the edge comes nearer. Not while paused or joining.
 - **Session corner text**: the top right of a session shows `N fps   cpu X ms   gpu Y ms` (`Engine::LivePerformance`:
   the `CPU: frame` profiler average and the last GPU pass sum without upload). Offline keeps `N fps` (F3 has the rest).
 

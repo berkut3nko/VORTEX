@@ -485,3 +485,45 @@ TEST(Player, PlayAreaOfARegionKeepsTheReachInsideTheWindow) {
         }
     }
 }
+
+TEST(Player, PlayBoundsOfARegionAreItsChunkBounds) {
+    // [wp-5]: what the client draws is the play bounds themselves; the feet area is 0.3 m inside.
+    for (const float voxelSize : {0.1f, 0.125f, 0.15f}) {
+        sim::RegionDesc region;
+        region.templateId = sim::RegionTemplateId::Empty;
+        region.playMinChunk = {-4, -5};
+        region.playMaxChunk = {3, 2};
+        region.heightRange = {0.0f, 32.0f};
+        region.generator = sim::RegionGenerator::Flat;
+        region.flatGroundVoxels = 64;
+        region.terrain.voxelSize = voxelSize;
+        {
+            voxel::MaterialLibrary scratch;
+            region.terrain.materials = voxel::RegisterDefaultWorldMaterials(scratch);
+        }
+        ASSERT_TRUE(sim::IsValid(region));
+        const sim::PlayArea b = sim::PlayBoundsOf(region);
+        const float chunk = 32.0f * voxelSize;
+        EXPECT_TRUE(b.Bounded());
+        EXPECT_FLOAT_EQ(b.min.x, -4.0f * chunk);
+        EXPECT_FLOAT_EQ(b.min.y, -5.0f * chunk);
+        EXPECT_FLOAT_EQ(b.max.x, 3.0f * chunk);
+        EXPECT_FLOAT_EQ(b.max.y, 2.0f * chunk);
+        EXPECT_NEAR(sim::PlayAreaOf(region, sim::PlayerTuning{}).min.x, b.min.x + 0.3f, 1.0e-5f);
+        EXPECT_NEAR(sim::PlayAreaOf(region, sim::PlayerTuning{}).max.y, b.max.y - 0.3f, 1.0e-5f);
+    }
+}
+
+TEST(Player, DistanceToThePlayAreaEdge) {
+    // [wp-5]: the HUD hint's distance (presentation only).
+    sim::PlayArea a;
+    a.min = {-10.0f, -20.0f};
+    a.max = {10.0f, 20.0f};
+    EXPECT_FLOAT_EQ(sim::DistanceToPlayAreaEdge(a, {0.0f, 0.0f}), 10.0f);
+    EXPECT_FLOAT_EQ(sim::DistanceToPlayAreaEdge(a, {9.0f, 0.0f}), 1.0f);
+    EXPECT_FLOAT_EQ(sim::DistanceToPlayAreaEdge(a, {0.0f, 19.5f}), 0.5f);
+    EXPECT_FLOAT_EQ(sim::DistanceToPlayAreaEdge(a, {-9.75f, 19.0f}), 0.25f);
+    EXPECT_FLOAT_EQ(sim::DistanceToPlayAreaEdge(a, {11.0f, 0.0f}), -1.0f);
+    EXPECT_FLOAT_EQ(sim::DistanceToPlayAreaEdge(a, {0.0f, -25.0f}), -5.0f);
+    EXPECT_TRUE(std::isinf(sim::DistanceToPlayAreaEdge(sim::PlayArea{}, {0.0f, 0.0f})));
+}

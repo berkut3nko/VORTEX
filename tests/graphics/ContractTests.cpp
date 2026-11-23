@@ -50,6 +50,15 @@ namespace cube {
     };
 }
 
+namespace curtain {
+    using namespace glm;
+    using uint = unsigned int;
+    /// shaders/shared/bounds.glsl compiled as C++: the very text composite.frag runs ([wp-5]).
+    struct Curtain {
+#include "shared/bounds.glsl"
+    };
+}
+
 namespace {
 
     // ---------------------------------------------------------------------------------------------
@@ -457,7 +466,7 @@ TEST(LayoutContract, FrameUniformsMatchTheGlslBlock) {
         const BlockLayout& block = *blockPtr;
         SCOPED_TRACE(file);
 
-        EXPECT_EQ(block.members.size(), 24u);
+        EXPECT_EQ(block.members.size(), 25u);
         EXPECT_EQ(block.arrayStride, 0u);
 #define VX_EXPECT_FRAME_MEMBER(member) ExpectMember(block, #member, offsetof(FrameUniforms, member))
         VX_EXPECT_FRAME_MEMBER(viewProj);
@@ -484,6 +493,7 @@ TEST(LayoutContract, FrameUniformsMatchTheGlslBlock) {
         VX_EXPECT_FRAME_MEMBER(gridMinChunk);
         VX_EXPECT_FRAME_MEMBER(counts);
         VX_EXPECT_FRAME_MEMBER(settings);
+        VX_EXPECT_FRAME_MEMBER(playBounds);
 #undef VX_EXPECT_FRAME_MEMBER
 
         // The members are declared in the same order as in C++ and the block is as large as the struct.
@@ -491,8 +501,8 @@ TEST(LayoutContract, FrameUniformsMatchTheGlslBlock) {
             EXPECT_LT(block.members[i - 1].offset, block.members[i].offset) << block.members[i].name;
         }
         if (!block.members.empty()) {
-            EXPECT_EQ(block.members.back().name, "settings");
-            EXPECT_EQ(block.members.back().offset + sizeof(glm::ivec4), sizeof(FrameUniforms));
+            EXPECT_EQ(block.members.back().name, "playBounds");
+            EXPECT_EQ(block.members.back().offset + sizeof(glm::vec4), sizeof(FrameUniforms));
         }
     }
     EXPECT_GT(checked, 0) << "no shader declares u_Frame";
@@ -881,4 +891,27 @@ TEST(ReverseZ, ImageIsUprightInVulkanClipSpace) {
     EXPECT_NEAR(topEdge.y / topEdge.w, -1.0f, 1.0e-5f);
     const glm::vec4 rightEdge = proj * glm::vec4(t * aspect * 5.0f, 0.0f, -5.0f, 1.0f);
     EXPECT_NEAR(rightEdge.x / rightEdge.w, 1.0f, 1.0e-5f);
+}
+
+// --- the play bounds' curtain ([wp-5]): shaders/shared/bounds.glsl as C++ --------------------------
+
+TEST(PlayBounds, TheCurtainShowsWhereTheRayCrossesABoundInFrontOfTheScene) {
+    curtain::Curtain c;
+    const glm::vec4 b(-10.0f, -10.0f, 10.0f, 10.0f);
+    // The wall x = 10 at t = 10, on a line (z = 0): fade 1 - smoothstep(6, 24, 10) = 0.8738, x (0.10 + 0.45).
+    EXPECT_NEAR(c.VxPlayBoundsCurtain(glm::vec3(0.0f, 1.6f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f), 1000.0f, b, 1.0f, 0.001f), 0.4806f, 1.0e-3f);
+    // Between lines (z = 0.5, y = 1.6): the sheet only, 0.8738 x 0.10.
+    EXPECT_NEAR(c.VxPlayBoundsCurtain(glm::vec3(0.0f, 1.6f, 0.5f), glm::vec3(1.0f, 0.0f, 0.0f), 1000.0f, b, 1.0f, 0.001f), 0.0874f, 1.0e-3f);
+    // Looking along -z from x = 3: the wall z = -10 at t = 10, x = 3 on a line.
+    EXPECT_NEAR(c.VxPlayBoundsCurtain(glm::vec3(3.0f, 1.6f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f), 1000.0f, b, 1.0f, 0.001f), 0.4806f, 1.0e-3f);
+}
+
+TEST(PlayBounds, NoBoundsBehindTheSceneOrFarAwayDrawNothing) {
+    curtain::Curtain c;
+    const glm::vec3 ro(0.0f, 1.6f, 0.0f), rd(1.0f, 0.0f, 0.0f);
+    const glm::vec4 b(-10.0f, -10.0f, 10.0f, 10.0f);
+    EXPECT_EQ(c.VxPlayBoundsCurtain(ro, rd, 5.0f, b, 1.0f, 0.001f), 0.0f);                                       // the scene is in front of the wall
+    EXPECT_EQ(c.VxPlayBoundsCurtain(ro, rd, 1000.0f, glm::vec4(0.0f), 1.0f, 0.001f), 0.0f);                     // offline: no bounds
+    EXPECT_EQ(c.VxPlayBoundsCurtain(ro, rd, 1000.0f, glm::vec4(-30.0f, -10.0f, 30.0f, 10.0f), 1.0f, 0.001f), 0.0f);   // the wall at 30 m: past the fade
+    EXPECT_EQ(c.VxPlayBoundsCurtain(ro, rd, 1000.0f, glm::vec4(-10.0f, 5.0f, 10.0f, 10.0f), 1.0f, 0.001f), 0.0f);     // the crossing is outside [5, 10]
 }

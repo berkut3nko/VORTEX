@@ -7,6 +7,7 @@
 #define VX_NEED_MATERIALS
 #include "include/common.glsl"
 #include "shared/shading.glsl"
+#include "shared/bounds.glsl"
 
 layout(set = 0, binding = 16) uniform usampler2D u_GMaterial;   // nearest
 layout(set = 0, binding = 17) uniform sampler2D  u_GNormal;     // nearest
@@ -218,6 +219,17 @@ vec3 SkyColor(vec3 rd) {
     return ApplyFog(sky, rd, VX_SKY_DISTANCE);
 }
 
+const vec3 VX_CURTAIN_COLOR = vec3(0.45, 0.85, 1.25);   // linear, before exposure: a cool glow
+
+// The play bounds' curtain over `color` for the view ray rd up to distance t ([wp-5]). Offline
+// (playBounds zero) VxPlayBoundsCurtain returns at once: every pixel takes the same branch.
+vec3 ApplyPlayBounds(vec3 color, vec3 rd, float t) {
+    float spacing = 8.0 * u_Frame.cameraPosVoxel.w;                     // 8 voxels: whole chunks divide by it
+    float pixelAngle = 2.0 * length(u_Frame.cameraUp.xyz) * u_Frame.renderSize.w;
+    float a = VxPlayBoundsCurtain(u_Frame.cameraPos.xyz, rd, t, u_Frame.playBounds, spacing, pixelAngle);
+    return mix(color, VX_CURTAIN_COLOR, a);
+}
+
 void main() {
     ivec2 px = ivec2(gl_FragCoord.xy);
     uint packed = texelFetch(u_GMaterial, px, 0).r;
@@ -237,6 +249,7 @@ void main() {
     if (packed == VX_GBUFFER_SKY || depth <= 0.0) {
         vec3 sky = vec3(0.0);
         if (debugView == VX_DEBUG_NONE) sky = SkyColor(rd);
+        if (debugView == VX_DEBUG_NONE) sky = ApplyPlayBounds(sky, rd, VX_SKY_DISTANCE);
         o_Color = vec4(sky, 1.0);
         return;
     }
@@ -301,6 +314,7 @@ void main() {
         float edge = smoothstep(u_Frame.jitter.z, u_Frame.jitter.w, horizontal);
         if (edge > 0.0) color = mix(color, SkyColor(rd), edge);
     }
+    color = ApplyPlayBounds(color, rd, t);
 
     o_Color = vec4(color, 1.0);
 }

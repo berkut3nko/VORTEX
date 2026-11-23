@@ -129,6 +129,7 @@ namespace vortex {
         graphics::UiLayer ui;
         HudCanvas hud;
         bool hudOverflowReported = false;
+        glm::dvec4 playBounds{0.0};   // [wp-5]: (min x, min z, max x, max z) in world metres; zero = none
 
         std::vector<graphics::InstanceDesc> instances;
         std::vector<graphics::PointLight> lights;
@@ -407,6 +408,7 @@ namespace vortex {
             in.particles = s.gpuParticles;
             in.hud = s.hud.Quads();
             in.hudDim = s.hud.BackgroundDim();
+            in.playBounds = s.playBounds;
             if (s.hud.Overflowed() && !s.hudOverflowReported) {
                 s.hudOverflowReported = true;
                 Log::Warn("HUD: more than {} quads in one frame; the rest were dropped", HudCanvas::kMaxQuads);
@@ -555,6 +557,14 @@ namespace vortex {
 
     bool Engine::WindowFocused() const { return !m_Impl->config.headless && m_Impl->window.IsFocused(); }
     void Engine::SetImGuiInput(bool enabled) { m_Impl->ui.SetInputEnabled(enabled); }
+
+    void Engine::SetPlayBounds(const std::optional<sim::PlayArea>& bounds) {
+        if (!bounds || !bounds->Bounded()) {
+            m_Impl->playBounds = glm::dvec4(0.0);
+            return;
+        }
+        m_Impl->playBounds = glm::dvec4(bounds->min.x, bounds->min.y, bounds->max.x, bounds->max.y);
+    }
     scene::Scene& Engine::Scene() { return m_Impl->sim.Scene(); }
 
     void Engine::ApplySettings(const GameSettings& settings, const GameSettings& previous) {
@@ -562,6 +572,7 @@ namespace vortex {
         if (settings.renderScale != previous.renderScale) rs.renderScale = std::clamp(settings.renderScale, 0.25f, 1.0f);
         if (settings.vsync != previous.vsync)
             rs.present = settings.vsync ? graphics::PresentPreference::FifoRelaxed : graphics::PresentPreference::Immediate;
+        if (settings.playBounds != previous.playBounds) rs.playBounds = settings.playBounds;
         if (settings.fovDegrees != previous.fovDegrees)
             camera.fovY = glm::radians(static_cast<float>(std::clamp(settings.fovDegrees, 50, 110)));
     }

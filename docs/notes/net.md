@@ -221,8 +221,8 @@ Ordering, the base rule and sync
   at one step and came back (regenerated) at the next enters again with the second, and the server sends it again. The
   game streams every frame and polls on ticks, so two steps between `Poll`s are normal. A reset is left only for steps
   that were not listed (never in play).
-- **A client's window is the region's when it fits `ClientSettings::windowChunks`** (0 = always; the game and the
-  arena bots pass 48), loaded whole before anything is applied; else it is `windowChunks` x the rows x
+- **A client's window is the region's when it is exactly `ClientSettings::windowChunks` wide** (0 = always; the game
+  and the bots pass 48; [wp-5]), loaded whole before anything is applied; else it is `windowChunks` x the rows x
   `windowChunks`, follows the player (`RunTick`; the game's engine follows the camera), loads its surface at `Attach`
   and streams the rest [net-7a] (`sim::ClientWorldConfig`). Its store is `sim::ClientChunkCapacity` (every cell of that
   window), capped by the owner's `storeLimit`. An operation it cannot apply in full does not fail it: the chunks it
