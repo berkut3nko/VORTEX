@@ -1,9 +1,13 @@
 module;
 
 #include <cstdint>
+#include <optional>
+#include <string>
+#include <vector>
 
 export module vortex.net:punch;
 
+import :address;
 import :traversal;
 
 // docs/design/rendezvous.md stage [nat-R0]: the NAT probe and the pair test as programs run them, over
@@ -14,6 +18,20 @@ export namespace vortex::net {
 
     /// @brief The two STUN servers asked when no --stun is given (on different IPs: the NAT class).
     inline constexpr const char* kDefaultStunServers[] = {"stun.cloudflare.com:3478", "stun.l.google.com:19302"};
+
+    /// @brief --stun HOST[:PORT] (repeatable; none: kDefaultStunServers), --candidates KINDS, --public
+    /// A.B.C.D:PORT (server only).
+    struct NatFlags {
+        std::vector<std::string> stun;
+        CandidateKinds kinds;
+        std::optional<Endpoint> given;
+    };
+    /// @brief Reads those three flags from argv ("--flag value" or "--flag=value"), ignoring every other
+    /// argument. false and `error` on a malformed one.
+    bool ParseNatFlags(int argc, const char* const* argv, PunchRole role, NatFlags& out, std::string& error);
+    /// @brief ENet's lookup of each name (blocking; start-up only), default port 3478; logs `NAT: STUN
+    /// server NAME is A:P` or a warning.
+    std::vector<Endpoint> ResolveStunServers(const std::vector<std::string>& names);
 
     /// @brief Whether the command line asks for `--nat-probe` or `--punch-test`.
     bool WantsNatTool(int argc, const char* const* argv);

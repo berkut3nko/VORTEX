@@ -260,6 +260,20 @@ vortex_assert_no_network(VortexCore)
 vortex_assert_no_network(VortexPhysics)
 vortex_assert_no_network(VortexSim)
 
+# rendezvous.md: HTTPS (libcurl) belongs to vortex_https, linked only by vortex_server and the game.
+function(vortex_assert_no_https target)
+    vortex_collect_link_closure(${target} _closure)
+    foreach(_item ${_closure})
+        if(_item MATCHES "^(vortex_https|CURL::libcurl|curl|libcurl)$" OR _item MATCHES "libcurl")
+            message(FATAL_ERROR "VORTEX: ${target} must not link '${_item}': HTTPS belongs to vortex_https only "
+                                "(docs/design/rendezvous.md \"The engine side\").")
+        endif()
+    endforeach()
+endfunction()
+foreach(_t VortexCore VortexPhysics VortexSim VortexNet)
+    vortex_assert_no_https(${_t})
+endforeach()
+
 # --- Tools & tests ---------------------------------------------------------------
 if(VORTEX_BUILD_TOOLS)
     add_subdirectory(tools)

@@ -58,6 +58,7 @@ endif()
 set(VORTEX_SERIAL_TESTS_VortexNetTests "EnetSession.*:Relay.*")   # wall clock: ENet sessions, the UDP relay (stage 8)
 vortex_add_tests(VortexNetTests net VortexNet)
 vortex_assert_gpu_free(VortexNetTests)
+vortex_assert_no_https(VortexNetTests)
 if(VORTEX_GRAPHICS)
     vortex_add_tests(VortexGraphicsTests graphics VortexGraphics)
     vortex_add_tests(VortexEngineTests engine VortexEngine)
@@ -75,3 +76,10 @@ endforeach()
 add_test(NAME CpuCheck.RefusesAMissingFeature
          COMMAND ${CMAKE_COMMAND} "-DPROGRAMS=${_vortex_cpu_check_programs}" -P "${CMAKE_CURRENT_SOURCE_DIR}/CpuCheckRefuses.cmake")
 set_tests_properties(CpuCheck.RefusesAMissingFeature PROPERTIES TIMEOUT 60)
+
+# rendezvous.md "Tests": the Worker over node:sqlite (decision 16 of docs/llm/nat-r1.md).
+find_program(VORTEX_NODE node)
+if(VORTEX_NODE)
+    add_test(NAME Tools.RendezvousWorker COMMAND "${VORTEX_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/../tools/rendezvous/test.mjs")
+    set_tests_properties(Tools.RendezvousWorker PROPERTIES TIMEOUT 60)
+endif()

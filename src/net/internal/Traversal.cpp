@@ -234,10 +234,50 @@ namespace vortex::net {
         switch (f) {
             case TraversalFailure::None: return "none";
             case TraversalFailure::ServerStale: return "the server has not reached the rendezvous lately (restarting or backing off)";
-            case TraversalFailure::NoAnswer: return "the server did not answer the join; try again";
+            case TraversalFailure::NoAnswer:
+                return "no datagram from the server arrived: the server may have missed the join, or the two networks cannot meet (compare both sides' --nat-probe)";
             case TraversalFailure::CannotMeet: return "the two networks cannot meet (see the NAT probe)";
         }
         return "?";
+    }
+
+    std::string FailureText(TraversalFailure f, double serverAgeSeconds) {
+        if (f == TraversalFailure::ServerStale)
+            return std::format("the server has not reached the rendezvous for {:.0f} s (restarting or backing off)", serverAgeSeconds);
+        return ToString(f);
+    }
+
+    std::vector<Candidate> ChooseCandidates(PunchRole role, std::span<const LocalInterface> interfaces, uint16_t port,
+                                            const CandidateKinds& kinds, const std::optional<Endpoint>& given,
+                                            std::span<const std::optional<Endpoint>> stunMapped) {
+        std::vector<Candidate> out;
+        const auto add = [&](Candidate c) {
+            if (out.size() >= kMaxCandidates) return;
+            for (const Candidate& o : out)
+                if (o.at == c.at) return;
+            out.push_back(c);
+        };
+        if (kinds.lan) {
+            // At most 4, in interface order: lan never crowds given and stun out of the 8.
+            size_t lan = 0;
+            for (const LocalInterface& i : interfaces) {
+                if (lan >= kMaxLanCandidates || !IsLanInterface(i)) continue;
+                const size_t before = out.size();
+                add({{i.ip, port}, CandidateKind::Lan});
+                lan += out.size() - before;
+            }
+        }
+        if (kinds.given && given && role == PunchRole::Server) add({*given, CandidateKind::Given});
+        if (kinds.stun) {
+            size_t stun = 0;
+            for (const std::optional<Endpoint>& m : stunMapped) {
+                if (!m || stun >= kMaxJoinStunCandidates) continue;
+                const size_t before = out.size();
+                add({*m, CandidateKind::Stun});
+                stun += out.size() - before;
+            }
+        }
+        return out;
     }
 
     // --- ClientTraversal ---------------------------------------------------------------------------
@@ -361,6 +401,13 @@ namespace vortex::net {
         if (m_Joins.size() >= m_Limits.maxJoins) return AddJoinResult::Busy;
         std::vector<Candidate> cands;
         if (join.nonceClient == 0 || !ParseCandidates(join.candidates, cands)) return AddJoinResult::BadCandidates;
+        if (!join.route.empty()) {
+            // G20 (local.mjs): punch the route, the same candidates as aliases in the server's box. The
+            // kind rules below apply to the route's entries; candHash stays over join.candidates.
+            std::vector<Candidate> route;
+            if (!ParseCandidates(join.route, route) || route.size() != cands.size()) return AddJoinResult::BadCandidates;
+            cands = std::move(route);
+        }
         Join j;
         j.join = join;
         j.candHash = CandHash(join.candidates);
@@ -505,33 +552,8 @@ namespace vortex::net {
     }
 
     void PunchTest::MakeLine() {
-        m_Candidates.clear();
-        const auto add = [&](Candidate c) {
-            if (m_Candidates.size() >= kMaxCandidates) return;
-            for (const Candidate& o : m_Candidates)
-                if (o.at == c.at) return;
-            m_Candidates.push_back(c);
-        };
-        if (m_Settings.kinds.lan) {
-            // At most 4, in interface order: lan never crowds given and stun out of the 8.
-            size_t lan = 0;
-            for (const LocalInterface& i : m_Settings.interfaces) {
-                if (lan >= kMaxLanCandidates || !IsLanInterface(i)) continue;
-                const size_t before = m_Candidates.size();
-                add({{i.ip, m_Settings.port}, CandidateKind::Lan});
-                lan += m_Candidates.size() - before;
-            }
-        }
-        if (m_Settings.kinds.given && m_Settings.given && m_Settings.role == PunchRole::Server) add({*m_Settings.given, CandidateKind::Given});
-        if (m_Settings.kinds.stun) {
-            size_t stun = 0;
-            for (const std::optional<Endpoint>& m : m_Stun.Mapped()) {
-                if (!m || stun >= kMaxJoinStunCandidates) continue;
-                const size_t before = m_Candidates.size();
-                add({*m, CandidateKind::Stun});
-                stun += m_Candidates.size() - before;
-            }
-        }
+        m_Candidates = ChooseCandidates(m_Settings.role, m_Settings.interfaces, m_Settings.port, m_Settings.kinds,
+                                        m_Settings.given, m_Stun.Mapped());
         m_CandidateText = FormatCandidates(m_Candidates);
         const std::string room = Hex(RoomTag(m_Settings.token));
         if (m_Settings.role == PunchRole::Server)

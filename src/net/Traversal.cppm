@@ -49,8 +49,8 @@ export namespace vortex::net {
     inline constexpr size_t kMaxCandidates = 8;
     inline constexpr size_t kMaxJoinStunCandidates = 2;
 
-    /// @brief "a.b.c.d:port/kind,..." (kinds lan, given, stun; "-" for none). R0's pasted lines carry
-    /// candidates in this form (R1's Worker carries JSON); the client's string is hashed as written.
+    /// @brief "a.b.c.d:port/kind,..." (kinds lan, given, stun; "-" for none). R0's pasted lines and R1's
+    /// Worker carry candidates in this form; the client's string is hashed as written.
     std::string FormatCandidates(std::span<const Candidate> candidates);
     /// @brief The inverse of FormatCandidates: at most kMaxCandidates, no peer-reflexive.
     bool ParseCandidates(std::string_view text, std::vector<Candidate>& out);
@@ -121,6 +121,9 @@ export namespace vortex::net {
         CannotMeet,    ///< the server was heard, but no address was proven both ways
     };
     const char* ToString(TraversalFailure f);
+    /// @brief ToString(f), except ServerStale: "the server has not reached the rendezvous for N s
+    /// (restarting or backing off)".
+    std::string FailureText(TraversalFailure f, double serverAgeSeconds);
 
     /// @brief What a client's join starts from: the Worker's reply (R1) or a pasted line (R0).
     struct ClientJoinSetup {
@@ -189,6 +192,7 @@ export namespace vortex::net {
         uint64_t nonceClient = 0;
         std::string candidates;   ///< the client's string as posted: candHash covers it
         bool verified = true;     ///< the Worker saw the stun candidates' IP as the caller's
+        std::string route;        ///< G20 only (local.mjs): where to punch instead of `candidates` (same count); candHash still covers `candidates`
     };
 
     /// @brief How a server's join ended (once per join).
@@ -257,6 +261,13 @@ export namespace vortex::net {
         std::vector<Join> m_Joins;
         std::vector<ServerJoinOutcome> m_Outcomes;
     };
+
+    /// @brief The candidates a side offers (PunchTest's line, R1's register and join): lan
+    /// (IsLanInterface, at most 4, interface order, at `port`), then given (server only), then each
+    /// distinct answered stun mapping (at most 2); at most kMaxCandidates, no address twice.
+    std::vector<Candidate> ChooseCandidates(PunchRole role, std::span<const LocalInterface> interfaces, uint16_t port,
+                                            const CandidateKinds& kinds, const std::optional<Endpoint>& given,
+                                            std::span<const std::optional<Endpoint>> stunMapped);
 
     // --- R0's pair test ----------------------------------------------------------------------------
 

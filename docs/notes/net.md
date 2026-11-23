@@ -15,7 +15,7 @@ Paths are relative to `engine/`. Code is cited by file and symbol; search for th
 
 - `src/net/Net.cppm` - primary unit of `vortex.net`; re-exports the partitions below (`:transport`, `:enet`, `:wire`,
   `:messages`, `:prediction`, `:session`, `:entities`, `:sync`, `:server`, `:client`, `:drill`, `:bot`, `:address`,
-  `:crypto`, `:stun`, `:traversal`, `:punch`).
+  `:crypto`, `:stun`, `:traversal`, `:punch`, `:https`, `:rendezvous`).
 - `src/net/Transport.cppm`, `internal/Transport.cpp` - `ITransport`, `TransportEvent`, `Channel`,
   `LoopbackTransport` (shared inboxes, `Connect(a, b)`), `Impairment` / `ImpairedTransport` (send-side queue sorted by
   due time; reliable packets keep per peer-and-channel order through `m_LastDue`).
@@ -38,9 +38,33 @@ Paths are relative to `engine/`. Code is cited by file and symbol; search for th
   `FormatCandidates` / `ParseCandidates`), the keys (`RoomKey`, `HostKey`, `RoomTag`, `CandHash`), the punch datagram
   (`EncodePunch` / `DecodePunch` / `PunchProof`, magic `VXPN`), `TraversalLimits` / `PairTestLimits()`,
   `ClientTraversal`, `ServerTraversal` and R0's `PunchTest` (`VXPT1` lines); pure state machines, tested over
-  `tests/net/NatSim.h`.
+  `tests/net/NatSim.h`. [nat-R1]: `ChooseCandidates` (the candidate list of the pair test's line, the register and
+  the join), `FailureText`, `ServerJoin::route` (G20 only: where to punch instead of the posted candidates).
 - `src/net/Punch.cppm`, `internal/Punch.cpp` [nat-R0] - `WantsNatTool` / `RunNatTool` (`--nat-probe`, `--punch-test`
   for `vortex_server` and the game), `kDefaultStunServers`; stdin is read from file descriptor 0 on a detached thread.
+  [nat-R1]: `NatFlags` / `ParseNatFlags` (`--stun`, `--candidates`, `--public`, shared by the NAT tools,
+  `--rendezvous` and `--join`) and `ResolveStunServers` (blocking name lookups, start-up only).
+- `src/net/Https.cppm` [nat-R1] - `HttpsClient` (`Start` / `Take` / `Cancel`; `HttpsRequest`, `HttpsResponse`): the
+  abstract HTTPS client of the rendezvous. Net has no HTTPS of its own; `vortex_https` implements it, tests give
+  `tests/net/FakeHttps.h`'s `FakeHttpsClient`.
+- `src/net/Rendezvous.cppm`, `internal/Rendezvous.cpp`, `internal/RendezvousRun.cpp` [nat-R1] - the Worker's client:
+  `Rendezvous` (the server's room: register, long poll, register again on a changed candidate list or NAT class,
+  back off 1-20 s, the spent quota, delete on exit), `RendezvousJoin` (one client join, retried twice without an HTTP
+  answer), the helpers (`RoomHex`, `HostKeyHex`, `BuildHex`, `ValidRendezvousUrl`, `ReadRendezvousUrlFile`), and the
+  runners the programs call: `RendezvousHost` (`vortex_server --rendezvous`: STUN, the room and `ServerTraversal` in
+  the server's pass, on the listening socket) and `JoinThroughRendezvous` (`Shredborne --join`: STUN, the join and
+  `ClientTraversal` on the transport's socket, blocking, before `ConnectTo`).
+- `tools/https/` [nat-R1] - `vortex_https` (module `vortex.https`, `MakeCurlHttpsClient`): `HttpsClient` over the
+  system's libcurl on two threads (the long poll alone on one). Linked only by `vortex_server` and the game;
+  `vortex_assert_no_https` stops the configure step if Core, Physics, Sim, Net, `VortexNetTests` or `vortex_bot`
+  link it or curl.
+- `tools/natbox/` [nat-R1] - `vortex_natbox` (Linux only, a test tool): an emulated NAT for one program (alias sockets
+  on 127.0.0.1, outside sockets on 127.0.0.2, .3, ..., mapping eim / symmetric, filtering independent / address /
+  port, a control socket that hands out aliases) and `--fake-stun`. Gate G20.
+- `tools/rendezvous/` [nat-R1] - the Worker the owner deploys (`worker.mjs`, `schema.sql`, `wrangler.example.toml`
+  with a placeholder `database_id`; the owner's copy `wrangler.toml` and `.wrangler/` are ignored), `local.mjs` (the
+  same Worker over `node:http` and `node:sqlite` on 127.0.0.1; G20's `--caller-ip` and `--server-box` /
+  `--client-box` route seam) and `test.mjs` (`node --test`, ctest `Tools.RendezvousWorker`). Requests are JSON, replies text lines (docs/llm/nat-r1.md card 1).
 - `src/net/Bot.cppm`, `internal/Bot.cpp` [net-8] - `Bot` (a client, its simulation built at the Welcome with the
   game's store and packing when it has a window, a `BotPilot`, the per-pass ticks, applied times; an injected broken
   chunk makes it stand until repaired; `PassOnClock` for a wall clock; `WantedTicks` / `ActedTicks`), `DrainWatch`
@@ -109,8 +133,8 @@ Paths are relative to `engine/`. Code is cited by file and symbol; search for th
 - `src/sim/Blast.cppm` (end of the constants) - `CastWork`, `CastWorkOf`, `OpWork`, the weights, `kMaxCastRadiusQ`,
   `kServerWindowMarginChunks`.
 - `tools/server/main.cpp` - `vortex_server`; `tools/server/sessions/*.session` - examples that `SessionFile.*` parses.
-  `tools/bot/main.cpp` - `vortex_bot` [net-8] (one bot player per process). Both link Net only and are GPU-free
-  (`vortex_assert_gpu_free`).
+  `tools/bot/main.cpp` - `vortex_bot` [net-8] (one bot player per process). Both link Net (`vortex_server` also
+  `vortex_https`, [nat-R1]) and are GPU-free (`vortex_assert_gpu_free`).
 - `tests/net/` (`VortexNetTests`) - `EnetTests.cpp` (real UDP sockets on 127.0.0.1, wall clock; the GPU-free acceptance
   `EnetSession.*`), `WireTests.cpp`, `TransportTests.cpp`, `ClientTests.cpp` (`FakeServer`: a client against a
   hand-written server endpoint - overlaps, gaps, forged `Welcome`s, late-join presentation, refused worlds; the join
@@ -127,7 +151,8 @@ Paths are relative to `engine/`. Code is cited by file and symbol; search for th
   the window; its harness is `FieldHarness.h`, a header included after the imports that includes nothing itself: a
   standard header after an import can clash with a module's copy), `Region250Tests.cpp` [net-7b] (the test table on
   `Plain250`, a flat 256 m region with the game's window and store), `BotTests.cpp` [net-8] (`Bot.*`, `Relay.*`: the
-  relay on the wall clock, RUN_SERIAL).
+  relay on the wall clock, RUN_SERIAL), `TraversalTests.cpp` [nat-R0] (over `NatSim.h`), `RendezvousTests.cpp`
+  [nat-R1] (`Rendezvous.*` over `FakeHttps.h`).
 - `tests/sim/ReplicationTests.cpp` - the server half of [net-6] on one `Simulation` (piece slots, caps, damage).
 - `tests/sim/PlayerTests.cpp` - `StepPlayer` alone and two simulations stepped with the same inputs.
 
@@ -590,6 +615,13 @@ Transports
 - A thread that reads stdin must not block inside `std::cin` / stdio: it holds stdin's lock, and glibc's `exit()`
   (2.41 on) takes every stream's lock, so the program hangs after its last line (the NAT tools read file descriptor
   0 instead).
+- HTTPS never runs on a tick or a frame: Net holds only the abstract `HttpsClient`; `vortex_https` runs each request
+  on one of two threads (the long poll alone), and `Rendezvous` only starts and takes (`vortex_assert_no_https` keeps
+  curl out of Net).
+- The Worker's replies are text lines; a route field exists only from local.mjs (G20): never trust it from the
+  internet.
+- `RendezvousHost::Update` must run every server pass: it takes the transport's raw datagrams (`TakeRaw`), and a
+  transport that is not emptied keeps 256 and drops the rest (`rawDropped`).
 
 Regions, templates and tests
 - `voxel::kGeneratorGoldenHash` must be updated whenever `Terrain.GoldenChunkHashes` (or the noise / height goldens)

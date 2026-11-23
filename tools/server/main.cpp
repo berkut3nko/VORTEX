@@ -9,6 +9,7 @@
 //                 [--client-window N] [--walk-across] [--precasts N] [--memory] [--max-join-p99-ticks N]
 //                 [--bot-broken-chunk N[:X,Y,Z]] [--bot-broken-generator N] [--timeline FILE] [--broken-chunk-candidate]
 //                 [--terrain-bulk-ceiling KIB] [--bulk-window-floor KIB] [--pacer-delivery-interval S]
+//                 [--rendezvous [URL]] [--stun HOST:PORT ...] [--candidates KINDS] [--public A.B.C.D:PORT]
 //   vortex_server --nat-probe [--stun HOST:PORT ...] [--bind ADDR] [--listen PORT]
 //   vortex_server --punch-test --token HEX [--stun HOST:PORT ...] [--candidates KINDS] [--public A.B.C.D:PORT]
 //                 [--bind ADDR] [--listen PORT]
@@ -18,6 +19,13 @@
 // prints a line to paste into `Shredborne --punch-test`, reads that program's line from stdin and
 // punches until it reached the client or 5 minutes passed (exit 0 once the client's ENet connected over
 // the punched path, else 1). Neither needs --session.
+//
+// Rendezvous (rendezvous.md [nat-R1]): with --listen and --token HEX or --new-token (never the session file's
+// token, which is in the repository), --rendezvous URL (or a bare --rendezvous: the URL in rendezvous.url next to
+// the executable) registers the session's room on the Worker, waits for joins and punches toward every joining
+// player (`Shredborne --join TOKEN`) on the listening socket; STUN (--stun, default the two public servers) gives
+// the outside address, --candidates limits the kinds offered and --public adds a `given` one (a forwarded port).
+// On exit it deletes the room (2 s at most). Logs NAT:, Rendezvous: and Punch: lines (docs/verify.md).
 //
 // Starts the server from a session file (token, region, template; see sessions/*.session), loads its
 // whole window and applies the template.
@@ -128,6 +136,7 @@ import vortex.scene;
 import vortex.physics;
 import vortex.sim;
 import vortex.net;
+import vortex.https;
 
 using namespace vortex;
 
@@ -201,7 +210,8 @@ int main(int argc, char** argv) {
                              "[--outage-ms A,B] [--threads T] [--stand] [--no-jumps] [--bot-casts N] [--bot-crates N] [--realtime] "
                              "[--hash-out <file>] [--drill-after N] [--drill-delay S] [--drill-sites K] [--drill-every T] "
                              "[--client-window N] [--walk-across] [--precasts N] [--memory] [--max-join-p99-ticks N] "
-                             "[--bot-broken-chunk N[:X,Y,Z]] [--bot-broken-generator N] [--timeline FILE] [--broken-chunk-candidate] [--terrain-bulk-ceiling KIB] [--bulk-window-floor KIB] [--pacer-delivery-interval S]\n");
+                             "[--bot-broken-chunk N[:X,Y,Z]] [--bot-broken-generator N] [--timeline FILE] [--broken-chunk-candidate] [--terrain-bulk-ceiling KIB] [--bulk-window-floor KIB] [--pacer-delivery-interval S] "
+                             "[--rendezvous [URL]] [--stun HOST:PORT] [--candidates KINDS] [--public A.B.C.D:PORT]\n");
         return 2;
     }
     net::SessionConfig session;
@@ -232,6 +242,38 @@ int main(int argc, char** argv) {
         std::string host;
         if (!net::ParseEndpoint("x:" + *p, net::kDefaultPort, host, port)) {
             Log::Error("--listen expects a UDP port (1-65535): '{}'", *p);
+            return 2;
+        }
+    }
+    // --rendezvous [URL] (rendezvous.md [nat-R1]): the room on the Worker; needs --listen and a token that
+    // is not the session file's.
+    const bool rendezvous = args.Has("--rendezvous");
+    std::string rendezvousUrl;
+    net::NatFlags natFlags;
+    if (rendezvous) {
+        if (!listen) {
+            Log::Error("--rendezvous needs --listen PORT");
+            return 2;
+        }
+        if (fileToken) {
+            Log::Error("--rendezvous needs --token HEX or --new-token: the session file's token is in the repository");
+            return 2;
+        }
+        std::string why;
+        if (const std::optional<std::string> url = args.Get("--rendezvous")) {
+            rendezvousUrl = *url;
+        } else if (const std::optional<std::string> fromFile = net::ReadRendezvousUrlFile(Paths::ExecutableDir(), why)) {
+            rendezvousUrl = *fromFile;
+        } else {
+            Log::Error("--rendezvous: no URL given and {}", why);
+            return 2;
+        }
+        if (!net::ValidRendezvousUrl(rendezvousUrl)) {
+            Log::Error("--rendezvous expects https://... or http://127.0.0.1:PORT: '{}'", rendezvousUrl);
+            return 2;
+        }
+        if (!net::ParseNatFlags(argc, argv, net::PunchRole::Server, natFlags, why)) {
+            Log::Error("{}", why);
             return 2;
         }
     }
@@ -645,6 +687,9 @@ int main(int argc, char** argv) {
             lastTimelineFlush = passStart;
         }
     };
+    // rendezvous.md [nat-R1]: the room and the punching (--rendezvous), made once the world is ready.
+    std::unique_ptr<net::HttpsClient> https;
+    std::unique_ptr<net::RendezvousHost> host;
     double lastWall = wallNow();                 // stage 8: the clock starts here, not before the preload
     double maxPassSeconds = 0.0;                 // wall clock of the server's work in one pass (UDP)
     net::DurationHistogram passBusy;             // ... every pass's, in 0.05 ms buckets (review of stage 8: its p99 beside the
@@ -662,6 +707,7 @@ int main(int argc, char** argv) {
             // Drill steps are queued between ticks, on the tick they are due (Advance runs at most 2).
             drillStep(before);
             server.Advance(passSeconds);
+            if (host) host->Update(wallNow(), *serverUdp);
             if (server.TickNumber() > before + 1) drillStep(before + 1);
             // How long the server's own work took (its ticks and the drill's edits): a pass over a
             // tick's length is a server hitch, which clients see as a growing input margin.
@@ -718,6 +764,18 @@ int main(int argc, char** argv) {
         if (net::BrokenChunkCandidate(server, c, &why)) Log::Info("Broken chunk candidate: {},{},{}", c.x, c.y, c.z);
         else Log::Warn("Broken chunk candidate: none ({})", why);
     }
+    if (rendezvous) {
+        https = vortex::https::MakeCurlHttpsClient();
+        std::random_device device;
+        net::RendezvousHostSettings hs{{rendezvousUrl, session.token, server.BuildHashValue(), net::kProtocolVersion},
+                                       net::ResolveStunServers(natFlags.stun),
+                                       natFlags.kinds,
+                                       natFlags.given,
+                                       net::LocalInterfaces(),
+                                       serverUdp->Port(),
+                                       static_cast<uint64_t>(device()) << 32 | device()};
+        host = std::make_unique<net::RendezvousHost>(*https, std::move(hs), wallNow());
+    }
     lastWall = wallNow();
     if (openEnded) {
         Log::Info("Server: waiting for clients ({}); {}", fileToken ? "token in " + *sessionPath : std::string("token given at start"),
@@ -738,6 +796,16 @@ int main(int argc, char** argv) {
             pass();
             if (server.Failed()) break;          // the session has ended (logged); report and exit 1
         }
+    }
+    // --rendezvous: delete the room (2 s at most), then the HTTPS threads.
+    if (host) {
+        host->Close(wallNow());
+        while (!host->Closed(wallNow())) {
+            host->Update(wallNow(), *serverUdp);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        host.reset();
+        https.reset();
     }
     // Drain: the players stop, the queue empties and every client catches up (at most 10 s of time).
     draining = true;

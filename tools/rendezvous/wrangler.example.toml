@@ -1,0 +1,12 @@
+# rendezvous.md "Owner steps": the owner deploys this Worker with wrangler on their own account. Copy this file to
+# wrangler.toml (ignored by engine/.gitignore, as is wrangler's .wrangler/ folder) and paste the D1 id there: the
+# tracked engine checkout stays clean, so builds are not -dirty and tools/install-live.sh does not refuse them.
+name = "vortex-rendezvous"
+main = "worker.mjs"
+compatibility_date = "2025-06-01"
+[[d1_databases]]
+binding = "DB"
+database_name = "vortex-rendezvous"
+database_id = "PASTE-THE-ID-THAT-wrangler-d1-create-PRINTS"
+[triggers]
+crons = ["17 * * * *"]

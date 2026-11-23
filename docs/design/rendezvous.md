@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| Status | R0 built (not reviewed): STUN, hashes, `Traversal`, ENet raw hooks, the NAT tools; R1 designed, nothing built. Reviewed, rechecked adversarially and amended twice. |
+| Status | R0 and R1 built (not reviewed). R0: STUN, hashes, `Traversal`, ENet raw hooks, the NAT tools. R1: the Worker + D1 (`engine/tools/rendezvous/`, tested under Node), `vortex_https` (libcurl), `net::Rendezvous` / `RendezvousJoin` / `RendezvousHost` / `JoinThroughRendezvous`, `vortex_server --rendezvous`, `Shredborne --join`, `vortex_natbox` and gate G20; the owner's deploy and internet session pending (owner check 17). The design was reviewed, rechecked adversarially and amended twice. |
 | Decided | - Owner's request (2026-11-19): the session server runs on the owner's own AVX2/FMA3 machine at home, with no public ("white") IPv4 address and no paid VPS. It finds players through STUN and UDP hole punching, with a Cloudflare Worker + D1 on the free tier as the meeting point.<br>- Us (this design, 2026-11-19): items 1-10 of "Decision in brief".<br>- Owner (2026-11-19): hide the token in `Hello` with M2a's protocol bump ([wp-7]); "Hello without the token" below. |
-| Next | [nat-R1] rendezvous (ROADMAP "Now" since 2026-11-23, see "Stages"); the owner's R0 pair results (owner check 16) decide [nat-R2]. ROADMAP placement: "Placement" below. |
+| Next | The owner deploys the Worker and plays one internet session ("Owner steps", owner check 17); the owner's R0 pair results (owner check 16) decide [nat-R2]. ROADMAP placement: "Placement" below. |
 | Open | "Open questions" 1-6, each with the recommended answer. 1 (a relay for pairs that cannot meet) waits for R0's pair results. |
 | History | [design-review-2026-11-19.md](../history/rendezvous/design-review-2026-11-19.md): the review's and the recheck's findings, and what was done with each |
 | Marks | **(m)** measured, **(c)** computed, **(e)** estimate, **(d)** from Cloudflare's documentation read on 2026-11-19 (re-check at R1: free tiers change). Code read at engine `a23af7a`, with WP1 uncommitted in the tree. |
@@ -135,7 +135,12 @@ does not guess from classes. It runs a **pair test** between the real machines t
   - The join reply showed the server's `last_seen` older than 25 s: "the server has not reached the rendezvous for
     N s (restarting or backing off)". The client waits and joins again, within the Worker's join limit, for up to
     60 s before it gives up.
-  - No server probe arrived, though the server was polling: "the server did not answer the join; try again".
+  - No server probe arrived, though the server was polling: "no datagram from the server arrived: the server may
+    have missed the join, or the two networks cannot meet (compare both sides' --nat-probe)". Both causes are named:
+    with port filtering on the client's side no server probe ever arrives, so this is also what most pairs that
+    cannot meet see ("Who can meet"), and a bare "try again" would send them round in circles. The server logs
+    `Punch: join <id> failed after N s: no datagram from the client arrived: the client may have given up, or the
+    two networks cannot meet (compare both sides' --nat-probe)`.
   - A server probe arrived but the two sides never got through to each other: "the two networks cannot meet (see
     the NAT probe)". The server logs `Punch: join <id> failed`.
 - **Choosing.** After the first proven Ack the client waits 150 ms for a better kind (lan > given > stun >
@@ -158,10 +163,13 @@ does not guess from classes. It runs a **pair test** between the real machines t
 
 ## Worker API and D1 schema
 
-Source: `engine/tools/rendezvous/` (`worker.js`, `schema.sql`, `wrangler.toml.example`, `local.mjs`, `test.mjs`).
+Source: `engine/tools/rendezvous/` (`worker.mjs`, `schema.sql`, `wrangler.example.toml` with a placeholder
+`database_id`, `local.mjs`, `test.mjs`). The owner's `wrangler.toml` (a copy with the D1 id) and wrangler's
+`.wrangler/` folder are ignored, so a deploy leaves the engine checkout clean (a dirty one makes every build
+`-dirty`, and `tools/install-live.sh` refuses it).
 - The owner deploys it once with Cloudflare's `wrangler` on their account ("Owner steps").
 - Claude writes and tests it with Node, which is an Arch package (no downloaded packages):
-  - `local.mjs` serves the real `worker.js` over `node:http`, with a D1 stand-in on `node:sqlite`, for tests and
+  - `local.mjs` serves the real `worker.mjs` over `node:http`, with a D1 stand-in on `node:sqlite`, for tests and
     G20.
   - `test.mjs` runs under `node --test`.
 
@@ -169,7 +177,7 @@ Source: `engine/tools/rendezvous/` (`worker.js`, `schema.sql`, `wrangler.toml.ex
 CREATE TABLE rooms (
   room       TEXT PRIMARY KEY,      -- 32 hex: SHA-256("vortex-room-v1" || token bytes)[0..16)
   host_key   TEXT NOT NULL,         -- 64 hex: SHA-256 of the host key
-  cands      TEXT NOT NULL,         -- JSON, at most 8 {"ip","port","kind"} (kind: lan | stun | given)
+  cands      TEXT NOT NULL,         -- the candidate string (`a.b.c.d:port/kind,...` or `-`; rooms: lan, stun, given), returned byte for byte
   nat        TEXT NOT NULL,         -- "eim" | "symmetric" | "unknown"
   build      TEXT NOT NULL,         -- buildHash, 16 hex
   protocol   INTEGER NOT NULL,
@@ -178,7 +186,7 @@ CREATE TABLE rooms (
 CREATE TABLE joins (
   id         INTEGER PRIMARY KEY AUTOINCREMENT,
   room       TEXT NOT NULL,
-  cands      TEXT NOT NULL,         -- the client's string as posted (lan, at most 2 stun), returned byte for byte
+  cands      TEXT NOT NULL,         -- the candidate string (`a.b.c.d:port/kind,...` or `-`; joins: lan and at most 2 stun), returned byte for byte
   nonce      TEXT NOT NULL,         -- 16 hex, the client's punch nonce
   verified   INTEGER NOT NULL,      -- 1 when every stun candidate's IP is the caller's IPv4
   created    INTEGER NOT NULL,
@@ -193,6 +201,8 @@ CREATE INDEX joins_by_room ON joins (room, id);
 | `GET /v1/host/wait?room&after=<id>`, the same header | server, again and again | Returns joins with `id > after` as soon as there are any, else after 20 s with none. Refreshes `last_seen`. At most 21 D1 queries (under the 50 subrequests a request may make, d). |
 | `POST /v1/join` `{room, cands, nonce, build, protocol}` | client | 404 for an unknown or absent room. 409 "another build" on a `build` mismatch, and 409 for a nonce already used in the room. 403 when an IPv4 caller's `stun` candidate is another IP; the body names the IP the Worker saw. 429 after 4 joins in a minute for the room. Otherwise inserts the join and returns the server's `cands`, `nat` and the age of its `last_seen`. |
 | `DELETE /v1/host` `{room}`, the same header | server, on a clean exit | Deletes the room and its joins. |
+
+Replies are text lines (`text/plain`); docs/llm/nat-r1.md card 1 gives their exact form.
 
 - **Validation.** Bodies are at most 2 KiB. Addresses are IPv4 literals, ports 1-65535, and fields have a fixed
   length. A join may list only `lan` and `stun` candidates, at most 2 `stun`, and its `lan` candidates must be
@@ -271,8 +281,9 @@ That leaves room for about 20 servers up all day, or many more for short session
   - Every request sets `CURL_IPRESOLVE_V4` and `CURLOPT_NOPROXY "*"`. Certificate checks stay on, and
     `curl_global_init` runs once on the main thread.
   - **Two threads.** One owns only the long poll. Its transfer aborts when `HttpsClient::Cancel(id)` sets a flag
-    that its progress callback reads. The other runs the short calls (register, join, delete) and the STUN name
-    lookups.
+    that its progress callback reads. The other runs the short calls (register, join, delete). The STUN name lookups
+    stay blocking at start-up (`ResolveStunServers`), before the server's first tick and before the game's engine
+    starts, where nothing waits behind them (docs/llm/nat-r1.md decision 6).
   - A request in flight never holds up another, and the server's tick and the client's frame only poll for results.
     This applies the lesson of stage 8's join and leave stalls.
   - On a clean exit: cancel the wait, send the DELETE with a 2 s limit (log and go on if it times out), then join
@@ -413,7 +424,7 @@ This proves the real ENet path and the shipped Worker through emulated NATs. Onl
 | ID | Builds | Effort (e) | Done when |
 |---|---|---|---|
 | [nat-R0] | `net::Stun`, the NAT class, `Sha256` / HMAC, `Traversal` + `NatSim` with every test above that needs no Worker; `EnetTransport::Open / SendRaw / TakeRaw / ConnectTo`, the always-on `intercept`, the client host's filter, `SIO_UDP_CONNRESET`; `--stun`, `--candidates`, `--nat-probe`, `--punch-test` | 3-4 d | Tests pass. The owner runs the pair test (below) for each pair that must play, one side on Windows, and reports the `NAT:` and `Punch:` lines. Those results decide "Open questions" 1. Built: on `main` after engine `27052ab` / game `a91f730` (2026-11-23; the commit hashes follow when the owner commits); the owner's pair results pending (owner check 16). |
-| [nat-R1] | The Worker + D1 (`local.mjs`, Node tests), `vortex_https` (libcurl on both platforms), `Rendezvous`, `--rendezvous` / `--join`, `vortex_natbox` with the fake STUN server, G20, the owner checks | 6-8 d, plus 0.5-1 d for the Windows build round trip | Every gate plus G20. The owner deploys the Worker and plays one internet session, with the Windows client as the joining side. |
+| [nat-R1] | The Worker + D1 (`local.mjs`, Node tests), `vortex_https` (libcurl on both platforms), `Rendezvous`, `--rendezvous` / `--join`, `vortex_natbox` with the fake STUN server, G20, the owner checks | 6-8 d, plus 0.5-1 d for the Windows build round trip | Every gate plus G20. The owner deploys the Worker and plays one internet session, with the Windows client as the joining side. Built (not reviewed): on `main` over engine `e919a9e` / game `4394a1b` (2026-11-23, uncommitted; the commit hashes follow when the owner commits); checked with ctest, G15, G16 and G20; the owner's deploy and internet session pending (owner check 17). |
 | [nat-R2] | Only for pairs that R0 found cannot meet: the relay chosen in "Open questions" 1 | 3-6 d | Those pairs play. |
 
 **R0's pair test, with no Worker.**
@@ -444,9 +455,14 @@ R2 waits for R0's pair results.
    for one, stop and tell us).
 2. `npm install -g wrangler` and `wrangler login`. This is the owner's own machine and their choice: Claude never
    runs downloaded binaries.
-3. `wrangler d1 create vortex-rendezvous`, then paste the printed id into `wrangler.toml`.
+3. In `engine/tools/rendezvous/`: `cp wrangler.example.toml wrangler.toml` (the copy is ignored by git: never
+   commit the id into the tracked example), `wrangler d1 create vortex-rendezvous`, then paste the printed id into
+   `wrangler.toml` (its `database_id`).
 4. `wrangler d1 execute vortex-rendezvous --remote --file schema.sql`.
-5. `wrangler deploy`. Write the printed `https://....workers.dev` URL into `rendezvous.url` next to both programs.
+5. `wrangler deploy`. Write the printed `https://....workers.dev` URL into `rendezvous.url` next to both programs
+   (one line; the game's `.gitignore` keeps it out of the repository): `build/engine/tools/server/` and `build/`.
+   `tools/install-live.sh` copies it from there (or from the previous `latest` install) into each live copy, where
+   the installed `vortex_server` and `Shredborne` look for it; or pass `--rendezvous https://...` explicitly.
 
 **Windows:** `pacman -S mingw-w64-clang-x86_64-curl` in MSYS2 CLANG64.
 

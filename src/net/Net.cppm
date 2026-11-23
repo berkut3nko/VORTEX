@@ -6,7 +6,8 @@ export module vortex.net;
 // Sim and below only; vortex_assert_gpu_free checks it), with ENet behind EnetTransport (stage 5;
 // linked privately, never into Core, Physics or Sim: vortex_assert_no_network). rendezvous.md [nat-R0]:
 // STUN, the hashes, hole punching (Traversal) and the pair test, all GPU-free and socket-free but for
-// EnetTransport's raw datagrams.
+// EnetTransport's raw datagrams. [nat-R1]: the Worker's client (Rendezvous) over an abstract HttpsClient
+// (no HTTPS in Net: vortex_https implements it, vortex_assert_no_https keeps curl out).
 export import :transport;
 export import :address;
 export import :crypto;
@@ -24,3 +25,5 @@ export import :drill;
 export import :bot;
 export import :traversal;
 export import :punch;
+export import :https;
+export import :rendezvous;

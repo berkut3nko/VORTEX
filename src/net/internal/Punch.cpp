@@ -99,6 +99,11 @@ namespace vortex::net {
         };
 
         bool Parse(int argc, const char* const* argv, PunchRole role, Options& o, std::string& error) {
+            NatFlags nat;
+            if (!ParseNatFlags(argc, argv, role, nat, error)) return false;
+            o.stun = std::move(nat.stun);
+            o.kinds = nat.kinds;
+            o.given = nat.given;
             for (int i = 1; i < argc; ++i) {
                 const std::string_view a = argv[i];
                 const auto value = [&](std::string& out) {
@@ -121,15 +126,8 @@ namespace vortex::net {
                         return false;
                     }
                     o.haveToken = true;
-                } else if (a == "--stun") {
-                    if (!value(v)) return false;
-                    o.stun.push_back(v);
-                } else if (a == "--candidates") {
-                    if (!value(v)) return false;
-                    if (!ParseCandidateKinds(v, o.kinds)) {
-                        error = "--candidates expects a list of lan, stun, given";
-                        return false;
-                    }
+                } else if (a == "--stun" || a == "--candidates" || (a == "--public" && role == PunchRole::Server)) {
+                    ++i;   // ParseNatFlags took it
                 } else if (a == "--bind") {
                     if (!value(v)) return false;
                     o.bind = v;
@@ -140,14 +138,6 @@ namespace vortex::net {
                         error = std::format("{} expects a UDP port (1-65535)", a);
                         return false;
                     }
-                } else if (a == "--public" && role == PunchRole::Server) {
-                    if (!value(v)) return false;
-                    Endpoint e;
-                    if (!ParseIpv4Endpoint(v, e)) {
-                        error = "--public expects A.B.C.D:PORT";
-                        return false;
-                    }
-                    o.given = e;
                 }
             }
             if (o.port == kDefaultPort) {
@@ -158,24 +148,7 @@ namespace vortex::net {
                 error = "--punch-test needs --token HEX (the same on both sides)";
                 return false;
             }
-            if (o.stun.empty())
-                for (const char* s : kDefaultStunServers) o.stun.emplace_back(s);
             return true;
-        }
-
-        std::vector<Endpoint> ResolveStun(const std::vector<std::string>& names) {
-            std::vector<Endpoint> out;
-            for (const std::string& name : names) {
-                Endpoint e;
-                std::string why;
-                if (ResolveEndpoint(name, 3478, e, &why)) {
-                    out.push_back(e);
-                    Log::Info("NAT: STUN server {} is {}", name, FormatEndpoint(e));
-                } else {
-                    Log::Warn("NAT: STUN server {}: {}", name, why);
-                }
-            }
-            return out;
         }
 
         int NatProbe(const Options& o) {
@@ -185,7 +158,7 @@ namespace vortex::net {
                 Log::Error("NAT: {}", error);
                 return 1;
             }
-            StunProbe stun(ResolveStun(o.stun), RandomSeed());
+            StunProbe stun(ResolveStunServers(o.stun), RandomSeed());
             const Clock::time_point start = Clock::now();
             const auto now = [&] { return std::chrono::duration<double>(Clock::now() - start).count(); };
             std::vector<Datagram> out;
@@ -226,7 +199,7 @@ namespace vortex::net {
             PunchTestSettings settings;
             settings.role = role;
             settings.token = o.token;
-            settings.stunServers = ResolveStun(o.stun);
+            settings.stunServers = ResolveStunServers(o.stun);
             settings.interfaces = LocalInterfaces();
             settings.port = transport->Port();
             settings.given = o.given;
@@ -312,6 +285,65 @@ namespace vortex::net {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
         }
+    }
+
+    bool ParseNatFlags(int argc, const char* const* argv, PunchRole role, NatFlags& out, std::string& error) {
+        NatFlags flags;
+        for (int i = 1; i < argc; ++i) {
+            std::string_view a = argv[i];
+            std::string value;
+            bool hasValue = false;
+            if (const size_t eq = a.find('='); a.starts_with("--") && eq != std::string_view::npos) {
+                value = std::string(a.substr(eq + 1));
+                a = a.substr(0, eq);
+                hasValue = true;
+            }
+            if (a != "--stun" && a != "--candidates" && a != "--public") continue;
+            if (!hasValue) {
+                if (i + 1 >= argc || std::string_view(argv[i + 1]).starts_with("--")) {
+                    error = std::format("{} needs a value", a);
+                    return false;
+                }
+                value = argv[++i];
+            }
+            if (a == "--stun") {
+                flags.stun.push_back(value);
+            } else if (a == "--candidates") {
+                if (!ParseCandidateKinds(value, flags.kinds)) {
+                    error = "--candidates expects a list of lan, stun, given";
+                    return false;
+                }
+            } else if (role == PunchRole::Server) {
+                Endpoint e;
+                if (!ParseIpv4Endpoint(value, e)) {
+                    error = "--public expects A.B.C.D:PORT";
+                    return false;
+                }
+                flags.given = e;
+            } else {
+                error = "--public is the server's";
+                return false;
+            }
+        }
+        if (flags.stun.empty())
+            for (const char* s : kDefaultStunServers) flags.stun.emplace_back(s);
+        out = std::move(flags);
+        return true;
+    }
+
+    std::vector<Endpoint> ResolveStunServers(const std::vector<std::string>& names) {
+        std::vector<Endpoint> out;
+        for (const std::string& name : names) {
+            Endpoint e;
+            std::string why;
+            if (ResolveEndpoint(name, 3478, e, &why)) {
+                out.push_back(e);
+                Log::Info("NAT: STUN server {} is {}", name, FormatEndpoint(e));
+            } else {
+                Log::Warn("NAT: STUN server {}: {}", name, why);
+            }
+        }
+        return out;
     }
 
     bool WantsNatTool(int argc, const char* const* argv) {

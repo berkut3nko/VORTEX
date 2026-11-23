@@ -39,3 +39,7 @@ imgui.ini
 # --- OS Specific ---
 .DS_Store
 Thumbs.db
+# --- The rendezvous Worker (docs/design/rendezvous.md "Owner steps") ---
+# The owner's copy of wrangler.example.toml with their D1 id, and wrangler's local state.
+tools/rendezvous/wrangler.toml
+tools/rendezvous/.wrangler/
