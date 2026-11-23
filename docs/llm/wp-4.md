@@ -1161,7 +1161,7 @@ in F frames`, `GPU PASS X ms (median Y ms over N frames)`.
 - perf.md "Stages" (rows 1-3), "Why the windowed game can show 27 fps" item 3, "T1b Jolt threads".
 - `engine/src/sim/Simulation.cppm`: `SimulationConfig::jobThreads`, `physics` (`physics::PhysicsConfig::threads`).
 - `engine/src/engine/internal/Engine.cpp`: `Engine::Impl::SimulationConfigFor`, `ApplyCommandLine`.
-- ROADMAP "Next" item 2, "State" Renderer row, "Performance and measured values" (table head and two rows).
+- ROADMAP "Next" (the `[wp-4]` item), "State" Renderer row, "Performance and measured values" (table head and two rows).
 
 **Files**
 - change `engine/src/engine/Engine.cppm` / `internal/Engine.cpp`: `EngineConfig` gets `unsigned jobThreads = 0;`
@@ -1191,7 +1191,7 @@ in F frames`, `GPU PASS X ms (median Y ms over N frames)`.
   **Built** and the measured result in "Accepted when" terms (far median change in ms, near change in %, the
   screenshots), and a short paragraph under "Why the windowed game can show 27 fps" item 3 with the A / B thread
   numbers (m). The owner's windowed result goes there once known.
-- ROADMAP: "Next" item 2 removed (it moves to "Now" / done as the ROADMAP's own rules say: read "Now" first and
+- ROADMAP: "Next"'s `[wp-4]` item removed (it moves to "Now" / done as the ROADMAP's own rules say: read "Now" first and
   follow its form); "State" Renderer row ("perf.md stages 1-3 built: M0, P1, G1, G2; block B next") and Game UI
   row; "Performance and measured values": rows dated today for far and near (GPU medians before card 4 from card 2 and
   after card 5), CPU p50 / p99, the thread comparison; the test count.

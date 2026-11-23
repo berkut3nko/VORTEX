@@ -42,7 +42,7 @@ export namespace vortex::net {
     struct CandidateKinds {
         bool lan = true, stun = true, given = true;
     };
-    /// @brief "lan,stun,given" in any order and subset; false for an unknown word.
+    /// @brief "lan,stun,given" in any order and subset; false for an unknown or empty word, or empty text.
     bool ParseCandidateKinds(std::string_view text, CandidateKinds& out);
 
     /// @brief At most this many candidates in a list (the Worker's `cands`), and stun ones in a join.
@@ -103,7 +103,9 @@ export namespace vortex::net {
         double chooseSeconds = 0.15;    ///< after the first proven Ack, wait this long for a better kind
         double staleServerSeconds = 25.0;   ///< a join reply with an older server last_seen: ServerStale
         uint32_t maxDatagrams = 100;    ///< per join and side, probes and acks together
-        uint32_t maxUnverifiedStun = 10;    ///< server: to an unverified join's stun candidates
+        /// server: probes to an unverified join's stun candidates (Acks answer proven datagrams and count
+        /// only toward maxDatagrams)
+        uint32_t maxUnverifiedStun = 10;
         uint32_t maxLearned = 2;        ///< peer-reflexive addresses a join learns
         uint32_t maxJoins = 4;          ///< server: joins punched at once
     };
@@ -206,7 +208,8 @@ export namespace vortex::net {
      * learned addresses, answers proven client Probes with an Ack, and is reached when an Ack from an
      * address it probed arrives. It takes a client datagram only with a valid proof, within
      * acceptSeconds of the join, and with a server nonce of 0 or its own; a second join with a client
-     * nonce it holds is refused. Everything else is dropped silently.
+     * nonce it holds is refused. Everything else is dropped silently. A join holds its slot until
+     * acceptSeconds after it came, finished or not.
      */
     class ServerTraversal {
     public:
@@ -219,7 +222,7 @@ export namespace vortex::net {
         size_t ActiveJoins() const { return m_Joins.size(); }
         /// @brief Datagrams sent for join `id` (0 for an unknown one); tests.
         uint32_t SentFor(uint32_t id) const;
-        /// @brief ... of them to its stun candidates.
+        /// @brief Probes of join `id` to its stun candidates (Acks are not counted; 0 for an unknown one).
         uint32_t SentToStunFor(uint32_t id) const;
         /// @brief The server nonce of join `id` (0 for an unknown one).
         uint64_t NonceFor(uint32_t id) const;

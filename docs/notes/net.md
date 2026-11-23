@@ -14,7 +14,8 @@ Paths are relative to `engine/`. Code is cited by file and symbol; search for th
 ## 1. Map
 
 - `src/net/Net.cppm` - primary unit of `vortex.net`; re-exports the partitions below (`:transport`, `:enet`, `:wire`,
-  `:messages`, `:prediction`, `:session`, `:entities`, `:sync`, `:server`, `:client`, `:drill`, `:bot`).
+  `:messages`, `:prediction`, `:session`, `:entities`, `:sync`, `:server`, `:client`, `:drill`, `:bot`, `:address`,
+  `:crypto`, `:stun`, `:traversal`, `:punch`).
 - `src/net/Transport.cppm`, `internal/Transport.cpp` - `ITransport`, `TransportEvent`, `Channel`,
   `LoopbackTransport` (shared inboxes, `Connect(a, b)`), `Impairment` / `ImpairedTransport` (send-side queue sorted by
   due time; reliable packets keep per peer-and-channel order through `m_LastDue`).
@@ -22,7 +23,24 @@ Paths are relative to `engine/`. Code is cited by file and symbol; search for th
   `<enet/enet.h>`), `EnetSettings` (timeouts, test receive loss), `EnetStats` [net-8] (bytes per channel),
   `ParseEndpoint`, `kDefaultPort`; `UdpRelay` [net-8] (a UDP relay on 127.0.0.1 with loss, delay + jitter, outages and
   a drop-tail bottleneck per direction, on a thread of its own, ENet's socket calls only: `vortex_bot`'s impairment
-  below ENet; `Seconds()`, `AddOutage`, the `RelaySettings::onAdmit` test hook).
+  below ENet; `Seconds()`, `AddOutage`, the `RelaySettings::onAdmit` test hook). [nat-R0]: `EnetTransport::Open`
+  (a client host bound at once) / `ConnectTo` / `SendRaw` / `TakeRaw` (`EnetSettings::interceptRaw`,
+  `kMaxRawWaiting`, `EnetStats::rawTaken / rawDropped / strangersDropped`), `ResolveEndpoint`; the intercept is always
+  installed, and every host has `SIO_UDP_CONNRESET` off on Windows.
+- `src/net/Address.cppm`, `internal/Address.cpp` [nat-R0] - `Endpoint` (IPv4 + port, host byte order), `Ipv4`,
+  `Datagram`, `FormatEndpoint`, `ParseIpv4Endpoint`, `IsPrivateIpv4`, `LocalInterface`, `IsLanInterface` (private and
+  not a docker / VPN / virtual adapter by name), `InSubnetOf`, `LocalInterfaces()`.
+- `src/net/Crypto.cppm`, `internal/Crypto.cpp` [nat-R0] - `Sha256` (`Update`, `Finish`, static `Of`) and `HmacSha256`.
+- `src/net/Stun.cppm`, `internal/Stun.cpp` [nat-R0] - the STUN Binding codec (`MakeStunBindingRequest`, `LooksLikeStun`,
+  `ParseStunBindingRequest`, `MakeStunBindingResponse`, `ParseStunBindingResponse`), `NatClass` / `ClassifyNat`, and
+  `StunProbe` (tries 2 s apart, a round every 15 s, `Settled`, `Mapped`, `Outside`, `Class`, `TakeChange`).
+- `src/net/Traversal.cppm`, `internal/Traversal.cpp` [nat-R0] - candidates (`Candidate`, `CandidateKinds`,
+  `FormatCandidates` / `ParseCandidates`), the keys (`RoomKey`, `HostKey`, `RoomTag`, `CandHash`), the punch datagram
+  (`EncodePunch` / `DecodePunch` / `PunchProof`, magic `VXPN`), `TraversalLimits` / `PairTestLimits()`,
+  `ClientTraversal`, `ServerTraversal` and R0's `PunchTest` (`VXPT1` lines); pure state machines, tested over
+  `tests/net/NatSim.h`.
+- `src/net/Punch.cppm`, `internal/Punch.cpp` [nat-R0] - `WantsNatTool` / `RunNatTool` (`--nat-probe`, `--punch-test`
+  for `vortex_server` and the game), `kDefaultStunServers`; stdin is read from file descriptor 0 on a detached thread.
 - `src/net/Bot.cppm`, `internal/Bot.cpp` [net-8] - `Bot` (a client, its simulation built at the Welcome with the
   game's store and packing when it has a window, a `BotPilot`, the per-pass ticks, applied times; an injected broken
   chunk makes it stand until repaired; `PassOnClock` for a wall clock; `WantedTicks` / `ActedTicks`), `DrainWatch`
@@ -560,6 +578,18 @@ Transports
   client or the transport until that thread is joined (`EnetTransport` is one thread at a time, not thread-safe).
 - Players do not join in `PeerId` order: a bot's slot depends on whose `Hello` arrived first. Tests take the slot from
   `Client::Slot()`.
+- The intercept runs for every datagram of every host: receive loss first, then the raw take (punch magic
+  `VXPN`, or a STUN answer to a transaction this host sent: the last 16), then a client host's filter (nothing
+  before `ConnectTo`, afterwards only its server). Keep that order; never parse ENet's header in it.
+- Why plain ENet would drop a punch or STUN datagram anyway: read as an ENet header, `VX` is peer id 1624 and a
+  STUN answer's `0x0101` is peer id 257, both past any host's peer count (`Enet.APunchOrStunDatagramNeverReachesENet`).
+  A session never lets ENet see them: do not raise `maxPeers` to 257 or more.
+- `Traversal` is a pure state machine (no socket, no clock): tests drive it over `tests/net/NatSim.h`; the
+  programs drive it over `EnetTransport::SendRaw` / `TakeRaw` on the thread that owns the transport, before any
+  keep-alive thread starts.
+- A thread that reads stdin must not block inside `std::cin` / stdio: it holds stdin's lock, and glibc's `exit()`
+  (2.41 on) takes every stream's lock, so the program hangs after its last line (the NAT tools read file descriptor
+  0 instead).
 
 Regions, templates and tests
 - `voxel::kGeneratorGoldenHash` must be updated whenever `Terrain.GoldenChunkHashes` (or the noise / height goldens)

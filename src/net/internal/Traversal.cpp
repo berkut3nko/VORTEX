@@ -22,6 +22,7 @@ namespace vortex::net {
     namespace {
         constexpr std::array<uint8_t, 4> kMagic = {'V', 'X', 'P', 'N'};
         constexpr double kNever = std::numeric_limits<double>::infinity();
+        constexpr size_t kMaxLanCandidates = 4;   ///< in one pair-test line ([nat-R0] pack, decision 3)
 
         void Put64(uint8_t* p, uint64_t v) {
             for (int i = 0; i < 8; ++i) p[i] = static_cast<uint8_t>(v >> (56 - 8 * i));
@@ -87,9 +88,10 @@ namespace vortex::net {
 
     bool ParseCandidateKinds(std::string_view text, CandidateKinds& out) {
         CandidateKinds k{false, false, false};
-        while (!text.empty()) {
+        if (text.empty()) return false;
+        for (;;) {
             const size_t comma = text.find(',');
-            const std::string_view word = text.substr(0, comma);
+            const std::string_view word = text.substr(0, comma);   // empty for "", "lan,", ",lan", "lan,,stun"
             if (word == "lan") k.lan = true;
             else if (word == "stun") k.stun = true;
             else if (word == "given") k.given = true;
@@ -398,7 +400,7 @@ namespace vortex::net {
         const auto bytes = EncodePunch(p);
         out.push_back({to, std::vector<uint8_t>(bytes.begin(), bytes.end())});
         ++j.sent;
-        if (toStun) ++j.sentToStun;
+        if (toStun && kind == PunchKind::Probe) ++j.sentToStun;   // an Ack answers a proven datagram
         if (kind == PunchKind::Probe && t != nullptr) t->probed = true;
         return true;
     }
@@ -510,9 +512,16 @@ namespace vortex::net {
                 if (o.at == c.at) return;
             m_Candidates.push_back(c);
         };
-        if (m_Settings.kinds.lan)
-            for (const LocalInterface& i : m_Settings.interfaces)
-                if (IsLanInterface(i)) add({{i.ip, m_Settings.port}, CandidateKind::Lan});
+        if (m_Settings.kinds.lan) {
+            // At most 4, in interface order: lan never crowds given and stun out of the 8.
+            size_t lan = 0;
+            for (const LocalInterface& i : m_Settings.interfaces) {
+                if (lan >= kMaxLanCandidates || !IsLanInterface(i)) continue;
+                const size_t before = m_Candidates.size();
+                add({{i.ip, m_Settings.port}, CandidateKind::Lan});
+                lan += m_Candidates.size() - before;
+            }
+        }
         if (m_Settings.kinds.given && m_Settings.given && m_Settings.role == PunchRole::Server) add({*m_Settings.given, CandidateKind::Given});
         if (m_Settings.kinds.stun) {
             size_t stun = 0;

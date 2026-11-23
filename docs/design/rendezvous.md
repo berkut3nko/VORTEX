@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| Status | Designed, nothing built or measured for it. Reviewed, rechecked adversarially and amended twice. |
+| Status | R0 built (not reviewed): STUN, hashes, `Traversal`, ENet raw hooks, the NAT tools; R1 designed, nothing built. Reviewed, rechecked adversarially and amended twice. |
 | Decided | - Owner's request (2026-11-19): the session server runs on the owner's own AVX2/FMA3 machine at home, with no public ("white") IPv4 address and no paid VPS. It finds players through STUN and UDP hole punching, with a Cloudflare Worker + D1 on the free tier as the meeting point.<br>- Us (this design, 2026-11-19): items 1-10 of "Decision in brief".<br>- Owner (2026-11-19): hide the token in `Hello` with M2a's protocol bump ([wp-7]); "Hello without the token" below. |
-| Next | [nat-R0] NAT probe and pair test (ROADMAP "Now" since 2026-11-22, after [wp-2]), then [nat-R1] rendezvous (see "Stages"). ROADMAP placement: "Placement" below. |
+| Next | [nat-R1] rendezvous (ROADMAP "Now" since 2026-11-23, see "Stages"); the owner's R0 pair results (owner check 16) decide [nat-R2]. ROADMAP placement: "Placement" below. |
 | Open | "Open questions" 1-6, each with the recommended answer. 1 (a relay for pairs that cannot meet) waits for R0's pair results. |
 | History | [design-review-2026-11-19.md](../history/rendezvous/design-review-2026-11-19.md): the review's and the recheck's findings, and what was done with each |
 | Marks | **(m)** measured, **(c)** computed, **(e)** estimate, **(d)** from Cloudflare's documentation read on 2026-11-19 (re-check at R1: free tiers change). Code read at engine `a23af7a`, with WP1 uncommitted in the tree. |
@@ -201,7 +201,7 @@ CREATE INDEX joins_by_room ON joins (room, id);
   (`CURLOPT_NOPROXY "*"`). The Worker then sees the same outside IPv4 that STUN reports. A VPN or a second outside
   address shows up as 403, and the client prints both IPs.
 - **IPv6 callers.** A caller seen over IPv6 anyway is stored with `verified = 0`, not refused. The server sends at
-  most 10 datagrams to an unverified join's `stun` candidates: enough to open its own filter, too few to aim at
+  most 10 probes to an unverified join's `stun` candidates: enough to open its own filter, too few to aim at
   anyone. The reply tells the client, which logs `Rendezvous: the Worker saw IPv6; the HTTPS client should force
   IPv4`.
 - **Joins.** A room keeps at most 16; the oldest are deleted on insert, and joins older than 60 s lazily.
@@ -254,7 +254,11 @@ That leaves room for about 20 servers up all day, or many more for short session
   - STUN, punching and `ConnectTo` run on the thread that owns the transport, before the game's keep-alive thread
     starts.
   - LAN candidates come from `getifaddrs` / `GetAdaptersAddresses`. Left out: loopback, link-local, 100.64.0.0/10
-    (Tailscale and CGNAT addresses), and docker or virtual adapters.
+    (Tailscale and CGNAT addresses), docker or virtual adapters, and VPN and tunnel adapters by name (`IsLanInterface`:
+    tun, tap, wg, utun, vnet, tap-windows, vpn, openvpn, wireguard, npcap, ...). At most 4 per side, in interface
+    order, so `lan` never crowds `given` and `stun` out of the 8 (`kMaxCandidates`; [nat-R0] decision 3). The rule
+    belongs to the candidate list itself, not to the pair test: R0 applies it in `PunchTest::MakeLine`, and R1's
+    `ChooseCandidates` (which takes over that body for the line, the register and the join) keeps it.
   - `--candidates stun,given` limits the kinds offered (G20 uses it). The server punches a client's `lan`
     candidates only when they lie in one of its own subnets.
 - **`vortex_https`** is a small library of its own, linked only by `vortex_server` and the game (as `Enet.cpp` is the
@@ -306,7 +310,8 @@ byte for byte. In R0's pair test it is the pasted line's candidate part.
 
   It drops a second join with a client nonce it already holds. Anything else is dropped silently.
 - **What each side may send.** At most 100 datagrams per join across all of its candidates (6.7 KB on the wire), and
-  at most 10 to an unverified join's `stun` candidates. The server runs at most 4 joins at once, and the Worker
+  at most 10 probes to an unverified join's `stun` candidates (its Acks answer proven datagrams and count only toward
+  the 100). The server runs at most 4 joins at once, and the Worker
   admits at most 4 joins per minute per room.
   - A verified join's STUN IP is the caller's own (the Worker's 403 rule).
   - LAN candidates are private, and in one of the server's own subnets.
@@ -407,7 +412,7 @@ This proves the real ENet path and the shipped Worker through emulated NATs. Onl
 
 | ID | Builds | Effort (e) | Done when |
 |---|---|---|---|
-| [nat-R0] | `net::Stun`, the NAT class, `Sha256` / HMAC, `Traversal` + `NatSim` with every test above that needs no Worker; `EnetTransport::Open / SendRaw / TakeRaw / ConnectTo`, the always-on `intercept`, the client host's filter, `SIO_UDP_CONNRESET`; `--stun`, `--candidates`, `--nat-probe`, `--punch-test` | 3-4 d | Tests pass. The owner runs the pair test (below) for each pair that must play, one side on Windows, and reports the `NAT:` and `Punch:` lines. Those results decide "Open questions" 1. |
+| [nat-R0] | `net::Stun`, the NAT class, `Sha256` / HMAC, `Traversal` + `NatSim` with every test above that needs no Worker; `EnetTransport::Open / SendRaw / TakeRaw / ConnectTo`, the always-on `intercept`, the client host's filter, `SIO_UDP_CONNRESET`; `--stun`, `--candidates`, `--nat-probe`, `--punch-test` | 3-4 d | Tests pass. The owner runs the pair test (below) for each pair that must play, one side on Windows, and reports the `NAT:` and `Punch:` lines. Those results decide "Open questions" 1. Built: on `main` after engine `27052ab` / game `a91f730` (2026-11-23; the commit hashes follow when the owner commits); the owner's pair results pending (owner check 16). |
 | [nat-R1] | The Worker + D1 (`local.mjs`, Node tests), `vortex_https` (libcurl on both platforms), `Rendezvous`, `--rendezvous` / `--join`, `vortex_natbox` with the fake STUN server, G20, the owner checks | 6-8 d, plus 0.5-1 d for the Windows build round trip | Every gate plus G20. The owner deploys the Worker and plays one internet session, with the Windows client as the joining side. |
 | [nat-R2] | Only for pairs that R0 found cannot meet: the relay chosen in "Open questions" 1 | 3-6 d | Those pairs play. |
 

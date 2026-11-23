@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Stage | `[wp-6]` rules seam + net split (ROADMAP "Next" item 4) |
+| Stage | `[wp-6]` rules seam + net split (ROADMAP "Next") |
 | Design | The project review of 2026-11-17 (game `docs/history/reviews/project-review-2026-11-17.md`), section 3.2 row "Gameplay rules inside `net::Server`" and section 4 "WP6. Rules seam and net split". No design document exists yet: card 1 writes `engine/docs/design/rules.md` from this pack's "Decisions". |
 | Code read at | engine `bafca16`, game `0e27ea7` (branch `llm-tasks`, from `wip/nat-r0`) |
 | Depends on | nothing in "Next" (it may start before `[wp-4]` / `[wp-5]`); `[nat-R0]` and `[nat-R1]` touch other files |

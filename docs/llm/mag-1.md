@@ -1526,7 +1526,7 @@ wall, `ctx.walls = WindowWalls(world)`, team spawn areas at chosen places)
 | Touches | docs only (plus fixes the checks find) |
 
 **Read first** (about 30 KiB)
-- magic.md "Contract changes" and "Stages"; ROADMAP "Now", "Next" item 8, "State"; CLAUDE.md section 5.
+- magic.md "Contract changes" and "Stages"; ROADMAP "Now", "Next" (the `[mag-1]` item), "State"; CLAUDE.md section 5.
 
 **Steps**
 1. `grep -rn 'DISABLED_' engine/tests tests` shows no test of this stage (the 6 disabled measurements of before
@@ -1545,7 +1545,7 @@ wall, `ctx.walls = WindowWalls(world)`, team spawn areas at chosen places)
 4. magic.md "Stages" row `[mag-1]`: State **Built** with the engine and game commits of the stage's cards; the
    design's "Status" line: `[mag-1]` built. Gate numbers in magic.md "Headless flags and gates": G22 is
    `--siege-matrix` (the design said G21; the plan moved it), G23 the spell drill.
-5. ROADMAP: "Next" item 8 -> state Built (move it per ROADMAP's own convention), "State" test count, measured values
+5. ROADMAP: "Next"'s `[mag-1]` item -> state Built (move it per ROADMAP's own convention), "State" test count, measured values
    from the `Magic:` lines (work and ms of each spell after `--after-fill`, labelled (m)) under "Performance and
    measured values".
 6. `VERIFY_SLOT=1 tools/verify.sh full --ci` - PASS. `VERIFY_SLOT=1 tools/verify.sh soak` in the background - PASS

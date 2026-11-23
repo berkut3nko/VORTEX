@@ -14,9 +14,11 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
 
 ## Now
 
-- **[nat-R0] NAT probe and pair test.** The owner's home server (no public IPv4) learns whether players can reach it:
-  STUN, the NAT class, hole punching on ENet's socket, a pair test with no Worker; no wire change.
-  [design/rendezvous.md](design/rendezvous.md), "Stages" R0. 3-4 d (e).
+- **[nat-R1] Rendezvous.** Testers outside the house join by an invite: a Cloudflare Worker + D1 (free tier) as the
+  meeting point, `--rendezvous` / `--join`, gate G20. [design/rendezvous.md](design/rendezvous.md), "Stages" R1.
+  6-8 d (e). [nat-R2] (a relay) waits for R0's pair results.
+- **[nat-R0] built** (2026-11-23): the NAT probe and the pair test run on the owner's machines (docs/verify.md "NAT
+  tools"); waiting for the owner's pair results (owner check 16), which decide `[nat-R2]`.
 - **Owner: M1 acceptance: LAN run on stage 8 commits** (engine `430fde0` / game `10197d2`), windowed, Linux host and
   Windows laptop, the short soak as its pre-check: two-PC guide
   ([section 6.5](../../docs/two-pc-test-windows.md)).
@@ -91,39 +93,36 @@ close the output-folder lock (fd 6), `tools/build.sh` checks `DEPS_FROM` pins un
 
 In this order:
 
-1. **[nat-R1] Rendezvous.** Testers outside the house join by an invite: a Cloudflare Worker + D1 (free tier) as the
-   meeting point, `--rendezvous` / `--join`, gate G20. [design/rendezvous.md](design/rendezvous.md), "Stages" R1.
-   6-8 d (e). [nat-R2] (a relay) waits for R0's pair results.
-2. **[wp-4] Frame-rate block A + settings.** A steadier, faster frame; settings in game; every playtest leaves
+1. **[wp-4] Frame-rate block A + settings.** A steadier, faster frame; settings in game; every playtest leaves
    numbers. [design/perf.md](design/perf.md) stages 1-3 (M0, P1, G1 + G2), a HUD settings page. 3-4 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP4".
-3. **[wp-5] Visible play boundary + moving window on small regions.** You see where the play area ends; the
+2. **[wp-5] Visible play boundary + moving window on small regions.** You see where the play area ends; the
    playground shows 88 m instead of 56 m. 1-2 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP5".
-4. **[wp-6] Rules seam + net split.** No player change yet: spells and modes then come without growing `net::Server`.
+3. **[wp-6] Rules seam + net split.** No player change yet: spells and modes then come without growing `net::Server`.
    A GPU-free `sim` rules seam, then `Server.cpp` / `Client.cpp` split; no behaviour or wire change. 6-9 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP6".
-5. **[wp-7] M2a "first fight".** The sandbox becomes a PvP game: hurt, die, respawn, win a round (M2 below). The only
+4. **[wp-7] M2a "first fight".** The sandbox becomes a PvP game: hurt, die, respawn, win a round (M2 below). The only
    protocol bump in WP4-WP8. 8-12 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP7".
-6. **[wp-8] Fight measurement + fx-budget 1-2 + 10 clients.** Fights stay playable on the UHD 620: `--stress-fx`, a
+5. **[wp-8] Fight measurement + fx-budget 1-2 + 10 clients.** Fights stay playable on the UHD 620: `--stress-fx`, a
    10-bot session at 10 casts/s with measured clients, then [design/fx-budget.md](design/fx-budget.md) stages 1-2.
    5-8 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP8".
-7. **[mech-1] Door and gate.** E opens doors, a lever runs a gate, crates move to Q.
+6. **[mech-1] Door and gate.** E opens doors, a lever runs a gate, crates move to Q.
    [design/mechanisms.md](design/mechanisms.md), "Stages" row 1. Its own protocol bump, after M2a's; after WP8 so its
    yard is measured inside a known fight budget. 9-10 d (e).
-8. **[mag-1] Siege core in sim, headless only.** The spell system's first four spells, Siege Cannon, Barricade Wave,
+7. **[mag-1] Siege core in sim, headless only.** The spell system's first four spells, Siege Cannon, Barricade Wave,
    Shockwave and Updraft (breach, cover, knock off, climb), with only what they use: the Pierce operator, the Burst
    strip, Plume's single column, `CarveCapsule` / `MapMask` / `MapShape` as sim ops, knit iron that blasts chip, with
    server-scheduled expiries, the spawn guard, Impulse and Lift zones in `sim::StepPlayer` (`kPlayerRuleRevision` 2);
    no wire change. [design/magic.md](design/magic.md), "Stages". 6-9 d (e).
-9. **[mag-2] First playable spells.** The same four spells in offline practice and in sessions: the one magic
+8. **[mag-2] First playable spells.** The same four spells in offline practice and in sessions: the one magic
     protocol bump (it reserves every value the later magic stages need), zone events with a 0.4 s lead, the spell bar
     and the attune menu on the HUD; the owner's Felling-duel taste check. [design/magic.md](design/magic.md), "Stages".
     6-9 d (e).
-10. **[si-2] Impacts with crush damage** (with the `NeckCheck` split and a chunk-source interface first). A falling
+9. **[si-2] Impacts with crush damage** (with the `NeckCheck` split and a chunk-source interface first). A falling
     tower cracks walls and kills. [design/shred.md](design/shred.md), "SI-2 - impacts (inertial contact)". 7-11 d (e).
-11. **[fog-1] Fog stage 1.** Haze toward the sun, low mist and blast dust puffs, without losing frame rate.
+10. **[fog-1] Fog stage 1.** Haze toward the sun, low mist and blast dust puffs, without losing frame rate.
     [design/fog.md](design/fog.md), "Stages" 1. About 4 d (e).
-12. **[spread-S1] Fire offline.** A burning house that falls, offline only, no wire change (its smoke feeds fog later).
+11. **[spread-S1] Fire offline.** A burning house that falls, offline only, no wire change (its smoke feeds fog later).
     [design/spread.md](design/spread.md), "Stages" S1. Large (e).
-13. **[wg-W1] Stamped village.** The first real map, with towers worth felling. Soak tier (nightly) first.
+12. **[wg-W1] Stamped village.** The first real map, with towers worth felling. Soak tier (nightly) first.
     [design/worldgen.md](design/worldgen.md), "W1: a stamped village, offline". About 1.5 weeks (e).
 
 Placement of [mech-1] and [spread-S1] was decided by us under the owner's rules; the owner may veto it. Mechanisms
@@ -206,7 +205,7 @@ never been measured.
 
 ## State
 
-Tests: **748** in ctest: 741 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
+Tests: **766** in ctest: 759 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
 game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts), `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
 `Tools.DocCheck`, `Tools.DocCheckSelftest`, `Tools.SessionCheckVerdict` and `Tools.VerifyAssertions` (WP2's checks
 and their self-tests), none needing a GPU (the ENet and relay ones use UDP on 127.0.0.1). The owner's windowed checks and their results: [owner checks](../../docs/owner-checks.md).

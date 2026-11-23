@@ -227,6 +227,7 @@ two-pc-test-windows.md 1) and the second 761 stage tokens.
 | game-ui.md | [design/game-ui.md](design/game-ui.md) |
 | notes/voxel.md | [notes/voxel.md](notes/voxel.md) |
 | docs/two-pc-test-windows.md 4.9 | the game repository's two-PC guide (name and section 4.9 kept) |
+| rendezvous.md "Keeping mappings", "Choosing", "Timeouts", "R0's pair test" | [design/rendezvous.md](design/rendezvous.md) "Flow" (its bold bullets) and "Stages" ("R0's pair test, with no Worker") |
 
 Bare stage tokens with no document name (the second grep) are read by their context: a token in `src/net`,
 `tests/net` or `tools/` is networking; 1b-1e and 4b are shred.md; "stage 4" next to a graph or a search is shred.md

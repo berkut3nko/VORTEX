@@ -86,9 +86,9 @@ namespace vortex::net {
         std::string name = i.name;
         std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         // Docker, bridges for virtual machines, VPNs (rendezvous.md: "docker or virtual adapters").
-        for (const char* prefix : {"docker", "br-", "veth", "virbr", "vmnet", "vboxnet", "tun", "tap", "wg", "zt", "tailscale", "lxc", "lxd"})
+        for (const char* prefix : {"docker", "br-", "veth", "virbr", "vmnet", "vboxnet", "tun", "tap", "wg", "zt", "tailscale", "lxc", "lxd", "vnet", "utun"})
             if (name.rfind(prefix, 0) == 0) return false;
-        for (const char* part : {"virtualbox", "vmware", "hyper-v", "vethernet", "wsl", "zerotier", "tailscale", "openvpn", "wireguard", "loopback"})
+        for (const char* part : {"virtualbox", "vmware", "hyper-v", "vethernet", "wsl", "zerotier", "tailscale", "openvpn", "wireguard", "loopback", "tap-windows", "vpn", "npcap"})
             if (name.find(part) != std::string::npos) return false;
         return true;
     }

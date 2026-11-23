@@ -5,7 +5,6 @@ module;
 #include <cstdio>
 #include <deque>
 #include <format>
-#include <iostream>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -14,6 +13,12 @@ module;
 #include <string_view>
 #include <thread>
 #include <vector>
+
+#if defined(_WIN32)
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 module vortex.net;
 
@@ -25,19 +30,41 @@ namespace vortex::net {
         using Clock = std::chrono::steady_clock;
 
         /// Lines typed or pasted on stdin, read by a thread of their own (a blocked read never holds the
-        /// punching loop). The thread is detached: it may still wait in getline when the program ends.
+        /// punching loop). The thread is detached: it may still wait for input when the program ends.
         struct StdinLines {
             std::mutex mutex;
             std::deque<std::string> lines;
         };
 
+        /// One read of file descriptor 0, never through std::cin / stdio: a thread blocked in getline
+        /// holds stdin's stdio lock, and glibc's exit() takes every stream's lock (2.41 on), so the
+        /// program would hang at its end, after "Punch: the pair test is done".
+        long ReadFd0(char* buffer, unsigned size) {
+#if defined(_WIN32)
+            return _read(0, buffer, size);
+#else
+            return static_cast<long>(::read(0, buffer, size));
+#endif
+        }
+
         std::shared_ptr<StdinLines> ReadStdin() {
             auto shared = std::make_shared<StdinLines>();
             std::thread([shared] {
-                std::string line;
-                while (std::getline(std::cin, line)) {
+                std::string pending;
+                char buffer[4096];
+                for (;;) {
+                    const long n = ReadFd0(buffer, sizeof(buffer));
+                    if (n <= 0) break;   // end of input or an error: no more lines
+                    pending.append(buffer, static_cast<size_t>(n));
+                    for (size_t end = pending.find('\n'); end != std::string::npos; end = pending.find('\n')) {
+                        std::lock_guard lock(shared->mutex);
+                        shared->lines.push_back(pending.substr(0, end));
+                        pending.erase(0, end + 1);
+                    }
+                }
+                if (!pending.empty()) {
                     std::lock_guard lock(shared->mutex);
-                    shared->lines.push_back(line);
+                    shared->lines.push_back(std::move(pending));
                 }
             }).detach();
             return shared;
@@ -179,8 +206,8 @@ namespace vortex::net {
             for (const LocalInterface& i : LocalInterfaces())
                 Log::Info("NAT: interface {} {}/{}{}", i.name, FormatIpv4(i.ip), FormatIpv4(i.mask), IsLanInterface(i) ? " (lan candidate)" : "");
             const std::optional<Endpoint> outside = stun.Outside();
-            Log::Info("NAT: outside {}, class {} (UDP port {})", outside ? FormatEndpoint(*outside) : std::string("-"), ToString(stun.Class()),
-                      transport->Port());
+            Log::Info("NAT: outside {}, class {}", outside ? FormatEndpoint(*outside) : std::string("-"), ToString(stun.Class()));
+            Log::Info("NAT: UDP port {}", transport->Port());
             return 0;
         }
 

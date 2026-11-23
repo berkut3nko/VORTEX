@@ -700,7 +700,7 @@ float DistanceToPlayAreaEdge(const PlayArea& area, const glm::vec2& feet) {
 | Touches | docs only (and fixes of anything the checks find, each as its own `card 4 fix` commit) |
 
 **Read first** (about 30 KiB)
-- `engine/docs/ROADMAP.md` "Now", "Next" item 3, "Not a game yet", "State" (the Sessions row: "an invisible wall at
+- `engine/docs/ROADMAP.md` "Now", "Next" (the `[wp-5]` item), "Not a game yet", "State" (the Sessions row: "an invisible wall at
   the play bounds ([wp-5] shows it); 56 m on the playground ([wp-5])"), "Performance and measured values"
 - `docs/owner-checks.md` item 15
 - `engine/docs/design/networking.md` "Player movement", the bullet "The play area (WP1)"
@@ -722,7 +722,7 @@ float DistanceToPlayAreaEdge(const PlayArea& area, const glm::vec2& feet) {
      turn), it fades out by about 24 m and above and below you, and it is never drawn over the sky beyond a hill.
      Settings page: Play bounds off removes it. The playground shows terrain to the horizon (88 m) with no edge of
      the world."
-   - ROADMAP: `[wp-5]` moves to "Now" as built (state **Built**, not "reviewed"); "Next" item 3 removed and the list
+   - ROADMAP: `[wp-5]` moves to "Now" as built (state **Built**, not "reviewed"); "Next"'s `[wp-5]` item removed and the list
      renumbered; "Not a game yet" drops "no visible play boundary ..." and "a playground session sees 56 m"; the
      Sessions row's gaps drop "an invisible wall ..." and "56 m on the playground"; "Performance and measured values"
      gets the composite cost (A and B medians, UHD 620, date) and "playground session view radius 88 m"; the test

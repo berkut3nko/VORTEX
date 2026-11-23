@@ -672,3 +672,141 @@ TEST(Traversal, PastesMinutesApartStillMeet) {
         EXPECT_LT(r.serverReachedAt, 183.0) << Describe(r);
     }
 }
+
+// rendezvous.md "The engine side": a lan candidate is a private (RFC 1918) address on an adapter that is not
+// docker, a bridge, a VPN or a virtual machine's; and a line carries at most 4 of them, in interface
+// order, so that lan never crowds given and stun out of the 8.
+TEST(Traversal, LanCandidatesAreOnlyPrivateNonVirtualAddresses) {
+    const uint32_t mask = Ipv4(255, 255, 255, 0);
+    const auto lan = [&](const char* name, uint32_t ip) { return net::IsLanInterface({name, ip, mask}); };
+    EXPECT_TRUE(lan("eth0", Ipv4(192, 168, 1, 10)));
+    EXPECT_TRUE(lan("wlan0", Ipv4(10, 0, 0, 5)));
+    EXPECT_TRUE(lan("enp3s0", Ipv4(172, 16, 4, 2)));
+    EXPECT_TRUE(lan("Wi-Fi / Intel(R) Wi-Fi 6 AX201", Ipv4(192, 168, 0, 12)));
+    EXPECT_TRUE(lan("Ethernet / Realtek PCIe GbE", Ipv4(192, 168, 0, 13)));
+    EXPECT_FALSE(lan("lo", Ipv4(127, 0, 0, 1)));
+    EXPECT_FALSE(lan("eth1", Ipv4(169, 254, 3, 3)));
+    EXPECT_FALSE(lan("eth2", Ipv4(100, 64, 0, 1)));
+    EXPECT_FALSE(lan("tailscale0", Ipv4(100, 101, 1, 1)));
+    EXPECT_FALSE(lan("docker0", Ipv4(172, 17, 0, 1)));
+    EXPECT_FALSE(lan("br-1a2b3c", Ipv4(172, 18, 0, 1)));
+    EXPECT_FALSE(lan("virbr0", Ipv4(192, 168, 122, 1)));
+    EXPECT_FALSE(lan("vboxnet0", Ipv4(192, 168, 56, 1)));
+    EXPECT_FALSE(lan("vnet3", Ipv4(192, 168, 122, 7)));
+    EXPECT_FALSE(lan("Ethernet 3 / TAP-Windows Adapter V9", Ipv4(10, 8, 0, 2)));
+    EXPECT_FALSE(lan("vEthernet (WSL) / Hyper-V Virtual Ethernet Adapter", Ipv4(172, 20, 0, 1)));
+    EXPECT_FALSE(lan("ProtonVPN / ProtonVPN Tunnel", Ipv4(10, 2, 0, 2)));
+    EXPECT_FALSE(lan("eth3", Ipv4(8, 8, 8, 8)));
+
+    const std::vector<net::LocalInterface> eth0 = {{"eth0", Ipv4(192, 168, 1, 10), mask}};
+    EXPECT_TRUE(net::InSubnetOf(Ipv4(192, 168, 1, 77), eth0));
+    EXPECT_FALSE(net::InSubnetOf(Ipv4(192, 168, 2, 1), eth0));
+    const std::vector<net::LocalInterface> noMask = {{"eth0", Ipv4(192, 168, 1, 10), 0}};
+    EXPECT_FALSE(net::InSubnetOf(Ipv4(192, 168, 1, 10), noMask));
+    EXPECT_FALSE(net::InSubnetOf(Ipv4(8, 8, 8, 8), noMask));
+
+    // The cap: six lan adapters, two STUN answers.
+    net::PunchTestSettings settings;
+    settings.role = net::PunchRole::Client;
+    settings.token = kToken;
+    settings.stunServers = {kStun1, kStun2};
+    settings.port = 6000;
+    for (uint8_t i = 0; i < 6; ++i)
+        settings.interfaces.push_back({"eth" + std::to_string(i), Ipv4(192, 168, 1, static_cast<uint8_t>(10 + i)), mask});
+    settings.seed = 3;
+    net::PunchTest test(settings, 0.0);
+    std::vector<net::Datagram> out;
+    for (int step = 0; step <= 100; ++step) {
+        const double t = 0.01 * step;
+        out.clear();
+        test.Update(t, out);
+        for (const net::Datagram& d : out) {
+            net::StunTransaction transaction{};
+            if (!net::ParseStunBindingRequest(d.bytes, transaction)) continue;
+            if (d.address == kStun1) test.OnDatagram({kStun1, net::MakeStunBindingResponse(transaction, {Ipv4(203, 0, 113, 20), 6000})}, t);
+            if (d.address == kStun2) test.OnDatagram({kStun2, net::MakeStunBindingResponse(transaction, {Ipv4(203, 0, 113, 20), 6001})}, t);
+        }
+    }
+    ASSERT_FALSE(test.Line().empty());
+    const std::vector<net::Candidate>& c = test.Candidates();
+    ASSERT_EQ(c.size(), 6u) << test.Line();
+    for (uint8_t i = 0; i < 4; ++i) {
+        EXPECT_EQ(c[i].kind, net::CandidateKind::Lan);
+        EXPECT_EQ(c[i].at, (Endpoint{Ipv4(192, 168, 1, static_cast<uint8_t>(10 + i)), 6000}));
+    }
+    EXPECT_EQ(c[4].kind, net::CandidateKind::Stun);
+    EXPECT_EQ(c[4].at.port, 6000);
+    EXPECT_EQ(c[5].kind, net::CandidateKind::Stun);
+    EXPECT_EQ(c[5].at.port, 6001);
+}
+
+// rendezvous.md "Punch datagram" (decision 1 of the [nat-R0] pack): the 10 of an unverified join count
+// probes only; an Ack answers a datagram that proved the token from that address, so it is sent after
+// the 10 probes too (an EIM client whose probes come from its stun address is still answered).
+TEST(Traversal, AnUnverifiedJoinStillAcksAfterItsTenProbes) {
+    net::ServerTraversal s(kToken, {}, {}, 9);
+    const std::string cands = "203.0.113.30:6000/stun";
+    const Endpoint client{Ipv4(203, 0, 113, 30), 6000};
+    ASSERT_EQ(s.AddJoin({1, 0x31, cands, false}, 0.0), net::AddJoinResult::Added);
+    std::vector<net::Datagram> out, all;
+    for (int step = 0; step <= 39; ++step) {
+        out.clear();
+        s.Update(0.05 * step, out);
+        all.insert(all.end(), out.begin(), out.end());
+    }
+    std::vector<net::Datagram> toClient;
+    for (const net::Datagram& d : all)
+        if (d.address == client) toClient.push_back(d);
+    EXPECT_EQ(CountKind(toClient, net::PunchKind::Probe), 10u);
+    for (const double t : {2.0, 2.5}) {
+        SCOPED_TRACE(t);
+        EXPECT_TRUE(s.OnDatagram(PunchFrom(client, kToken, kToken, net::PunchKind::Probe, net::PunchRole::Client, 0x31, 0, cands), t));
+        out.clear();
+        s.Update(t, out);
+        EXPECT_EQ(CountKind(out, net::PunchKind::Ack), 1u);
+        EXPECT_EQ(CountKind(out, net::PunchKind::Probe), 0u);
+    }
+    EXPECT_EQ(s.SentToStunFor(1), 10u);
+}
+
+// rendezvous.md "R0's pair test, with no Worker": a STUN server that never answers never stops the
+// run. Each server is given up after 3 tries 2 s apart; then the line is printed with the lan
+// candidate only and the class unknown, and the side waits for the paste.
+TEST(Traversal, WithNoStunAnswerTheLineIsPrintedAndTheClassIsUnknown) {
+    net::PunchTestSettings settings;
+    settings.role = net::PunchRole::Server;
+    settings.token = kToken;
+    settings.stunServers = {kStun1, kStun2};
+    settings.interfaces = {{"eth0", Ipv4(192, 168, 1, 10), Ipv4(255, 255, 255, 0)}};
+    settings.port = 5000;
+    settings.seed = 4;
+    net::PunchTest test(settings, 0.0);
+    std::vector<net::Datagram> out;
+    std::vector<std::string> log;
+    size_t toStun1 = 0;
+    double printedAt = -1.0;
+    for (int step = 0; step <= 800; ++step) {
+        const double t = 0.01 * step;
+        out.clear();
+        test.Update(t, out);
+        for (const net::Datagram& d : out)
+            if (d.address == kStun1) ++toStun1;
+        for (std::string& line : test.TakeLog()) log.push_back(std::move(line));
+        if (step == 590) EXPECT_TRUE(test.Line().empty()) << test.Line();
+        if (printedAt < 0.0 && !test.Line().empty()) printedAt = t;
+    }
+    ASSERT_GE(printedAt, 0.0);
+    EXPECT_LE(printedAt, 7.0);
+    EXPECT_EQ(test.CurrentPhase(), net::PunchTest::Phase::WaitingForPaste);
+    EXPECT_EQ(test.Class(), net::NatClass::Unknown);
+    EXPECT_NE(std::find(log.begin(), log.end(), "NAT: outside -, class unknown"), log.end());
+    ASSERT_EQ(test.Candidates().size(), 1u);
+    EXPECT_EQ(test.Candidates()[0].kind, net::CandidateKind::Lan);
+    EXPECT_EQ(test.Candidates()[0].at, (Endpoint{Ipv4(192, 168, 1, 10), 5000}));
+    const std::string& line = test.Line();
+    EXPECT_NE(line.find("VXPT1 S "), std::string::npos) << line;
+    const std::string_view tail = "192.168.1.10:5000/lan";
+    ASSERT_GE(line.size(), tail.size());
+    EXPECT_EQ(std::string_view(line).substr(line.size() - tail.size()), tail) << line;
+    EXPECT_EQ(toStun1, 3u);   // tries at 0, 2 and 4 s; the next round starts at 15 s
+}
