@@ -103,12 +103,20 @@ Paths are relative to `engine/`. Code is cited by file and symbol; search for th
   revision), `ProbeChunks` / `CheckProbes`, `RegionHash`, `BreakChunks` [net-7b] (a
   generator that makes some chunks differently, for tests and `--bot-broken-chunk`), `SessionGenerator` [net-7b] (the
   client's generator, Empty inside the server's window once server terrain mode is on).
-- `src/net/Server.cppm`, `internal/Server.cpp` - `ServerSettings`, `CastRecord`, `ServerStats`, `net::Server` (event
-  backlog, peers with send cursors, the modified map, per-peer bulk queues and pacers, the entity baseline, cast queue
-  and the credits; `Impl::EmitOp`, `Impl::ColliderFocus`, `SendChecks`, `RefreshHashes`, `PruneQueue`, `SortChunks`).
-- `src/net/Client.cppm`, `internal/Client.cpp` - `ClientSettings`, `ClientState`, `ClientStats`, `PredictionStats`,
-  `net::Client` (events; the own player's prediction, input sends and reconciliation; `MakeSimulationConfig`,
-  `Attach`).
+- `src/net/Server.cppm`, `internal/ServerImpl.cppm` (partition `:server_impl`: `Server::Impl`, its types),
+  `internal/Server.cpp` (the public methods, the tick loop, emit, transport), `ServerPeers.cpp` (join, inputs, player
+  steps, snapshots, baseline), `ServerCasts.cpp` (the cast queue through `vortex.sim:rules`), `ServerSync.cpp` (chunk
+  sync and bulk), `ServerChecks.cpp` (hash, entity checks), `ServerEntities.cpp` (replicated bodies, crates) -
+  `ServerSettings`, `CastRecord`, `ServerStats`, `net::Server` (event backlog, peers with send cursors, the modified
+  map, per-peer bulk queues and pacers, the entity baseline, cast queue and the credits; `Impl::EmitOp`,
+  `Impl::ColliderFocus`, `SendChecks`, `RefreshHashes`, `PruneQueue`, `SortChunks`). [wp-6]
+- `src/net/Client.cppm`, `internal/ClientImpl.cppm` (partition `:client_impl`: `Client::Impl`, its types),
+  `internal/Client.cpp` (the public methods, the Welcome, receive, the pending stream), `ClientPrediction.cpp`
+  (prediction, inputs, snapshots, reconciliation), `ClientSync.cpp` (window, server terrain mode, applying and holding
+  events, bulk, cast presentation), `ClientEntities.cpp` (replicated copies, rubble, tombstones, samples, baseline),
+  `ClientChecks.cpp` (hash, entity checks, entity lists) - `ClientSettings`, `ClientState`, `ClientStats`,
+  `PredictionStats`, `net::Client` (events; the own player's prediction, input sends and reconciliation;
+  `MakeSimulationConfig`, `Attach`). [wp-6]
 - `src/net/Drill.cppm`, `internal/Drill.cpp` - `BlastDrill`: mushroom / bar / neck tower per step, sites of 100 x 100
   voxels in the play bounds, a crate in each blast and one per site in the margin, `KeepSites`; `RunDrillStep` (clear
   the site's bodies, build, crates, cast); `BotPilot` / `PilotSettings`: seeded controls of a bot player
@@ -642,7 +650,8 @@ Regions, templates and tests
 
 ## 4. Recipes
 
-- New cast kind / loadout: the loadout id is in `QueuedCast` only (0 = the tuning's cast); a second one needs a wire
+- New cast kind / loadout: an action is a `sim::ActionRequest` in `QueuedCast::request` (rules.md "The seam"); a new
+  slot is a value in `sim::ActionSlot` and a case in `sim::ResolveAction`; a second player-triggered one needs a wire
   field in `PlayerInput` (and `kInputBytes`), its radius / power in the tuning, `kProtocolVersion` + 1, and a
   `Movement.*` test that a late cast of it is judged at its tick.
 - New player rule (crouch, sprint, a second jump): `sim::StepPlayer` and `PlayerTuning` (+ `WritePlayerTuning` /

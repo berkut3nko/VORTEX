@@ -610,3 +610,80 @@ TEST(Blast, TwoSimulationsFedOperationsWithAClearMaskHaveEqualHashes) {
     sim::ApplyOp(missing.World(), stream[1]);
     EXPECT_NE(missing.Hash().hash, s.hash);
 }
+
+// --- The rules seam (docs/design/rules.md "The seam"; [wp-6]) ------------------------------------
+
+TEST(Rules, TheBlastSlotGivesTheSameOperationsAsTheOldPath) {
+    Arena a, b;
+    ASSERT_TRUE(a.initialized && b.initialized);
+    ApplyAll(a.World(), Mushrooms(a.Ids()));
+    ApplyAll(b.World(), Mushrooms(b.Ids()));
+    const sim::BlastResult old = sim::Blast(a.simulation, StemCut(), kStrong);
+
+    sim::ActionRequest request;
+    sim::ActionAim aim;
+    aim.hit = true;
+    aim.sphere = StemCut();
+    aim.power = kStrong;
+    sim::PlayerTuning tuning;
+    const sim::RulesContext context{tuning};
+    const sim::ActionOutcome got = sim::ResolveAction(b.simulation, context, request, aim);
+
+    EXPECT_EQ(got.refusal, sim::ActionRefusal::None);
+    ASSERT_EQ(got.blasts.size(), 1u);
+    ASSERT_EQ(got.blasts[0].ops.size(), old.ops.size());
+    for (size_t i = 0; i < old.ops.size(); ++i) EXPECT_EQ(got.blasts[0].ops[i].op, old.ops[i].op) << "operation " << i;
+    EXPECT_EQ(got.blasts[0].IslandCount(), old.IslandCount());
+    EXPECT_EQ(got.blasts[0].IslandCount(), 2u);   // the two mushroom caps (Blast.IslandsBecomeDetachOperationsWithoutEntities)
+    EXPECT_EQ(got.blasts[0].crumbs, old.crumbs);
+    EXPECT_EQ(b.Hash().hash, a.Hash().hash);
+    ASSERT_EQ(got.effects.size(), 1u);
+    EXPECT_EQ(got.effects[0], (sim::EffectCue{sim::EffectKind::Blast, StemCut().center, StemCut().radius}));
+    EXPECT_TRUE(got.damage.empty());
+    EXPECT_TRUE(got.impulses.empty());
+    ASSERT_FALSE(old.ops.empty());
+    EXPECT_EQ(sim::BlastCueOf(old.ops[0].op), got.effects[0]);
+}
+
+TEST(Rules, AMissedAimRefusesWithMissed) {
+    Arena a;
+    ASSERT_TRUE(a.initialized);
+    const voxel::WorldHashResult before = a.Hash();
+    sim::ActionRequest request;
+    request.eye = {0.05, 9.0, 0.05};
+    request.dir = {0.0f, 1.0f, 0.0f};   // up into the sky; the ground top is 8 m
+    sim::ActionAim aim;
+    EXPECT_EQ(sim::AimAction(a.simulation, request, sim::OfflineAimRules(), aim), sim::ActionRefusal::Missed);
+    EXPECT_FALSE(aim.hit);
+    sim::PlayerTuning tuning;
+    const sim::RulesContext context{tuning};
+    const sim::ActionOutcome got = sim::ResolveAction(a.simulation, context, request, aim);
+    EXPECT_EQ(got.refusal, sim::ActionRefusal::Missed);
+    EXPECT_TRUE(got.blasts.empty());
+    EXPECT_TRUE(got.effects.empty());
+    EXPECT_EQ(a.Hash().hash, before.hash);
+}
+
+TEST(Rules, OutsideThePlayBoundsRefuses) {
+    Arena a;
+    ASSERT_TRUE(a.initialized);
+    sim::ActionRequest request;
+    request.eye = {0.05, 10.0, 0.05};
+    request.dir = {0.0f, -1.0f, 0.0f};   // the ground at y = 8 m: voxel (0, 79, 0), chunk (0, 2, 0)
+    sim::PlayerTuning tuning;
+    sim::RegionDesc far;
+    far.playMinChunk = {1, 1};
+    far.playMaxChunk = {2, 2};
+    sim::ActionAim aim;
+    EXPECT_EQ(sim::AimAction(a.simulation, request, sim::SessionAimRules(tuning, far), aim), sim::ActionRefusal::Outside);
+    EXPECT_TRUE(aim.hit);
+    EXPECT_FALSE(aim.atBody);
+
+    sim::RegionDesc near;
+    near.playMinChunk = {-1, -1};
+    near.playMaxChunk = {1, 1};
+    EXPECT_EQ(sim::AimAction(a.simulation, request, sim::SessionAimRules(tuning, near), aim), sim::ActionRefusal::None);
+    EXPECT_EQ(aim.voxel, glm::ivec3(0, 79, 0));
+    EXPECT_EQ(aim.sphere.radius, 192);   // 1.2 m / 0.1 m x 16
+    EXPECT_EQ(aim.power, voxel::QuantizePower(6.0f));
+}

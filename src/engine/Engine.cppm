@@ -223,6 +223,9 @@ export namespace vortex {
         /// the crumbs of a ClearMask, the explosion and a flash). Simulates nothing else.
         void PresentBlast(const sim::BlastResult& blast);
 
+        /// @brief Shows an outcome of the rules seam: PresentBlast for each of its blasts, in order ([wp-6]).
+        void PresentOutcome(const sim::ActionOutcome& outcome);
+
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;

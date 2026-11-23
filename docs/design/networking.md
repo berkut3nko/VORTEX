@@ -60,12 +60,14 @@ vortex_bot     tools/bot/main.cpp       links VortexNet only: one net::Bot over 
   `:wire` (byte reader / writer, events, mask runs, `RegionDesc`), `:messages`, `:prediction` (`TickClock`,
   `ServerTime`, `RemotePlayers`, `RemoteBodies`), `:session` (session file, `BuildHash`, probe chunks,
   `SessionGenerator`), `:entities` (`EntityInfo`, `CompareEntities`), `:sync` (`ChunkSync`, `OpRing`, `BulkPacer`,
-  `HashCheckPlanner`), `:server`, `:client`, `:drill` (`BlastDrill`, `RunDrillStep`, `BotPilot`) and `:bot`
+  `HashCheckPlanner`), `:server`, `:client` (implementation split by concern: internal partitions `:server_impl` /
+  `:client_impl`, rules.md "File map"), `:drill` (`BlastDrill`, `RunDrillStep`, `BotPilot`) and `:bot`
   (`net::Bot`, `DrainWatch`, `JudgeBot`, the shared exit lines, the timeline).
 - Simulation vs presentation: `sim::Blast` (server or offline) = carve, island extraction, object damage, impulses;
   it returns the operations and events it produced. `Engine::PresentBlast` / `sim::PresentBlast` (client) =
   particles, local rubble and flash made from those and from the client's own data (ids of the voxels it removes,
-  old and new object model). No particle data is sent.
+  old and new object model). No particle data is sent. A player's cast is aimed and resolved by the rules seam
+  (`vortex.sim:rules`: `sim::AimAction`, `sim::ResolveAction`; [rules.md](rules.md)).
 - Server scene (`sim::ServerConfig`): `bakeModels = false`, zero-capacity `ParticleSystem`, `debrisRemnants = false`,
   `markDebris = false`, replication on, `replicatedPieceVoxels` from the session's voxel size.
 - The game owns `net::Client` (`src/Session.cpp`) and drives it from `OnFixedUpdate`, after the engine's streaming

@@ -41,6 +41,19 @@ namespace vortex::net {
         return "unknown";
     }
 
+    CastRejection RejectionOf(sim::ActionRefusal refusal) {
+        switch (refusal) {
+            case sim::ActionRefusal::None: return CastRejection::None;
+            case sim::ActionRefusal::Cooldown: return CastRejection::Cooldown;
+            case sim::ActionRefusal::Missed: return CastRejection::Missed;
+            case sim::ActionRefusal::Outside: return CastRejection::Outside;
+        }
+        return CastRejection::Missed;
+    }
+    static_assert(static_cast<uint8_t>(sim::ActionRefusal::Cooldown) == static_cast<uint8_t>(CastRejection::Cooldown));
+    static_assert(static_cast<uint8_t>(sim::ActionRefusal::Missed) == static_cast<uint8_t>(CastRejection::Missed));
+    static_assert(static_cast<uint8_t>(sim::ActionRefusal::Outside) == static_cast<uint8_t>(CastRejection::Outside));
+
     namespace {
         constexpr uint32_t kMaxProbes = 256;
 

@@ -1134,6 +1134,13 @@ the tests. The wire values (message types, event kinds, refusals, enums) and
   unloaded chunk (7.2) marks it `Failed`, which ends the session (peers disconnected, nothing more
   sent). `Server::Hash` keeps each chunk's hash under its `World::ChunkRevision` and re-hashes the
   chunks operations changed, 32 per tick, so a leave or a check costs no full re-hash `[net-8]`.
+* **Rules seam.** What an action does is decided in `vortex.sim:rules` `[wp-6]` (GPU-free, network-free):
+  `sim::AimAction` casts a captured `sim::ActionRequest`'s ray on the world as it is now (`sim::AimRules`: the
+  session's from the tuning and the region, the offline click's own) and `sim::ResolveAction` applies it, returning
+  an `ActionOutcome` (blasts with their operations, damage, impulses, effect cues). The server aims a cast when its
+  queue reaches it and resolves it in `RunCast`; the offline click calls both and `Engine::PresentOutcome`. A client
+  never resolves: it presents the cue of each `CarveSphere` it applied (`sim::BlastCueOf`). See
+  [rules.md](design/rules.md).
 * **Client.** `net::Client` does not own a simulation: once `Welcomed`, the owner builds one from
   `MakeSimulationConfig` / `MakeGenerator` and gives it to `Attach`, which checks it against the
   session, loads the region window, checks that the store held it and that the probe chunks are its

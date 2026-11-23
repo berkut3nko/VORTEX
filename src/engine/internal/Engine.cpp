@@ -190,6 +190,10 @@ namespace vortex {
         PresentBlast(sim::Blast(m_Impl->sim, sim::BlastDesc{center, radius, power}));
     }
 
+    void Engine::PresentOutcome(const sim::ActionOutcome& outcome) {
+        for (const sim::BlastResult& blast : outcome.blasts) PresentBlast(blast);
+    }
+
     void Engine::PresentBlast(const sim::BlastResult& blast) {
         sim::Simulation& sim = m_Impl->sim;
         const uint32_t slotsBefore = sim.Chunks().UsedCount();

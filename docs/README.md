@@ -39,6 +39,7 @@ Rules every document follows:
 | [design/worldgen.md](design/worldgen.md) | decision + plan (regions built from structures) | designed | code read on 2026-11-17 (committed as `c970f16`) | 74 |
 | [design/rendezvous.md](design/rendezvous.md) | decision + plan (internet sessions without a public IP: STUN, UDP hole punching, Cloudflare D1) | designed | code read at `a23af7a` (committed as `84ac7e7`) | 36 |
 | [design/magic.md](design/magic.md) | decision + plan (spells: four forms x four elements, the 16 siege spells, conjured matter, zones) | designed | code read at `58f2650` | 145 |
+| [design/rules.md](design/rules.md) | decision + current spec (the rules seam `vortex.sim:rules`, the net split) | built | `ed409ee` + [wp-6] | 12 |
 | [llm/README.md](llm/README.md) | guide: task packs for a local model (work loop, rules, values planned across packs, card template); the packs `llm/<stage>.md` | current | `bafca16` | 22 |
 | [notes/core-fx-editor.md](notes/core-fx-editor.md) | notes: map, invariants, traps, recipes, verifying | current | `430fde0` | 33 |
 | [notes/graphics.md](notes/graphics.md) | notes | current | `430fde0` | 25 |
@@ -227,6 +228,7 @@ two-pc-test-windows.md 1) and the second 761 stage tokens.
 | game-ui.md | [design/game-ui.md](design/game-ui.md) |
 | notes/voxel.md | [notes/voxel.md](notes/voxel.md) |
 | docs/two-pc-test-windows.md 4.9 | the game repository's two-PC guide (name and section 4.9 kept) |
+| rules.md "The seam", "Aim rules", "Outcome", "File map" | [design/rules.md](design/rules.md) (headings kept) |
 | rendezvous.md "Keeping mappings", "Choosing", "Timeouts", "R0's pair test" | [design/rendezvous.md](design/rendezvous.md) "Flow" (its bold bullets) and "Stages" ("R0's pair test, with no Worker") |
 
 Bare stage tokens with no document name (the second grep) are read by their context: a token in `src/net`,

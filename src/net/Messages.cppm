@@ -168,6 +168,8 @@ export namespace vortex::net {
     };
     inline constexpr uint8_t kMaxCastRejection = 3;
     const char* ToString(CastRejection rejection);
+    /// @brief The rejection a snapshot reports for a refusal of the rules seam (values are equal; [wp-6]).
+    CastRejection RejectionOf(sim::ActionRefusal refusal);
 
     /// `Snapshot::inputMargin` before the server has had an input from this client.
     inline constexpr int16_t kNoInputMargin = -32768;

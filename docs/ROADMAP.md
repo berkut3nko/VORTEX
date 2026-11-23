@@ -14,6 +14,18 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
 
 ## Now
 
+- **[wp-6] Rules seam + net split: built, not reviewed** (2026-11-23). Nothing changes for a player; spells, modes and
+  the use key now land in small files. What an action does is decided in one GPU-free place, `vortex.sim:rules`
+  ([design/rules.md](design/rules.md)): `sim::AimAction` (a captured `sim::ActionRequest` -> where it lands, the
+  quantised sphere and power, or a refusal) and `sim::ResolveAction` (-> `sim::ActionOutcome`: blasts with their
+  operations, damage and impulses (empty until [wp-7] / [mag-1]), effect cues). The session server aims and resolves
+  every cast through it (`SessionAimRules`), the offline click too (`OfflineAimRules`, `Engine::PresentOutcome`), and a
+  client presents a cast from its cue (`sim::BlastCueOf`). `Server.cpp` (130 KiB) and `Client.cpp` (117 KiB) are split
+  by concern into internal partitions `vortex.net:server_impl` / `:client_impl` and eleven units (rules.md "File
+  map"). No wire (`kProtocolVersion` 10), movement-rule (`kPlayerRuleRevision` 1) or `buildHash` change. Checks: the
+  net suite and the new `Rules.*`; the drill (G11's command) and the arena walk (G13's) give the same world and entity
+  hashes and summary lines as before; session-check `PASS`. Not run: `verify.sh full --ci` and the soak (the batch
+  runs them at its end).
 - **[wp-5] Visible play boundary + moving window on small regions: built, not reviewed** (2026-11-23). A session
   client gets the game's moving 48-chunk window on every region whose window is not exactly 48 chunks
   (`sim::ClientWindowMoves`), so the playground shows terrain to 88 m instead of 56 m (the columns beyond the server's
@@ -25,6 +37,8 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
   offline `--play-bounds minX,minZ,maxX,maxZ` for screenshots. No wire, movement-rule or `buildHash` change.
   [design/networking.md](design/networking.md) "Chunk sync" and "Player movement"; [design/game-ui.md](design/game-ui.md)
   "Settings". Not run: `verify.sh full --ci` and the soak (the batch runs them at its end).
+- **Owner: [wp-6]'s offline click** (owner check 20, [owner checks](../../docs/owner-checks.md)): blasts land at the
+  crosshair, a crate takes 0.6 m, terrain 1.2 m; nothing feels different.
 - **Owner: [wp-5]'s look** (owner check 15, [owner checks](../../docs/owner-checks.md)): the curtain from 1, 5 and
   20 m (steady, no shimmer or ghost trail), the hint at the edge, the settings toggle, the playground's 88 m.
 - **[wp-4] Frame-rate block A + settings: built, not committed or reviewed** (2026-11-23). The far view's GPU frame
@@ -128,32 +142,30 @@ close the output-folder lock (fd 6), `tools/build.sh` checks `DEPS_FROM` pins un
 
 In this order:
 
-1. **[wp-6] Rules seam + net split.** No player change yet: spells and modes then come without growing `net::Server`.
-   A GPU-free `sim` rules seam, then `Server.cpp` / `Client.cpp` split; no behaviour or wire change. 6-9 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP6".
-2. **[wp-7] M2a "first fight".** The sandbox becomes a PvP game: hurt, die, respawn, win a round (M2 below). The only
+1. **[wp-7] M2a "first fight".** The sandbox becomes a PvP game: hurt, die, respawn, win a round (M2 below). The only
    protocol bump in WP4-WP8. 8-12 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP7".
-3. **[wp-8] Fight measurement + fx-budget 1-2 + 10 clients.** Fights stay playable on the UHD 620: `--stress-fx`, a
+2. **[wp-8] Fight measurement + fx-budget 1-2 + 10 clients.** Fights stay playable on the UHD 620: `--stress-fx`, a
    10-bot session at 10 casts/s with measured clients, then [design/fx-budget.md](design/fx-budget.md) stages 1-2.
    5-8 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP8".
-4. **[mech-1] Door and gate.** E opens doors, a lever runs a gate, crates move to Q.
+3. **[mech-1] Door and gate.** E opens doors, a lever runs a gate, crates move to Q.
    [design/mechanisms.md](design/mechanisms.md), "Stages" row 1. Its own protocol bump, after M2a's; after WP8 so its
    yard is measured inside a known fight budget. 9-10 d (e).
-5. **[mag-1] Siege core in sim, headless only.** The spell system's first four spells, Siege Cannon, Barricade Wave,
+4. **[mag-1] Siege core in sim, headless only.** The spell system's first four spells, Siege Cannon, Barricade Wave,
    Shockwave and Updraft (breach, cover, knock off, climb), with only what they use: the Pierce operator, the Burst
    strip, Plume's single column, `CarveCapsule` / `MapMask` / `MapShape` as sim ops, knit iron that blasts chip, with
    server-scheduled expiries, the spawn guard, Impulse and Lift zones in `sim::StepPlayer` (`kPlayerRuleRevision` 2);
    no wire change. [design/magic.md](design/magic.md), "Stages". 6-9 d (e).
-6. **[mag-2] First playable spells.** The same four spells in offline practice and in sessions: the one magic
+5. **[mag-2] First playable spells.** The same four spells in offline practice and in sessions: the one magic
     protocol bump (it reserves every value the later magic stages need), zone events with a 0.4 s lead, the spell bar
     and the attune menu on the HUD; the owner's Felling-duel taste check. [design/magic.md](design/magic.md), "Stages".
     6-9 d (e).
-7. **[si-2] Impacts with crush damage** (with the `NeckCheck` split and a chunk-source interface first). A falling
+6. **[si-2] Impacts with crush damage** (with the `NeckCheck` split and a chunk-source interface first). A falling
     tower cracks walls and kills. [design/shred.md](design/shred.md), "SI-2 - impacts (inertial contact)". 7-11 d (e).
-8. **[fog-1] Fog stage 1.** Haze toward the sun, low mist and blast dust puffs, without losing frame rate.
+7. **[fog-1] Fog stage 1.** Haze toward the sun, low mist and blast dust puffs, without losing frame rate.
     [design/fog.md](design/fog.md), "Stages" 1. About 4 d (e).
-9. **[spread-S1] Fire offline.** A burning house that falls, offline only, no wire change (its smoke feeds fog later).
+8. **[spread-S1] Fire offline.** A burning house that falls, offline only, no wire change (its smoke feeds fog later).
     [design/spread.md](design/spread.md), "Stages" S1. Large (e).
-10. **[wg-W1] Stamped village.** The first real map, with towers worth felling. Soak tier (nightly) first.
+9. **[wg-W1] Stamped village.** The first real map, with towers worth felling. Soak tier (nightly) first.
     [design/worldgen.md](design/worldgen.md), "W1: a stamped village, offline". About 1.5 weeks (e).
 
 Placement of [mech-1] and [spread-S1] was decided by us under the owner's rules; the owner may veto it. Mechanisms
@@ -235,7 +247,7 @@ never been measured.
 
 ## State
 
-Tests: **792** in ctest: 784 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
+Tests: **795** in ctest: 787 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
 game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts), `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
 `Tools.DocCheck`, `Tools.DocCheckSelftest`, `Tools.SessionCheckVerdict` and `Tools.VerifyAssertions` (WP2's checks
 and their self-tests), `Tools.RendezvousWorker` (the rendezvous Worker under `node --test`, registered when `node` is
@@ -257,7 +269,7 @@ found), none needing a GPU (the ENet and relay ones use UDP on 127.0.0.1). The o
 | Particles | CPU pool with emitters, voxel collision, presets. | Pool of 32 768 sorted every frame; fight cost unmeasured ([wp-8]). |
 | Renderer | Ray-marched G-buffer (primary rays end at the edge-fog radius), ray-traced sun shadows, AO, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping; headless screenshots; validation-clean on the UHD 620. Present mode FIFO_RELAXED / FIFO / IMMEDIATE by preference, 3 images; per-pass GPU timers with `upload`, the `Perf:` line. | perf.md stages 1-3 built: M0, P1, G1, G2; block B next (L1, H1); P1's windowed result is the owner's; reflections, bloom, shadowed particles. |
 | Editor | `vortex.editor` (F1): fly camera, selection with translate / rotate gizmo, inspector, terrain brush, primitives, `.vox` / glTF import, environment / render / profiler / world panels; tool logic unit tested. | Editor list under Later. |
-| Simulation | `sim::Simulation`: world, physics, terrain colliders and scene on a numbered fixed tick; `sim::WorldOp` / `ApplyOp`; `sim::Blast`; no renderer or window. | Gameplay rules live in `net::Server` ([wp-6]). |
+| Simulation | `sim::Simulation`: world, physics, terrain colliders and scene on a numbered fixed tick; `sim::WorldOp` / `ApplyOp`; `sim::Blast`; the rules seam `vortex.sim:rules` (`sim::AimAction`, `sim::ResolveAction`: every cast, server and offline; [wp-6]); no renderer or window. | No game mode, damage or teams in the rules seam yet ([wp-7]). |
 | Sessions (M1) | Networking stages 0-8 built, reviewed and committed ([design/networking.md](design/networking.md), "Stages"). `vortex.net` over ENet: server-authoritative terrain operations, predicted movement, replicated bodies with NetIds (2 new per tick, 64 awake, 256 live), joins by chunk sync, a moving 48-chunk client window on every region whose window is not exactly 48 chunks (the playground sees 88 m, [wp-5]), the play bounds drawn as a curtain with an edge hint ([wp-5]), hash and entity checks with repair, server terrain mode; `vortex_server`, `vortex_bot`, `tools/soak.sh`, `tools/session-check.sh`. Owner LAN run 2026-11-17 (stage 7b's commits): "seamless". | M1 acceptance (owner's LAN run on stage 8 or a later pair); the play-bounds curtain's look confirmed only by the owner (owner check 15); 5v5 never run; the arena walker's 1.49 s quiet p99 unexplained; the arena walker's 150 s still stretch in G19 of 2026-11-22 unexplained (trees on its line were only a contributing weakness; the walk line now names the next one's surroundings, and the walker's verdict fails one over 20 s); pacer on a slow lossy link (M6); re-sent chunks for a walker (memory); bodies frozen awake count against the cap; Windows build not reproducible. |
 
 ## Performance and measured values
@@ -268,6 +280,7 @@ before `[wp-4]` (2026-11-23: G1 + G2 took 2.6 ms off the far view, 0.4 ms off th
 
 | Date | Measure | Value | Source |
 |---|---|---|---|
+| 2026-11-23 | The cast path through the rules seam and the net split, before / after (drill: G11's command; walk: G13's; session-check: G16) | drill: equal world hash `7cf265595fef59bf` at opSeq 3163, `Drill: freed` line and both `Entities: client N ... agree` lines in 2 runs before and 5 after; arena walk: equal `Drill: freed` line and world / sync-box hashes (`2f47611cfe48a298`), entity id hash `3f44ac910423721e`, in 2 before and 4 after (its end opSeq 770-775, end tick and awake count vary between runs of one build: timing); session-check `PASS` 2 / 2 before, 4 / 4 after, the walking client's corrections 1, 3 before and 2, 2, 6, 2 after, max error 0.063, 0.321 m before and 0.183, 0.467, 0.379, 0.100 m after (wall-clock ENet: its worlds differ run to run) | [wp-6] |
 | 2026-11-23 | GPU composite, the play-bounds curtain 10 m ahead (`--camera 0,14,0,0,-0.15`, without / with `--play-bounds -48,-10,48,48`) | first version (four wall tests per pixel): 1.06 / 1.23 and 1.08 / 1.25 ms (+0.17, over the 0.15 ms budget); with the inside-camera path (the ray leaves through one wall): 1.05 / 1.17 and 1.07 / 1.16 ms, **+0.09 to +0.12 ms** (m, headless, 700 frames, medians of the last 120, two runs each, on AC). Off (offline, or far camera without bounds): far-view composite 0.94 ms against G21's baseline 0.96 | [wp-5] card 3 |
 | 2026-11-23 | Playground session view radius | 88.0 m (48 x 44 x 48 moving window; 56 m with the region's 30-chunk window before [wp-5]); store 5140 / 12 288 slots at the join (m, G16, both clients); G16 corrections 1 and 0, max error 0.102 m | [wp-5] card 1 |
 | 2026-11-23 | GPU, far (`--camera=-1,61,65,-0.241,-0.55`), before / after `[wp-4]` G1 + G2 | gbuffer 12.18 -> 10.62, lighting 6.63 -> 5.72, composite 1.00 -> 0.87, TAA 0.52-0.53, present 0.42, upload 0.00 ms: GPU sum 20.8 -> 18.2 ms (m, headless, 1200 frames, medians of the last 120 after the window filled at frame 272-283, two runs each, GPU at 1150 MHz) | [wp-4]: [design/perf.md](design/perf.md) "Stages" |

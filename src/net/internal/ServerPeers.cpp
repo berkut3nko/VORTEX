@@ -1,0 +1,360 @@
+module;
+
+#include <entt/entt.hpp>
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <deque>
+#include <functional>
+#include <limits>
+#include <map>
+#include <memory>
+#include <optional>
+#include <span>
+#include <string>
+#include <tuple>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
+#include <variant>
+#include <vector>
+
+module vortex.net;
+
+import vortex.core;
+import vortex.math;
+import vortex.voxel;
+import vortex.physics;
+import vortex.scene;
+import vortex.sim;
+import :server_impl;
+
+// Server::Impl: join, refusals, inputs, player steps, snapshots, the join's baseline (docs/design/rules.md "File map"). [wp-6]
+namespace vortex::net {
+    using namespace detail;
+
+    void Server::Impl::DropPlayer(Peer& p) {
+        if (!p.player) return;
+        // Its crates go with it (review of stage 6: a reconnect loop left 8 bodies per connection).
+        const std::deque<uint32_t> crates = p.player->crates;
+        for (const uint32_t netId : crates)
+            if (const scene::Entity e = EntityOf(netId); e != scene::kNoEntity) sim::Despawn(*simulation, e, scene::DespawnReason::Destroyed);
+        simulation->Physics().DestroyCharacter(p.player->character);
+        p.player.reset();
+    }
+
+    std::vector<std::pair<PeerId, Peer*>> Server::Impl::PlayersBySlot() {
+        std::vector<std::pair<PeerId, Peer*>> out;
+        for (auto& [id, p] : peers)
+            if (p.joined && p.player) out.emplace_back(id, &p);
+        std::sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.second->slot < b.second->slot; });
+        return out;
+    }
+
+    std::vector<glm::dvec3> Server::Impl::PlayerFocus() const {
+        std::vector<glm::dvec3> focus;
+        for (const auto& [id, p] : peers)
+            if (p.player) focus.push_back(glm::dvec3(p.player->state.position));
+        return focus;
+    }
+
+    Peer* Server::Impl::PeerOfSlot(uint8_t player) {
+        if (player == 0) return nullptr;
+        for (auto& [id, p] : peers)
+            if (p.joined && p.player && p.slot + 1u == player) return &p;
+        return nullptr;
+    }
+
+    void Server::Impl::OnInputs(Peer& p, std::span<const uint8_t> bytes) {
+        InputBatch batch;
+        if (!p.player || !Decode(bytes, batch)) {
+            ++stats.malformedInputs;
+            return;
+        }
+        ++stats.inputPackets;
+        Player& pl = *p.player;
+        const uint32_t now = Tick();   // the tick simulated next
+        uint32_t newest = 0;
+        bool any = false;
+        for (const sim::PlayerInput& in : batch.inputs) {
+            const uint32_t t = in.tick;
+            if (pl.anyInput && t <= pl.lastRealTick) {
+                ++stats.inputsDuplicate;
+            } else if (t < pl.joinTick) {
+                // No client makes an input for a tick before its player existed (it predicts from
+                // its first snapshot on): a forged or broken one is ignored.
+                ++stats.inputsBeforeJoin;
+                continue;
+            } else if (t < now) {
+                // Too late for its tick: it only refreshes the last input. Its edges still count
+                // (a cast in it is captured once), derived against the levels the repeats kept.
+                ++stats.inputsLate;
+                const uint8_t pressed = sim::PressButtons(pl.state, in.buttons);
+                if ((pressed & sim::PlayerButton_Cast) != 0) LateCast(p, in, now);
+                if ((pressed & sim::PlayerButton_Crate) != 0) PlayerCrate(p, in, pl.state);
+                // A jump edge is not spent here without a jump: the next step makes it.
+                if ((pressed & sim::PlayerButton_Jump) != 0 && !pl.lateJump) {
+                    pl.lateJump = true;
+                    ++stats.jumpsFromLateInputs;
+                }
+                pl.last = in;
+                pl.lastRealTick = t;
+                pl.anyInput = true;
+                pl.queue.erase(pl.queue.begin(), pl.queue.upper_bound(t));
+            } else if (t - now >= settings.inputQueueTicks) {
+                ++stats.inputsTooEarly;
+                continue;
+            } else if (!pl.queue.emplace(t, in).second) {
+                ++stats.inputsDuplicate;
+            } else {
+                ++stats.inputsQueued;
+            }
+            newest = any ? std::max(newest, t) : t;
+            any = true;
+        }
+        if (batch.inputs.empty()) return;
+        if (any) pl.ackTick = std::max(pl.ackTick, newest);
+        // The margin of the newest input of the packet, dropped ones too (the client is too far
+        // ahead: exactly what its clock must hear), unless a packet with newer inputs already
+        // arrived (reordered or duplicated: it would pair an older, smaller margin with the tick).
+        const uint32_t last = batch.inputs.back().tick;
+        if (pl.margin != kNoInputMargin && last <= pl.marginTick) return;
+        const int64_t margin = static_cast<int64_t>(last) - static_cast<int64_t>(now);
+        // No client is that far off: a forged tick must not become the newest for good.
+        if (margin > kMaxReportedMargin || margin < -kMaxReportedMargin) return;
+        pl.margin = static_cast<int16_t>(std::clamp<int64_t>(margin, -32767, 32767));
+        pl.marginTick = last;
+    }
+
+    void Server::Impl::StepPlayers() {
+        const uint32_t now = Tick();
+        const float dt = simulation->FixedTimeStep();
+        for (auto& [id, peer] : PlayersBySlot()) {
+            Player& pl = *peer->player;
+            sim::PlayerInput input;
+            const auto it = pl.queue.find(now);
+            if (it != pl.queue.end()) {
+                input = it->second;
+                pl.last = input;
+                pl.lastRealTick = now;
+                pl.anyInput = true;
+            } else {
+                // Missing: the last movement for repeatInputTicks, then none. The levels stay those of
+                // the last input, so a repeat never makes an edge.
+                input = pl.last;
+                input.buttons = pl.state.lastButtons;
+                ++stats.ticksRepeated;
+                if (!pl.anyInput || now - pl.lastRealTick > settings.repeatInputTicks) {
+                    input.moveX = input.moveZ = 0;
+                    ++stats.ticksStood;
+                }
+            }
+            pl.queue.erase(pl.queue.begin(), pl.queue.upper_bound(now));
+            input.tick = now;
+            // The colliders this step can touch hold every edit made so far (never a worker's timing).
+            tickFlushCooks += simulation->Terrain().FlushBox(sim::PlayerReach(pl.state.position, settings.player));
+            const uint8_t levels = input.buttons;
+            const bool lateJump = pl.lateJump;
+            if (lateJump) {
+                // The edge of a late input's jump is made now; the levels stay this input's.
+                pl.state.lastButtons = static_cast<uint8_t>(pl.state.lastButtons & ~sim::PlayerButton_Jump);
+                input.buttons = static_cast<uint8_t>(input.buttons | sim::PlayerButton_Jump);
+                pl.lateJump = false;
+            }
+            const sim::PlayerStepResult r = sim::StepPlayer(simulation->Physics(), simulation->Terrain(), pl.character, pl.state, input,
+                                                            settings.player, playArea, dt);
+            if (lateJump) pl.state.lastButtons = static_cast<uint8_t>(levels & sim::kPlayerButtonMask);
+            stats.heldTicks += r.held ? 1u : 0u;
+            pl.Store(now);
+            if (r.cast) CaptureCast(*peer, input, pl.state, false);
+            else if ((r.pressed & sim::PlayerButton_Cast) != 0) RejectCast(*peer, now);
+            if ((r.pressed & sim::PlayerButton_Crate) != 0) PlayerCrate(*peer, input, pl.state);
+        }
+    }
+
+    void Server::Impl::SendSnapshots(uint32_t tick) {
+        const std::vector<std::pair<PeerId, Peer*>> players = PlayersBySlot();
+        const std::vector<BodySample> awake = AwakeSamples();
+        for (const auto& [id, peer] : players) {
+            Snapshot snap;
+            snap.tick = tick;
+            snap.lastOpSeq = LastOpSeq();
+            snap.ackInputTick = peer->player->ackTick;
+            snap.marginTick = peer->player->marginTick;
+            snap.inputMargin = peer->player->margin;
+            snap.hasOwner = true;
+            snap.owner = peer->player->state;
+            snap.lastCastTick = peer->player->lastCastTick;
+            snap.castRejected = peer->player->castRejected;
+            for (const auto& [otherId, other] : players) {
+                if (otherId == id) continue;
+                snap.others.push_back({other->slot, other->player->state.position, other->player->last.yaw, other->player->state.flags});
+            }
+            // Bodies by priority: what was left out longest, nearest first, as many as fit.
+            const size_t fixed = kSnapshotHeaderBytes + kSnapshotOwnerBytes + snap.others.size() * kSnapshotPlayerBytes;
+            const size_t room = settings.snapshotBytes > fixed ? std::min<size_t>((settings.snapshotBytes - fixed) / kSnapshotBodyBytes, 255) : 0;
+            std::unordered_map<uint32_t, float> priority;
+            std::vector<std::pair<float, size_t>> order;
+            order.reserve(awake.size());
+            const float scale = std::max(settings.bodyPriorityMetres, 0.001f);
+            for (size_t i = 0; i < awake.size(); ++i) {
+                const auto it = peer->priority.find(awake[i].netId);
+                const float waited = (it != peer->priority.end() ? it->second : 0.0f) + 1.0f;
+                priority[awake[i].netId] = waited;
+                const float distance = glm::distance(awake[i].position, peer->player->state.position);
+                order.emplace_back(waited / (1.0f + distance / scale), i);
+            }
+            std::sort(order.begin(), order.end(), [&awake](const auto& a, const auto& b) {
+                return a.first != b.first ? a.first > b.first : awake[a.second].netId < awake[b.second].netId;
+            });
+            for (size_t k = 0; k < order.size() && k < room; ++k) {
+                const BodySample& b = awake[order[k].second];
+                snap.bodies.push_back(b);
+                priority[b.netId] = 0.0f;
+            }
+            peer->priority = std::move(priority);
+            stats.bodySamples += snap.bodies.size();
+            stats.bodiesLeftOut += awake.size() - snap.bodies.size();
+            stats.maxSnapshotBodies = std::max(stats.maxSnapshotBodies, static_cast<uint32_t>(snap.bodies.size()));
+            const std::vector<uint8_t> bytes = Encode(snap);
+            stats.maxSnapshotBytes = std::max(stats.maxSnapshotBytes, bytes.size());
+            ++stats.snapshotHistogram[std::min<size_t>(bytes.size() / 64, stats.snapshotHistogram.size() - 1)];
+            ++stats.snapshots;
+            stats.snapshotBytes += bytes.size();
+            Send(id, Channel::State, bytes);
+        }
+    }
+
+    uint32_t Server::Impl::JoinedCount() const {
+        uint32_t n = 0;
+        for (const auto& [id, p] : peers) n += p.joined ? 1u : 0u;
+        return n;
+    }
+
+    void Server::Impl::Refuse(PeerId peer, Peer& p, RefuseReason reason) {
+        Send(peer, Channel::Events, Encode(net::Refuse{reason}));
+        p.closing = true;
+        p.closingTick = Tick();
+        ++stats.clientsRefused;
+        Log::Info("Server: refused a client: {}", ToString(reason));
+    }
+
+    void Server::Impl::OnHello(PeerId peer, Peer& p, std::span<const uint8_t> bytes) {
+        Hello hello;
+        if (!Decode(bytes, hello)) return Refuse(peer, p, RefuseReason::Malformed);
+        if (hello.protocolVersion != kProtocolVersion) return Refuse(peer, p, RefuseReason::Protocol);
+        if (hello.buildHash != buildHash) return Refuse(peer, p, RefuseReason::Build);
+        if (hello.token != settings.session.token) return Refuse(peer, p, RefuseReason::Token);
+        uint32_t joined = 0;
+        std::vector<bool> used(256, false);
+        for (const auto& [id, other] : peers)
+            if (other.joined) {
+                ++joined;
+                used[other.slot] = true;
+            }
+        if (joined >= settings.session.maxClients) return Refuse(peer, p, RefuseReason::Full);
+        uint8_t slot = 0;
+        while (used[slot]) ++slot;
+        Welcome welcome;
+        welcome.slot = slot;
+        welcome.tick = Tick();
+        welcome.region = region;
+        welcome.spawn = tmpl.spawn;
+        welcome.player = settings.player;
+        welcome.tickSeconds = simulation->FixedTimeStep();
+        welcome.gravity = simulation->Config().physics.gravity;
+        welcome.joinOpSeq = LastOpSeq();
+        welcome.probes = probes;
+        Send(peer, Channel::Events, Encode(welcome));
+        // Join by chunk sync (stage 7a): the live stream from the join point on; what was made
+        // before comes as ChunkData (its WindowUpdate says where) and the entity baseline.
+        p.joined = true;
+        p.slot = slot;
+        p.sentUpTo = LastOpSeq();
+        p.pacer = std::make_unique<BulkPacer>(settings.bulkPacer);
+        p.planner = HashCheckPlanner(settings.hashCheck);
+        p.join = JoinRecord{};
+        p.join.joinTick = Tick();
+        p.join.joinOpSeq = welcome.joinOpSeq;
+        QueueBaseline(p, glm::dvec3(tmpl.spawn));
+        // Its player stands at the spawn point; the ground under every player gets its collider
+        // before the next step (a gate that held the player here would hold it for another
+        // number of ticks than its client's): the spawn is a permanent collider focus (built at
+        // Start, kept current by the background cooks) and this tick's StepPlayers cooks whatever
+        // of the player's reach is still stale (FlushBox). Stage 8: no global Terrain().Flush()
+        // here any more - it cooked every pending collider of the window in the join tick (126 ms
+        // in the owner's run, the first join after the spawn's colliders were dropped).
+        p.player = std::make_unique<Player>();
+        p.player->joinTick = Tick();          // Receive runs at the start of the tick that steps it first
+        p.player->state.position = glm::vec3(tmpl.spawn);
+        p.player->character = simulation->Physics().CreateCharacter(sim::PlayerCharacterDesc(p.player->state.position, settings.player));
+        tickEvents |= kTickHello;
+        ++stats.clientsJoined;
+        Log::Info("Server: client {} joined at tick {} (slot {}, join point opSeq {}, {} entities in its baseline, {} modified chunks)",
+                  peer, Tick(), slot, LastOpSeq(), p.baseline.size(), modified.size());
+    }
+
+    void Server::Impl::QueueBaseline(Peer& p, const glm::dvec3& at) {
+        // Nearest first by the distance to the nearest point of the model's bounding sphere (the
+        // body's origin is a corner of its model): the near set is a prefix of the order.
+        std::vector<std::pair<double, uint32_t>> ids;
+        for (const auto& [netId, light] : lights) ids.emplace_back(glm::distance(glm::dvec3(light.position), at), netId);
+        const physics::PhysicsWorld& physics = simulation->Physics();
+        const double voxelSize = static_cast<double>(simulation->World().VoxelSize());
+        const scene::Scene& scene = simulation->Scene();
+        for (const auto [entity, id, body] : scene.Registry().view<const scene::NetId, const scene::RigidBody>().each()) {
+            double extent = 0.0;
+            if (const scene::VoxelBody* voxels = scene.TryGet<scene::VoxelBody>(entity); voxels && voxels->model)
+                extent = glm::length(glm::dvec3(voxels->model->Volume().Size())) * voxelSize;
+            ids.emplace_back(std::max(0.0, glm::distance(glm::dvec3(physics.GetState(body.body).position), at) - extent), id.value);
+        }
+        std::sort(ids.begin(), ids.end());
+        p.baseline.clear();
+        p.nearLeft = 0;
+        p.nearSent = false;
+        for (const auto& [d, netId] : ids) {
+            p.baseline.push_back(netId);
+            p.nearLeft += d <= static_cast<double>(settings.baselineNearMetres) ? 1u : 0u;
+        }
+        p.baselineOpen = true;
+        p.baselineSent = 0;
+    }
+
+    bool Server::Impl::MakeBaselineEntity(uint32_t netId, BaselineEntity& out) {
+        out = BaselineEntity{};
+        out.asOfOpSeq = LastOpSeq();
+        // The tick whose physics made the state (Flush runs after StepPhysics, which already
+        // counted the next tick): snapshots, EntityRest and the rest tick label it the same
+        // (review of stage 7a).
+        out.tick = steppedTick;
+        out.spawn.netId = netId;
+        if (const auto light = lights.find(netId); light != lights.end()) {
+            out.spawn.kind = EntityKind::Light;
+            out.spawn.light = light->second;
+            return true;
+        }
+        const scene::Entity entity = EntityOf(netId);
+        if (entity == scene::kNoEntity) return false;
+        out.spawn.kind = EntityKind::Object;
+        if (!DescribeObject(entity, out.spawn.object)) return false;
+        const auto t = tracks.find(netId);
+        const bool resting = t != tracks.end() && t->second.resting;
+        if (resting) {
+            out.restTick = t->second.restTick;
+            out.spawn.object.position = t->second.restPosition;
+            out.spawn.object.rotation = t->second.restRotation;
+            out.spawn.object.linearVelocity = glm::vec3(0.0f);
+            out.spawn.object.angularVelocity = glm::vec3(0.0f);
+            out.spawn.object.flags = kObjectResting;
+        } else {
+            out.spawn.object.flags = 0;
+        }
+        return true;
+    }
+}
