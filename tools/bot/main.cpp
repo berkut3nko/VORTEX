@@ -3,7 +3,7 @@
 //   vortex_bot --connect HOST:PORT --token HEX (--seconds S | --end-at UNIX_S) [--id N] [--seed S]
 //              [--drain-seconds S] [--leave-file PATH] [--leave-wait S] [--parent-pid PID]
 //              [--client-window N] [--threads T] [--present]
-//              [--stand] [--no-jumps] [--casts N] [--crates N] [--walk-across [--loop]]
+//              [--stand] [--no-jumps] [--casts N] [--crates N] [--walk-across [--loop]] [--fight]
 //              [--broken-chunk X,Y,Z] [--broken-generator]
 //              [--loss P] [--delay-ms D] [--jitter-ms J] [--outage-ms A,B]
 //              [--down-bytes-per-second R] [--up-bytes-per-second R] [--relay-seed S]
@@ -112,7 +112,7 @@ int main(int argc, char** argv) {
     if (!connect || !tokenText || (seconds <= 0.0 && endAt <= 0.0)) {
         std::fprintf(stderr, "usage: vortex_bot --connect HOST:PORT --token HEX (--seconds S | --end-at UNIX_S) [--id N] [--seed S] "
                              "[--drain-seconds S] [--leave-file PATH] [--leave-wait S] [--parent-pid PID] [--client-window N] [--threads T] "
-                             "[--present] [--stand] [--no-jumps] [--casts N] [--crates N] [--walk-across [--loop]] [--broken-chunk X,Y,Z] "
+                             "[--present] [--stand] [--no-jumps] [--casts N] [--crates N] [--walk-across [--loop]] [--fight] [--broken-chunk X,Y,Z] "
                              "[--broken-generator] [--loss P] [--delay-ms D] [--jitter-ms J] [--outage-ms A,B] [--down-bytes-per-second R] "
                              "[--up-bytes-per-second R] [--relay-seed S] [--timeline FILE] [--memory]\n");
         return 2;

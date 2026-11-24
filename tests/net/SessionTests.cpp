@@ -206,7 +206,7 @@ TEST(SessionFile, RoundTripsAndNamesItsErrors) {
     EXPECT_FALSE(net::ParseSession("token = 00112233\n", back, error));
 
     // The example sessions of vortex_server parse.
-    for (const char* name : {"drill", "arena250", "playground", "duel", "felling"}) {
+    for (const char* name : {"drill", "arena250", "playground", "duel", "felling", "fight10"}) {
         const std::filesystem::path path = std::filesystem::path(VORTEX_TEST_SOURCE_DIR) / "tools/server/sessions" / (std::string(name) + ".session");
         EXPECT_TRUE(net::LoadSessionFile(path, back, error)) << error;
     }

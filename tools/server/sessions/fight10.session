@@ -1,0 +1,25 @@
+# [wp-8] The 10-client fight measurement (docs/design/fx-budget.md, the game's docs/verify.md "Fight measurement"):
+# arena250.session with a 5v5 deathmatch. One charge comes back every 60 ticks, so 10 bots with --casts 60 keep
+# 10 casts/s. The round starts when the 10 bots are on their teams and lasts longer than the 600 s run; the score
+# limit is out of reach, so no team wins before the run ends.
+#   vortex_server --session fight10.session --listen 27065 --bind 127.0.0.1 --token T --seconds 660
+# This token is in the repository, so it is public: a run gives its own token with --token.
+token = 009fd959be26f4809c0c7a32e3d49b29
+template = empty
+seed = 1337
+play_min = -31 -31
+play_max = 32 32
+height = -48 128
+voxel_size = 0.125
+generator = terrain
+terrain_seed = 1337
+max_clients = 16
+chunk_capacity = 0
+pack_hidden = 1
+mode = deathmatch
+team_spawn_1 = -30 0
+team_spawn_2 = 30 0
+min_players = 10
+score_limit = 10000
+round_seconds = 900
+charge_ticks = 60
