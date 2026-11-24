@@ -123,8 +123,13 @@ Spaces, units, ranges
   (`BuildFrameData`, `lighting.frag`). Lighting samples are clamped to 64 (`VX_MAX_SAMPLE`).
 - `renderScale` is clamped to 0.25..1, non-finite -> 1 (`DesiredRenderExtent`). Camera fov / near are sanitised
   (`SanitizeCamera`). Degenerate instance transforms are skipped.
-- At most `kMaxLights` = 256 lights, the nearest to the camera; the shader has the same bound as a constant
-  (`VX_MAX_LIGHTS`, `lighting.frag`). Change both.
+- At most `kMaxLights` = 256 shadowed lights, the nearest to the camera; the shader has the same bound as a
+  constant (`VX_MAX_LIGHTS`, `lighting.frag`). Change both.
+- Effect lights (`PointLight::effect`, the blast flash) never reach `lighting.frag`: `BuildFrameData` merges them
+  into at most `fx::kMaxEffectLights` = 8 and writes two records each after the shadowed ones (A position and
+  radius, radiance; B clip box min in `positionRadius.xyz`, max in `colorSize.xyz`; render space, like the
+  position). `FrameUniforms::effectLights` = (count, first record = `counts.z`, 0, 0); `composite.frag` reads only
+  those records. A light lost to a truncated upload lowers the count, never splits a record pair.
 - Draw list = front-drawn indices then inside-drawn ones; the inside draw uses `firstInstance = frontCount`. A
   truncated BVH is published as 0 nodes.
 - Slot reuse: a freed slot found in the pending queue clears `uploaded` and marks the grid stale. `ChunkStore::Free`
@@ -249,8 +254,8 @@ A. Add a field to `FrameUniforms`
 1. Prefer a spare component (see traps). Otherwise append a vec4 / ivec4 at the same position in `Frame.cppm`
    (`FrameUniforms`) and `common.glsl` (the `FrameUniforms` block), and fix the `static_assert` size.
 2. Fill it in `BuildFrameData`.
-3. `tests/graphics/ContractTests.cpp` `LayoutContract.FrameUniformsMatchTheGlslBlock`: member count (25), one
-   `VX_EXPECT_FRAME_MEMBER` line, and the "last member is `playBounds`" check if you append after it.
+3. `tests/graphics/ContractTests.cpp` `LayoutContract.FrameUniformsMatchTheGlslBlock`: member count (26), one
+   `VX_EXPECT_FRAME_MEMBER` line, and the "last member is `effectLights`" check if you append after it.
 4. Update the table comment in `common.glsl` and ARCHITECTURE 5 if the meaning is a contract.
 
 B. Add a feature toggle

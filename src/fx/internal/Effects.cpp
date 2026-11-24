@@ -314,9 +314,66 @@ namespace vortex::fx {
 
     void MergeEffectLights(std::span<const EffectLightIn> lights, const glm::dvec3& camera,
                            std::vector<EffectLightIn>& out) {
-        // [wp-8] card 4 fills this
-        (void) lights;
-        (void) camera;
         out.clear();
+        if (lights.empty()) return;
+
+        // Strongest first as the camera sees it: intensity * radius^2 / distance^2, ties by input index.
+        // The scratch is kept per thread so a frame with effect lights allocates nothing.
+        struct Ranked {
+            double score;
+            uint32_t index;
+        };
+        thread_local std::vector<Ranked> order;
+        order.clear();
+        for (size_t i = 0; i < lights.size(); ++i) {
+            const EffectLightIn& l = lights[i];
+            const double d = std::max(glm::distance(camera, l.position), 1.0);
+            const double score =
+                static_cast<double>(l.intensity) * static_cast<double>(l.radius) * static_cast<double>(l.radius) / (d * d);
+            order.push_back({score, static_cast<uint32_t>(i)});
+        }
+        std::sort(order.begin(), order.end(), [](const Ranked& a, const Ranked& b) {
+            return a.score != b.score ? a.score > b.score : a.index < b.index;
+        });
+
+        out.reserve(kMaxEffectLights);
+        for (const Ranked& ranked : order) {
+            const EffectLightIn& in = lights[ranked.index];
+            size_t slot = out.size();
+            for (size_t s = 0; s < out.size(); ++s) {
+                const double reach = 0.5 * static_cast<double>(std::max(out[s].radius, in.radius));
+                if (glm::distance(out[s].position, in.position) <= reach) {
+                    slot = s;
+                    break;
+                }
+            }
+            if (slot == out.size()) {
+                if (out.size() < kMaxEffectLights) {
+                    out.push_back(in);
+                    continue;
+                }
+                // Full: a dropped light goes into the nearest slot, so no flash is lost.
+                double nearest = glm::distance(out[0].position, in.position);
+                slot = 0;
+                for (size_t s = 1; s < out.size(); ++s) {
+                    const double d = glm::distance(out[s].position, in.position);
+                    if (d < nearest) {
+                        nearest = d;
+                        slot = s;
+                    }
+                }
+            }
+
+            EffectLightIn& s = out[slot];
+            const float w = s.intensity + in.intensity;
+            if (w <= 0.0f) continue;
+            const double ws = static_cast<double>(s.intensity), wi = static_cast<double>(in.intensity);
+            s.position = (s.position * ws + in.position * wi) / static_cast<double>(w);
+            s.color = (s.color * s.intensity + in.color * in.intensity) / w;
+            s.intensity = w;
+            s.radius = std::max(s.radius, in.radius);
+            s.clipMin = glm::min(s.clipMin, in.clipMin);
+            s.clipMax = glm::max(s.clipMax, in.clipMax);
+        }
     }
 }

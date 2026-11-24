@@ -380,6 +380,9 @@ namespace vortex::scene {
         light.intensity = desc.intensity;
         light.radius = desc.radius;
         light.sourceRadius = desc.sourceRadius;
+        light.effect = desc.effect;
+        light.clipMin = desc.clipMin;
+        light.clipMax = desc.clipMax;
 
         const Entity entity = s.registry.create();
         s.registry.emplace<Transform>(entity, transform);

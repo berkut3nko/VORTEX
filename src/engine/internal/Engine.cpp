@@ -447,6 +447,7 @@ namespace vortex {
             {
                 const graphics::RenderStats& rs = s.renderer.Stats();
                 s.perf.fenceWait.Add(rs.fenceWaitMs);
+                s.fx.effectLightsMax = std::max(s.fx.effectLightsMax, rs.effectLights);
                 // The pass times of a frame slot arrive once (two frames later): count each reading once.
                 s.lastFrameTimes.gpuSumMs = 0.0;
                 if (rs.timingSerial != s.lastTimingSerial) {

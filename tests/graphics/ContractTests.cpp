@@ -121,7 +121,7 @@ namespace {
             {"lighting", "fullscreen.vert", "lighting.frag", With(kTraceBuffers, {"u_Materials", "u_Lights"}),
              {{16, "u_GMaterial"}, {17, "u_GNormal"}, {18, "u_GDepth"}, {19, "u_GVelocity"},
               {20, "u_PrevLighting"}, {21, "u_PrevLightCount"}, {22, "u_PrevDepth"}, {23, "u_PrevNormal"}}},
-            {"composite", "fullscreen.vert", "composite.frag", {"u_Frame", "u_Materials"},
+            {"composite", "fullscreen.vert", "composite.frag", {"u_Frame", "u_Materials", "u_Lights"},
              {{16, "u_GMaterial"}, {17, "u_GNormal"}, {18, "u_GDepth"}, {19, "u_Lighting"}, {20, "u_LightCount"}}},
             {"particles", "particles.vert", "particles.frag", {"u_Frame", "u_Particles"}, {}},
             {"taa", "fullscreen.vert", "taa.frag", {"u_Frame"},
@@ -466,7 +466,7 @@ TEST(LayoutContract, FrameUniformsMatchTheGlslBlock) {
         const BlockLayout& block = *blockPtr;
         SCOPED_TRACE(file);
 
-        EXPECT_EQ(block.members.size(), 25u);
+        EXPECT_EQ(block.members.size(), 26u);
         EXPECT_EQ(block.arrayStride, 0u);
 #define VX_EXPECT_FRAME_MEMBER(member) ExpectMember(block, #member, offsetof(FrameUniforms, member))
         VX_EXPECT_FRAME_MEMBER(viewProj);
@@ -494,6 +494,7 @@ TEST(LayoutContract, FrameUniformsMatchTheGlslBlock) {
         VX_EXPECT_FRAME_MEMBER(counts);
         VX_EXPECT_FRAME_MEMBER(settings);
         VX_EXPECT_FRAME_MEMBER(playBounds);
+        VX_EXPECT_FRAME_MEMBER(effectLights);
 #undef VX_EXPECT_FRAME_MEMBER
 
         // The members are declared in the same order as in C++ and the block is as large as the struct.
@@ -501,8 +502,8 @@ TEST(LayoutContract, FrameUniformsMatchTheGlslBlock) {
             EXPECT_LT(block.members[i - 1].offset, block.members[i].offset) << block.members[i].name;
         }
         if (!block.members.empty()) {
-            EXPECT_EQ(block.members.back().name, "playBounds");
-            EXPECT_EQ(block.members.back().offset + sizeof(glm::vec4), sizeof(FrameUniforms));
+            EXPECT_EQ(block.members.back().name, "effectLights");
+            EXPECT_EQ(block.members.back().offset + sizeof(glm::ivec4), sizeof(FrameUniforms));
         }
     }
     EXPECT_GT(checked, 0) << "no shader declares u_Frame";

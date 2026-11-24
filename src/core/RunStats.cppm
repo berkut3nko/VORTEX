@@ -67,7 +67,7 @@ export namespace vortex {
         RunStats particlesBuild;        ///< per frame: ParticleSystem::BuildRenderData
         uint32_t particlesMax = 0;      ///< most particles alive in one frame
         uint32_t particlesCapacity = 0; ///< the particle pool's capacity
-        uint32_t effectLightsMax = 0;   ///< most effect lights after the merge in one frame ([wp-8] card 4)
+        uint32_t effectLightsMax = 0;   ///< most effect lights after the merge in one frame ([wp-8])
     };
 
     /**

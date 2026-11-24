@@ -124,23 +124,23 @@ from 400 to 96 voxels with dust on every fourth: about 800 particles per LOD 0 b
 
 ### Effect lights
 
-- Fixed pool of 32 `{dvec3 pos; vec3 color; float intensity, radius, decay, age; float clip[6]}`
-  in `vortex.fx`; not entities, no shadow ray, no temporal history.
-- `graphics::PointLight` gains `bool effect`. The renderer uploads shadowed lights first, effect
-  lights after; `counts.z` stays the shadowed count, the unused `settings.w` carries the effect
-  count. `FrameUniforms` layout and `lighting.frag` do not change.
-- `composite.frag` defines `VX_NEED_LIGHTS` and loops over at most 8 effect lights:
+- An effect light is a scene light with `PointLight::effect` set (the blast flash: a scene entity
+  with `Lifetime` and decay). It has no shadow ray and no temporal history.
+- The renderer uploads shadowed lights first, effect lights after. `counts.z` stays the shadowed
+  count. `FrameUniforms::effectLights` carries the effect count and the first effect record
+  (`settings.w` is the HUD dim). `lighting.frag` reads only the shadowed records.
+- `composite.frag` loops over at most 8 effect lights:
   `diffuseColor * color * VxLightFalloff * max(dot(n, l), 0)` from the position and normal it
   already has. Est. < 0.5 ms, 0 with no effect lights. Flash is crisp and instant.
 - Leak control: range `4 * r` instead of 8, lifetime under 0.4 s, and 6 axis `World::Raycast`
-  calls at spawn give a free distance per axis; the light is attenuated outside that box
-  (packed into a second light record, no new binding). A blast in a room does not light the far
-  side of the wall.
-- Merge per frame on the CPU: score `intensity * radius^2 / max(dist, 1)^2`; a light within half
-  the larger radius of a slot merges (colour x intensity summed, position intensity-weighted,
-  radius and clip box = max); else free slot; else nearest slot. A dropped light draws one
-  additive glow sprite.
-- Shadowed lights are capped at the nearest 16 on this tier (256 today).
+  calls at spawn give a clip box relative to the light. The extent on an axis is the hit
+  distance plus half a voxel, or the range when the ray hits nothing. The light is cut (zero)
+  outside that box. A blast in a room does not light the far side of the wall.
+- Merge per frame on the CPU (`fx::MergeEffectLights`): score
+  `intensity * radius^2 / max(dist, 1)^2`; a light within half the larger radius of a slot merges
+  (colour x intensity summed, position intensity-weighted, radius and clip box = max); else free
+  slot; else nearest slot. A glow sprite for a dropped light is not built.
+- Shadowed lights keep the nearest 256.
 
 ### Authoring
 
@@ -188,6 +188,16 @@ exceeds 40% of the overdraw budget. Designers set counts and caps, never budgets
    particles alive <= 8192 with the last blast still visible in a screenshot, island scope >= 3x
    cheaper; unit test: chunk edited every frame for 60 frames receives a collider; a 5-voxel
    island yields no entity; a sleeping piece is gone after its lifetime.
+   *As built ([wp-8], effect lights; not yet measured or tested):* the flash stays a scene entity
+   (`Lifetime` and decay, now 18 per second: about 0.38 s at r = 1.2) with `PointLight::effect`, range
+   `4 * r` and a clip box relative to the light from six axis `World::Raycast` calls in
+   `sim::PresentBlast`. A hit extent is the hit distance plus half a voxel, not the hit distance:
+   with the box face on the lit surface, the composite test lit about half of its pixels by float
+   rounding. No fixed pool in `vortex.fx`: `fx::MergeEffectLights` merges the gathered
+   effect lights to at most 8 by the rule above, and a light that finds no free slot merges into
+   the nearest one (no glow sprite yet). `FrameUniforms` gains `effectLights` (count, first record)
+   instead of using `settings.w` (the HUD dim took it); `lighting.frag` is unchanged and reads only
+   the shadowed records. Shadowed lights keep the nearest 256.
 3. **`FxDirector`.** Queues and caps, region merge, per-entity damage coalescing, LOD + load
    factor, overdraw budget and clamp, swap on upload, edited uploads first. *Verify:*
    `--stress-fx 10` worst CPU frame for destruction + effects <= 4 ms, GPU effects <= 4 ms; all

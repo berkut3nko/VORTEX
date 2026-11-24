@@ -46,8 +46,9 @@ export namespace vortex::graphics {
         glm::ivec4 counts{0};
         glm::ivec4 settings{0};          ///< x features, y debug view, z front-face draw count, w HUD backdrop dim 0..255
         glm::vec4 playBounds{0.0f};      ///< min x, min z, max x, max z of the session's play bounds (render space, m); max <= min: none
+        glm::ivec4 effectLights{0};      ///< x effect light count (<= 8), y first record in u_Lights (= counts.z), zw 0
     };
-    static_assert(sizeof(FrameUniforms) == 3 * 64 + 22 * 16);
+    static_assert(sizeof(FrameUniforms) == 3 * 64 + 23 * 16);
 
     /// @brief Feature bits of FrameUniforms::settings.x (VX_FEATURE_* in common.glsl).
     enum FeatureFlags : int {
@@ -118,7 +119,7 @@ export namespace vortex::graphics {
         float intensity = 5.0f;
         float radius = 8.0f;                     ///< Range of influence in metres.
         float sourceRadius = 0.1f;               ///< Size of the emitter (soft shadows).
-        bool effect = false;                     ///< Unshadowed effect light: composite pass only ([wp-8] card 4).
+        bool effect = false;                     ///< Unshadowed effect light: composite pass only ([wp-8]).
         glm::dvec3 clipMin{0.0}, clipMax{0.0};   ///< effect only: world box the light reaches
     };
 

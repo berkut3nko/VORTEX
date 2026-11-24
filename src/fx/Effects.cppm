@@ -53,11 +53,15 @@ export namespace vortex::fx {
         glm::dvec3 clipMin{0.0}, clipMax{0.0};   ///< world box the light reaches (from the axis rays)
     };
 
-    /// @brief At most this many effect lights reach the GPU in one frame ([wp-8] card 4).
+    /// @brief At most this many effect lights reach the GPU in one frame ([wp-8]).
     inline constexpr uint32_t kMaxEffectLights = 8;
 
-    /// @brief Merges `lights` into at most kMaxEffectLights (fx-budget.md "Effect lights"; [wp-8] card 4
-    /// gives the rule). Deterministic: score order, ties by input index.
+    /// @brief Merges `lights` into at most kMaxEffectLights (fx-budget.md "Effect lights"; [wp-8]).
+    /// @details Inputs in score order (intensity * radius^2 / max(camera distance, 1 m)^2, ties by
+    /// input index). An input within half the larger radius of a slot merges into that slot; else it
+    /// takes a new slot while fewer than kMaxEffectLights exist, else it merges into the nearest slot.
+    /// A merge weights position and colour by intensity, adds the intensities, keeps the larger
+    /// radius and takes the union of the clip boxes. Deterministic; nothing is dropped.
     void MergeEffectLights(std::span<const EffectLightIn> lights, const glm::dvec3& camera,
                            std::vector<EffectLightIn>& out);
 }

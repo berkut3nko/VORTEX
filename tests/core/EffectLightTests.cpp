@@ -30,7 +30,7 @@ namespace {
     }
 }
 
-TEST(EffectLights, DISABLED_AtMostEightAfterTheMerge) {
+TEST(EffectLights, AtMostEightAfterTheMerge) {
     // 20 lights 60 m apart: no two are within half a radius of each other.
     std::vector<EffectLightIn> in;
     float total = 0.0f;
@@ -47,7 +47,7 @@ TEST(EffectLights, DISABLED_AtMostEightAfterTheMerge) {
     EXPECT_NEAR(merged, total, 1e-3f);
 }
 
-TEST(EffectLights, DISABLED_NearLightsMergeIntensityWeighted) {
+TEST(EffectLights, NearLightsMergeIntensityWeighted) {
     // 0.5 m apart, both radius 4 (within half of it): one slot, 3/4 of the way to the stronger one.
     const std::vector<EffectLightIn> in = {Light(glm::dvec3(10.0, 10.0, 0.0), 1.0f), Light(glm::dvec3(10.5, 10.0, 0.0), 3.0f)};
     std::vector<EffectLightIn> out;
@@ -59,7 +59,7 @@ TEST(EffectLights, DISABLED_NearLightsMergeIntensityWeighted) {
     EXPECT_FLOAT_EQ(out[0].radius, 4.0f);
 }
 
-TEST(EffectLights, DISABLED_ClipBoxIsTheUnion) {
+TEST(EffectLights, ClipBoxIsTheUnion) {
     EffectLightIn a = Light(glm::dvec3(10.0, 10.0, 0.0), 2.0f);
     a.clipMin = glm::dvec3(0.0);
     a.clipMax = glm::dvec3(1.0);

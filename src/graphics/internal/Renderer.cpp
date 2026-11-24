@@ -434,6 +434,9 @@ namespace vortex::graphics {
         std::vector<GpuLight> gpuLights;
         std::vector<uint32_t> lightOrder;
         std::vector<float> lightDistance;
+        std::vector<uint32_t> shadowedLights;
+        std::vector<fx::EffectLightIn> effectLightsIn;
+        std::vector<fx::EffectLightIn> effectLightsOut;
         std::unordered_set<std::string> reported;
 
         // -----------------------------------------------------------------------------------------
@@ -1240,12 +1243,30 @@ namespace vortex::graphics {
             data.frontCount = frontCount;
             data.insideCount = insideCount;
 
-            // --- lights (nearest kMaxLights) -----------------------------------------------------
-            lightOrder.resize(input.lights.size());
-            std::iota(lightOrder.begin(), lightOrder.end(), 0u);
+            // --- lights: shadowed (nearest kMaxLights), then the merged effect lights ------------
+            shadowedLights.clear();
+            effectLightsIn.clear();
+            for (size_t i = 0; i < input.lights.size(); ++i) {
+                const PointLight& light = input.lights[i];
+                if (!light.effect) {
+                    shadowedLights.push_back(static_cast<uint32_t>(i));
+                    continue;
+                }
+                fx::EffectLightIn in;
+                in.position = light.position;
+                in.color = light.color;
+                in.intensity = light.intensity;
+                in.radius = light.radius;
+                in.clipMin = light.clipMin;
+                in.clipMax = light.clipMax;
+                effectLightsIn.push_back(in);
+            }
+            fx::MergeEffectLights(effectLightsIn, camera.position, effectLightsOut);
+
+            lightOrder.assign(shadowedLights.begin(), shadowedLights.end());
             if (lightOrder.size() > kMaxLights) {
                 lightDistance.resize(input.lights.size());
-                for (size_t i = 0; i < input.lights.size(); ++i) {
+                for (const uint32_t i : shadowedLights) {
                     const glm::dvec3 delta = input.lights[i].position - camera.position;
                     lightDistance[i] = static_cast<float>(glm::dot(delta, delta));
                 }
@@ -1261,7 +1282,23 @@ namespace vortex::graphics {
                 gpu.colorSize = glm::vec4(light.color * light.intensity, light.sourceRadius);
                 gpuLights.push_back(gpu);
             }
-            const uint32_t lightCount = Upload<GpuLight>(frame, frame.lights, gpuLights, "lights");
+            // Two records per effect light after the shadowed ones (lighting.frag reads only
+            // [0, counts.z)): A = position and radius, radiance; B = the clip box, min and max.
+            const uint32_t shadowedCount = static_cast<uint32_t>(gpuLights.size());
+            for (const fx::EffectLightIn& light : effectLightsOut) {
+                GpuLight a;
+                a.positionRadius = glm::vec4(glm::vec3(light.position - origin), light.radius);
+                a.colorSize = glm::vec4(light.color * light.intensity, 0.0f);
+                GpuLight b;
+                b.positionRadius = glm::vec4(glm::vec3(light.clipMin - origin), 0.0f);
+                b.colorSize = glm::vec4(glm::vec3(light.clipMax - origin), 0.0f);
+                gpuLights.push_back(a);
+                gpuLights.push_back(b);
+            }
+            const uint32_t uploaded = Upload<GpuLight>(frame, frame.lights, gpuLights, "lights");
+            const uint32_t lightCount = std::min(uploaded, shadowedCount);
+            const uint32_t effectCount = uploaded > shadowedCount ? (uploaded - shadowedCount) / 2 : 0u;
+            u.effectLights = glm::ivec4(static_cast<int>(effectCount), static_cast<int>(lightCount), 0, 0);
 
             // --- particles (already relative to the render origin) -------------------------------
             data.particleCount = Upload<fx::GpuParticle>(frame, frame.particles, input.particles, "particles");
@@ -1289,6 +1326,7 @@ namespace vortex::graphics {
             stats.instancesTotal = static_cast<uint32_t>(input.instances.size());
             stats.instancesDrawn = frontCount + insideCount;
             stats.lights = lightCount;
+            stats.effectLights = effectCount;
             stats.particles = data.particleCount;
             stats.hudQuads = data.hudCount;
             return data;

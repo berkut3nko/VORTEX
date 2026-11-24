@@ -166,9 +166,9 @@ In this order:
 
 1. **[wp-8] Fight measurement + fx-budget 1-2 + 10 clients.** Fights stay playable on the UHD 620: `--stress-fx`, a
    10-bot session at 10 casts/s with measured clients, then [design/fx-budget.md](design/fx-budget.md) stages 1-2.
-   5-8 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP8". State: cards 1-2 of
-   [llm/wp-8.md](llm/wp-8.md) built (the skeleton; `--stress-fx`, the `Fx:` and `FxStress:` lines, `--blast-log`),
-   not yet measured or tested.
+   5-8 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP8". State: cards 1-4 of
+   [llm/wp-8.md](llm/wp-8.md) built (the skeleton; `--stress-fx`, the `Fx:` and `FxStress:` lines, `--blast-log`;
+   the `fight10.session`; card 4's effect lights in composite), not yet measured or tested.
 2. **[mech-1] Door and gate.** E opens doors, a lever runs a gate, crates move to Q.
    [design/mechanisms.md](design/mechanisms.md), "Stages" row 1. Its own protocol bump, after M2a's; after WP8 so its
    yard is measured inside a known fight budget. 9-10 d (e).

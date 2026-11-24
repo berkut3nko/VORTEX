@@ -439,7 +439,14 @@ current layout per image). All full-screen passes use `fullscreen.vert` (3 verti
    blended with the reprojected history (lighting[prev], validated against depth[prev] and
    gNormal[prev]) with weight `1 / min(count + 1, maxHistory)`.
 3. **composite** - attachment hdr. Sky for empty pixels; otherwise albedo (material colour
-   with per-voxel variation) x filtered lighting + emission + specular, then height fog.
+   with per-voxel variation) x filtered lighting + emission + specular, then the effect lights,
+   then height fog. Effect lights (blast flashes, `PointLight::effect`) are not traced in the
+   lighting pass: the renderer merges them on the CPU into at most 8 (`fx::MergeEffectLights`)
+   and puts two `u_Lights` records per light after the shadowed ones (A: position and radius,
+   radiance; B: the clip box min and max, render space). `FrameUniforms::effectLights` holds the
+   count (x) and the first record (y = `counts.z`). Composite adds each one unshadowed, without
+   history, only inside its axis clip box (from 6 `World::Raycast` calls at spawn, so a wall
+   between the flash and a surface stops it along the axes).
    The lighting is filtered with a small depth / normal aware kernel that widens while the
    history is short. Liquids are shaded here as an animated surface (5.7). Debug views are
    produced here.
@@ -520,7 +527,7 @@ Resources per shader (set 0):
 | `gbuffer_object.vert` | `u_Frame`, `u_Instances`, `u_DrawList` | - |
 | `gbuffer_object_*.frag` | `u_Frame`, `u_Grid`, `u_Occ`, `u_Ids`, `u_Instances`, `u_Bvh` | - |
 | `lighting.frag` | `u_Frame`, trace buffers, `u_Materials`, `u_Lights` | 16 `u_GMaterial` usampler2D nearest; 17 `u_GNormal` sampler2D nearest; 18 `u_GDepth` sampler2D nearest; 19 `u_GVelocity` sampler2D nearest; 20 `u_PrevLighting` sampler2D linear; 21 `u_PrevLightCount` sampler2D linear; 22 `u_PrevDepth` sampler2D nearest; 23 `u_PrevNormal` sampler2D nearest |
-| `composite.frag` | `u_Frame`, `u_Materials` | 16 `u_GMaterial` usampler2D nearest; 17 `u_GNormal` sampler2D nearest; 18 `u_GDepth` sampler2D nearest; 19 `u_Lighting` sampler2D nearest; 20 `u_LightCount` sampler2D nearest |
+| `composite.frag` | `u_Frame`, `u_Materials`, `u_Lights` (effect lights only) | 16 `u_GMaterial` usampler2D nearest; 17 `u_GNormal` sampler2D nearest; 18 `u_GDepth` sampler2D nearest; 19 `u_Lighting` sampler2D nearest; 20 `u_LightCount` sampler2D nearest |
 | `particles.vert` / `.frag` | `u_Frame`, `u_Particles` | - |
 | `taa.frag` | `u_Frame` | 16 `u_Color` sampler2D nearest; 17 `u_History` sampler2D linear; 18 `u_GVelocity` sampler2D nearest; 19 `u_GDepth` sampler2D nearest |
 | `present.frag` | `u_Frame` | 16 `u_Color` sampler2D linear |
@@ -780,8 +787,10 @@ sim.UpdateLifetimes(frameDt)                 once per frame, after the frame was
 `vortex::GatherInstances` (in `vortex.engine`; the scene does not know graphics types) emits one
 `graphics::InstanceDesc` per baked chunk of every visible voxel object (transform x chunk offset,
 slot, tight bounds, palette); `vortex::GatherLights` one `graphics::PointLight` per light with a
-positive intensity. Both only read the scene's public registry. All lights are entities: persistent
-ones have no `Lifetime`, an explosion flash is `Transform + PointLight + Lifetime`.
+positive intensity (an effect light with its clip box made world space: position + box).
+Both only read the scene's public registry. All lights are entities: persistent ones have no
+`Lifetime`, an explosion flash is `Transform + PointLight + Lifetime` with `PointLight::effect`
+set (range 4 x r, decay 18 per second, clip box from six axis rays in `sim::PresentBlast`).
 
 ### 7.2 Destruction
 

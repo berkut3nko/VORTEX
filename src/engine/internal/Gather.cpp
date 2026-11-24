@@ -44,6 +44,11 @@ namespace vortex {
             gathered.intensity = light.intensity;
             gathered.radius = light.radius;
             gathered.sourceRadius = light.sourceRadius;
+            gathered.effect = light.effect;
+            if (light.effect) {
+                gathered.clipMin = gathered.position + glm::dvec3(light.clipMin);
+                gathered.clipMax = gathered.position + glm::dvec3(light.clipMax);
+            }
             out.push_back(gathered);
         }
     }

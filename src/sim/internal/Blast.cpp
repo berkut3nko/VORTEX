@@ -878,16 +878,34 @@ namespace vortex::sim {
                                      .debris = true});
         }
 
-        // A flash of light that fades out quickly and removes itself once it is too dim to see.
-        constexpr float kFlashDecay = 9.0f, kFlashCutoff = 0.05f;
+        // A flash of light that fades out quickly and removes itself once it is too dim to see. It is an
+        // unshadowed effect light (fx-budget.md "Effect lights"): the composite pass draws it inside an
+        // axis box cut by the first wall along each of the six axis rays, so it does not light the far
+        // side of a wall. A hit extent reaches half a voxel past the hit face: the composite pass
+        // rebuilds each surface point from depth with float error, so a box face on the lit surface
+        // would light about half of its pixels. A wall is at least 1 voxel thick, so its far side
+        // stays outside the box.
+        constexpr float kFlashDecay = 18.0f, kFlashCutoff = 0.05f;
         if (!(radius > 0.0f)) return;
         scene::LightDesc flash;
         flash.position = center;
         flash.color = glm::vec3(1.0f, 0.7f, 0.35f);
         flash.intensity = 40.0f * radius;
-        flash.radius = radius * 8.0f;
+        flash.radius = radius * 4.0f;
         flash.decay = kFlashDecay;
         flash.lifetime = std::log(flash.intensity / kFlashCutoff) / kFlashDecay;
+        flash.effect = true;
+        std::array<float, 6> extent{};
+        for (int axis = 0; axis < 3; ++axis) {
+            for (int side = 0; side < 2; ++side) {
+                glm::vec3 direction(0.0f);
+                direction[axis] = side == 0 ? -1.0f : 1.0f;
+                const voxel::WorldRayHit hit = world.Raycast(center, direction, flash.radius);
+                extent[static_cast<size_t>(axis * 2 + side)] = hit.hit ? hit.distance + 0.5f * vs : flash.radius;
+            }
+        }
+        flash.clipMin = -glm::vec3(extent[0], extent[2], extent[4]);
+        flash.clipMax = glm::vec3(extent[1], extent[3], extent[5]);
         if (flash.lifetime > 0.0f) scene.CreateLight(flash);
     }
 }

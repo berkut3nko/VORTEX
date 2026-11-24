@@ -1,10 +1,11 @@
 #version 460
 #extension GL_GOOGLE_include_directive : require
 // Composite: sky for empty pixels, otherwise albedo x filtered lighting + emission + sun
-// specular, then height fog. Liquids get an animated, sky-reflecting surface instead (no extra
-// pass, no extra target: a few noise lookups on the pixels that show them). Also produces the
-// debug views.
+// specular and the unshadowed effect lights (blast flashes), then height fog. Liquids get an
+// animated, sky-reflecting surface instead (no extra pass, no extra target: a few noise lookups on
+// the pixels that show them). Also produces the debug views.
 #define VX_NEED_MATERIALS
+#define VX_NEED_LIGHTS
 #include "include/common.glsl"
 #include "shared/shading.glsl"
 #include "shared/bounds.glsl"
@@ -304,6 +305,19 @@ void main() {
         color = diffuseColor * lighting.rgb
               + albedo * emissive
               + specularColor * u_Frame.sunRadiance.rgb * lighting.a;
+    }
+
+    // Effect lights ([wp-8]): unshadowed, no history, each inside its axis clip box. The renderer
+    // puts two records per light after the shadowed ones: A position and radius, radiance; B the box.
+    vec3 p = u_Frame.cameraPos.xyz + rd * t;
+    for (int i = 0; i < u_Frame.effectLights.x; ++i) {
+        int r = u_Frame.effectLights.y + 2 * i;
+        vec4 pr = u_Lights.lights[r].positionRadius;
+        vec3 lo = u_Lights.lights[r + 1].positionRadius.xyz, hi = u_Lights.lights[r + 1].colorSize.xyz;
+        if (any(lessThan(p, lo)) || any(greaterThan(p, hi))) continue;
+        vec3 l = pr.xyz - p;
+        float d = length(l);
+        color += albedo * u_Lights.lights[r].colorSize.rgb * VxLightFalloff(d, pr.w) * max(dot(n, l / max(d, 1e-4)), 0.0);
     }
     color = ApplyFog(color, rd, t);
 

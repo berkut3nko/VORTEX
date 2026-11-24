@@ -769,7 +769,7 @@ TEST(Rules, ARayAtAnEnemysChestTakesTheCastThere) {
 
 // [wp-8] (fx-budget.md "Effect lights"): the flash is an unshadowed effect light, range 4 r, with
 // an axis clip box from six rays. Power 0 carves nothing, so the wall stays 1 m east of the centre.
-TEST(Blast, DISABLED_TheFlashIsAnEffectLightClippedByWalls) {
+TEST(Blast, TheFlashIsAnEffectLightClippedByWalls) {
     Arena a;
     ASSERT_TRUE(a.initialized);
     const int g = kGroundVoxels;

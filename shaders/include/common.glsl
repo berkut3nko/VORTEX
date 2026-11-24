@@ -56,6 +56,7 @@ layout(set = 0, binding = 0, std140) uniform FrameUniforms {
     ivec4 counts;                // x = instance count, y = BVH node count, z = light count, w = frame index
     ivec4 settings;              // x = feature flags (VX_FEATURE_*), y = debug view (VX_DEBUG_*), z = front-face draw count, w = HUD backdrop dim (0..255, present pass)
     vec4 playBounds;             // xy = min x / z, zw = max x / z of the session's play bounds (render space, m); zw <= xy: none (offline)
+    ivec4 effectLights;          // x effect light count, y first record (two records per light in u_Lights after the shadowed ones), zw 0
 } u_Frame;
 
 const int VX_FEATURE_SUN_SHADOWS      = 1;
