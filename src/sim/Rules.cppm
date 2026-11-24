@@ -10,6 +10,7 @@ module;
 export module vortex.sim:rules;
 
 import vortex.voxel;
+import vortex.scene;
 import :simulation;
 import :worldop;
 import :blast;
@@ -90,6 +91,7 @@ export namespace vortex::sim {
         glm::vec3 normal{0.0f, 1.0f, 0.0f};
         voxel::SphereQ sphere;               ///< the blast, quantised (1/16 voxel)
         uint16_t power = 0;                  ///< 1/16 hardness
+        scene::Entity body = scene::kNoEntity;   ///< the body that took it (atBody); a mechanism takes a MechanismBlast
     };
     /// @brief Casts the request's ray on the simulation as it is now, and on the capsules of the living enemies of
     /// `request.player` in `players` (with AimRules::playerRadius above 0). Fills `out` (also on Outside: `hit`,

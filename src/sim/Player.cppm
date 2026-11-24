@@ -20,12 +20,12 @@ export namespace vortex::sim {
         PlayerButton_Jump = 1,   ///< edge: jump if on the ground
         PlayerButton_Run = 2,    ///< level: run speed
         PlayerButton_Cast = 4,   ///< edge: a cast, if the cooldown allows (the server captures it)
-        /// edge: a crate (the game's E key) dropped in front of the eye; a session server makes it
+        /// edge: a crate (the game's Q key) dropped in front of the eye; a session server makes it
         /// (networking stage 6), nothing is predicted.
         PlayerButton_Crate = 8,
         PlayerButton_Use = 16,   ///< edge: E, a use (mechanisms.md); the crate moves to Q
     };
-    inline constexpr uint8_t kPlayerButtonMask = 15;
+    inline constexpr uint8_t kPlayerButtonMask = 31;
 
     /**
      * @brief What a player does in one tick (docs/design/networking.md "Player movement"): integers

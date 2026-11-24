@@ -155,7 +155,7 @@ TEST(Player, EdgesComeFromLevelsAndTheCooldownTakesOneCast) {
     sim::PlayerTuning t;
     EXPECT_EQ(sim::PressButtons(s, sim::PlayerButton_Cast | sim::PlayerButton_Run), sim::PlayerButton_Cast | sim::PlayerButton_Run);
     EXPECT_EQ(sim::PressButtons(s, sim::PlayerButton_Cast | sim::PlayerButton_Run), 0);      // repeated: no edge
-    EXPECT_EQ(sim::PressButtons(s, sim::PlayerButton_Run | 0xF0), 0);                         // unknown bits ignored
+    EXPECT_EQ(sim::PressButtons(s, sim::PlayerButton_Run | 0xE0), 0);                         // unknown bits (above Use) ignored
     EXPECT_EQ(s.lastButtons, sim::PlayerButton_Run);
     EXPECT_EQ(sim::PressButtons(s, sim::PlayerButton_Cast | sim::PlayerButton_Jump), sim::PlayerButton_Cast | sim::PlayerButton_Jump);
 

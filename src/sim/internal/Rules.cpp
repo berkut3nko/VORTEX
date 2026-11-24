@@ -136,6 +136,7 @@ namespace vortex::sim {
         } else if (bodyTakes) {
             out.hit = true;
             out.atBody = true;
+            out.body = simulation.Scene().EntityFromUserData(body.userData);
             out.point = glm::dvec3(body.position);
             out.distance = body.distance;
             out.normal = body.normal;
@@ -166,6 +167,12 @@ namespace vortex::sim {
         }
         switch (request.slot) {
             case ActionSlot::Blast:
+                // A cast that resolved on a mechanism ([mech-1] Decision 11): its own damage rule, no terrain
+                // operation and no explosion burst (there is no carve to present).
+                if (aim.atBody && aim.body != scene::kNoEntity && simulation.Scene().TryGet<scene::Mechanism>(aim.body)) {
+                    outcome.blasts.push_back(MechanismBlast(simulation, aim.body, aim.sphere, aim.power));
+                    break;
+                }
                 outcome.blasts.push_back(Blast(simulation, aim.sphere, aim.power));
                 outcome.effects.push_back(EffectCue{EffectKind::Blast, aim.sphere.center, aim.sphere.radius});
                 break;
