@@ -11,3 +11,4 @@ export import :player;
 export import :rules;
 export import :combat;
 export import :mechanism;
+export import :rope;

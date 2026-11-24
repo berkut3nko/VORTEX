@@ -219,7 +219,8 @@ In rough order:
   Crushing Weight after [si-2] and [mag-4], [mag-5] Thermal (after [spread-S1] headless, [spread-S2] / [spread-S3]
   for play), [mag-6] presentation and tuning. None needs spread S4.
 - [si-1] objects break under their own weight and [si-3] re-checks away from casts, after W1 (shred.md SI plan).
-- [mech-2]..[mech-4] ropes, siege kit, placement (mechanisms.md); [spread-S2]..[spread-S6] fire in a session (a
+- [mech-2]..[mech-4] ropes, siege kit, placement (mechanisms.md; the offline part of [mech-2] is built: load ropes,
+  chains, cutting, release with E, drawing, the yard's gallows; its session part is not); [spread-S2]..[spread-S6] fire in a session (a
   protocol bump), collapse from fire, liquid, presentation, tuning (spread.md).
 - Frame-rate block B: [perf-L1] (= lod.md stage 1 = [vd-4] distance budgets) and [perf-H1] half-resolution lighting
   (perf.md).
@@ -280,7 +281,7 @@ never been measured.
 
 ## State
 
-Tests: **900** in ctest: 892 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
+Tests: **909** in ctest: 901 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
 game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts), `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
 `Tools.DocCheck`, `Tools.DocCheckSelftest`, `Tools.SessionCheckVerdict` and `Tools.VerifyAssertions` (WP2's checks
 and their self-tests), `Tools.RendezvousWorker` (the rendezvous Worker under `node --test`, registered when `node` is

@@ -32,6 +32,7 @@ module;
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/Collision/Shape/StaticCompoundShape.h>
 #include <Jolt/Physics/Collision/ShapeFilter.h>
+#include <Jolt/Physics/Constraints/DistanceConstraint.h>
 #include <Jolt/Physics/EPhysicsUpdateError.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
@@ -356,6 +357,16 @@ namespace vortex::physics {
         constexpr uint32_t kCharacterIndexMask = (1u << kCharacterIndexBits) - 1u;
         constexpr uint32_t kCharacterGenerationCount = 0xFFFu;   // generations 0..0xFFE: an id is never 0xFFFFFFFF
 
+        constexpr uint32_t kConstraintIndexBits = 20;
+        constexpr uint32_t kConstraintIndexMask = (1u << kConstraintIndexBits) - 1u;
+        constexpr uint32_t kConstraintGenerationCount = 0xFFFu;
+
+        struct ConstraintSlot {
+            JPH::Ref<JPH::Constraint> constraint;
+            JPH::BodyID body;
+            uint32_t generation = 0;
+        };
+
         struct CharacterSlot {
             JPH::Ref<JPH::CharacterVirtual> character;
             uint32_t generation = 0;
@@ -405,6 +416,8 @@ namespace vortex::physics {
             std::vector<CharacterSlot> characters;
             std::vector<uint32_t> freeCharacters;
             std::vector<JPH::BodyID> walls;        // SetCharacterWalls
+            std::vector<ConstraintSlot> constraints;
+            std::vector<uint32_t> freeConstraints;
         };
 
         /// Bookkeeping of one dynamic body. While `frozen` the Jolt body is static and this holds
@@ -433,6 +446,24 @@ namespace vortex::physics {
             const JPH::BodyID id(body.value);
             if (sim->system.GetBodyLockInterfaceNoLock().TryGetBody(id) == nullptr) return std::nullopt;
             return id;
+        }
+
+        ConstraintSlot* FindConstraint(ConstraintId id) const {
+            if (!sim || !id.IsValid()) return nullptr;
+            const uint32_t index = id.value & kConstraintIndexMask;
+            if (index >= sim->constraints.size()) return nullptr;
+            ConstraintSlot& slot = sim->constraints[index];
+            if (!slot.constraint || slot.generation != (id.value >> kConstraintIndexBits)) return nullptr;
+            return &slot;
+        }
+
+        void ReleaseConstraint(uint32_t index) {
+            ConstraintSlot& slot = sim->constraints[index];
+            if (!slot.constraint) return;
+            sim->system.RemoveConstraint(slot.constraint);
+            slot.constraint = nullptr;
+            slot.generation = (slot.generation + 1) % kConstraintGenerationCount;
+            sim->freeConstraints.push_back(index);
         }
 
         CharacterSlot* FindCharacter(CharacterId id) const {
@@ -499,6 +530,7 @@ namespace vortex::physics {
 
     void PhysicsWorld::Shutdown() {
         if (!m_Impl->sim) return;
+        for (uint32_t i = 0; i < m_Impl->sim->constraints.size(); ++i) m_Impl->ReleaseConstraint(i);
         m_Impl->initialized.store(false);
         m_Impl->sim.reset();
         m_Impl->events.clear();
@@ -717,6 +749,9 @@ namespace vortex::physics {
     void PhysicsWorld::DestroyBody(BodyId body) {
         const auto id = m_Impl->Find(body);
         if (!id) return;
+        // Its constraints go first: a constraint must never outlive a body it holds.
+        for (uint32_t i = 0; i < m_Impl->sim->constraints.size(); ++i)
+            if (m_Impl->sim->constraints[i].constraint && m_Impl->sim->constraints[i].body == *id) m_Impl->ReleaseConstraint(i);
         m_Impl->Forget(body);
         JPH::BodyInterface& bodies = m_Impl->sim->system.GetBodyInterface();
         bodies.RemoveBody(*id);
@@ -724,6 +759,54 @@ namespace vortex::physics {
     }
 
     bool PhysicsWorld::IsValid(BodyId body) const { return m_Impl->Find(body).has_value(); }
+
+    ConstraintId PhysicsWorld::CreateDistanceConstraint(const glm::vec3& anchor, BodyId body, const glm::vec3& attach, float minLength,
+                                                        float maxLength) {
+        ConstraintId out;
+        const auto id = m_Impl->Find(body);
+        if (!id || !IsFinite(anchor) || !IsFinite(attach) || !std::isfinite(minLength) || !std::isfinite(maxLength) || minLength < 0.0f ||
+            maxLength < minLength)
+            return out;
+        Impl::Simulation& sim = *m_Impl->sim;
+        JPH::Ref<JPH::Constraint> constraint;
+        {
+            const JPH::BodyLockWrite lock(sim.system.GetBodyLockInterface(), *id);
+            if (!lock.Succeeded() || !lock.GetBody().IsDynamic()) return out;
+            JPH::DistanceConstraintSettings settings;
+            settings.mSpace = JPH::EConstraintSpace::WorldSpace;
+            settings.mPoint1 = ToJoltR(anchor);
+            settings.mPoint2 = ToJoltR(attach);
+            settings.mMinDistance = minLength;
+            settings.mMaxDistance = maxLength;
+            constraint = settings.Create(JPH::Body::sFixedToWorld, lock.GetBody());
+        }
+        sim.system.AddConstraint(constraint);
+        uint32_t index = 0;
+        if (!sim.freeConstraints.empty()) {
+            index = sim.freeConstraints.back();
+            sim.freeConstraints.pop_back();
+        } else {
+            index = static_cast<uint32_t>(sim.constraints.size());
+            sim.constraints.emplace_back();
+        }
+        ConstraintSlot& slot = sim.constraints[index];
+        slot.constraint = constraint;
+        slot.body = *id;
+        out.value = (slot.generation << kConstraintIndexBits) | index;
+        return out;
+    }
+
+    void PhysicsWorld::DestroyConstraint(ConstraintId constraint) {
+        if (!m_Impl->FindConstraint(constraint)) return;
+        m_Impl->ReleaseConstraint(constraint.value & kConstraintIndexMask);
+    }
+
+    bool PhysicsWorld::IsValid(ConstraintId constraint) const { return m_Impl->FindConstraint(constraint) != nullptr; }
+
+    BodyId PhysicsWorld::ConstraintBody(ConstraintId constraint) const {
+        const ConstraintSlot* slot = m_Impl->FindConstraint(constraint);
+        return slot ? BodyId{slot->body.GetIndexAndSequenceNumber()} : BodyId{};
+    }
 
     BodyState PhysicsWorld::GetState(BodyId body) const {
         BodyState state;

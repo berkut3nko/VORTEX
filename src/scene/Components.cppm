@@ -236,6 +236,30 @@ export namespace vortex::scene {
         math::AABB swept;                      ///< world bounds over the whole travel
     };
 
+    /// @brief Rope flags (docs/design/mechanisms.md "Ropes with physics").
+    enum RopeFlag : uint8_t {
+        RopeFlag_Cleat = 1,   ///< E on the anchor releases it ("Rope actions")
+        RopeFlag_Chain = 2,   ///< a mechanism chain: drawn between the anchor and the mechanism's pose, no physics
+    };
+
+    /// @brief A rope ([mech-2]): a load rope holds a dynamic body on one distance constraint from a world-fixed
+    /// anchor; a chain follows its mechanism. An entity of its own (no body); its presence is the rope.
+    struct Rope {
+        glm::ivec3 anchorVoxel{0};             ///< the world voxel it hangs from (the anchor point: its bottom face centre)
+        Entity load = kNoEntity;               ///< the body it holds, or the mechanism of a chain
+        glm::vec3 attach{0.0f};                ///< load: its current model's voxels; chain: the mechanism's ORIGINAL model voxels
+        float length = 0.0f;                   ///< metres (a load rope's longest)
+        uint8_t flags = 0;                     ///< RopeFlag
+        physics::ConstraintId constraint;      ///< load ropes, while not cut
+        physics::BodyId body;                  ///< the body the constraint holds (Scene::Damage makes a new one)
+        glm::dvec3 lastAttach{0.0};            ///< the attach point's world position after the last step
+        bool cut = false;
+        float cutFraction = 0.0f;              ///< where it was cut: 0 the anchor end .. 1 the load end
+        uint32_t cutTick = 0;
+        uint32_t lastDecisionTick = 0;         ///< the busy rule of a release (12 ticks)
+        bool anyDecision = false;
+    };
+
     /// @brief A body a player holds (docs/design/mechanisms.md "One use key: E"). Its presence is the truth.
     struct Held {
         uint8_t holder = 0;                    ///< session slot; 0 offline

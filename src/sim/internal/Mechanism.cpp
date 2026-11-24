@@ -625,7 +625,15 @@ namespace vortex::sim {
             if (RayPosedBox(pose, glm::vec3(0.0f), size, kUseBoxInflate, eye, dir, vs, t))
                 targets.push_back({entity, UseTargetKind::Holdable, keyOf(entity), t});
         }
-        // [mech-2] adds the rope source here (cleats and climbable ropes), under the same order rule.
+        // Ropes ([mech-2] "Rope actions"): an uncut rope's cleat (its anchor voxel grown by 2 voxels).
+        for (const auto [entity, rope] : scene.Registry().view<const scene::Rope>().each()) {
+            if (rope.cut || (rope.flags & scene::RopeFlag_Cleat) == 0) continue;
+            const math::AABB box = RopeCleatBox(simulation.World(), rope);
+            MechanismPose identity;
+            float t = 0.0f;
+            if (RayPosedBox(identity, box.min / vs, box.max / vs, 0.0f, eye, dir, vs, t))
+                targets.push_back({entity, UseTargetKind::Rope, static_cast<uint32_t>(entity), t});
+        }
 
         // The winner: the smallest distance in front of the terrain and of every other occluder; ties go to
         // the lower kind, then the lower key. A mechanism's own block box does not hide its own use box.
@@ -750,6 +758,7 @@ namespace vortex::sim {
     std::string UsePrompt(const Simulation& simulation, const UseTarget& target, uint32_t /*tick*/, bool& greyed) {
         greyed = false;
         if (target.kind == UseTargetKind::Holdable) return "[E] Pick up";
+        if (target.kind == UseTargetKind::Rope) return "[E] Release rope";
         if (target.kind == UseTargetKind::HeldByOther) {
             greyed = true;
             return "Held";
@@ -1000,6 +1009,9 @@ namespace vortex::sim {
         const scene::VoxelBody* voxels = scene.TryGet<scene::VoxelBody>(entity);
         if (!voxels || !voxels->model || !scene.TryGet<scene::RigidBody>(entity)) return false;
         if (scene.TryGet<scene::Mechanism>(entity) || scene.TryGet<scene::Held>(entity)) return false;
+        // A body that hangs on an uncut rope is not a pick-up: release or cut its rope first.
+        for (const auto [rope, r] : scene.Registry().view<const scene::Rope>().each())
+            if (!r.cut && r.load == entity && (r.flags & scene::RopeFlag_Chain) == 0) return false;
         const float vs = simulation.World().VoxelSize();
         const glm::ivec3 s = voxels->model->Volume().Size();
         for (int a = 0; a < 3; ++a)

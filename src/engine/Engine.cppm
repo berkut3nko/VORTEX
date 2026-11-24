@@ -89,6 +89,12 @@ export namespace vortex {
     /// positive intensity, in world space.
     void GatherLights(const scene::Scene& scene, std::vector<graphics::PointLight>& out);
 
+    /// @brief Appends one instance of a baked link model (1 x 1 x 8 voxels) per rope segment ([mech-2], mechanisms.md
+    /// "Drawing a rope"), stretched from the anchor to the attach point and kRopeRadius * 2 thick: `rope` for load ropes,
+    /// `chain` for chains. A cut rope leaves a stub of its anchor part hanging straight down. At most `maxInstances`.
+    void GatherRopes(const sim::Simulation& simulation, const voxel::VoxelModel& rope, const voxel::VoxelModel& chain,
+                     std::vector<graphics::InstanceDesc>& out, uint32_t maxInstances = 384);
+
     class Engine;
 
     /// @brief What a game implements.

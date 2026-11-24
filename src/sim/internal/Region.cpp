@@ -439,6 +439,10 @@ namespace vortex::sim {
         box({5, 30, -99}, {35, 40, -98}, 0);
         // Lever post.
         box({39, 0, -136}, {41, 10, -134}, m.wood);
+        // Gallows behind the wall ([mech-2]): two posts and a beam 3 m up; the game hangs a cage and a chandelier from it.
+        box({4, 0, -127}, {6, 30, -123}, m.wood);
+        box({30, 0, -127}, {32, 30, -123}, m.wood);
+        box({4, 30, -126}, {32, 33, -124}, m.wood);
 
         const auto model = [](const glm::ivec3& size, const char* name, auto solid) {
             voxel::VoxelVolume volume(size);

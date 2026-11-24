@@ -139,6 +139,13 @@ export namespace vortex::physics {
         bool IsValid() const { return value != 0xFFFFFFFFu; }
     };
 
+/// A constraint between the world and a body ([mech-2] load ropes); a generation guards stale ids.
+    struct ConstraintId {
+        uint32_t value = 0xFFFFFFFFu;
+        bool IsValid() const { return value != 0xFFFFFFFFu; }
+        friend bool operator==(const ConstraintId&, const ConstraintId&) = default;
+    };
+
     struct CharacterState {
         glm::vec3 position{0.0f};        ///< Feet position.
         glm::vec3 velocity{0.0f};
@@ -268,6 +275,16 @@ export namespace vortex::physics {
         uint32_t FrozenBodyCount() const;
 
         // --- characters --------------------------------------------------------------------------
+        /// @brief A rope (mechanisms.md "The physics wrapper"): the distance between the world point `anchor` and the
+        /// body's point now at `attach` (world metres) stays in [minLength, maxLength]. Invalid when the body is gone or
+        /// not dynamic. A destroyed body takes its constraints with it.
+        ConstraintId CreateDistanceConstraint(const glm::vec3& anchor, BodyId body, const glm::vec3& attach, float minLength,
+                                              float maxLength);
+        void DestroyConstraint(ConstraintId constraint);
+        bool IsValid(ConstraintId constraint) const;
+        /// @brief The body a constraint holds (invalid id when it is gone).
+        BodyId ConstraintBody(ConstraintId constraint) const;
+
         CharacterId CreateCharacter(const CharacterDesc& desc);
         void DestroyCharacter(CharacterId character);
         /**

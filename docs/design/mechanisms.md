@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Status | Designed. [mech-1] cards 1-3 built (engine `af50590`, `282ba04`, `46b29e0`: the skeleton, the timetable, posing, stepping, crush), cards 4-11 not built; nothing measured (the owner deferred the test runs and the measurements). Holding objects on E designed on 2026-11-24, built in [mech-1] (card 4 on). |
+| Status | [mech-1] offline part built and tested (cards 1-7: doors, the portcullis and its lever, holding with E, the damage rule, the yard; the owner checked doors and the lever in a window, 2026-11-24); its session part (cards 8-11) not built. [mech-2] offline part built (2026-11-24, "Ropes: the offline part as built" below); its session part not built. |
 | Decided | - Owner's request (2026-11-17): "in game should be implemented rope with physics, in game action which moves objects such as door opening by clicking E on them or activating lever (for castle gates)".<br>- Us (this design, 2026-11-17), amended the same day after two critics' review: 27 findings, two pairs of them the same, so 25 distinct: 24 applied, two of those with a change, and 1 rejected in part ("Decision in brief").<br>- Us, placement in ROADMAP under the owner's standing rules (the owner may veto): stage 1 comes after the fight measurement (review WP8), so its yard is measured inside a known fight budget, and takes the protocol number after M2a's, because it changes the E key and adds a `PlayerButton`.<br>- Owner's request (2026-11-24): "design all those actions on the button E: toggle a lever, open / close a door, hold a small object (it gets moved with the player's movement), rope actions; add it to card 4". Us, the same day (the owner may veto): 12 decisions, written as "One use key: E"; refined there with their reasons ("Decisions refined"), after a review of the holding design (32 findings) the same day. |
 | Next | [mech-1] door and gate (M-a offline, M-b session), in ROADMAP "Next" after WP8. [mech-2]..[mech-4] in ROADMAP "Later"; [mech-5] after M2. |
 | Open | Questions 1-20 in "Open questions" (each with the recommended answer; 1 and the fixed-or-adaptive part of 2 are settled). |
@@ -1047,6 +1047,39 @@ first; the first version's 64 simulated strands could never all be drawn).
   cosmetic halves. **A cut portcullis chain jams the portcullis shut** (`MechanismMove` to `minPos` at drop speed with
   `Jammed`; stage 2, so the first rope already changes a fight in the yard); cutting both drawbridge chains drops the
   bridge (to `minPos`, 1 s, `Jammed`, stage 3).
+
+### Ropes: the offline part as built (2026-11-24)
+
+The owner asked for the offline part of ropes first. Built, in `vortex.physics` and `vortex.sim:rope`:
+- **Physics:** `PhysicsWorld::CreateDistanceConstraint` (a world-fixed anchor point to a dynamic body's point, min 0,
+  max the length), `DestroyConstraint`, `ConstraintBody`; `DestroyBody` and `Shutdown` remove a body's constraints
+  first. `ConstraintId` follows the `CharacterId` pattern (slot and generation).
+- **Data:** `scene::Rope` on an entity of its own: the anchor voxel (its bottom face centre is the anchor point), the
+  load or the mechanism, the attach point (a load's current model voxels; a chain's mechanism's original model
+  voxels), the length, the flags (`RopeFlag_Cleat`, `RopeFlag_Chain`), the constraint and the cut state.
+- **Load ropes and chains:** `sim::CreateLoadRope` (as long as the ends are apart now), `sim::CreateChainRope` (no
+  physics: drawn between the anchor and the mechanism's pose).
+- **Cutting:** `CutRopesAlongRay` (positions quantised to 1/16 voxel; within `kRopeRadius` + 0.1 m of the ray, nearest
+  first, at most 4 per cast; ropes never stop the ray) and `CutRopesBySphere` run in the rules seam's cast path
+  (`ActionOutcome::ropeCuts`), so the server's cast path (the session part) gets them unchanged. A cast into the sky
+  still cuts the ropes on its ray (the offline game calls `CutRopesAlongRay` on `Missed`). `StepRopes` every tick:
+  an anchor voxel turned to air cuts at 0, a lost load cuts at 1, and a load whose body `Scene::Damage` re-made keeps
+  its rope while the attach point still lies in a solid voxel of its model (the constraint is re-made on the new
+  body), else it is cut at 1. Decided by floats on quantised points on one machine; the session part must make the
+  ray and sphere tests integer as "Cutting a rope (server, integer)" says before the server uses them.
+- **A cut chain jams its portcullis:** a segment to `minPos` at its drop speed with `MechanismFlag_Jammed`; the lever
+  then answers `Locked`.
+- **E on a cleat:** a `Rope` candidate in `FindUseTarget` (the anchor voxel grown by 2 voxels), prompt `[E] Release
+  rope`, `ReleaseRope` (busy 12 ticks; a cut rope or one without a cleat is no target). A body that hangs on an uncut
+  rope is not holdable.
+- **Drawing:** `vortex::GatherRopes` draws each rope as one stretched instance of a baked 1 x 1 x 8 link model (planks
+  for ropes, iron for chains), 4 cm thick (6 cm for chains); a cut rope leaves its anchor part hanging straight down.
+  No `rope` material yet (no `MaterialTableHash` change), no cosmetic strands, no cut halves.
+- **The yard:** a gallows behind the gate wall with a cage on a plain rope and a chandelier (torches on an iron ring) on
+  a cleat rope, and the portcullis chain. `--rope-script` checks all of it.
+
+Not built: `EntityKind::Rope`, `RopeCut` on the wire, the integer server tests, cosmetic strands with wind,
+`--rope-stress` and the GPU measurement at the cap, ropes that slide or winch.
 
 ### A player rope tool (tie, pull, climb): later, not in stages 1-4
 

@@ -167,6 +167,8 @@ namespace vortex::sim {
         }
         switch (request.slot) {
             case ActionSlot::Blast:
+                // Ropes the ray passes before its hit are cut; they never stop the ray ([mech-2]).
+                CutRopesAlongRay(simulation, request.eye, request.dir, aim.distance, simulation.Tick(), &outcome.ropeCuts);
                 // A cast that resolved on a mechanism ([mech-1] Decision 11): its own damage rule, no terrain
                 // operation and no explosion burst (there is no carve to present).
                 if (aim.atBody && aim.body != scene::kNoEntity && simulation.Scene().TryGet<scene::Mechanism>(aim.body)) {
@@ -175,6 +177,7 @@ namespace vortex::sim {
                 }
                 outcome.blasts.push_back(Blast(simulation, aim.sphere, aim.power));
                 outcome.effects.push_back(EffectCue{EffectKind::Blast, aim.sphere.center, aim.sphere.radius});
+                CutRopesBySphere(simulation, aim.sphere, simulation.Tick(), &outcome.ropeCuts);
                 break;
         }
         // Damage (fight.md "Damage"): every living enemy of the actor within the rule's reach, in span order.

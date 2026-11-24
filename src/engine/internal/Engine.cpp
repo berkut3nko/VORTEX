@@ -143,6 +143,8 @@ namespace vortex {
         PerfSummary perf;
         // Run-wide effect statistics for the `Fx:` exit line ([wp-8]).
         FxSummary fx;
+        // The shared link models of ropes and chains ([mech-2] "Drawing a rope"), baked on the first rope drawn.
+        std::shared_ptr<voxel::VoxelModel> ropeLink, chainLink;
         bool blastLog = false;   // Engine::SetBlastLog
         Engine::FrameTimes lastFrameTimes;   // Engine::LastFrameTimes
         uint64_t lastTimingSerial = 0;
@@ -411,6 +413,21 @@ namespace vortex {
             // --- render ----------------------------------------------------------------------
             s.instances.clear();
             GatherInstances(sim.Scene(), s.instances);
+            if (!sim.Scene().Registry().view<const scene::Rope>().empty()) {
+                if (!s.ropeLink) {
+                    const voxel::WorldMaterials& ids = sim.WorldMaterialIds();
+                    const auto link = [&sim](uint8_t material, const char* name) {
+                        voxel::VoxelVolume volume(glm::ivec3(1, 1, 8));
+                        volume.FillBox(glm::ivec3(0), glm::ivec3(1, 1, 8), material);
+                        auto model = std::make_shared<voxel::VoxelModel>(std::move(volume), voxel::kWorldPalette, name);
+                        model->Bake(sim.Chunks());
+                        return model;
+                    };
+                    s.ropeLink = link(ids.planks, "rope link");
+                    s.chainLink = link(ids.iron, "chain link");
+                }
+                GatherRopes(sim, *s.ropeLink, *s.chainLink, s.instances);
+            }
             s.lights.clear();
             GatherLights(sim.Scene(), s.lights);
             const double buildStart = NowSeconds();

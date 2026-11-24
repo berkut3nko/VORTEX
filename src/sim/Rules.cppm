@@ -16,6 +16,7 @@ import :worldop;
 import :blast;
 import :region;
 import :player;
+import :rope;
 
 // docs/design/rules.md "The seam": what an action does, GPU-free; the server, the offline game and a
 // client's presentation share it. [wp-6]
@@ -128,6 +129,7 @@ export namespace vortex::sim {
         std::vector<DamageEvent> damage;
         std::vector<PlayerImpulse> impulses;
         std::vector<EffectCue> effects;
+        std::vector<RopeCutEvent> ropeCuts;   ///< ropes the cast's ray passed or its sphere reached ([mech-2])
     };
 
     /// @brief A blast's damage: `centre` at distance 0, falling linearly to 0 at `zeroMm` ([wp-7]). centre 0 = none.
