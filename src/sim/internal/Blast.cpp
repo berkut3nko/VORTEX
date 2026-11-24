@@ -832,17 +832,22 @@ namespace vortex::sim {
         const float vs = world.VoxelSize();
         const glm::dvec3 center = blast.center;
         const float radius = blast.radius;
-        constexpr size_t kMaxBursts = 400;
+        // [wp-8] (fx-budget.md "Particle cost"): at most 96 bursts per carving operation, dust on
+        // every fourth, so ten blasts fit in the pool.
+        constexpr size_t kMaxBursts = 96;
+        constexpr size_t kDustEvery = 4;
 
         for (const AppliedOp& applied : blast.ops) {
             const std::vector<voxel::VoxelEdit>& removed = applied.edits;
             if (applied.op.kind == WorldOpKind::CarveSphere) {
                 // Debris for a bounded sample of the removed voxels, in their material's colour.
-                const size_t stride = std::max<size_t>(1, removed.size() / kMaxBursts);
-                for (size_t i = 0; i < removed.size(); i += stride) {
+                const size_t stride = std::max<size_t>(1, (removed.size() + kMaxBursts - 1) / kMaxBursts);
+                size_t burst = 0;
+                for (size_t i = 0; i < removed.size() && burst < kMaxBursts; i += stride, ++burst) {
                     const glm::dvec3 p = world.VoxelCenter(removed[i].voxel);
                     const glm::vec3 away = glm::normalize(glm::vec3(p - center) + glm::vec3(0.0f, 0.2f, 0.0f)) * 3.0f;
-                    fx::SpawnVoxelBreak(particles, p, materials.Get(voxel::kWorldPalette, removed[i].oldId).color, vs, away);
+                    fx::SpawnVoxelBreak(particles, p, materials.Get(voxel::kWorldPalette, removed[i].oldId).color, vs, away,
+                                        burst % kDustEvery == 0);
                 }
             } else if (applied.op.kind == WorldOpKind::Detach && applied.op.netId == 0) {
                 // Terrain that broke off, made from the voxels this world just removed. Rubble:
@@ -858,10 +863,11 @@ namespace vortex::sim {
                 // Crumbs: particles where the voxels were, as Scene::CreateVoxelObject crumbles a
                 // piece under minPieceVoxels, but without a model per crumb.
                 const size_t stride = std::max<size_t>({1, scene.Config().debrisParticleStride, (removed.size() + kMaxBursts - 1) / kMaxBursts});
-                for (size_t i = 0; i < removed.size(); i += stride) {
+                size_t burst = 0;
+                for (size_t i = 0; i < removed.size() && burst < kMaxBursts; i += stride, ++burst) {
                     const glm::dvec3 p = world.VoxelCenter(removed[i].voxel);
                     fx::SpawnVoxelBreak(particles, p, materials.Get(voxel::kWorldPalette, removed[i].oldId).color, vs,
-                                        BlastPush(glm::vec3(center), radius, glm::vec3(p)));
+                                        BlastPush(glm::vec3(center), radius, glm::vec3(p)), burst % kDustEvery == 0);
                 }
             }
         }

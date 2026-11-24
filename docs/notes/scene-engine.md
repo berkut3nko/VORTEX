@@ -209,7 +209,7 @@ Voxel size and thresholds [vd-2, vd-3]
   crumb rule is `scene::MinPieceVoxels(world.VoxelSize())` (the session's size, shared bit for bit; `kMinPieceVoxels`
   is its value at the default size). Nobody converts by hand (the game does not).
 - Not rescaled (cost limits in voxels, not sizes): `sim::kIslandSearchMargin` 24, `kMaxIslandVoxels` 60 000,
-  `kMaxBursts` 400. `fx` presets scale particle sizes from a 0.1 m reference voxel.
+  `kMaxBursts` 96. `fx` presets scale particle sizes from a 0.1 m reference voxel.
 
 Rubble budget [shred-1e]
 - Every Dynamic object created with `VoxelObjectDesc::debris` and a body (terrain `Detach` pieces, object fragments)

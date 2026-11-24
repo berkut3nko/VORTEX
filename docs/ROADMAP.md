@@ -166,9 +166,9 @@ In this order:
 
 1. **[wp-8] Fight measurement + fx-budget 1-2 + 10 clients.** Fights stay playable on the UHD 620: `--stress-fx`, a
    10-bot session at 10 casts/s with measured clients, then [design/fx-budget.md](design/fx-budget.md) stages 1-2.
-   5-8 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP8". State: cards 1-4 of
+   5-8 d (e). [Review](../../docs/history/reviews/project-review-2026-11-17.md) "WP8". State: cards 1-5 of
    [llm/wp-8.md](llm/wp-8.md) built (the skeleton; `--stress-fx`, the `Fx:` and `FxStress:` lines, `--blast-log`;
-   the `fight10.session`; card 4's effect lights in composite), not yet measured or tested.
+   the `fight10.session`; card 4's effect lights in composite; card 5's particle wins), not yet measured or tested.
 2. **[mech-1] Door and gate.** E opens doors, a lever runs a gate, crates move to Q.
    [design/mechanisms.md](design/mechanisms.md), "Stages" row 1. Its own protocol bump, after M2a's; after WP8 so its
    yard is measured inside a known fight budget. 9-10 d (e).
@@ -292,7 +292,7 @@ found), none needing a GPU (the ENet and relay ones use UDP on 127.0.0.1). The o
 | Destruction | `sim::Blast`: integer carve; islands searched on a cell graph cached per chunk (face flood inside a +-96-voxel flood box), one `Detach` per island of 8+ voxels, one `ClearMask` for smaller ones; a max-flow load check releases what its bonds cannot carry (integer strengths per material); object damage (`Scene::Damage`), impulses. `Engine::PresentBlast`: particles, local rubble, flash. Rubble lifetime by size (15 / 20 / 30 s), caps 192 small, 48 bodies, 600 store slots. | No impact damage (contact events never drained: [si-2]); objects not load-checked ([si-1]); no re-checks away from casts ([si-3]); windowed falls not confirmed by the owner. |
 | Import | MagicaVoxel `.vox` read / write, glTF voxelisation. | |
 | Physics | Jolt behind an engine interface, fixed step, character moved by `sim::StepPlayer` (restorable for replays); terrain colliders streamed and requested by moving bodies; bodies without a ready (or not yet re-cooked) collider frozen with their velocity; a parked body woken when its edited ground gets a collider. | Guard gaps under Later. |
-| Particles | CPU pool with emitters, voxel collision, presets. | Pool of 32 768 sorted every frame; fight cost unmeasured ([wp-8]). |
+| Particles | CPU pool with emitters, voxel collision, presets. | Pool of 8192, blended particles sorted every frame, additive ones not; fight cost unmeasured ([wp-8]). |
 | Renderer | Ray-marched G-buffer (primary rays end at the edge-fog radius), ray-traced sun shadows, AO, emissive voxel light, point lights, temporal accumulation, fog, particles, TAA, tone mapping; headless screenshots; validation-clean on the UHD 620. Present mode FIFO_RELAXED / FIFO / IMMEDIATE by preference, 3 images; per-pass GPU timers with `upload`, the `Perf:` line. | perf.md stages 1-3 built: M0, P1, G1, G2; block B next (L1, H1); P1's windowed result is the owner's; reflections, bloom, shadowed particles. |
 | Editor | `vortex.editor` (F1): fly camera, selection with translate / rotate gizmo, inspector, terrain brush, primitives, `.vox` / glTF import, environment / render / profiler / world panels; tool logic unit tested. | Editor list under Later. |
 | Simulation | `sim::Simulation`: world, physics, terrain colliders and scene on a numbered fixed tick; `sim::WorldOp` / `ApplyOp`; `sim::Blast`; the rules seam `vortex.sim:rules` (`sim::AimAction`, `sim::ResolveAction`: every cast, server and offline; [wp-6]); no renderer or window. The fight's rules `vortex.sim:combat` ([wp-7]: damage, charges, lives, teams, the round, Felling's tower). | Crush damage waits for [si-2]; spells for [mag-1]. |

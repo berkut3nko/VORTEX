@@ -348,9 +348,12 @@ namespace vortex::fx {
         out.clear();
         if (s.alive == 0) return;
 
+        // Only blended particles need an order. Additive ones (alpha 0) give the same sum in any
+        // order, so they follow the sorted ones in pool order ([wp-8]).
         std::vector<SortKey>& keys = s.sortScratch;
         keys.clear();
         for (uint32_t i = 0; i < s.alive; ++i) {
+            if ((s.flags[i] & ParticleFlag_Additive) != 0) continue;
             const glm::dvec3 d = s.position[i] - cameraPosition;
             keys.push_back(SortKey{glm::dot(d, d), i});
         }
@@ -359,6 +362,9 @@ namespace vortex::fx {
             if (a.distanceSq != b.distanceSq) return a.distanceSq > b.distanceSq;
             return a.index < b.index;
         });
+        for (uint32_t i = 0; i < s.alive; ++i) {
+            if ((s.flags[i] & ParticleFlag_Additive) != 0) keys.push_back(SortKey{0.0, i});
+        }
 
         out.reserve(s.alive);
         for (const SortKey& key : keys) {

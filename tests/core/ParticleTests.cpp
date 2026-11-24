@@ -812,7 +812,7 @@ TEST(Effects, ImpulseThrowsDebrisAlongIt) {
 
 // [wp-8]: blended particles are sorted back to front; additive ones (alpha 0, order-free) follow
 // unsorted, in pool order.
-TEST(Particles, DISABLED_BlendedSortedAdditiveAppended) {
+TEST(Particles, BlendedSortedAdditiveAppended) {
     ParticleSystem ps(16);
     for (const double x : {1.0, 3.0, 2.0}) ASSERT_TRUE(ps.Emit(Inert(glm::dvec3(x, 0.0, 0.0))));
     for (const double x : {0.5, 5.0}) {

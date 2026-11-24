@@ -8,7 +8,7 @@
 
 layout(location = 0) out vec2 v_Local;              // quad coordinate, [-1, 1]^2
 layout(location = 1) flat out vec4 v_Color;         // rgb = premultiplied radiance at full coverage, a = opacity
-layout(location = 2) flat out uint v_Particle;
+layout(location = 2) flat out float v_Shape;        // params.y: 0 = square, 1 = soft disc
 
 const float VX_PARTICLE_SUN_WRAP = 0.5;     // share of the sun a small unoriented particle receives
 
@@ -60,6 +60,6 @@ void main() {
 
     v_Local = corner;
     v_Color = premultiplied;
-    v_Particle = uint(gl_InstanceIndex);
+    v_Shape = params.y;
     gl_Position = u_Frame.viewProj * vec4(pos, 1.0);
 }

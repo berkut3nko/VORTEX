@@ -287,7 +287,6 @@ namespace vortex::fx {
 
     void SpawnVoxelBreak(ParticleSystem& particles, const glm::dvec3& voxelCenter, const glm::vec3& color,
                          float voxelSize, const glm::vec3& impulse, bool withDust) {
-        (void) withDust;   // [wp-8] card 5 fills this
         const float size = (std::isfinite(voxelSize) && voxelSize > 0.0f) ? voxelSize : 0.1f;
         const float scale = std::clamp(size / 0.1f, 0.25f, 4.0f);   // relative to the reference voxel
 
@@ -304,6 +303,7 @@ namespace vortex::fx {
             debris.speedMax += kick;
         }
         particles.Burst(debris, voxelCenter, ScaledCount(4.0f, 2.0f, scale, 12));
+        if (!withDust) return;
 
         EmitterDesc dust = effects::Dust(color);
         dust.particle.sizeStart *= scale;

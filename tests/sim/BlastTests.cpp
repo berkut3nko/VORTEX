@@ -792,7 +792,7 @@ TEST(Blast, TheFlashIsAnEffectLightClippedByWalls) {
 
 // [wp-8] (fx-budget.md "Particle cost"): at most 96 debris bursts per carving operation, dust on
 // every fourth: 96 x 6 + 24 x 2 = 624 particles per operation at the reference voxel size.
-TEST(Blast, DISABLED_PresentBlastSamplesAtMost96Bursts) {
+TEST(Blast, PresentBlastSamplesAtMost96Bursts) {
     Arena a;
     ASSERT_TRUE(a.initialized);
     // A 12-voxel sphere centred on the ground's surface carves a half ball of about 3600 voxels.

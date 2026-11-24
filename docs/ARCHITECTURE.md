@@ -452,7 +452,9 @@ current layout per image). All full-screen passes use `fullscreen.vert` (3 verti
    produced here.
 4. **particles** - attachment hdr (load), depth[cur] as read-only test (no write). Instanced
    camera-facing quads from `u_Particles`, premultiplied blending (additive particles have
-   opacity 0), sorted back to front on the CPU.
+   opacity 0). The CPU sorts the blended particles back to front and appends the additive ones
+   unsorted in pool order. The fragment shader reads the shape from a flat varying, not from
+   `u_Particles`.
 5. **taa** - attachment taa[cur]. Reprojects taa[prev] with the motion vector of the closest
    depth in a 3x3 neighbourhood, clamps it to the neighbourhood colour box, blends with weight
    `temporalParams.y`. Pass-through when TAA is off or the history is invalid.
@@ -960,7 +962,7 @@ box, so any of these is an error: counted (`islandBoxUnloaded`, `attachedByUnloa
 **Crumbs.** Islands and released parts under `scene::MinPieceVoxels(world voxel size)` never
 become entities or bodies anywhere: all of them are in the one `ClearMask` of their blast, and
 `PresentBlast` turns them into particles (every `SceneConfig::debrisParticleStride`-th voxel, at
-most 400 bursts).
+most 96 bursts, dust on every fourth burst).
 
 **Replicated pieces** (`SimulationConfig::replication`, a session server). A `Detach` of at least
 `SceneConfig::replicatedPieceVoxels` (0.512 m^3: 262 voxels at 0.125 m) asks `sim::TakePieceSlot`

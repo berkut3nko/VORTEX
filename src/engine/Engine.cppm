@@ -33,7 +33,7 @@ export namespace vortex {
         uint32_t exitAfterFrames = 0;       ///< 0 = run until closed.
         std::string screenshotPath;         ///< Written on the last frame when exitAfterFrames > 0.
         uint32_t chunkCapacity = 8192;
-        uint32_t maxParticles = 32768;
+        uint32_t maxParticles = 8192;
         /// Worker threads of the world's job system and of Jolt (0 = the engine's default: hardware - 1 each).
         /// perf.md T1b measures them; a session takes them only when non-zero.
         unsigned jobThreads = 0;

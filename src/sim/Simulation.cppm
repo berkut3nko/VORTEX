@@ -54,7 +54,7 @@ export namespace vortex::sim {
         uint32_t chunkCapacity = 8192;        ///< Slots of the chunk store (terrain + baked models).
         /// Size of the particle pool. 0 = no particles at all: every effect the scene asks for is
         /// dropped without a word (a session server).
-        uint32_t maxParticles = 32768;
+        uint32_t maxParticles = 8192;
         float fixedTimeStep = 1.0f / 60.0f;   ///< Seconds per tick.
         /// Metres of terrain collision kept around every focus point given to Step /
         /// UpdateStreaming. Moving bodies get the colliders they need wherever they are.

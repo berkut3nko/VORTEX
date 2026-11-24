@@ -185,7 +185,8 @@ Spaces, units, ranges
   `2 * near + 0.05` m (`insideMargin` in `BuildFrameData`); shrinking it makes boxes vanish when the camera touches
   them.
 - Particles: lighting is per vertex (sun wrap + mean sky, no shadows); additive = opacity 0 with emission; depth test
-  only, no write, no soft fade; sorted on the CPU by the fx module. Zero particles still writes both timestamps but
+  only, no write, no soft fade; the fx module sorts the blended particles on the CPU and appends the additive ones
+  unsorted. `particles.frag` gets the shape as a flat varying (`v_Shape`) and does not bind `u_Particles`. Zero particles still writes both timestamps but
   skips the rendering scope (`PassParticles`).
 - Present: data debug views (normal, depth, steps, motion, material) bypass tone mapping (`present.frag`). The
   backbuffer is UNORM and the shader applies the sRGB curve; never pick an sRGB swapchain format

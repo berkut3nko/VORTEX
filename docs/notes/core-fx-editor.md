@@ -154,7 +154,7 @@ Code is cited by file and symbol; search for the symbol. The text before this re
 - Pool: SoA vectors sized to `capacity` at construction, `[0, alive)` live, swap-remove. A new field needs a line in
   the `Impl` constructor, `Spawn` and `Remove`.
 - Full pool: new particles are dropped, never the oldest; one warning per `ParticleSystem` lifetime. Capacity comes
-  from `EngineConfig::maxParticles` (32768; a server's simulation uses 0).
+  from `EngineConfig::maxParticles` (8192 since [wp-8]; a server's simulation uses 0).
 - Units: positions `dvec3` world metres; velocity m/s; `size*` is the edge length in metres, the GPU gets the **half**
   size; colours linear; `gravity` is a multiplier of the `Update` argument (-9.81).
 - `Spawn` sanitises: non-finite position / velocity / lifetime or lifetime <= 0 is rejected; sizes, drag, emissive
@@ -169,9 +169,10 @@ Code is cited by file and symbol; search for the symbol. The text before this re
   `LayoutContract.ParticleMatchesVxParticle`. Additive particles are sent with alpha 0, rgb pre-multiplied by opacity
   and emissive >= 1.
 - Effect budgets are caps in code (`ScaledCount` caps in `Effects.cpp`): `SpawnExplosion` <= 400 fire + 200 sparks +
-  200 smoke, radius clamped to [0.1, 8] m; `SpawnVoxelBreak` <= 12 debris + 4 dust. `sim::PresentBlast` samples the
-  carved voxels with stride `n / 400` and crumb voxels with a stride of at least `debrisParticleStride` and
-  `ceil(n / 400)` (`kMaxBursts` in `sim/internal/Blast.cpp`). Particles are presentation: nothing in a session's hash
+  200 smoke, radius clamped to [0.1, 8] m; `SpawnVoxelBreak` <= 12 debris + 4 dust (no dust when `dust` is false).
+  `sim::PresentBlast` samples the carved voxels with stride `ceil(n / 96)` and crumb voxels with a stride of at least
+  `debrisParticleStride` and `ceil(n / 96)`, at most 96 bursts per operation, dust on burst 0, 4, 8, ... only
+  (`kMaxBursts`, `kDustEvery` in `sim/internal/Blast.cpp`; `Blast.PresentBlastSamplesAtMost96Bursts`). Particles are presentation: nothing in a session's hash
   or schedule may read them.
 
 ### Editor
@@ -268,8 +269,9 @@ Code is cited by file and symbol; search for the symbol. The text before this re
   `Particles.EmbeddedParticlesTravelUntilTheyLeaveTheSolid`.
 - **A full pool changes the random stream**: `Burst` stops drawing when the pool is full. Still deterministic for
   identical call sequences, but not comparable across capacities.
-- **`BuildRenderData` sorts every live particle every frame** on the main thread; its cost at 32768 particles on the
-  UHD 620 is not measured. The renderer has no particle cap of its own: its buffer grows to whatever
+- **`BuildRenderData` sorts every blended particle every frame** on the main thread; additive particles follow
+  unsorted in pool order (`Particles.BlendedSortedAdditiveAppended`). Its cost at 8192 particles on the UHD 620 is not
+  measured. The renderer has no particle cap of its own: its buffer grows to whatever
   `BuildRenderData` returns (`EnsureCapacity` in `Renderer.cpp`), so the pool capacity is the only limit.
 - **`AddEmitter` does not validate the recipe**; a non-finite one simply never emits. Do not add "validation" that
   returns an invalid id unless callers are updated.

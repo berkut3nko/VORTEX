@@ -40,7 +40,7 @@ export namespace vortex::fx {
     void SpawnExplosion(ParticleSystem& particles, const glm::dvec3& position, float radius);
 
     /// @brief Debris + dust for a destroyed voxel of the given linear colour. `dust` false leaves out
-    /// the dust ([wp-8] card 5).
+    /// the dust ([wp-8]: a blast asks for it on every fourth burst only).
     void SpawnVoxelBreak(ParticleSystem& particles, const glm::dvec3& voxelCenter, const glm::vec3& color,
                          float voxelSize, const glm::vec3& impulse = glm::vec3(0.0f), bool dust = true);
 

@@ -107,8 +107,8 @@ export namespace vortex::fx {
         /**
          * @brief Produces the instance data for rendering.
          * @param renderOrigin World position that render space is relative to.
-         * @param cameraPosition World position of the camera; particles are sorted back to front
-         * so alpha blending composes correctly.
+         * @param cameraPosition World position of the camera; blended particles are sorted back to
+         * front so alpha blending composes correctly, additive ones follow unsorted in pool order.
          */
         void BuildRenderData(const glm::dvec3& renderOrigin, const glm::dvec3& cameraPosition,
                              std::vector<GpuParticle>& out) const;

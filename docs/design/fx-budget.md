@@ -198,6 +198,12 @@ exceeds 40% of the overdraw budget. Designers set counts and caps, never budgets
    the nearest one (no glow sprite yet). `FrameUniforms` gains `effectLights` (count, first record)
    instead of using `settings.w` (the HUD dim took it); `lighting.frag` is unchanged and reads only
    the shadowed records. Shadowed lights keep the nearest 256.
+   *As built ([wp-8], particles; not yet measured or tested):* pool 8192 in `EngineConfig` and
+   `sim::SimulationConfig`; `sim::PresentBlast` makes at most 96 bursts per `CarveSphere` and per
+   `ClearMask` operation (stride `ceil(n / 96)`), and `fx::SpawnVoxelBreak(..., dust)` adds dust on
+   every fourth burst only: at most 96 x 6 + 24 x 2 = 624 particles per operation at 0.1 m voxels.
+   `BuildRenderData` sorts only the blended particles and appends the additive ones in pool order.
+   `particles.frag` reads the shape from a flat varying, so its stage no longer binds `u_Particles`.
 3. **`FxDirector`.** Queues and caps, region merge, per-entity damage coalescing, LOD + load
    factor, overdraw budget and clamp, swap on upload, edited uploads first. *Verify:*
    `--stress-fx 10` worst CPU frame for destruction + effects <= 4 ms, GPU effects <= 4 ms; all
