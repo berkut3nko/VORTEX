@@ -465,12 +465,11 @@ namespace vortex::scene {
 
     // --- destruction -----------------------------------------------------------------------------
 
-    DamageResult Scene::Damage(Entity entity, const glm::dvec3& center, float radius, const DamageOptions& /*options*/) {
-        // [mech-1] card 5 fills this
-        return Damage(entity, center, radius);
+    DamageResult Scene::Damage(Entity entity, const glm::dvec3& center, float radius) {
+        return Damage(entity, center, radius, DamageOptions{});
     }
 
-    DamageResult Scene::Damage(Entity entity, const glm::dvec3& center, float radius) {
+    DamageResult Scene::Damage(Entity entity, const glm::dvec3& center, float radius, const DamageOptions& options) {
         Impl& s = *m_Impl;
         DamageResult result;
         if (!s.registry.valid(entity) || !(radius > 0.0f)) return result;
@@ -516,6 +515,8 @@ namespace vortex::scene {
                     if (glm::dot(d, d) > r * r) continue;
                     const voxel::Material& material = s.materials.Get(palette, id);
                     if ((material.flags & voxel::MaterialFlag_Indestructible) != 0) continue;
+                    // The mechanism damage rule (CarveSphereQ's float test): harder voxels survive the hit.
+                    if (options.powerQ != 0xFFFF && material.hardness * 16.0f > static_cast<float>(options.powerQ)) continue;
                     volume.Set(x, y, z, 0);
                     if ((result.removed++ % s.config.debrisParticleStride) == 0) {     // a sample is plenty of debris
                         const glm::vec3 world = transform.TransformPoint(glm::vec3(x, y, z) + glm::vec3(0.5f));
@@ -531,6 +532,32 @@ namespace vortex::scene {
 
         voxel::SplitResult split = voxel::SplitComponents(volume, s.config.minPieceVoxels);
         result.loose = static_cast<uint32_t>(split.loose.size());
+
+        // The piece that keeps the entity: the largest (the first) by default; with keepByBox the one
+        // with the most solid voxels in [keepMin, keepMax) (a mechanism's hinge), ties to the lower index.
+        size_t keptIndex = 0;
+        if (options.keepByBox) {
+            uint32_t best = 0;
+            for (size_t i = 0; i < split.pieces.size(); ++i) {
+                const voxel::VolumePiece& piece = split.pieces[i];
+                const glm::ivec3 ps = piece.volume.Size();
+                uint32_t count = 0;
+                for (int z = 0; z < ps.z; ++z)
+                    for (int y = 0; y < ps.y; ++y)
+                        for (int x = 0; x < ps.x; ++x) {
+                            if (piece.volume.Get(x, y, z) == 0) continue;
+                            const glm::ivec3 v = glm::ivec3(x, y, z) + piece.offset;
+                            if (v.x >= options.keepMin.x && v.y >= options.keepMin.y && v.z >= options.keepMin.z && v.x < options.keepMax.x &&
+                                v.y < options.keepMax.y && v.z < options.keepMax.z)
+                                ++count;
+                        }
+                if (count > best) {
+                    best = count;
+                    keptIndex = i;
+                }
+            }
+            result.keptBoxVoxels = best;
+        }
         for (const voxel::LooseVoxel& v : split.loose) {
             const glm::vec3 world = transform.TransformPoint(glm::vec3(v.position) + glm::vec3(0.5f));
             fx::SpawnVoxelBreak(s.particles, glm::dvec3(world), s.materials.Get(palette, v.material).color, vs, pointVelocity(world));
@@ -576,12 +603,13 @@ namespace vortex::scene {
 
             auto pieceModel = std::make_shared<voxel::VoxelModel>(std::move(piece.volume), palette, modelName);
             const bool small = s.IsSmall(pieceModel->SolidCount());
-            const bool kept = i == 0;
-            const physics::MotionType pieceMotion = kept && !splitApart ? motion : physics::MotionType::Dynamic;
+            const bool kept = i == keptIndex;
+            const physics::MotionType pieceMotion =
+                kept && (!splitApart || options.keepMotion) ? motion : physics::MotionType::Dynamic;
 
             // Below the replicated-piece threshold: no entity, the caller makes local rubble.
             if (s.config.replicatedPieceVoxels > 0 && piece.voxelCount < s.config.replicatedPieceVoxels &&
-                pieceMotion == physics::MotionType::Dynamic) {
+                pieceMotion == physics::MotionType::Dynamic && !(kept && options.keepMotion)) {
                 result.fragments.push_back({std::move(pieceModel), placed.current, linear[i], angular});
                 if (kept) {
                     s.registry.destroy(entity);

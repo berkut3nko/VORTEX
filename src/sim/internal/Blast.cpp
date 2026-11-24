@@ -582,6 +582,42 @@ namespace vortex::sim {
         }
     }
 
+    namespace {
+        /// What Scene::Damage left besides the kept entity: its fragments (pushed from `center`) and its new
+        /// pieces. Replicated: server bodies within the piece budgets (Damage lists them largest first, so
+        /// the slots go to the largest, as for terrain), otherwise fragments; offline the pieces stay bodies.
+        void TakeDamagePieces(Simulation& simulation, scene::DamageResult& damage, const glm::vec3& center, float radius, bool replicate,
+                              BlastResult& result) {
+            scene::Scene& scene = simulation.Scene();
+            physics::PhysicsWorld& physics = simulation.Physics();
+            for (scene::DamageFragment& fragment : damage.fragments) {
+                fragment.linearVelocity += BlastPush(center, radius, fragment.pose.position);
+                result.fragments.push_back(std::move(fragment));
+            }
+            if (!replicate) return;
+            for (const scene::Entity piece : damage.pieces) {
+                if (TakePieceSlot(simulation) == PieceSlot::Replicate) {
+                    ObjectEvent spawn;
+                    spawn.kind = ObjectEvent::Kind::Spawn;
+                    spawn.netId = Replicate(simulation, piece, true);
+                    spawn.entity = piece;
+                    result.objectEvents.push_back(std::move(spawn));
+                    continue;
+                }
+                const scene::VoxelBody* voxels = scene.TryGet<scene::VoxelBody>(piece);
+                const scene::Transform* transform = scene.TryGet<scene::Transform>(piece);
+                const scene::RigidBody* body = scene.TryGet<scene::RigidBody>(piece);
+                if (voxels && transform && body) {
+                    const physics::BodyState state = physics.GetState(body->body);
+                    result.fragments.push_back({voxels->model, transform->current,
+                                                state.linearVelocity + BlastPush(center, radius, transform->current.position),
+                                                state.angularVelocity});
+                }
+                scene.Destroy(piece);
+            }
+        }
+    }
+
     BlastResult Blast(Simulation& simulation, const BlastDesc& desc) {
         const double vs = static_cast<double>(simulation.World().VoxelSize());
         return Blast(simulation, voxel::QuantizeSphere(desc.center / vs, static_cast<double>(desc.radius) / vs),
@@ -658,6 +694,13 @@ namespace vortex::sim {
                             simulation.Tick(), scene.TryGet<scene::NetId>(entity) != nullptr, release);
                     result.holdChanges.push_back(release);
                 }
+                // A mechanism ([mech-1], mechanisms.md "The damage rule"): only an aimed hit (within
+                // kMechanismHitRadius of its model) damages it, by its own rule.
+                if (scene.TryGet<scene::Mechanism>(entity)) {
+                    if (DistanceToMechanism(simulation, entity, result.center) <= kMechanismHitRadius)
+                        DamageMechanism(simulation, entity, result.center, power, result);
+                    continue;
+                }
                 // A replicated object that Damage destroys broke apart (its remains are fragments).
                 uint32_t netId = 0;
                 if (scene::NetId* id = replicate ? scene.TryGet<scene::NetId>(entity) : nullptr) {
@@ -682,40 +725,14 @@ namespace vortex::sim {
                 if (damage.removed == 0) continue;
                 ++result.objectsHit;
                 result.objectVoxels += damage.removed;
-                for (scene::DamageFragment& fragment : damage.fragments) {
-                    fragment.linearVelocity += BlastPush(center, radius, fragment.pose.position);
-                    result.fragments.push_back(std::move(fragment));
-                }
-                if (!replicate) continue;
-                // New pieces: server bodies within the piece budgets, otherwise fragments (rubble).
-                // Damage lists them largest first, so the slots go to the largest (as for terrain).
-                for (const scene::Entity piece : damage.pieces) {
-                    if (TakePieceSlot(simulation) == PieceSlot::Replicate) {
-                        ObjectEvent spawn;
-                        spawn.kind = ObjectEvent::Kind::Spawn;
-                        spawn.netId = Replicate(simulation, piece, true);
-                        spawn.entity = piece;
-                        result.objectEvents.push_back(std::move(spawn));
-                        continue;
-                    }
-                    const scene::VoxelBody* voxels = scene.TryGet<scene::VoxelBody>(piece);
-                    const scene::Transform* transform = scene.TryGet<scene::Transform>(piece);
-                    const scene::RigidBody* body = scene.TryGet<scene::RigidBody>(piece);
-                    if (voxels && transform && body) {
-                        const physics::BodyState state = physics.GetState(body->body);
-                        result.fragments.push_back({voxels->model, transform->current,
-                                                    state.linearVelocity + BlastPush(center, radius, transform->current.position),
-                                                    state.angularVelocity});
-                    }
-                    scene.Destroy(piece);
-                }
+                TakeDamagePieces(simulation, damage, center, radius, replicate, result);
             }
         }
 
         // 4. Push bodies outwards (the new pieces included) and wake what rested nearby.
         for (const auto [entity, body] : scene.Registry().view<const scene::RigidBody>().each()) {
             if (!physics.IsValid(body.body)) continue;
-            if (scene.Registry().all_of<scene::Held>(entity)) continue;   // posed by its holder: no push
+            if (scene.Registry().any_of<scene::Held, scene::Mechanism>(entity)) continue;   // posed, not pushed
             const glm::vec3 push = BlastPush(center, radius, physics.GetState(body.body).position);
             if (push == glm::vec3(0.0f)) continue;
             physics.AddImpulse(body.body, push * physics.GetMass(body.body));
@@ -935,5 +952,93 @@ namespace vortex::sim {
         flash.clipMin = -glm::vec3(extent[0], extent[2], extent[4]);
         flash.clipMax = glm::vec3(extent[1], extent[3], extent[5]);
         if (flash.lifetime > 0.0f) scene.CreateLight(flash);
+    }
+
+    MechanismHit DamageMechanism(Simulation& simulation, scene::Entity entity, const glm::dvec3& centre, uint16_t powerQ,
+                                 BlastResult& into) {
+        MechanismHit hit;
+        scene::Scene& scene = simulation.Scene();
+        scene::Mechanism* m = scene.TryGet<scene::Mechanism>(entity);
+        if (!m || (m->desc.flags & scene::MechanismDesc_Warded) != 0) return hit;
+        const MechanismKind kind = m->desc.kind;
+        const glm::ivec3 keepMin = m->desc.hingeBox.min - m->modelOffset;
+        const glm::ivec3 keepMax = m->desc.hingeBox.max - m->modelOffset;
+        const bool replicate = simulation.Config().replication.enabled;
+
+        uint32_t netId = 0;
+        if (scene::NetId* id = replicate ? scene.TryGet<scene::NetId>(entity) : nullptr) {
+            netId = id->value;
+            id->despawn = scene::DespawnReason::Broken;
+        }
+        scene::DamageResult r = scene.Damage(entity, centre, kMechanismHitRadius,
+                                             scene::DamageOptions{powerQ, true, keepMin, keepMax, true});
+        if (netId != 0 && !r.destroyed)
+            if (scene::NetId* id = scene.TryGet<scene::NetId>(entity)) id->despawn = scene::DespawnReason::Destroyed;
+        if (r.removed == 0) return hit;
+        hit.removed = r.removed;
+        ++into.objectsHit;
+        into.objectVoxels += r.removed;
+        TakeDamagePieces(simulation, r, glm::vec3(centre), kMechanismHitRadius, replicate, into);
+
+        // The survivor stays a mechanism: kinematic, posed by its timetable, in its layer.
+        const uint32_t tick = simulation.Tick();
+        if (!r.destroyed) {
+            if ((m = scene.TryGet<scene::Mechanism>(entity))) {
+                m->modelOffset += r.keptOffset;
+                physics::PhysicsWorld& physics = simulation.Physics();
+                if (scene::RigidBody* rigid = scene.TryGet<scene::RigidBody>(entity)) {
+                    if (rigid->motion != physics::MotionType::Kinematic) {
+                        rigid->motion = physics::MotionType::Kinematic;
+                        physics.SetMotionType(rigid->body, physics::MotionType::Kinematic);
+                    }
+                    const float vs = simulation.World().VoxelSize();
+                    const MechanismPose pose = PoseAt(*m, PositionAt(*m, tick), vs);
+                    scene.SetTransform(entity, glm::vec3(pose.position), pose.rotation, true);
+                    physics.SetLayer(rigid->body, MechanismLayer(*m, tick));
+                }
+                if (netId != 0) {
+                    if (const scene::VoxelBody* voxels = scene.TryGet<scene::VoxelBody>(entity)) {
+                        ObjectEvent model;
+                        model.kind = ObjectEvent::Kind::Model;
+                        model.netId = netId;
+                        model.entity = entity;
+                        model.model = voxels->model;
+                        model.offset = r.keptOffset;
+                        model.motion = physics::MotionType::Kinematic;
+                        into.objectEvents.push_back(std::move(model));
+                    }
+                }
+            }
+        }
+
+        // The hinge is gone (or the whole mechanism): a lever breaks, a door or a portcullis is freed.
+        if (r.destroyed || r.keptBoxVoxels == 0) {
+            const uint8_t flag = kind == MechanismKind::Lever ? uint8_t{scene::MechanismFlag_Broken} : uint8_t{scene::MechanismFlag_Freed};
+            if (!r.destroyed) ReleaseMechanism(simulation, entity, tick, flag, into.mechanismChanges);
+            (kind == MechanismKind::Lever ? hit.broken : hit.freed) = true;
+        }
+        return hit;
+    }
+
+    BlastResult MechanismBlast(Simulation& simulation, scene::Entity target, const voxel::SphereQ& sphere, uint16_t power) {
+        BlastResult result;
+        SetCenter(simulation.World(), sphere, result);
+        result.islandsSearched = true;
+        DamageMechanism(simulation, target, result.center, power, result);
+
+        // The push to every other body, as Blast step 4 does (mechanisms and held bodies are posed, not pushed).
+        scene::Scene& scene = simulation.Scene();
+        physics::PhysicsWorld& physics = simulation.Physics();
+        const glm::vec3 center(result.center);
+        const float radius = result.radius;
+        for (const auto [entity, body] : scene.Registry().view<const scene::RigidBody>().each()) {
+            if (!physics.IsValid(body.body)) continue;
+            if (scene.Registry().any_of<scene::Mechanism, scene::Held>(entity)) continue;
+            const glm::vec3 push = BlastPush(center, radius, physics.GetState(body.body).position);
+            if (push == glm::vec3(0.0f)) continue;
+            physics.AddImpulse(body.body, push * physics.GetMass(body.body));
+        }
+        physics.ActivateInBox(math::AABB(center - glm::vec3(radius * 2.0f), center + glm::vec3(radius * 2.0f)));
+        return result;
     }
 }

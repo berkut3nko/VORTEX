@@ -768,20 +768,19 @@ namespace vortex::sim {
         return m->track.Newest().targetPos == m->desc.maxPos ? "[E] Lower gate" : "[E] Raise gate";
     }
 
-    MechanismHit DamageMechanism(Simulation& /*simulation*/, scene::Entity /*entity*/, const glm::dvec3& /*centre*/, uint16_t /*powerQ*/,
-                                 BlastResult& /*into*/) {
-        // [mech-1] card 5 fills this
-        return {};
-    }
+    // DamageMechanism and MechanismBlast live in Blast.cpp: they share Blast's piece handling.
 
-    BlastResult MechanismBlast(Simulation& /*simulation*/, scene::Entity /*target*/, const voxel::SphereQ& /*sphere*/, uint16_t /*power*/) {
-        // [mech-1] card 5 fills this
-        return {};
-    }
-
-    float DistanceToMechanism(const Simulation& /*simulation*/, scene::Entity /*entity*/, const glm::dvec3& /*point*/) {
-        // [mech-1] card 5 fills this
-        return 0.0f;
+    float DistanceToMechanism(const Simulation& simulation, scene::Entity entity, const glm::dvec3& point) {
+        const scene::Scene& scene = simulation.Scene();
+        const scene::Mechanism* m = scene.TryGet<scene::Mechanism>(entity);
+        const scene::VoxelBody* voxels = scene.TryGet<scene::VoxelBody>(entity);
+        if (!m || !voxels || !voxels->model || m->track.count == 0) return std::numeric_limits<float>::max();
+        const float vs = simulation.World().VoxelSize();
+        const MechanismPose pose = PoseAt(*m, PositionAt(*m, simulation.Tick()), vs);
+        const glm::vec3 local = glm::conjugate(pose.rotation) * glm::vec3(point - pose.position) / vs;
+        const glm::vec3 size(voxels->model->Volume().Size());
+        const glm::vec3 closest = glm::clamp(local, glm::vec3(0.0f), size);
+        return glm::length(local - closest) * vs;
     }
 
     void ReleaseMechanism(Simulation& simulation, scene::Entity entity, uint32_t tick, uint8_t flag, std::vector<MechanismChange>& changes) {

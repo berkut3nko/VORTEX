@@ -946,7 +946,7 @@ namespace {
     }
 }
 
-TEST(Mechanism, DISABLED_DentedKeepsWorking) {
+TEST(Mechanism, DentedKeepsWorking) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     const Entity door = MakeYardDoor(f, kYardDoorSpawn);
@@ -965,7 +965,7 @@ TEST(Mechanism, DISABLED_DentedKeepsWorking) {
     EXPECT_EQ(sim::PositionAt(*f.MechanismOf(door), sim::ArrivalTick(f.MechanismOf(door)->track)), 1024);
 }
 
-TEST(Mechanism, DISABLED_DentThatCropsTheModelKeepsThePivot) {
+TEST(Mechanism, DentThatCropsTheModelKeepsThePivot) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     // Hinged at the far edge (x = 8): the hits empty the model's minimum-corner column.
@@ -995,7 +995,7 @@ TEST(Mechanism, DISABLED_DentThatCropsTheModelKeepsThePivot) {
     EXPECT_LT(glm::length(glm::dvec3(transform->current.position) - pose.position), 1.0e-3) << "re-posed after the dent";
 }
 
-TEST(Mechanism, DISABLED_SplitDoorKeepsItsHingedPart) {
+TEST(Mechanism, SplitDoorKeepsItsHingedPart) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     // A short 12 x 4 x 3 door: a hit at x = 4 voxels cuts it across, leaving the hinge part (x 0..1,
@@ -1022,7 +1022,7 @@ TEST(Mechanism, DISABLED_SplitDoorKeepsItsHingedPart) {
     EXPECT_EQ(dynamicPieces, 1u) << "the other part is a new Dynamic piece";
 }
 
-TEST(Mechanism, DISABLED_HingeGoneFrees) {
+TEST(Mechanism, HingeGoneFrees) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     const Entity door = MakeYardDoor(f, kYardDoorSpawn);
@@ -1046,7 +1046,7 @@ TEST(Mechanism, DISABLED_HingeGoneFrees) {
     EXPECT_NE(into.mechanismChanges.back().segment.flags & scene::MechanismFlag_Freed, 0);
 }
 
-TEST(Mechanism, DISABLED_AnchorAirFrees) {
+TEST(Mechanism, AnchorAirFrees) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     const uint8_t stone = f.Ids().stone;
@@ -1074,7 +1074,7 @@ TEST(Mechanism, DISABLED_AnchorAirFrees) {
     EXPECT_EQ(f.Scene().TryGet<scene::RigidBody>(door)->motion, physics::MotionType::Dynamic);
 }
 
-TEST(Mechanism, DISABLED_CastAtTheGateLeavesTheLeverBesideIt) {
+TEST(Mechanism, CastAtTheGateLeavesTheLeverBesideIt) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     // A wall z 0..1 m with a lever on its +z face; the cast hits the wall 0.8 m beside the lever.
@@ -1091,7 +1091,7 @@ TEST(Mechanism, DISABLED_CastAtTheGateLeavesTheLeverBesideIt) {
     EXPECT_TRUE(blast.mechanismChanges.empty());
 }
 
-TEST(Mechanism, DISABLED_DoorTakesNHits) {
+TEST(Mechanism, DoorTakesNHits) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     const Entity door = MakeYardDoor(f, kYardDoorSpawn);
@@ -1117,7 +1117,7 @@ TEST(Mechanism, DISABLED_DoorTakesNHits) {
     EXPECT_LE(hits, 8);
 }
 
-TEST(Mechanism, DISABLED_MechanismHitCarvesNoTerrain) {
+TEST(Mechanism, MechanismHitCarvesNoTerrain) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     // A stone frame around the door: jambs on both sides and a lintel above.
@@ -1136,7 +1136,7 @@ TEST(Mechanism, DISABLED_MechanismHitCarvesNoTerrain) {
     EXPECT_EQ(f.Hash().hash, before.hash);
 }
 
-TEST(Mechanism, DISABLED_WardedTakesNoDamage) {
+TEST(Mechanism, WardedTakesNoDamage) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     scene::MechanismDesc desc = MakeDoorDesc();
@@ -1197,7 +1197,7 @@ namespace {
     }
 }
 
-TEST(Mechanism, DISABLED_TwoSimulationsFedTheSameInputsAgree) {
+TEST(Mechanism, TwoSimulationsFedTheSameInputsAgree) {
     const YardScriptOut a = RunYardScript();
     const YardScriptOut b = RunYardScript();
     ASSERT_TRUE(a.ok);
