@@ -173,10 +173,12 @@ In this order:
 2. **[mech-1] Door and gate.** E opens doors, a lever runs a gate, crates move to Q; E picks up, carries and drops
    a small object and LMB throws it (designed 2026-11-24).
    [design/mechanisms.md](design/mechanisms.md), "Stages" row 1. Its own protocol bump, after M2a's; after WP8 so its
-   yard is measured inside a known fight budget. 12-13 d (e). State: [llm/mech-1.md](llm/mech-1.md) cards 1-3 built
-   (the skeleton: `scene::Mechanism` and the `sim:mechanism` interface, `PlayerButton_Use` 16; the integer timetable;
-   the layer rule, posing, stepping, the landing push, the crush rule and the release; the tests of cards 2-3
-   enabled, those of cards 4-5 written and disabled), not yet measured or tested.
+   yard is measured inside a known fight budget. 12-13 d (e). State: the offline part is built and tested, [llm/mech-1.md](llm/mech-1.md)
+   cards 1-7: the timetable, posing and the crush rule; use targets, levers and holding; the damage rule; E, Q and the
+   use prompt in the offline game; the yard in the default game (`--no-mechanisms`, `--mechanism-script`,
+   `--mechanism-blast`, `--hold-script`). Tests and `tools/verify.sh quick` pass on the Windows PC; the owner
+   checked doors and the lever in a window (2026-11-24). Cards 8-11 (protocol 12, the server and client paths) are not
+   built.
 3. **[mag-1] Siege core in sim, headless only.** The spell system's first four spells, Siege Cannon, Barricade Wave,
    Shockwave and Updraft (breach, cover, knock off, climb), with only what they use: the Pierce operator, the Burst
    strip, Plume's single column, `CarveCapsule` / `MapMask` / `MapShape` as sim ops, knit iron that blasts chip, with

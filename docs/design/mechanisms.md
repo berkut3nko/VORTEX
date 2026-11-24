@@ -1158,6 +1158,14 @@ All est. until the stage named measures them. Server tick 16.7 ms; client frame 
 | Rope cut tests | per cast: ropes along the ray and in the sphere's box | under 1 us per rope | - | `RopeCut` 12 B |
 | Gate under fire | carved, 0.3 m per aimed hit | as any object | as any object | 0.3-1 KiB per hit; 3-10 kB/s at 10 casts/s against the 12 kB/s entity budget (stage 3 measures) |
 
+Measured on the Windows PC (Core Ultra 7 356H iGPU, not the UHD 620), [mech-1] card 7, `--mechanism-blast` at 0.125 m: the
+yard door is freed after 7 casts (power 6: two on the leaf, then the hinge column, which is the door's hinge box over its
+whole height, cast along in 0.45 m steps), the lever breaks after 1, and a survivor's `ObjectModel` volume is 170-260
+bytes per hit. `Mechanism.DoorTakesNHits` (an all-planks door whose hinge box is its middle metre): 5 casts. The yard
+door's hinge column is wood, not iron: iron (hardness 8) never breaks to the cast power 6, so an iron hinge could never
+be freed. `--mechanism-script`: `StepMechanisms` at most 11-29 us per tick with 3 moving (the summary line's `step
+max`). The UHD 620 numbers are the owner's (owner check 24 runs on that laptop).
+
 How measured:
 - The game's exit log gains `Mechanisms: N, moving max M, uses U (refused R), lead min A max B, crushed K, step max S
   us, pose max P us, use query max Q us` and `Ropes: N (load L, cut C), strands simulated max S, instances drawn max

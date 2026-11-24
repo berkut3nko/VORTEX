@@ -409,9 +409,103 @@ namespace vortex::sim {
         return out;
     }
 
-    RegionTemplate MechanismYardTemplate(voxel::World& /*world*/, const voxel::WorldMaterials& /*m*/, const glm::ivec3& /*plazaAnchor*/) {
-        // [mech-1] card 7 fills this
-        return {};
+    RegionTemplate MechanismYardTemplate(voxel::World& world, const voxel::WorldMaterials& m, const glm::ivec3& plazaAnchor) {
+        RegionTemplate t;
+        const float vs = world.VoxelSize();
+        const double scale = PlaygroundScale(vs);
+        const auto S1 = [scale](int v) { return static_cast<int>(std::lround(static_cast<double>(v) * scale)); };
+        const auto S = [&S1](const glm::ivec3& v) { return glm::ivec3(S1(v.x), S1(v.y), S1(v.z)); };
+        const auto V = [vs](double metres) { return std::max(1, static_cast<int>(std::lround(metres / static_cast<double>(vs)))); };
+        const glm::ivec3 c = plazaAnchor;
+        t.anchor = c;
+        // Offsets in voxels of 0.1 m, scaled as PlaygroundTemplate scales them; the yard lies north (-z) of the plaza.
+        auto box = [&t, &S, c](glm::ivec3 lo, glm::ivec3 hi, uint8_t id) {
+            const glm::ivec3 a = S(lo);
+            t.ops.push_back(WorldOp::Box(c + a, c + glm::max(S(hi), a + 1), id));
+        };
+
+        // Pad.
+        box({-70, 0, -150}, {60, 90, -84}, 0);
+        box({-70, -30, -150}, {60, 0, -84}, m.stone);
+        box({-70, -1, -150}, {60, 0, -84}, m.stoneDark);
+        // Hut, its roof and doorway.
+        box({-60, 0, -140}, {-20, 30, -110}, m.brick);
+        box({-57, 0, -137}, {-23, 30, -113}, 0);
+        box({-62, 30, -142}, {-18, 32, -108}, m.planks);
+        box({-45, 0, -113}, {-36, 21, -110}, 0);
+        // Gate wall, its passage, the slot above it for the rising gate.
+        box({-10, 0, -100}, {50, 40, -97}, m.brick);
+        box({5, 0, -100}, {35, 30, -97}, 0);
+        box({5, 30, -99}, {35, 40, -98}, 0);
+        // Lever post.
+        box({39, 0, -136}, {41, 10, -134}, m.wood);
+
+        const auto model = [](const glm::ivec3& size, const char* name, auto solid) {
+            voxel::VoxelVolume volume(size);
+            for (int z = 0; z < size.z; ++z)
+                for (int y = 0; y < size.y; ++y)
+                    for (int x = 0; x < size.x; ++x)
+                        if (const uint8_t id = solid(x, y, z); id != 0) volume.Set(x, y, z, id);
+            return std::make_shared<voxel::VoxelModel>(std::move(volume), voxel::kWorldPalette, name);
+        };
+
+        // Door 0: planks with a wooden hinge column at x = 0 (a cast must be able to break it: iron, hardness 8,
+        // never breaks to the cast power 6), hinged about +y, opening either way.
+        const glm::ivec3 doorSize(V(0.9), V(2.1), 3);
+        TemplateMechanism door;
+        door.model = model(doorSize, "yard door", [&](int x, int, int) { return x == 0 ? m.wood : m.planks; });
+        door.spawnVoxel = c + S(glm::ivec3(-45, 0, -113));
+        door.desc.kind = MechanismKind::Door;
+        door.desc.flags = scene::MechanismDesc_Usable;
+        door.desc.pivotQ = {0, 0, 24};
+        door.desc.axis = 2;
+        door.desc.minPos = -1024;
+        door.desc.maxPos = 1024;
+        door.desc.openTicks = door.desc.closeTicks = 72;
+        door.desc.useBox = door.desc.blockBox = {glm::ivec3(0), doorSize};
+        door.desc.hingeBox = {glm::ivec3(0), glm::ivec3(1, doorSize.y, doorSize.z)};
+        door.desc.pushAxis = 4;
+        door.desc.anchorCount = 2;
+        door.desc.anchors = {door.spawnVoxel + glm::ivec3(-1, 2, 1), door.spawnVoxel + glm::ivec3(-1, doorSize.y - 3, 1)};
+        t.mechanisms.push_back(std::move(door));
+
+        // Gate 1: a wooden lattice portcullis that slides up 2.5 m out of the passage.
+        const glm::ivec3 gateSize(V(3.0), V(3.0), 1);
+        TemplateMechanism gate;
+        gate.model = model(gateSize, "yard portcullis",
+                           [&](int x, int y, int) { return (x % 3 == 0 || y % 4 == 0 || y == 0) ? m.wood : uint8_t{0}; });
+        gate.spawnVoxel = c + S(glm::ivec3(5, 0, -99));
+        gate.desc.kind = MechanismKind::Portcullis;
+        gate.desc.axis = 2;
+        gate.desc.minPos = 0;
+        gate.desc.maxPos = static_cast<int16_t>(V(2.5) * 16);
+        gate.desc.openTicks = 180;
+        gate.desc.closeTicks = 45;
+        gate.desc.useBox = gate.desc.blockBox = {glm::ivec3(0), gateSize};
+        gate.desc.hingeBox = {glm::ivec3(0, gateSize.y - 1, 0), gateSize};
+        gate.desc.pushAxis = 4;
+        t.mechanisms.push_back(std::move(gate));
+
+        // Lever 2: on its post behind the wall, turning 45 deg about +x at its foot; it runs gate 1.
+        const glm::ivec3 leverSize(2, 6, 2);
+        TemplateMechanism lever;
+        lever.model = model(leverSize, "yard lever", [&](int, int, int) { return m.wood; });
+        lever.spawnVoxel = c + S(glm::ivec3(39, 10, -136));
+        lever.desc.kind = MechanismKind::Lever;
+        lever.desc.flags = scene::MechanismDesc_Usable;
+        lever.desc.pivotQ = {16, 0, 16};
+        lever.desc.axis = 0;
+        lever.desc.minPos = 0;
+        lever.desc.maxPos = 512;
+        lever.desc.openTicks = lever.desc.closeTicks = 12;
+        lever.desc.useBox = lever.desc.blockBox = {glm::ivec3(0), leverSize};
+        lever.desc.hingeBox = {glm::ivec3(0), glm::ivec3(leverSize.x, 1, leverSize.z)};
+        lever.desc.pushAxis = 4;
+        lever.link = 1;
+        t.mechanisms.push_back(std::move(lever));
+
+        t.spawn = world.VoxelCenter(c + S(glm::ivec3(20, 0, -90)));
+        return t;
     }
 
     namespace {
