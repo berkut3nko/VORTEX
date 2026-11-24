@@ -238,6 +238,10 @@ export namespace vortex::sim {
 
     /// @brief The yard ([mech-1]): a hut with a door, and a wall with a portcullis and a lever, north of the playground's plaza.
     RegionTemplate MechanismYardTemplate(voxel::World& world, const voxel::WorldMaterials& m, const glm::ivec3& plazaAnchor);
+    /// @brief A small castle west of the playground's plaza (the offline game): curtain walls with a brick weak spot, a
+    /// gatehouse with a portcullis and its lever, a keep and a sally port with doors, a frame for a log trap, crates and
+    /// barrels to carry. Mechanisms: 0 keep door, 1 sally door, 2 portcullis, 3 lever (runs 2).
+    RegionTemplate PlaygroundCastleTemplate(voxel::World& world, const voxel::WorldMaterials& m, const glm::ivec3& plazaAnchor);
     /// @brief Creates a template's mechanisms in order and links them; empty (logged) if the authoring rule fails.
     std::vector<scene::Entity> CreateTemplateMechanisms(Simulation& simulation, const RegionTemplate& t);
     /// @brief The authoring rule: every lever's use box is at least kUseReach + 0.5 m from its target's outer face.

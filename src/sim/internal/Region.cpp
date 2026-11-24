@@ -512,6 +512,158 @@ namespace vortex::sim {
         return t;
     }
 
+    RegionTemplate PlaygroundCastleTemplate(voxel::World& world, const voxel::WorldMaterials& m, const glm::ivec3& plazaAnchor) {
+        RegionTemplate t;
+        const float vs = world.VoxelSize();
+        const double scale = PlaygroundScale(vs);
+        const auto S1 = [scale](int v) { return static_cast<int>(std::lround(static_cast<double>(v) * scale)); };
+        const auto S = [&S1](const glm::ivec3& v) { return glm::ivec3(S1(v.x), S1(v.y), S1(v.z)); };
+        const auto V = [vs](double metres) { return std::max(1, static_cast<int>(std::lround(metres / static_cast<double>(vs)))); };
+        const glm::ivec3 c = plazaAnchor;
+        t.anchor = c;
+        // Offsets in voxels of 0.1 m, scaled as PlaygroundTemplate scales them. The castle stands west of the plaza
+        // (x -340 .. -140, z -100 .. 100), its gate in the north wall.
+        auto box = [&t, &S, c](glm::ivec3 lo, glm::ivec3 hi, uint8_t id) {
+            const glm::ivec3 a = S(lo);
+            t.ops.push_back(WorldOp::Box(c + a, c + glm::max(S(hi), a + 1), id));
+        };
+
+        // Pad: clear the air, a stone foundation, a dark paving.
+        box({-370, 0, -150}, {-110, 140, 130}, 0);
+        box({-370, -30, -150}, {-110, 0, 130}, m.stone);
+        box({-370, -1, -150}, {-110, 0, 130}, m.stoneDark);
+
+        // Curtain walls, 6 m high and 1 m thick, merlons on top.
+        box({-340, 0, -100}, {-140, 60, -90}, m.stone);     // north
+        box({-340, 0, 90}, {-140, 60, 100}, m.stone);       // south
+        box({-340, 0, -100}, {-330, 60, 100}, m.stone);     // west
+        box({-150, 0, -100}, {-140, 60, 100}, m.stone);     // east
+        for (int i = -340; i < -140; i += 20) {
+            box({i, 60, -100}, {i + 10, 70, -90}, m.stone);
+            box({i, 60, 90}, {i + 10, 70, 100}, m.stone);
+        }
+        for (int i = -100; i < 100; i += 20) {
+            box({-340, 60, i}, {-330, 70, i + 10}, m.stone);
+            box({-150, 60, i}, {-140, 70, i + 10}, m.stone);
+        }
+        // A weak spot: an old brick patch in the west wall (no merlons above it).
+        box({-340, 0, -20}, {-330, 70, 20}, 0);
+        box({-340, 0, -20}, {-330, 60, 20}, m.brick);
+
+        // Four solid corner towers, 9 m.
+        box({-350, 0, -110}, {-320, 90, -80}, m.stone);
+        box({-160, 0, -110}, {-130, 90, -80}, m.stone);
+        box({-350, 0, 80}, {-320, 90, 110}, m.stone);
+        box({-160, 0, 80}, {-130, 90, 110}, m.stone);
+
+        // Gatehouse: two towers and a lintel over a 4 m passage; the portcullis rises into a slot in the lintel.
+        box({-280, 0, -110}, {-260, 90, -80}, m.stone);
+        box({-220, 0, -110}, {-200, 90, -80}, m.stone);
+        box({-260, 40, -110}, {-220, 90, -80}, m.stone);
+        box({-260, 0, -110}, {-220, 40, -80}, 0);
+        box({-260, 40, -96}, {-220, 80, -95}, 0);
+
+        // Keep: 10 x 6 m, 10 m high, hollow, a door in its north face.
+        box({-290, 0, 20}, {-190, 100, 80}, m.stoneDark);
+        box({-280, 0, 30}, {-200, 90, 70}, 0);
+        box({-245, 0, 20}, {-236, 21, 30}, 0);
+
+        // Sally port in the south wall.
+        box({-305, 0, 90}, {-296, 21, 100}, 0);
+
+        // The lever's post, 3.6 m inside the gate's outer face (the authoring rule asks 3.0), east of the passage.
+        box({-200, 0, -60}, {-198, 10, -58}, m.wood);
+
+        // A frame over the approach north of the gate: a log hangs from its beam (the game ties it on a rope).
+        box({-266, 0, -141}, {-262, 35, -137}, m.wood);
+        box({-218, 0, -141}, {-214, 35, -137}, m.wood);
+        box({-266, 35, -141}, {-214, 38, -137}, m.wood);
+
+        const auto model = [](const glm::ivec3& size, const char* name, auto solid) {
+            voxel::VoxelVolume volume(size);
+            for (int z = 0; z < size.z; ++z)
+                for (int y = 0; y < size.y; ++y)
+                    for (int x = 0; x < size.x; ++x)
+                        if (const uint8_t id = solid(x, y, z); id != 0) volume.Set(x, y, z, id);
+            return std::make_shared<voxel::VoxelModel>(std::move(volume), voxel::kWorldPalette, name);
+        };
+        const auto door = [&](const glm::ivec3& spawn, const char* name) {
+            const glm::ivec3 size(V(0.9), V(2.1), 3);
+            TemplateMechanism d;
+            d.model = model(size, name, [&](int x, int, int) { return x == 0 ? m.wood : m.planks; });
+            d.spawnVoxel = c + S(spawn);
+            d.desc.kind = MechanismKind::Door;
+            d.desc.flags = scene::MechanismDesc_Usable;
+            d.desc.pivotQ = {0, 0, 24};
+            d.desc.axis = 2;
+            d.desc.minPos = -1024;
+            d.desc.maxPos = 1024;
+            d.desc.openTicks = d.desc.closeTicks = 72;
+            d.desc.useBox = d.desc.blockBox = {glm::ivec3(0), size};
+            d.desc.hingeBox = {glm::ivec3(0), glm::ivec3(1, size.y, size.z)};
+            d.desc.pushAxis = 4;
+            d.desc.anchorCount = 2;
+            d.desc.anchors = {d.spawnVoxel + glm::ivec3(-1, 2, 1), d.spawnVoxel + glm::ivec3(-1, size.y - 3, 1)};
+            return d;
+        };
+        // 0 the keep door, 1 the sally port.
+        t.mechanisms.push_back(door({-245, 0, 20}, "keep door"));
+        t.mechanisms.push_back(door({-305, 0, 97}, "sally door"));
+
+        // 2 the portcullis: a 4 x 4 m lattice that rises 3.5 m into the lintel.
+        const glm::ivec3 gateSize(V(4.0), V(4.0), 1);
+        TemplateMechanism gate;
+        gate.model = model(gateSize, "castle portcullis",
+                           [&](int x, int y, int) { return (x % 3 == 0 || y % 4 == 0 || y == 0) ? m.iron : uint8_t{0}; });
+        gate.spawnVoxel = c + S(glm::ivec3(-260, 0, -96));
+        gate.desc.kind = MechanismKind::Portcullis;
+        gate.desc.axis = 2;
+        gate.desc.minPos = 0;
+        gate.desc.maxPos = static_cast<int16_t>(V(3.5) * 16);
+        gate.desc.openTicks = 180;
+        gate.desc.closeTicks = 45;
+        gate.desc.useBox = gate.desc.blockBox = {glm::ivec3(0), gateSize};
+        gate.desc.hingeBox = {glm::ivec3(0, gateSize.y - 1, 0), gateSize};
+        gate.desc.pushAxis = 4;
+        t.mechanisms.push_back(std::move(gate));
+
+        // 3 the lever on its post: it runs the portcullis.
+        const glm::ivec3 leverSize(2, 6, 2);
+        TemplateMechanism lever;
+        lever.model = model(leverSize, "castle lever", [&](int, int, int) { return m.wood; });
+        lever.spawnVoxel = c + S(glm::ivec3(-200, 10, -60));
+        lever.desc.kind = MechanismKind::Lever;
+        lever.desc.flags = scene::MechanismDesc_Usable;
+        lever.desc.pivotQ = {16, 0, 16};
+        lever.desc.axis = 0;
+        lever.desc.minPos = 0;
+        lever.desc.maxPos = 512;
+        lever.desc.openTicks = lever.desc.closeTicks = 12;
+        lever.desc.useBox = lever.desc.blockBox = {glm::ivec3(0), leverSize};
+        lever.desc.hingeBox = {glm::ivec3(0), glm::ivec3(leverSize.x, 1, leverSize.z)};
+        lever.desc.pushAxis = 4;
+        lever.link = 2;
+        t.mechanisms.push_back(std::move(lever));
+
+        // Things to carry and stack: crates against the east wall, barrels beside the keep.
+        const auto crate = CrateModel(m, scale);
+        const auto at = [&](const glm::ivec3& v) { return world.VoxelToWorld(c + S(v)); };
+        for (const glm::ivec3& p : {glm::ivec3(-175, 0, -40), glm::ivec3(-166, 0, -40), glm::ivec3(-157, 0, -40), glm::ivec3(-170, 8, -40),
+                                    glm::ivec3(-161, 8, -40), glm::ivec3(-166, 16, -40)})
+            t.objects.push_back({crate, at(p)});
+        const glm::ivec3 barrelSize(V(0.6), V(0.8), V(0.6));
+        const auto barrel = model(barrelSize, "barrel", [&](int x, int, int z) {
+            const float dx = static_cast<float>(x) + 0.5f - 0.5f * static_cast<float>(barrelSize.x);
+            const float dz = static_cast<float>(z) + 0.5f - 0.5f * static_cast<float>(barrelSize.z);
+            return dx * dx + dz * dz <= 0.25f * static_cast<float>(barrelSize.x * barrelSize.x) ? m.wood : uint8_t{0};
+        });
+        for (const glm::ivec3& p : {glm::ivec3(-185, 0, 25), glm::ivec3(-178, 0, 25), glm::ivec3(-185, 0, 33), glm::ivec3(-178, 0, 33)})
+            t.objects.push_back({barrel, at(p)});
+
+        t.spawn = world.VoxelCenter(c + S(glm::ivec3(-240, 0, -160)));
+        return t;
+    }
+
     namespace {
         glm::quat QuarterTurns(uint8_t turns) {
             constexpr double kPi = 3.14159265358979323846;
