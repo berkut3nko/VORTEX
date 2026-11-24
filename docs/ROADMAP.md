@@ -172,9 +172,10 @@ In this order:
    and the collider starvation test), not yet measured or tested.
 2. **[mech-1] Door and gate.** E opens doors, a lever runs a gate, crates move to Q.
    [design/mechanisms.md](design/mechanisms.md), "Stages" row 1. Its own protocol bump, after M2a's; after WP8 so its
-   yard is measured inside a known fight budget. 9-10 d (e). State: [llm/mech-1.md](llm/mech-1.md) card 1 built
-   (the skeleton: `scene::Mechanism` and the `sim:mechanism` interface as stubs, `PlayerButton_Use` 16, the sim tests
-   of cards 2-5 written and disabled), not yet measured or tested.
+   yard is measured inside a known fight budget. 9-10 d (e). State: [llm/mech-1.md](llm/mech-1.md) cards 1-3 built
+   (the skeleton: `scene::Mechanism` and the `sim:mechanism` interface, `PlayerButton_Use` 16; the integer timetable;
+   the layer rule, posing, stepping, the landing push, the crush rule and the release; the tests of cards 2-3
+   enabled, those of cards 4-5 written and disabled), not yet measured or tested.
 3. **[mag-1] Siege core in sim, headless only.** The spell system's first four spells, Siege Cannon, Barricade Wave,
    Shockwave and Updraft (breach, cover, knock off, climb), with only what they use: the Pierce operator, the Burst
    strip, Plume's single column, `CarveCapsule` / `MapMask` / `MapShape` as sim ops, knit iron that blasts chip, with

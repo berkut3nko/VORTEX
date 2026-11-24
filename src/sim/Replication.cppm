@@ -27,6 +27,7 @@ export namespace vortex::sim {
 
     /// @brief Replicated pieces alive and awake now (placed objects not counted), and every awake
     /// replicated body (pieces and placed objects: what the awake cap and the snapshots see).
+    /// Mechanisms are never counted: a kinematic body is always awake to Jolt.
     struct PieceCounts {
         uint32_t live = 0;
         uint32_t awake = 0;

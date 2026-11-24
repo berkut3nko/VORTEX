@@ -338,7 +338,7 @@ TEST(Mechanism, RingHoldsTheLeadAndTheStaleWindow) {
 //  The layer rule, posing and stepping
 // =================================================================================================
 
-TEST(Mechanism, DISABLED_LayerFollowsMotion) {
+TEST(Mechanism, LayerFollowsMotion) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     const Entity door = MakeYardDoor(f, {0, kGroundVoxels, 0});
@@ -381,7 +381,7 @@ TEST(Mechanism, DISABLED_LayerFollowsMotion) {
     EXPECT_EQ(sim::MechanismLayer(*f.MechanismOf(gate), 345), physics::Layer::Dynamic);
 }
 
-TEST(Mechanism, DISABLED_NotCountedAsAwake) {
+TEST(Mechanism, NotCountedAsAwake) {
     sim::SimulationConfig config = sim::ServerConfig(YardConfig());
     config.replication.maxAwakePieces = 1;    // one counted door would refuse every new piece
     YardField f(config);
@@ -449,7 +449,7 @@ namespace {
     }
 }
 
-TEST(Mechanism, DISABLED_LandingPushesThePlayerOut) {
+TEST(Mechanism, LandingPushesThePlayerOut) {
     const sim::PlayerTuning tuning;
     const float mid = 0.5f * kVoxel;                      // the gate's mid-plane, z
     const float half = 0.5f * kVoxel;                     // its half thickness
@@ -473,7 +473,7 @@ TEST(Mechanism, DISABLED_LandingPushesThePlayerOut) {
     EXPECT_FLOAT_EQ(bothBlocked.feet.z, 0.1f) << "both sides terrain: no push";
 }
 
-TEST(Mechanism, DISABLED_StandingOnALoweredBridgeIsNotPushed) {
+TEST(Mechanism, StandingOnALoweredBridgeIsNotPushed) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     // A Portcullis-kind slide lying flat: 2 x 0.125 x 2 m, lowered (p 320 -> 0) long ago.
@@ -502,7 +502,7 @@ TEST(Mechanism, DISABLED_StandingOnALoweredBridgeIsNotPushed) {
     }
 }
 
-TEST(Mechanism, DISABLED_LeaningOnAClosedDoorIsNotPushed) {
+TEST(Mechanism, LeaningOnAClosedDoorIsNotPushed) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     const Entity door = MakeYardDoor(f, {0, kGroundVoxels, 0});
@@ -523,7 +523,7 @@ TEST(Mechanism, DISABLED_LeaningOnAClosedDoorIsNotPushed) {
     }
 }
 
-TEST(Mechanism, DISABLED_ClosingGateCrushesACrateInsteadOfLaunchingIt) {
+TEST(Mechanism, ClosingGateCrushesACrateInsteadOfLaunchingIt) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     const Entity gate = MakeYardGate(f, {-8, kGroundVoxels, 0}, 320);
@@ -558,7 +558,7 @@ TEST(Mechanism, DISABLED_ClosingGateCrushesACrateInsteadOfLaunchingIt) {
     EXPECT_TRUE(f.Scene().IsValid(gate));
 }
 
-TEST(Mechanism, DISABLED_PlayerStepIsTheSameReplayed) {
+TEST(Mechanism, PlayerStepIsTheSameReplayed) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     // The door at x 0..1 m, z 0..0.375 m; the player walks through it along -z from z = 2 m. It
