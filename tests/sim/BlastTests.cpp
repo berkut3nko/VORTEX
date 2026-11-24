@@ -720,3 +720,49 @@ TEST(Rules, ABlastDamagesEnemiesInRangeOnly) {
     const sim::RulesContext none{tuning, views, 0, {0, 1200}};
     EXPECT_TRUE(sim::ResolveAction(b.simulation, none, request, aim).damage.empty());
 }
+
+// Review of [wp-7]: a player is a CharacterVirtual with no body, so the session aim meets the living enemies' capsules
+// itself. A ray at an enemy's chest in the open takes the cast there (the blast centred on the capsule: full damage);
+// a team mate, a dead enemy and the caster let it pass, and without players (the sandbox, offline) nothing changes.
+TEST(Rules, ARayAtAnEnemysChestTakesTheCastThere) {
+    Arena a;
+    ASSERT_TRUE(a.initialized);
+    sim::PlayerTuning tuning;
+    sim::RegionDesc near;
+    near.playMinChunk = {-1, -1};
+    near.playMaxChunk = {1, 1};
+    const sim::AimRules rules = sim::SessionAimRules(tuning, near);
+    const glm::vec3 casterFeet(-0.95f, 8.0f, 0.05f), enemyFeet(1.55f, 8.0f, 0.05f);   // the blast fits the play bounds (x < 3.2 m)
+    sim::ActionRequest request;
+    request.player = 1;
+    request.eye = glm::dvec3(casterFeet) + glm::dvec3(0.0, static_cast<double>(tuning.eyeHeight), 0.0);
+    request.dir = glm::normalize(enemyFeet + glm::vec3(0.0f, 1.3f, 0.0f) - glm::vec3(request.eye));
+    sim::ActionAim aim;
+    const sim::ActionRefusal alone = sim::AimAction(a.simulation, request, rules, aim);
+    EXPECT_TRUE(alone != sim::ActionRefusal::None || aim.distance > 4.0f);   // nothing near the enemy's place
+    EXPECT_EQ(aim.player, 0);
+
+    const std::array<sim::PlayerView, 2> duel = {{{1, 1, casterFeet, true}, {2, 2, enemyFeet, true}}};
+    ASSERT_EQ(sim::AimAction(a.simulation, request, rules, aim, duel), sim::ActionRefusal::None);
+    EXPECT_EQ(aim.player, 2);
+    EXPECT_FALSE(aim.atBody);
+    EXPECT_NEAR(aim.distance, glm::length(enemyFeet + glm::vec3(0.0f, 1.3f, 0.0f) - glm::vec3(request.eye)) - tuning.radius, 0.05f);
+    EXPECT_EQ(aim.sphere.radius, 192);                         // terrainRadius 1.2 m at 0.1 m
+    const sim::RulesContext context{tuning, duel, 0, {60, 1200}};
+    const sim::ActionOutcome got = sim::ResolveAction(a.simulation, context, request, aim);
+    ASSERT_EQ(got.damage.size(), 1u);
+    EXPECT_EQ(got.damage[0].target, 2);
+    EXPECT_GE(got.damage[0].amount, 59);
+
+    // A team mate, a dead enemy, the caster itself: the ray passes.
+    for (const sim::PlayerView other : {sim::PlayerView{3, 1, enemyFeet, true}, sim::PlayerView{2, 2, enemyFeet, false}}) {
+        const std::array<sim::PlayerView, 2> views = {{{1, 1, casterFeet, true}, other}};
+        sim::ActionAim passed;
+        (void)sim::AimAction(a.simulation, request, rules, passed, views);
+        EXPECT_EQ(passed.player, 0);
+    }
+    // Offline rules never meet a player.
+    sim::ActionAim offline;
+    (void)sim::AimAction(a.simulation, request, sim::OfflineAimRules(), offline, duel);
+    EXPECT_EQ(offline.player, 0);
+}

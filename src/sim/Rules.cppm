@@ -47,6 +47,13 @@ export namespace vortex::sim {
         uint8_t spell = 0;                   ///< [mag-2]; 0 now
     };
 
+    /// @brief A player as the rules see it (the session server fills the list in a fight mode; [wp-7]).
+    struct PlayerView {
+        uint8_t player = 0;                  ///< slot + 1
+        TeamId team = kNoTeam;
+        glm::vec3 feet{0.0f};
+        bool alive = true;
+    };
     /// @brief How a ray becomes a blast (decision 5).
     struct AimRules {
         float range = 60.0f;                 ///< metres from the eye
@@ -59,9 +66,14 @@ export namespace vortex::sim {
         /// than the terrain hit. Else the body ray stops at the terrain hit and any hit on it counts.
         bool strictBodyFirst = false;
         const RegionDesc* region = nullptr;  ///< set: CastFitsRegion decides Outside; null: no check
+        /// The players' capsule (PlayerTuning radius / height; review of [wp-7]). Above 0, a living enemy of the actor
+        /// in AimAction's `players` takes the cast where the ray meets its capsule, when nearer than the terrain and the
+        /// bodies; the blast is then centred there with `terrainRadius`. 0: players never take a cast (offline).
+        float playerRadius = 0.0f;
+        float playerHeight = 0.0f;
     };
     /// @brief The session server's rules: castRange, castRadius on terrain and bodies, castPower, Dynamic | Rubble
-    /// bodies with a NetId, the region check. `region` must outlive the returned rules.
+    /// bodies with a NetId, the players' capsule, the region check. `region` must outlive the returned rules.
     AimRules SessionAimRules(const PlayerTuning& tuning, const RegionDesc& region);
     /// @brief The offline click's rules: 80 m, 1.2 m on terrain, 0.6 m on a body, power 6, every layer,
     /// strictBodyFirst, no region.
@@ -71,6 +83,7 @@ export namespace vortex::sim {
     struct ActionAim {
         bool hit = false;
         bool atBody = false;                 ///< a body took it (counted by the server: castsAtBodies)
+        uint8_t player = 0;                  ///< slot + 1 of the enemy whose capsule took it; 0 = none
         float distance = 0.0f;               ///< metres from the eye
         glm::dvec3 point{0.0};               ///< world metres
         glm::ivec3 voxel{0};                 ///< the voxel hit (World::WorldToVoxel of `point` for a body)
@@ -78,9 +91,11 @@ export namespace vortex::sim {
         voxel::SphereQ sphere;               ///< the blast, quantised (1/16 voxel)
         uint16_t power = 0;                  ///< 1/16 hardness
     };
-    /// @brief Casts the request's ray on the simulation as it is now. Fills `out` (also on Outside: `hit`,
-    /// `atBody`, `sphere`); returns None, Missed or Outside.
-    ActionRefusal AimAction(Simulation& simulation, const ActionRequest& request, const AimRules& rules, ActionAim& out);
+    /// @brief Casts the request's ray on the simulation as it is now, and on the capsules of the living enemies of
+    /// `request.player` in `players` (with AimRules::playerRadius above 0). Fills `out` (also on Outside: `hit`,
+    /// `atBody`, `player`, `sphere`); returns None, Missed or Outside.
+    ActionRefusal AimAction(Simulation& simulation, const ActionRequest& request, const AimRules& rules, ActionAim& out,
+                            std::span<const PlayerView> players = {});
 
     /// @brief Health taken from a player (docs/design/fight.md "Damage"; [wp-7]).
     struct DamageEvent {
@@ -113,13 +128,6 @@ export namespace vortex::sim {
         std::vector<EffectCue> effects;
     };
 
-    /// @brief A player as the rules see it (the session server fills the list in a fight mode; [wp-7]).
-    struct PlayerView {
-        uint8_t player = 0;                  ///< slot + 1
-        TeamId team = kNoTeam;
-        glm::vec3 feet{0.0f};
-        bool alive = true;
-    };
     /// @brief A blast's damage: `centre` at distance 0, falling linearly to 0 at `zeroMm` ([wp-7]). centre 0 = none.
     struct BlastDamageRule {
         int16_t centre = 0;

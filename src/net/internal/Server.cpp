@@ -501,17 +501,18 @@ namespace vortex::net {
         }
     }
 
-    uint32_t Server::Advance(double seconds) {
+    uint32_t Server::Advance(double seconds, uint32_t maxTicks, uint32_t maxBacklogTicks) {
         Impl& s = *m_Impl;
         if (!s.started) return 0;
         const double dt = static_cast<double>(s.simulation->FixedTimeStep());
         s.accumulator += seconds;
         uint32_t ran = 0;
-        while (s.accumulator >= dt && ran < 2) {
+        while (s.accumulator >= dt && ran < maxTicks) {
             Tick();
             s.accumulator -= dt;
             ++ran;
         }
+        s.accumulator = std::min(s.accumulator, static_cast<double>(maxBacklogTicks) * dt);
         return ran;
     }
 

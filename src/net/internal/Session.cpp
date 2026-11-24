@@ -240,6 +240,12 @@ namespace vortex::net {
                     return false;
                 }
             }
+            // Review of [wp-7]: the Roster carries at most kMaxRosterPlayers; a player past it would have no team on
+            // any client.
+            if (config.maxClients > kMaxRosterPlayers) {
+                error = std::format("'max_clients' must be at most {} in a fight: '{}'", kMaxRosterPlayers, config.maxClients);
+                return false;
+            }
             if (fight.maxCharges > 0 && fight.chargeTicks == 0) {
                 error = "'charge_ticks' must not be 0 while 'max_charges' is above 0";
                 return false;

@@ -75,6 +75,14 @@ namespace vortex::net {
 
     void Server::Impl::FightLeave(uint8_t slot) {
         fighters[slot] = sim::FighterState{};
+        // Review of [wp-7]: the slot goes to the next joiner, so nobody keeps it as its last attacker (a later fall
+        // or lava death would credit the joiner, maybe of the victim's own team).
+        const uint8_t player = static_cast<uint8_t>(slot + 1);
+        for (sim::FighterState& f : fighters)
+            if (f.lastAttacker == player) {
+                f.lastAttacker = 0;
+                f.lastAttackTick = 0;
+            }
         if (Fighting() && !failed) SendRoster();
     }
 
@@ -123,7 +131,17 @@ namespace vortex::net {
         return u;
     }
 
-    void Server::Impl::SendRoster() { SendToJoined(Encode(MakeRoster())); }
+    void Server::Impl::SendRoster() { rosterChanged = true; }
+
+    void Server::Impl::FlushRoster() {
+        // Review of [wp-7]: one Roster per tick however many kills, joins and leaves changed it (a blast with k kills
+        // sent k whole rosters to every peer, outside the event budgets).
+        if (!rosterChanged) return;
+        rosterChanged = false;
+        if (failed) return;
+        ++stats.rostersSent;
+        SendToJoined(Encode(MakeRoster()));
+    }
 
     void Server::Impl::SendRound() {
         LogRound();
@@ -146,8 +164,16 @@ namespace vortex::net {
                       round.score[round.winner == 2 ? 0 : 1], sim::ToString(round.end), tick, sim::ToString(Rules().mode));
     }
 
+    bool Server::Impl::NotAliveAt(uint8_t slot, uint32_t inputTick) const {
+        if (!Fighting()) return false;
+        const sim::FighterState& f = fighters[slot];
+        // Dead now, or an input from before the current life (the dead time, or before a round start's teleport) that
+        // arrives late (review of [wp-7]: it cast from the corpse with a charge of the new life).
+        return f.dead || (f.spawned && inputTick <= f.lifeStartTick);
+    }
+
     bool Server::Impl::RefuseDeadCast(Peer& p, uint32_t inputTick) {
-        if (!Fighting() || !fighters[p.slot].dead) return false;
+        if (!NotAliveAt(p.slot, inputTick)) return false;
         ++stats.castsRefusedDead;
         p.player->lastCastTick = inputTick;
         p.player->castRejected = CastRejection::Dead;
@@ -178,7 +204,8 @@ namespace vortex::net {
         kill.victim = slot;
         kill.cause = static_cast<sim::DamageCause>(std::clamp<uint8_t>(event.cause, 1, sim::kMaxDamageCause));
         const auto score = round.score;
-        if (r.credit != 0 && PeerOfSlot(r.credit) != nullptr) {
+        // A credit goes only to a living slot of the other team (review of [wp-7]: a backstop to FightLeave's reset).
+        if (r.credit != 0 && PeerOfSlot(r.credit) != nullptr && (fighters[r.credit - 1].team != target.team || target.team == sim::kNoTeam)) {
             sim::FighterState& killer = fighters[r.credit - 1];
             killer.kills = static_cast<uint16_t>(killer.kills + 1);
             ++stats.kills;
@@ -247,7 +274,12 @@ namespace vortex::net {
     }
 
     void Server::Impl::StepFight() {
-        if (!Fighting() || sessionOver) return;
+        if (!Fighting()) return;
+        if (!sessionOver) StepRoundAndLives();
+        FlushRoster();
+    }
+
+    void Server::Impl::StepRoundAndLives() {
         const uint32_t tick = Tick();
         for (const auto& [id, p] : PlayersBySlot()) {
             sim::FighterState& f = fighters[p->slot];
@@ -256,6 +288,7 @@ namespace vortex::net {
             else if (tick >= f.respawnTick) Respawn(p->slot);
         }
         if (Rules().mode == sim::GameMode::Felling && round.phase == sim::RoundPhase::Live && tick % 30 == 0) CheckCrowns();
+        const sim::RoundPhase phaseBefore = round.phase;
         const sim::RoundStep step = sim::StepRound(round, Rules(), tick, TeamPlayers(), felled);
         if (step.startLives) {
             // The round begins: every player at its team's spawn, health and charges full, scores 0.
@@ -266,6 +299,12 @@ namespace vortex::net {
             }
             felled = {false, false};
             SendRoster();
+        }
+        // Review of [wp-7]: the towers stand whole when the round goes Live (the warmup's free casts and the
+        // countdown's could cut a crown before it, and the first crown check ended the round).
+        if (phaseBefore != sim::RoundPhase::Live && round.phase == sim::RoundPhase::Live) {
+            BuildFellingTowers();
+            felled = {false, false};
         }
         if (step.changed) SendRound();
         if (step.sessionOver) {
@@ -302,20 +341,31 @@ namespace vortex::net {
         if (Rules().mode != sim::GameMode::Felling) return;
         const voxel::World& w = simulation->World();
         const float vs = w.VoxelSize();
-        for (int t = 0; t < 2; ++t) {
-            const glm::vec2 at = Rules().towers[t];
-            const voxel::WorldRayHit hit = w.Raycast(glm::dvec3(at.x, static_cast<double>(region.heightRange.y) - 0.5, at.y),
-                                                     glm::vec3(0.0f, -1.0f, 0.0f), 256.0f);
-            const int32_t ground = hit.hit ? hit.voxel.y + 1 : w.WorldToVoxel(glm::dvec3(at.x, 0.0, at.y)).y;
-            const sim::FellingTower tower = sim::BuildFellingTower(w, simulation->WorldMaterialIds(), at, vs, ground);
-            for (const sim::WorldOp& op : tower.ops) {
-                const sim::OpResult r = sim::ApplyOp(simulation->World(), op);
-                if (!CheckOp(r)) return;
-                EmitOp(op, r);
+        const bool first = towerOps.empty();
+        if (first) {
+            // The towers' boxes are found once, on the generated ground (a later raycast would meet the tower).
+            for (int t = 0; t < 2; ++t) {
+                const glm::vec2 at = Rules().towers[t];
+                const voxel::WorldRayHit hit = w.Raycast(glm::dvec3(at.x, static_cast<double>(region.heightRange.y) - 0.5, at.y),
+                                                         glm::vec3(0.0f, -1.0f, 0.0f), 256.0f);
+                const int32_t ground = hit.hit ? hit.voxel.y + 1 : w.WorldToVoxel(glm::dvec3(at.x, 0.0, at.y)).y;
+                const sim::FellingTower tower = sim::BuildFellingTower(w, simulation->WorldMaterialIds(), at, vs, ground);
+                towerOps.insert(towerOps.end(), tower.ops.begin(), tower.ops.end());
+                crowns[t] = {tower.crownMin, tower.crownMax, 0};
             }
-            crowns[t] = {tower.crownMin, tower.crownMax, sim::CountSolid(w, tower.crownMin, tower.crownMax)};
-            Log::Info("Felling: tower {} at ({:.1f}, {:.1f}), crown {} voxels", t + 1, at.x, at.y, crowns[t].voxels);
         }
+        // Built again when the round goes Live: the same boxes, applied and sent as any stream operation.
+        for (const sim::WorldOp& op : towerOps) {
+            const sim::OpResult r = sim::ApplyOp(simulation->World(), op);
+            if (!CheckOp(r)) return;
+            EmitOp(op, r);
+        }
+        for (int t = 0; t < 2; ++t) {
+            crowns[t].voxels = sim::CountSolid(w, crowns[t].min, crowns[t].max);
+            if (first)
+                Log::Info("Felling: tower {} at ({:.1f}, {:.1f}), crown {} voxels", t + 1, Rules().towers[t].x, Rules().towers[t].y, crowns[t].voxels);
+        }
+        if (!first) Log::Info("Felling: both towers built again at tick {}", Tick());
     }
 
     void Server::Impl::CheckCrowns() {

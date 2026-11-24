@@ -47,7 +47,17 @@ namespace vortex::net {
             if (const scene::Entity e = EntityOf(netId); e != scene::kNoEntity) sim::Despawn(*simulation, e, scene::DespawnReason::Destroyed);
         simulation->Physics().DestroyCharacter(p.player->character);
         p.player.reset();
-        if (p.joined) FightLeave(p.slot);   // [wp-7] its place on its team is free (never rebalanced mid-round)
+        if (p.joined) {
+            // Review of [wp-7]: its queued casts still carve, as anyone's, but hurt nobody and credit nobody (the slot
+            // goes to the next joiner, whose team would decide who they hurt).
+            const uint8_t player = static_cast<uint8_t>(p.slot + 1);
+            for (QueuedCast& q : queue)
+                if (q.player == player) {
+                    q.player = 0;
+                    q.request.player = 0;
+                }
+            FightLeave(p.slot);   // [wp-7] its place on its team is free (never rebalanced mid-round)
+        }
     }
 
     std::vector<std::pair<PeerId, Peer*>> Server::Impl::PlayersBySlot() {
@@ -96,15 +106,22 @@ namespace vortex::net {
                 // Too late for its tick: it only refreshes the last input. Its edges still count
                 // (a cast in it is captured once), derived against the levels the repeats kept.
                 ++stats.inputsLate;
-                const uint8_t pressed = sim::PressButtons(pl.state, in.buttons);
-                // [wp-7] A dead player's late edges do nothing but refuse its cast (fight.md "Rules").
                 const bool dead = Fighting() && fighters[p.slot].dead;
-                if ((pressed & sim::PlayerButton_Cast) != 0 && !RefuseDeadCast(p, in.tick)) LateCast(p, in, now);
-                if ((pressed & sim::PlayerButton_Crate) != 0 && !dead) PlayerCrate(p, in, pl.state);
-                // A jump edge is not spent here without a jump: the next step makes it.
-                if ((pressed & sim::PlayerButton_Jump) != 0 && !pl.lateJump && !dead) {
-                    pl.lateJump = true;
-                    ++stats.jumpsFromLateInputs;
+                if (!dead && NotAliveAt(p.slot, t)) {
+                    // [wp-7] An input of the dead time (or from before the round start's teleport) that arrives after
+                    // the spawn (review of [wp-7]): the new life's levels stay the spawn's (decision 7: every button
+                    // held until released) and a cast in it is refused Dead; nothing else of it acts.
+                    if ((in.buttons & sim::PlayerButton_Cast) != 0) RefuseDeadCast(p, t);
+                } else {
+                    const uint8_t pressed = sim::PressButtons(pl.state, in.buttons);
+                    // [wp-7] A dead player's late edges do nothing but refuse its cast (fight.md "Rules").
+                    if ((pressed & sim::PlayerButton_Cast) != 0 && !RefuseDeadCast(p, in.tick)) LateCast(p, in, now);
+                    if ((pressed & sim::PlayerButton_Crate) != 0 && !dead) PlayerCrate(p, in, pl.state);
+                    // A jump edge is not spent here without a jump: the next step makes it.
+                    if ((pressed & sim::PlayerButton_Jump) != 0 && !pl.lateJump && !dead) {
+                        pl.lateJump = true;
+                        ++stats.jumpsFromLateInputs;
+                    }
                 }
                 pl.last = in;
                 pl.lastRealTick = t;

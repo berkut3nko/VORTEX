@@ -200,8 +200,13 @@ namespace vortex::net {
         std::deque<KillNotice> kills;
         bool lifeKnown = false;           ///< a lifeSeq was seen
         uint32_t lifeStartTick = 0;       ///< the snapshot tick of the current life (older snapshots are not compared)
+        /// A new lifeSeq was seen at `lifeStartTick` and is taken by Reconcile, once a snapshot of the new life has its
+        /// events applied (review of [wp-7]: the replay runs on the terrain the server stepped). Until then the player
+        /// is not stepped, as while dead.
+        bool respawnPending = false;
         /// The owner block of a new snapshot: a death stops the prediction (the owner's state is taken), a new
-        /// lifeSeq is a respawn (the owner's state taken and the inputs since replayed: never a correction).
+        /// lifeSeq is a respawn (recorded here; Reconcile takes the owner's state and replays the inputs since:
+        /// never a correction).
         void OnOwnerFight(const Snapshot& snap);
         void Respawned(const Snapshot& snap);
         bool syncHeld = false;              // the reach holds a chunk that is not current: not moved

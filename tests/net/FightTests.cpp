@@ -12,8 +12,10 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -219,10 +221,65 @@ namespace {
         return s;
     }
 
+    /// A client's end of the link that can hold back what it receives or sends on a channel (review of [wp-7]: an
+    /// event batch that arrives after its snapshot, inputs that arrive after a respawn). Held messages keep their
+    /// order and are delivered (sent) once the hold is lifted; the other channels pass through.
+    class HoldingTransport final : public net::ITransport {
+    public:
+        explicit HoldingTransport(net::ITransport& inner) : m_Inner(inner) {}
+        std::array<bool, net::kChannelCount> holdReceive{}, holdSend{};
+
+        void Send(net::PeerId peer, net::Channel channel, std::span<const uint8_t> data) override {
+            const size_t c = static_cast<size_t>(channel);
+            if (holdSend[c]) {
+                m_Sends.push_back({peer, channel, std::vector<uint8_t>(data.begin(), data.end())});
+                return;
+            }
+            m_Inner.Send(peer, channel, data);
+        }
+        /// Sends what holdSend kept, in order (call after clearing holdSend).
+        void ReleaseSends() {
+            for (const Held& h : m_Sends) m_Inner.Send(h.peer, h.channel, h.data);
+            m_Sends.clear();
+        }
+        bool Poll(net::TransportEvent& out) override {
+            for (size_t c = 0; c < net::kChannelCount; ++c) {
+                if (holdReceive[c] || m_Received[c].empty()) continue;
+                out = std::move(m_Received[c].front());
+                m_Received[c].pop_front();
+                return true;
+            }
+            while (m_Inner.Poll(out)) {
+                const size_t c = static_cast<size_t>(out.channel);
+                if (out.type == net::TransportEvent::Type::Received && (holdReceive[c] || !m_Received[c].empty())) {
+                    m_Received[c].push_back(std::move(out));
+                    continue;
+                }
+                return true;
+            }
+            return false;
+        }
+        double RoundTripSeconds(net::PeerId peer) const override { return m_Inner.RoundTripSeconds(peer); }
+        size_t ReliableBytesInFlight(net::PeerId peer) const override { return m_Inner.ReliableBytesInFlight(peer); }
+        size_t ChannelBytesInFlight(net::PeerId peer, net::Channel channel) const override { return m_Inner.ChannelBytesInFlight(peer, channel); }
+        void Disconnect(net::PeerId peer) override { m_Inner.Disconnect(peer); }
+
+    private:
+        struct Held {
+            net::PeerId peer = 0;
+            net::Channel channel = net::Channel::State;
+            std::vector<uint8_t> data;
+        };
+        net::ITransport& m_Inner;
+        std::vector<Held> m_Sends;
+        std::array<std::deque<net::TransportEvent>, net::kChannelCount> m_Received;
+    };
+
     /// A server and player clients on loopback links, one manual clock (MovementTests.cpp's Match).
     struct FightField {
         struct Bot {
             net::LoopbackTransport loop;
+            HoldingTransport hold{loop};
             std::unique_ptr<net::Client> client;
             std::unique_ptr<sim::Simulation> simulation;
             std::function<sim::PlayerInput(Bot&)> controls;
@@ -238,7 +295,7 @@ namespace {
             auto bot = std::make_unique<Bot>();
             net::ClientSettings cs;
             cs.token = TestToken();
-            bot->client = std::make_unique<net::Client>(cs, bot->loop);
+            bot->client = std::make_unique<net::Client>(cs, bot->hold);
             bot->controls = controls ? std::move(controls) : [](Bot&) { return sim::PlayerInput{}; };
             net::LoopbackTransport::Connect(serverLoop, bot->loop);
             bots.push_back(std::move(bot));
@@ -292,6 +349,12 @@ namespace {
             }, maxPasses);
         }
         glm::vec3 Feet(uint8_t slot) const { return server.GetPlayer(slot).value_or(sim::PlayerState{}).position; }
+        /// The bot leaves (its end of the link goes: the server sees it disconnect).
+        void RemoveBot(size_t index) {
+            bots[index]->client.reset();
+            bots[index]->simulation.reset();
+            bots.erase(bots.begin() + static_cast<std::ptrdiff_t>(index));
+        }
 
         double clock = 0.0;
         double dt = 1.0 / 60.0;
@@ -605,6 +668,249 @@ TEST(Fight, FallsAndLavaHurtOnlyInALiveRound) {
     EXPECT_EQ(f.server.Fighter(1).health, 80);
     f.Passes(15);
     EXPECT_EQ(f.server.Fighter(1).health, 60);
+}
+
+// --- Review of [wp-7]: death, respawn and late inputs; kill credit; the roster; felling --------------------------
+
+namespace {
+    /// Joins every bot, waits for the Live round and for the spawn protection (120 ticks) to end.
+    bool LiveRound(FightField& f) {
+        if (!f.Join()) return false;
+        if (!f.Until([&] { return f.server.RoundState().phase == sim::RoundPhase::Live; }, 600)) return false;
+        f.Passes(130);
+        return true;
+    }
+
+    /// Kills `slot` by the void (its feet half a metre above the region's floor; fight.md "Damage").
+    bool KillByVoid(FightField& f, uint8_t slot) {
+        const glm::vec3 feet = f.Feet(slot);
+        if (!f.server.TeleportPlayer(slot, glm::vec3(feet.x, 0.5f, feet.z))) return false;
+        return f.Until([&] { return f.server.Fighter(slot).dead; }, 10);
+    }
+
+    /// Walks a circle of about 2.5 m (the yaw turns every tick).
+    sim::PlayerInput Circle(FightField::Bot& bot) {
+        sim::PlayerInput in;
+        in.moveZ = 127;
+        in.yaw = static_cast<uint16_t>(bot.client->PredictTick() * 300u);
+        return in;
+    }
+
+    constexpr size_t kEvents = static_cast<size_t>(net::Channel::Events);
+    constexpr size_t kBulk = static_cast<size_t>(net::Channel::Bulk);
+    constexpr size_t kState = static_cast<size_t>(net::Channel::State);
+}
+
+// The respawn is taken once the snapshot's events are applied: a platform built under the team spawn just before the
+// respawn reaches the victim only after the respawn's snapshots, and its replay still stands on it.
+TEST(Fight, ARespawnWhoseEventsArriveAfterItsSnapshotIsNotACorrection) {
+    FightField f;
+    ASSERT_TRUE(f.started);
+    f.AddBot();
+    FightField::Bot& victim = f.AddBot();
+    ASSERT_TRUE(LiveRound(f));
+    ASSERT_TRUE(KillByVoid(f, 1));
+    ASSERT_TRUE(f.Until([&] { return victim.client->Fight().dead; }, 20));
+    f.Passes(5);
+    const net::PredictionStats before = victim.client->Prediction();
+    const uint32_t respawnTick = f.server.Fighter(1).respawnTick;
+    ASSERT_TRUE(f.Until([&] { return f.server.TickNumber() + 6 >= respawnTick; }, 400));
+    victim.hold.holdReceive[kEvents] = true;
+    // A 2 m stone platform (12 .. 14 m) over team 2's spawn ring (6, -2).
+    const voxel::World& w = f.server.Simulation().World();
+    const glm::ivec3 lo = w.WorldToVoxel(glm::dvec3(3.0, 12.0, -5.0)), hi = w.WorldToVoxel(glm::dvec3(9.0, 14.0, 1.0));
+    ASSERT_NE(f.server.ApplyOp(sim::WorldOp::Box(lo, hi, f.server.Simulation().WorldMaterialIds().stone)), 0u);
+    ASSERT_TRUE(f.Until([&] { return !f.server.Fighter(1).dead; }, 20));
+    f.Passes(8);                                               // the respawn's snapshots are in, its events are not
+    EXPECT_GT(f.Feet(1).y, 13.9f);                             // the server's player stands on the platform
+    EXPECT_EQ(victim.client->Prediction().respawns, before.respawns);   // taken once its events are applied
+    victim.hold.holdReceive[kEvents] = false;
+    f.Passes(60);
+    const net::PredictionStats& after = victim.client->Prediction();
+    EXPECT_EQ(after.respawns, before.respawns + 1);
+    EXPECT_EQ(after.corrections, before.corrections);
+    EXPECT_EQ(after.snaps, before.snaps);
+    EXPECT_GT(after.compared, before.compared + 10);
+    EXPECT_LT(after.lastError, 0.02f);
+    EXPECT_GT(victim.client->Player().position.y, 13.9f);
+}
+
+// A respawn sooner than the client's lead: the inputs it predicted before it saw the death are the server's first
+// inputs of the new life, and the replay steps them.
+TEST(Fight, ARespawnSoonerThanTheClientsLeadIsNotACorrection) {
+    sim::FightRules rules = FightRulesForTests();
+    rules.respawnTicks = 2;
+    FightField f(Settings(rules));
+    ASSERT_TRUE(f.started);
+    f.AddBot();
+    FightField::Bot& victim = f.AddBot(Circle);
+    ASSERT_TRUE(LiveRound(f));
+    const net::PredictionStats before = victim.client->Prediction();
+    ASSERT_TRUE(KillByVoid(f, 1));
+    ASSERT_TRUE(f.Until([&] { return !f.server.Fighter(1).dead; }, 20));
+    f.Passes(60);
+    const net::PredictionStats& after = victim.client->Prediction();
+    std::printf("short respawn: %llu deaths seen, %llu respawns, %llu corrections (%llu before), lead %u ticks\n",
+                static_cast<unsigned long long>(after.deathsSeen), static_cast<unsigned long long>(after.respawns),
+                static_cast<unsigned long long>(after.corrections), static_cast<unsigned long long>(before.corrections),
+                victim.client->PredictTick() - f.server.TickNumber());
+    EXPECT_EQ(after.respawns, before.respawns + 1);
+    EXPECT_EQ(after.corrections, before.corrections);
+    EXPECT_EQ(after.snaps, before.snaps);
+    EXPECT_LT(after.lastError, 0.02f);
+}
+
+// A player held over a chunk without a base (plan amendment 7) dies: its pending resume is dropped, so the inputs
+// replayed at the respawn are not stepped a second time once the chunk is current again.
+TEST(Fight, APlayerThatDiesWhileHeldIsNotSteppedTwiceAfterItsRespawn) {
+    FightField f;
+    ASSERT_TRUE(f.started);
+    f.AddBot();
+    bool walk = false;
+    FightField::Bot& victim = f.AddBot([&walk](FightField::Bot& bot) { return walk ? Circle(bot) : sim::PlayerInput{}; });
+    ASSERT_TRUE(LiveRound(f));
+    // The victim's own copy of a ground voxel under its feet differs from the server's: the next HashCheck makes its
+    // chunk Requested, and the repair's data is held back.
+    const glm::vec3 feet = victim.client->Player().position;
+    voxel::World& own = victim.simulation->World();
+    const glm::ivec3 v = own.WorldToVoxel(glm::dvec3(feet.x + 0.5, 11.95, feet.z));
+    const voxel::WorldMaterials ids = victim.simulation->WorldMaterialIds();
+    victim.hold.holdReceive[kBulk] = true;
+    uint32_t changed = sim::ApplyOp(own, sim::WorldOp::Box(v, v + glm::ivec3(1), ids.brick)).changed;
+    if (changed == 0) changed = sim::ApplyOp(own, sim::WorldOp::Box(v, v + glm::ivec3(1), ids.stone)).changed;
+    ASSERT_EQ(changed, 1u);
+    const uint64_t takenBefore = victim.client->Prediction().syncTaken;
+    ASSERT_TRUE(f.Until([&] { return victim.client->Prediction().syncTaken > takenBefore + 2; }, 400));
+    ASSERT_TRUE(KillByVoid(f, 1));
+    ASSERT_TRUE(f.Until([&] { return victim.client->Fight().dead; }, 20));
+    walk = true;
+    victim.hold.holdReceive[kBulk] = false;
+    f.Passes(5);
+    const net::PredictionStats before = victim.client->Prediction();
+    ASSERT_TRUE(f.Until([&] { return !f.server.Fighter(1).dead; }, 300));
+    f.Passes(60);
+    const net::PredictionStats& after = victim.client->Prediction();
+    EXPECT_EQ(after.respawns, before.respawns + 1);
+    EXPECT_EQ(after.corrections, before.corrections);
+    EXPECT_EQ(after.snaps, before.snaps);
+    EXPECT_LT(after.lastError, 0.02f);
+}
+
+// Inputs of the dead time that reach the server only after the respawn (held back on the way): their cast edges are
+// refused Dead, never a cast from the corpse with a charge of the new life.
+TEST(Fight, ALateInputOfTheDeadTimeCastsNothingAfterTheRespawn) {
+    FightField f;
+    ASSERT_TRUE(f.started);
+    f.AddBot();
+    uint32_t castBefore = 0;
+    FightField::Bot& victim = f.AddBot([&castBefore](FightField::Bot& bot) {
+        sim::PlayerInput in;
+        const uint32_t t = bot.client->PredictTick();
+        if (t < castBefore && (t / 4) % 2 == 0) in.buttons = sim::PlayerButton_Cast;
+        return in;
+    });
+    ASSERT_TRUE(LiveRound(f));
+    ASSERT_TRUE(KillByVoid(f, 1));
+    castBefore = f.server.Fighter(1).respawnTick;              // every input of the dead time toggles Cast
+    victim.hold.holdSend[kState] = true;
+    ASSERT_TRUE(f.Until([&] { return !f.server.Fighter(1).dead; }, 300));
+    f.Passes(3);
+    const net::ServerStats st = f.server.Stats();
+    victim.hold.holdSend[kState] = false;
+    victim.hold.ReleaseSends();
+    f.Passes(20);
+    const net::ServerStats& now = f.server.Stats();
+    EXPECT_GT(now.inputsLate, st.inputsLate);
+    EXPECT_EQ(now.castsFromInputs, st.castsFromInputs);
+    EXPECT_EQ(now.castsFromLateInputs, st.castsFromLateInputs);
+    EXPECT_GT(now.castsRefusedDead, st.castsRefusedDead);
+    EXPECT_EQ(f.server.Fighter(1).charges, FightRulesForTests().maxCharges);
+    EXPECT_EQ(f.server.QueuedCasts(), 0u);
+}
+
+// The attacker leaves and a new player takes its slot: the victim's later fall credits nobody.
+TEST(Fight, AKillCreditNeverPassesToTheNextPlayerOfTheSlot) {
+    sim::FightRules rules = FightRulesForTests();
+    rules.creditTicks = 3000;                                  // the window outlasts the rejoin whatever it takes
+    FightField f(Settings(rules));
+    ASSERT_TRUE(f.started);
+    bool fire = false;
+    uint32_t firstCast = 0;
+    f.AddBot(Aimer([&f] { return f.Feet(1); }, [&](uint32_t tick) { return fire && tick == firstCast; }));
+    f.AddBot();
+    f.AddBot();
+    ASSERT_TRUE(LiveRound(f));
+    ASSERT_EQ(f.server.Fighter(1).team, 2);
+    f.server.TeleportPlayer(1, f.Feet(0) + glm::vec3(2.5f, 0.05f, 0.0f));
+    f.Passes(60);
+    firstCast = f.bots[0]->client->PredictTick() + 5;
+    fire = true;
+    ASSERT_TRUE(f.Until([&] { return f.server.Fighter(1).health < 100; }, 100));
+    fire = false;
+    ASSERT_FALSE(f.server.Fighter(1).dead);
+    ASSERT_EQ(f.server.Fighter(1).lastAttacker, 1);
+    f.RemoveBot(0);
+    ASSERT_TRUE(f.Until([&] { return !f.server.GetPlayer(0).has_value(); }, 30));
+    EXPECT_EQ(f.server.Fighter(1).lastAttacker, 0);
+    f.AddBot();
+    ASSERT_TRUE(f.Until([&] { return f.server.GetPlayer(0).has_value(); }, 300));
+    ASSERT_TRUE(KillByVoid(f, 1));
+    f.Passes(5);
+    EXPECT_EQ(f.server.Stats().kills, 0u);
+    EXPECT_EQ(f.server.Fighter(0).kills, 0);
+    EXPECT_EQ(f.server.RoundState().score, (std::array<uint16_t, 2>{0, 0}));
+}
+
+// Two deaths in one tick: two kill notices, one roster.
+TEST(Fight, TwoDeathsInOneTickSendOneRoster) {
+    FightField f;
+    ASSERT_TRUE(f.started);
+    f.AddBot();
+    f.AddBot();
+    ASSERT_TRUE(LiveRound(f));
+    for (const auto& bot : f.bots) (void)bot->client->TakeKillNotices();
+    const uint32_t rosters = f.server.Stats().rostersSent;
+    for (uint8_t slot = 0; slot < 2; ++slot) {
+        const glm::vec3 feet = f.Feet(slot);
+        ASSERT_TRUE(f.server.TeleportPlayer(slot, glm::vec3(feet.x, 0.5f, feet.z)));
+    }
+    f.Pass();
+    ASSERT_TRUE(f.server.Fighter(0).dead && f.server.Fighter(1).dead);
+    EXPECT_EQ(f.server.Stats().rostersSent, rosters + 1);
+    f.Passes(3);
+    for (const auto& bot : f.bots) EXPECT_EQ(bot->client->TakeKillNotices().size(), 2u);
+}
+
+// Felling: a crown cut while the round waits (warmup casts are free) stands again when the round goes Live.
+TEST(Fight, AFellingCrownCutBeforeTheRoundStandsAgainWhenItGoesLive) {
+    sim::FightRules rules = FightRulesForTests();
+    rules.mode = sim::GameMode::Felling;
+    rules.towers = {glm::vec2(-10.0f, 6.0f), glm::vec2(6.0f, 6.0f)};
+    rules.countdownTicks = 30;
+    FightField f(Settings(rules));
+    ASSERT_TRUE(f.started);
+    f.AddBot();
+    ASSERT_TRUE(f.Join());
+    f.Passes(20);
+    ASSERT_EQ(f.server.RoundState().phase, sim::RoundPhase::Warmup);
+    const voxel::World& w = f.server.Simulation().World();
+    const sim::FellingTower tower = sim::BuildFellingTower(w, f.server.Simulation().WorldMaterialIds(), rules.towers[1], w.VoxelSize(), kGround);
+    ASSERT_EQ(sim::CountSolid(w, tower.crownMin, tower.crownMax), tower.crownVoxels);
+    ASSERT_NE(f.server.ApplyOp(sim::WorldOp::Box(tower.crownMin, tower.crownMax, 0)), 0u);
+    ASSERT_EQ(sim::CountSolid(w, tower.crownMin, tower.crownMax), 0u);
+    f.AddBot();
+    ASSERT_TRUE(f.Join());
+    ASSERT_TRUE(f.Until([&] { return f.server.RoundState().phase == sim::RoundPhase::Live; }, 600));
+    f.Passes(90);                                              // three crown checks
+    EXPECT_EQ(f.server.RoundState().phase, sim::RoundPhase::Live);
+    EXPECT_EQ(sim::CountSolid(w, tower.crownMin, tower.crownMax), tower.crownVoxels);
+    // Every client holds the rebuilt tower.
+    ASSERT_TRUE(f.Until([&] {
+        for (const auto& bot : f.bots)
+            if (bot->client->AppliedOpSeq() != f.server.LastOpSeq() || !bot->client->Synced()) return false;
+        return true;
+    }, 600));
+    for (const auto& bot : f.bots) EXPECT_EQ(bot->client->Hash().hash, f.server.Hash(bot->client->SyncWindow()).hash);
 }
 
 // fight.md "Bots": four fighting pilots, two a side, play a round to its score limit (2) on the flat field.

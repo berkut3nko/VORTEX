@@ -91,7 +91,9 @@ namespace vortex::net {
 
     bool Server::Impl::ResolveRay(QueuedCast& q) {
         sim::ActionAim aim;
-        const sim::ActionRefusal why = sim::AimAction(*simulation, q.request, aimRules, aim);
+        // The living enemies' capsules take a cast in a fight (review of [wp-7]); a sandbox's rays pass players as before.
+        const std::vector<sim::PlayerView> views = Fighting() && q.request.player != 0 ? PlayerViews() : std::vector<sim::PlayerView>{};
+        const sim::ActionRefusal why = sim::AimAction(*simulation, q.request, aimRules, aim, views);
         if (aim.atBody) ++stats.castsAtBodies;        // as before: counted when a body took it, even if then Outside
         if (why == sim::ActionRefusal::Missed) ++stats.castsMissed;
         if (why == sim::ActionRefusal::Outside) ++stats.castsRejected;

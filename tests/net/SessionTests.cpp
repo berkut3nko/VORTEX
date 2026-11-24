@@ -263,6 +263,13 @@ TEST(SessionFile, FightKeysRoundTrip) {
     refused(dm + "round_seconds = 0\n", "round_seconds");
     refused(dm + "round_seconds = 3601\n", "round_seconds");
     refused("mode = brawl\n", "mode");
+    // Review of [wp-7]: a fight's players all fit the Roster (64); a sandbox keeps 255.
+    const std::string duel = dm + "team_spawn_1 = -5 0\nteam_spawn_2 = 5 0\n";
+    refused(duel + "max_clients = 65\n", "max_clients");
+    ASSERT_TRUE(net::ParseSession(base + duel + "max_clients = 64\n", back, error)) << error;
+    EXPECT_EQ(back.maxClients, net::kMaxRosterPlayers);
+    ASSERT_TRUE(net::ParseSession(base + "max_clients = 255\n", back, error)) << error;
+    EXPECT_EQ(back.maxClients, 255u);
 }
 
 TEST(SessionFile, RegionValidationRefusesWhatCannotBeBuilt) {
@@ -675,6 +682,29 @@ TEST(Session, AdvanceCatchesUpTwoTicksAPassAndDropsNone) {
     while (s.server.Advance(0.0) > 0) ++passes;
     EXPECT_EQ(passes, 2u);                                   // the other 4, two per pass
     EXPECT_EQ(s.server.TickNumber() - start, 7u);
+}
+
+// Review of [wp-7]: practice calls Advance once per rendered frame. With up to 8 ticks a call and a backlog bound, 40 ms
+// frames (25 fps) keep the server on real time, and a long hitch is dropped rather than run fast later.
+TEST(Session, AdvanceOncePerSlowFrameKeepsRealTime) {
+    Session s(Settings(DrillRegion()));
+    ASSERT_TRUE(s.started);
+    const uint32_t start = s.server.TickNumber();
+    const double dt = s.server.Simulation().FixedTimeStep();
+    for (int frame = 0; frame < 50; ++frame) s.server.Advance(0.040, 8, 8);   // 2 s of 25 fps
+    const double due = 2.0 / dt;
+    EXPECT_NEAR(static_cast<double>(s.server.TickNumber() - start), due, 1.0);
+    // A 1 s hitch: 8 ticks now, at most 8 kept for the next frame, the rest dropped.
+    const uint32_t before = s.server.TickNumber();
+    EXPECT_EQ(s.server.Advance(1.0, 8, 8), 8u);
+    while (s.server.Advance(0.0, 8, 8) > 0) {
+    }
+    EXPECT_GE(s.server.TickNumber() - before, 15u);           // 8 now and the 8 kept (rounding may leave the last)
+    EXPECT_LE(s.server.TickNumber() - before, 16u);
+    // The default (2 a call, nothing dropped) is unchanged: 40 ms frames fall behind.
+    const uint32_t slow = s.server.TickNumber();
+    for (int frame = 0; frame < 50; ++frame) s.server.Advance(0.040);
+    EXPECT_EQ(s.server.TickNumber() - slow, 100u);
 }
 
 // --- the cast budget -------------------------------------------------------------------------------

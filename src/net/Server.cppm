@@ -302,6 +302,7 @@ export namespace vortex::net {
         uint32_t castsRefusedDead = 0;    ///< cast edges of a dead player (CastRejection::Dead)
         uint32_t castsRefusedNoCharge = 0;///< cast edges without a charge (CastRejection::NoCharge)
         uint32_t respawns = 0;            ///< lives started (the round's start counts every player)
+        uint32_t rostersSent = 0;         ///< Roster broadcasts (at most one per tick: StepFight sends a changed roster)
 
         // Replicated objects (stage 6).
         uint32_t objectSpawns = 0;        ///< EntitySpawn of objects with a NetId (template objects, crates, object pieces)
@@ -387,9 +388,12 @@ export namespace vortex::net {
         bool Start();
         /// @brief One tick.
         void Tick();
-        /// @brief Wall-clock driving: adds `seconds` and runs due ticks, at most 2 per call (a
-        /// hitch is caught up over later calls, never dropped). Returns the ticks run.
-        uint32_t Advance(double seconds);
+        /// @brief Wall-clock driving: adds `seconds` and runs due ticks, at most `maxTicks` per call (a
+        /// hitch is caught up over later calls), then keeps at most `maxBacklogTicks` ticks of time not
+        /// run yet: the rest is dropped (the default drops none). Returns the ticks run. A caller that
+        /// calls it once per rendered frame (practice) passes a bound: else, below 30 fps, the server
+        /// falls behind real time and later runs fast until it has paid the backlog (review of [wp-7]).
+        uint32_t Advance(double seconds, uint32_t maxTicks = 2, uint32_t maxBacklogTicks = 0xffffffffu);
 
         /// @brief A server-side operation (template, script, admin): applied now, sent with the next
         /// tick; its opSeq. 0 when the session has failed, or fails because the server's own world

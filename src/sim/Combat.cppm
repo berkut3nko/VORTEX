@@ -69,6 +69,7 @@ export namespace vortex::sim {
         bool dead = false;
         bool spawned = false;                          ///< false until its first spawn on a team
         uint32_t respawnTick = 0;                      ///< dead: the tick it respawns
+        uint32_t lifeStartTick = 0;                    ///< the tick of its last spawn: an input of this tick or older is not of this life
         uint32_t protectedUntil = 0;                   ///< no damage before this tick
         uint8_t lifeSeq = 0;                           ///< +1 per spawn (owner block)
         uint8_t hits = 0;                              ///< damage events dealt to enemies, wrapping (hit marker)

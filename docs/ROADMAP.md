@@ -14,7 +14,7 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
 
 ## Now
 
-- **[wp-7] M2a "first fight": built, not reviewed** (2026-11-23). The sandbox is a PvP game: a session file with
+- **[wp-7] M2a "first fight": built and reviewed** (2026-11-23; review fixes 2026-11-24). The sandbox is a PvP game: a session file with
   `mode = deathmatch` or `felling` runs health 100, blast damage (60 at the capsule, 0 at 1.2 m, integer mm), falls,
   lava and the void, death (not stepped, casts refused `Dead`) and a 3 s respawn at the team spawn with 2 s of spawn
   protection (a teleport: a new `lifeSeq`, never a correction), two teams, three cast charges (one back every 1.2 s;
@@ -25,7 +25,14 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
   tier `full`). The game's fight HUD (health, charge pips, hit marker, damage flash, kill feed, round banner, Tab
   scoreboard, death screen, team-coloured figures) and offline practice (`Shredborne --practice [--bots N] [--mode
   deathmatch|felling]`, an in-process server). Every old session file stays a sandbox: G11-G21 unchanged.
-  [design/fight.md](design/fight.md). Not run: `verify.sh full --ci` and the soak (the batch runs them at its end).
+  [design/fight.md](design/fight.md). The batch review's 14 confirmed findings are fixed, the engine's each with a test (casts
+  meet enemy capsules, a respawn taken once its events are applied, a short respawn and a death while held replay
+  once, late dead-time casts refused `Dead`, a left slot's kill credit and queued casts cleared, one roster per tick,
+  Felling towers rebuilt when the round goes Live, `max_clients` at most 64 in a fight, practice's server catch-up
+  bounded, `--practice --bots 0` refused, a session closed after its round exits 0); 3 were rejected (the curtain's
+  cost (measured under its budget), the crown count's cost (a fraction of a millisecond every 30 ticks), a new
+  practice round's full reload (the design: pristine terrain)). Not run: `verify.sh full --ci`
+  and the soak (the batch runs them at its end).
 - **Owner: [wp-7]'s fight** (owner checks 21 and 22, [owner checks](../../docs/owner-checks.md)): a windowed practice
   round with 3 bots to its end (the HUD, Tab, team colours) and the taste check (too fast, too slow, too lethal?).
   The Windows client must be rebuilt (protocol 11).
@@ -264,7 +271,7 @@ never been measured.
 
 ## State
 
-Tests: **828** in ctest: 820 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
+Tests: **837** in ctest: 829 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
 game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts), `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
 `Tools.DocCheck`, `Tools.DocCheckSelftest`, `Tools.SessionCheckVerdict` and `Tools.VerifyAssertions` (WP2's checks
 and their self-tests), `Tools.RendezvousWorker` (the rendezvous Worker under `node --test`, registered when `node` is

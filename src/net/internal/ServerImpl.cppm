@@ -568,6 +568,8 @@ namespace vortex::net {
             uint32_t voxels = 0;
         };
         std::array<Crown, 2> crowns{};                       // Felling: each team's crown box
+        std::vector<sim::WorldOp> towerOps;                  // Felling: both towers' boxes, built at the start, again when Live begins
+        bool rosterChanged = false;                          // a Roster is sent at the end of StepFight (once per tick at most)
         std::array<bool, 2> felled{};
         bool sessionOver = false;                            // the Ended phase ran out
         bool endNow = false;                                 // ... with end_session: disconnect every peer after this tick's Flush
@@ -581,17 +583,22 @@ namespace vortex::net {
         void DealDamage(const sim::DamageEvent& event);      // decision 16: the one damage entry
         void EnvironmentDamage(uint8_t slot, const sim::PlayerState& before, const sim::PlayerState& after);
         void Respawn(uint8_t slot);
-        void StepFight();                                    // charges, respawns, round; after RunCasts
+        void StepFight();                                    // charges, respawns, round; after RunCasts; then the roster
+        void StepRoundAndLives();
         std::vector<sim::PlayerView> PlayerViews();          // slot ascending, joined players
         std::array<uint32_t, 2> TeamPlayers();
         void SendToJoined(const std::vector<uint8_t>& bytes);
         Roster MakeRoster();
         RoundUpdate MakeRoundUpdate() const;
-        void SendRoster();
+        void SendRoster();                                   // marks the roster changed (FlushRoster sends it)
+        void FlushRoster();
         void SendRound();
         void SendKill(const KillNotice& kill);
         void LogRound();
-        /// A dead player's cast edge: refused Dead (fight.md "Rules"). True when it was refused.
+        /// Dead now, or `inputTick` is not of its current life (at or before its last spawn). False outside a fight.
+        bool NotAliveAt(uint8_t slot, uint32_t inputTick) const;
+        /// A cast edge of a player not alive at its input's tick (NotAliveAt): refused Dead (fight.md "Rules").
+        /// True when it was refused.
         bool RefuseDeadCast(Peer& p, uint32_t inputTick);
         Snapshot::Fight OwnerFightOf(uint8_t slot) const;
         uint8_t RemoteFightOf(uint8_t slot) const;

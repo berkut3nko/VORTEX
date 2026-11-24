@@ -140,12 +140,24 @@ namespace vortex::net {
             return;
         }
         if (newLife && !fight.dead) {
-            Respawned(snap);
+            // A respawn (decision 7): taken by Reconcile once a snapshot of this life is ready (its events applied),
+            // so that its replay steps on the terrain the server stepped (review of [wp-7]).
+            lifeStartTick = snap.tick;
+            respawnPending = true;
+            needResume = false;
         } else if (fight.dead && !wasDead) {
-            // A death (fight.md "Rules"): the server froze the player where it died; so does the prediction.
+            // A death (fight.md "Rules"): the server froze the player where it died; so does the prediction. The
+            // inputs predicted after this snapshot keep their place in the history (the server may respawn the
+            // player before their ticks and step them: Respawned replays them), with the frozen state; a resume
+            // left over from a hold is dropped (review of [wp-7]: it replayed them a second time after the respawn).
             ++prediction.deathsSeen;
             Restore(snap.owner);
-            for (HistoryEntry& h : history) h.valid = false;
+            for (uint32_t k = snap.tick + 1; k < nextTick; ++k) {
+                HistoryEntry& e = history[k % kHistoryTicks];
+                if (e.valid && e.tick == k) e.state = player;
+            }
+            respawnPending = false;
+            needResume = false;
             offset = glm::vec3(0.0f);
             blendLeft = 0;
             Log::Info("Client: died at tick {} (life {})", snap.tick, f.lifeSeq);
@@ -153,11 +165,14 @@ namespace vortex::net {
     }
 
     void Client::Impl::Respawned(const Snapshot& snap) {
-        // The server's teleport (decision 7): its state at S is taken and the inputs after S replayed as Reconcile
-        // replays them; no correction, no snap and no blend (the camera cuts).
+        // The server's teleport (decision 7): its state at S (a snapshot of the new life, its events applied) is
+        // taken and the inputs after S replayed as Reconcile replays them; no correction, no snap and no blend (the
+        // camera cuts). Over a reach without a base the state is taken as the held path takes it, and the replay
+        // waits for the resume (plan amendment 7).
         ++prediction.respawns;
+        respawnPending = false;
+        needResume = false;
         const uint32_t t = snap.tick;
-        lifeStartTick = t;
         Restore(snap.owner);
         offset = glm::vec3(0.0f);
         blendLeft = 0;
@@ -168,12 +183,18 @@ namespace vortex::net {
             history[t % kHistoryTicks].valid = true;
             history[t % kHistoryTicks].tick = t;
             history[t % kHistoryTicks].state = player;
-            for (uint32_t k = t + 1; k < nextTick; ++k) {
-                HistoryEntry& e = history[k % kHistoryTicks];
-                if (!e.valid || e.tick != k) continue;
-                FreshColliders();
-                sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, e.input, welcome.player, playArea, Dt());
-                e.state = player;
+            if (!ReachCurrent()) {
+                ++prediction.syncTaken;
+                lastTaken = t;
+                needResume = true;
+            } else {
+                for (uint32_t k = t + 1; k < nextTick; ++k) {
+                    HistoryEntry& e = history[k % kHistoryTicks];
+                    if (!e.valid || e.tick != k) continue;
+                    FreshColliders();
+                    sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, e.input, welcome.player, playArea, Dt());
+                    e.state = player;
+                }
             }
         }
         Log::Info("Client: respawned at tick {} (life {})", t, fight.lifeSeq);
@@ -182,6 +203,10 @@ namespace vortex::net {
     void Client::Impl::Reconcile(const Snapshot& snap) {
         // [wp-7] A dead player is not predicted, and a snapshot of an earlier life is not compared (fight.md "Rules").
         if (fight.dead || (snap.fight.flags & Snapshot::Fight::kDead) != 0 || snap.tick < lifeStartTick) return;
+        if (respawnPending) {
+            Respawned(snap);
+            return;
+        }
         ++prediction.compared;
         const uint32_t t = snap.tick;
         if (t >= nextTick) {

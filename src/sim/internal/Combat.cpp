@@ -163,6 +163,7 @@ namespace vortex::sim {
         fighter.dead = false;
         fighter.spawned = true;
         fighter.respawnTick = 0;
+        fighter.lifeStartTick = tick;
         fighter.protectedUntil = tick + rules.protectTicks;
         fighter.lifeSeq = static_cast<uint8_t>(fighter.lifeSeq + 1);
         fighter.lastAttacker = 0;

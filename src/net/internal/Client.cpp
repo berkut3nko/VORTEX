@@ -338,9 +338,10 @@ namespace vortex::net {
         if (!s.predicting || s.state != ClientState::Playing || !s.simulation) return {};
         sim::PlayerStepResult r;
         s.syncHeld = !s.ReachCurrent();
-        if (s.fight.dead) {
+        if (s.fight.dead || s.respawnPending) {
             // [wp-7] Dead (fight.md "Rules"): the input is kept and sent as today, the player is not stepped (the
-            // server does not step it either); a respawn replays the inputs after the server's teleport.
+            // server does not step it either); a respawn replays the inputs after the server's teleport (also those
+            // made while it waits for the respawn snapshot's events).
             sim::PlayerInput input = controls;
             input.tick = s.nextTick;
             s.history[s.nextTick % kHistoryTicks] = {true, s.nextTick, input, s.player};
