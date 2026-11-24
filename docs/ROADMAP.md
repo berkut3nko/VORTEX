@@ -170,9 +170,10 @@ In this order:
    ([llm/wp-8.md](llm/wp-8.md) cards 1-7: the skeleton; `--stress-fx`, the `Fx:` and `FxStress:` lines,
    `--blast-log`; the `fight10.session`; effect lights in composite; the particle wins; edited chunks uploaded first
    and the collider starvation test), not yet measured or tested.
-2. **[mech-1] Door and gate.** E opens doors, a lever runs a gate, crates move to Q.
+2. **[mech-1] Door and gate.** E opens doors, a lever runs a gate, crates move to Q; E picks up, carries and drops
+   a small object and LMB throws it (designed 2026-11-24).
    [design/mechanisms.md](design/mechanisms.md), "Stages" row 1. Its own protocol bump, after M2a's; after WP8 so its
-   yard is measured inside a known fight budget. 9-10 d (e). State: [llm/mech-1.md](llm/mech-1.md) cards 1-3 built
+   yard is measured inside a known fight budget. 12-13 d (e). State: [llm/mech-1.md](llm/mech-1.md) cards 1-3 built
    (the skeleton: `scene::Mechanism` and the `sim:mechanism` interface, `PlayerButton_Use` 16; the integer timetable;
    the layer rule, posing, stepping, the landing push, the crush rule and the release; the tests of cards 2-3
    enabled, those of cards 4-5 written and disabled), not yet measured or tested.

@@ -4,13 +4,13 @@
 
 | | |
 |---|---|
-| Stage | `[mech-1]` door and gate: E opens a hinged door, a lever raises and drops a portcullis, offline and in a session; doors wear down hit by hit; the crate moves to Q |
-| Design | [mechanisms.md](../design/mechanisms.md): "Interaction: the use key", "Mechanisms" (all of it except winch / drawbridge / button rows), "Destruction interplay" "The damage rule (stage 1)" and "What happens to a damaged mechanism", "Budgets and costs", "Tests", "Stages" row 1. Ropes ("Ropes with physics") are `[mech-2]`: not here |
+| Stage | `[mech-1]` door and gate: E opens a hinged door, a lever raises and drops a portcullis, offline and in a session; doors wear down hit by hit; the crate moves to Q; E picks up and drops a small object, LMB throws it (added 2026-11-24) |
+| Design | [mechanisms.md](../design/mechanisms.md): "Interaction: the use key", "One use key: E" (added 2026-11-24; its rope actions are `[mech-2]`), "Mechanisms" (all of it except winch / drawbridge / button rows), "Destruction interplay" "The damage rule (stage 1)" and "What happens to a damaged mechanism", "Budgets and costs", "Tests", "Stages" row 1. Ropes ("Ropes with physics") are `[mech-2]`: not here |
 | Code read at | engine `bafca16`, game `0e27ea7` (before `[wp-4]`..`[wp-8]`: names below are checked against this code; where a later stage moved a function, find it with `grep -rn`) |
 | Depends on | `[wp-7]` (protocol 11, the owner block's fight fields, the rules seam of `[wp-6]`), `[wp-8]` (the fight baseline the yard is measured in) |
 | Cards | 11 (M-a offline: cards 1-7; M-b session: cards 8-11) |
-| Effort | 9-10 d (e): M-a 5, M-b 4-5 |
-| Changes | `net::kProtocolVersion` 11 -> **12** (card 8); `PlayerButton_Use = 16`, `kPlayerButtonMask` 15 -> 31 (card 6); `EntityKind::Mechanism = 3`, `EventKind::MechanismMove = 37`, owner block +5 B (card 8). `sim::kPlayerRuleRevision`: **unchanged** (mechanisms are posed before `StepPlayer`, never inside it). `buildHash`: only through `kProtocolVersion`. No new gate |
+| Effort | 12-13 d (e): M-a 7, M-b 5-6 (holding about 3 d of it) |
+| Changes | `net::kProtocolVersion` 11 -> **12** (card 8); `PlayerButton_Use = 16`, `kPlayerButtonMask` 15 -> 31 (card 6); `EntityKind::Mechanism = 3`, `EventKind::MechanismMove = 37`, owner block +5 B (card 8). Holding (card 8, the same bump): `EventKind::EntityHold = 41`, `EventKind::EntityRelease = 42` (38-40 are `[mag-2]`'s in the plan), `ObjectSpawn` flag `kObjectHeld = 2` (+7 B), `RemotePlayer::holdPitch` (+1 B: `kSnapshotPlayerBytes` 17 -> 18), `sim::HoldEnd` 1-6. Not wire: `physics::Layer::Held = 6` (card 4), `sim::UseTargetKind`. `sim::kPlayerRuleRevision`: **unchanged** (mechanisms are posed before `StepPlayer`, held objects after it, never inside it). `buildHash`: only through `kProtocolVersion`. No new gate |
 
 ## Before you start
 
@@ -93,6 +93,53 @@ the code, the code wins and the choice is written here.
 15. **The yard is in the default offline game and, in sessions, only where the session file says `mechanisms = 1`**
     (a new server-only key; `playground.session` sets it, `drill.session` and `arena250.session` do not, so G11-G19
     keep their numbers).
+
+Added on 2026-11-24 (the owner: "hold a small object ... add it to card 4"; design "One use key: E"):
+
+16. **One key, one resolution.** While a player holds an object, E drops it (no target search). Else
+    `FindUseTarget` returns the nearest target of any kind (`UseTargetKind`: Mechanism 1, Info 2, Holdable 3, Rope 4
+    reserved for `[mech-2]`, HeldByOther 5); ties go to the lower kind, then the lower key. A body held by another
+    player occludes and answers `Busy`. `UseTarget::info` stays (the card-1 tests read it): `info == (kind == Info)`.
+17. **Holdable, in two tests:** the shape test (`IsHoldableShape`, every side: no `Mechanism`, no `Held`, every model
+    axis `<= 1.25 m`, solid voxels in `[SceneConfig::debrisBodyVoxels, llround(0.6 / vs^3)]`) and a per-side owner
+    test through `UseTargetHooks::holdable` (server and offline: `RigidBody::motion == Dynamic`, a `NetId` in a
+    session; a client: a copy whose server motion, `Copy::motion`, is Dynamic). The tie key is a hook too (NetId on
+    both session sides). Not the design request's 80 kg: the crate weighs 750-1270 kg by its iron edges (design
+    "Decisions refined" 1).
+18. **The hold is posed, never simulated:** kinematic, `physics::Layer::Held` (meets nothing; rays only with the mask
+    `LayerBit(Held)`), `MoveKinematic` to `HeldPoseAt` every tick after the players step. `StepPlayer` does not
+    change. The pose hangs from a chest-height anchor (0.5 m below the eye), its distance comes from a sphere swept
+    against terrain and block boxes (a thick clamp), and its centre stays in the play area.
+19. **Auto-drop when pinned** (the clamp cannot keep the object out of a wall) for 30 ticks, not "0.5 m short"
+    (design "Decisions refined" 2).
+20. **The throw is a release reason** (`HoldEnd::Throw`), not a `CastRejection`: the Cast edge never reaches the cast
+    path, the owner block's cast fields do not change, no charge is spent. `CastRejection` 6-10 are `[mag-2]`'s.
+21. **Event kinds 41 and 42**, not 38 and 39: the plan (llm/README) gives 38-40 to `[mag-2]`; its `EventKind` row
+    plans 41 and 42 for this stage since 2026-11-24.
+22. **A held body is not counted as awake** (`CountPieces`, `EvictionCandidate`, `TrackBodies`, `AwakeSamples`,
+    `AwakeBodies` skip it): no samples, no contacts, one per player. A release may take the awake count over 64 by at
+    most the player count (accepted; design "Prediction and replication").
+23. **The data types in scene, the functions in sim's `:mechanism`** (decision 1): `scene::Held` in
+    `Components.cppm`; `sim::HoldChange` in `Blast.cppm` (as `MechanismChange`: `BlastResult` carries it).
+24. **Card 1 is committed:** the holding declarations land in card 4 with their tests written enabled there, not as
+    `DISABLED_` stubs.
+
+Added on 2026-11-24 after the review of the holding design (32 findings; design "Decisions refined" 6-12):
+
+25. **Client copies stay kinematic.** A hold or a release on a client changes the copy's `Held` component, layer,
+    pose and `Copy::held` / `resting`, and calls `RemoteBodies::Restart(netId, tick)` (drop the buffered samples and
+    refuse those of `tick` or older); never `Dynamic`, `SetVelocity` or `Activate`. A predicted drop or throw hangs
+    until `EntityRelease` (chosen; design open question 19).
+26. **A held body's track is not resting** from the pick-up (`EntityHold` is the wake); baselines and model answers
+    never send `kObjectResting` with `kObjectHeld`; `AwakeBodies` and `AwakeSamples` skip held tracks.
+27. **Not a player's floor:** a pick-up of a body any player stood on in the last 30 ticks is refused `Busy`.
+28. **The echo of an auto-drop:** after a `Damaged` or `Pinned` release the server consumes the player's Use and Cast
+    edges of the next `echo` ticks (that player's lead term). A Use and a Cast edge in one input while holding are
+    one throw.
+29. **Latched edges while a pick-up is pending**, discarded when it is refused.
+30. **Other clients apply a release when the drawn holder reaches its tick** (at most 12 ticks later).
+31. **The crush rule skips held bodies;** a blast releases a held body only when its sphere meets the posed model
+    box.
 
 ## Skeleton
 
@@ -330,8 +377,122 @@ bool CheckMechanismAuthoring(const RegionTemplate& t, float voxelSize, std::stri
 `engine/src/sim/Player.cppm`: `PlayerButton_Use = 16` (card 1, with the comment "edge: E, a use (mechanisms.md);
 the crate moves to Q"); `kPlayerButtonMask` stays 15 until card 6.
 
-Test files (new): `engine/tests/sim/MechanismTests.cpp` (suites `Mechanism`, `Use`), `engine/tests/net/MechanismNetTests.cpp`
-(suite `Mechanisms`, card 8 on). Shared test helpers get a `Yard` / `Make` prefix (never `Mechanism` or `Door`: a test
+**Added on 2026-11-24 (holding; card 4 lands these, card 1 is committed).**
+
+`engine/src/physics/PhysicsWorld.cppm` `Layer`: after `Bounds`, `Held, ///< a held object: meets no body, no character,
+and only a ray whose mask is exactly LayerBit(Held)`. `PhysicsWorld.cpp`: `kLayerHeld = 6`, `kLayerCount` 7;
+`LayerPairFilter`: false when either is Held; `ObjectVsBroadPhaseFilter`: false for Held; `CharacterLayerFilter`: false
+for Held; `LayerMaskFilter`: Held only when the mask is exactly `LayerBit(Held)` (so the default mask 0xFF does not see
+it).
+
+`engine/src/scene/Components.cppm`, after `Mechanism`:
+
+```cpp
+/// @brief A body a player holds (docs/design/mechanisms.md "One use key: E"). Its presence is the truth.
+struct Held {
+    uint8_t holder = 0;          ///< session slot; 0 offline
+    uint16_t relYaw = 0;         ///< object yaw - holder yaw at pick-up (PlayerInput yaw units)
+    uint32_t sinceTick = 0;      ///< the tick the hold started
+    uint16_t pinnedTicks = 0;    ///< consecutive pinned ticks (authority only)
+};
+```
+
+`engine/src/sim/Blast.cppm`, after `MechanismChange`:
+
+```cpp
+/// @brief A hold or a release: what the server sends as EntityHold / EntityRelease ([mech-1]).
+struct HoldChange {
+    scene::Entity entity = scene::kNoEntity;
+    bool hold = false;           ///< true: EntityHold; false: EntityRelease
+    uint8_t holder = 0;
+    uint16_t relYaw = 0;
+    uint32_t tick = 0;
+    uint8_t reason = 0;          ///< sim::HoldEnd (release)
+    glm::vec3 position{0.0f};    ///< release pose (shape origin) and velocity (quantised)
+    glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+    glm::vec3 velocity{0.0f};
+};
+// in BlastResult:
+std::vector<HoldChange> holdChanges;   ///< releases (Damaged) the blast made, before its object events
+```
+
+`engine/src/sim/Mechanism.cppm` (`UseTarget` gains `kind`; the rest is new; add `#include <functional>` and
+`#include <span>` to the global fragment):
+
+```cpp
+enum class UseTargetKind : uint8_t { None = 0, Mechanism = 1, Info = 2, Holdable = 3, Rope = 4, HeldByOther = 5 };
+// UseTarget gains, after `info`:  UseTargetKind kind = UseTargetKind::None;
+
+/// @brief What differs per side in FindUseTarget (design "The order rule" step 4, "What can be held").
+struct UseTargetHooks {
+    /// The owner test of a holdable body (after IsHoldableShape). Empty: IsHoldable(sim, e, false).
+    std::function<bool(scene::Entity)> holdable;
+    /// The tie key. Empty: uint32_t(entity). Server: NetId::value; client: the NetId of the copy.
+    std::function<uint32_t(scene::Entity)> key;
+};
+// FindUseTarget gains a last parameter: const UseTargetHooks* hooks = nullptr
+
+inline constexpr float kHoldDistance = 1.5f, kHoldClearance = 0.1f, kHoldMaxExtent = 1.25f;   ///< metres
+inline constexpr float kHoldDrop = 0.5f;               ///< metres: the hold anchor below the eye
+inline constexpr float kHoldMaxVolume = 0.6f;          ///< m^3 of solid voxels
+inline constexpr uint32_t kHoldPinnedTicks = 30, kHoldBusyTicks = 12;
+inline constexpr uint32_t kHoldGroundTicks = 30;       ///< a body stood on this recently is not a pick-up
+inline constexpr int16_t kHoldPitchLimit = 16384;      ///< 45 deg in PlayerInput pitch units
+inline constexpr float kThrowSpeed = 6.0f;             ///< m/s along the look
+inline constexpr float kHoldReleaseMin = 0.3f;         ///< metres: the release fix-up's nearest centre
+static_assert(kHoldDistance >= 0.8660254f * kHoldMaxExtent + kHoldClearance);
+
+/// Why a hold ended (EntityRelease). Values are wire format.
+enum class HoldEnd : uint8_t { Drop = 1, Throw = 2, HolderDead = 3, HolderGone = 4, Damaged = 5, Pinned = 6 };
+inline constexpr uint8_t kMaxHoldEnd = 6;
+
+/// @brief Where a hold is posed and released besides the holder: the play area and the other players.
+struct HoldEnv {
+    PlayerTuning tuning;
+    PlayArea area;                         ///< sim::PlayAreaOf(region, tuning) in a session; PlayArea{} offline
+    std::span<const glm::vec3> playerFeet; ///< every player's feet (the release fix-up's capsules)
+};
+
+int8_t HoldPitch(int16_t pitch);                       ///< clamp(pitch, -16384, 16384) / 256
+uint32_t HoldMaxVoxels(float voxelSize);               ///< llround(kHoldMaxVolume / vs^3)
+uint16_t RelYawAtPickup(const glm::quat& rotation, uint16_t holderYaw);
+glm::dvec3 HoldAnchor(const glm::vec3& feet, const PlayerTuning& tuning);   ///< feet + (0, eyeHeight - kHoldDrop, 0)
+/// Every side: VoxelBody and RigidBody, no Mechanism, no Held, extents, solid voxels in [debrisBodyVoxels, HoldMaxVoxels].
+bool IsHoldableShape(const Simulation& simulation, scene::Entity entity);
+/// Server and offline: the shape test, RigidBody::motion == Dynamic, and with `replicatedOnly` a NetId != 0.
+bool IsHoldable(const Simulation& simulation, scene::Entity entity, bool replicatedOnly);
+/// The pick-up path: the sphere of the object's radius swept from `anchor` to its centre meets no solid voxel.
+bool PickupPathClear(const Simulation& simulation, scene::Entity entity, const glm::dvec3& anchor);
+struct HeldPose {
+    MechanismPose pose;          ///< shape origin and rotation
+    float distance = 0.0f;       ///< d: anchor to the object's centre
+    bool pinned = false;
+};
+/// The pose of `held` for a holder at `feet` looking (yaw, HoldPitch * 256); mechanisms at `tick` clamp it.
+HeldPose HeldPoseAt(const Simulation& simulation, scene::Entity held, const glm::vec3& feet, uint16_t yaw, int8_t holdPitch,
+                    const HoldEnv& env, uint32_t tick);
+/// Authority: picks `entity` up for `holder` (None, Busy or NoTarget); `out` is the EntityHold. `stoodOn`: a player
+/// stood on the body within kHoldGroundTicks (the caller knows; offline the own ground body now).
+UseResult BeginHold(Simulation& simulation, scene::Entity entity, uint8_t holder, uint16_t yaw, uint32_t tick,
+                    uint32_t lastChangeTick, bool anyChange, bool stoodOn, bool replicated, HoldChange& out);
+/// Every tick after the players: MoveKinematic to the pose; with `authority` counts pinned ticks and returns true
+/// at kHoldPinnedTicks (the caller ends the hold Pinned).
+bool StepHeld(Simulation& simulation, scene::Entity entity, const PlayerState& holder, uint16_t yaw, int8_t holdPitch,
+              const HoldEnv& env, uint32_t tick, bool authority);
+/// Server and offline: ends the hold at `pose` (fix-up out of walls, bodies and players), Dynamic, quantised
+/// `velocity`; `out` is the EntityRelease. `anchor` (the holder's; nullptr for Damaged and HolderGone) enables the fix-up.
+void EndHold(Simulation& simulation, scene::Entity entity, HoldEnd reason, const MechanismPose& pose, const glm::vec3& velocity,
+             const glm::dvec3* anchor, const HoldEnv& env, uint32_t tick, bool replicated, HoldChange& out);
+glm::vec3 ReleaseVelocity(HoldEnd reason, const glm::vec3& holderVelocity, uint16_t yaw, int16_t pitch);
+/// A client copy (kinematic, never simulated): `hold` emplaces Held and Layer::Held; a release removes Held and
+/// teleports to the release pose. The layer after a release and the samples are the caller's (net).
+void ApplyHoldChange(Simulation& simulation, scene::Entity entity, const HoldChange& change);
+/// "[E] Drop   [LMB] Throw".
+std::string HoldPrompt();
+```
+
+Test files (new): `engine/tests/sim/MechanismTests.cpp` (suites `Mechanism`, `Use`; `Hold` from card 4),
+`engine/tests/net/MechanismNetTests.cpp` (suites `Mechanisms` and the net `Hold.*` tests, card 8 on). Shared test helpers get a `Yard` / `Make` prefix (never `Mechanism` or `Door`: a test
 helper never shares a name with an engine type).
 
 ## Card 1: Skeleton
@@ -567,15 +728,22 @@ helper never shares a name with an engine type).
 
 | | |
 |---|---|
-| Goal | Looking at a door and pressing E opens it away from you; a lever runs its gate; spamming E cannot keep a gate open |
+| Goal | Looking at a door and pressing E opens it away from you; a lever runs its gate; spamming E cannot keep a gate open; E picks up a crate, it follows the holder as a ghost, and drops, throws and auto-drops work in the sim |
 | Depends on | card 3 |
-| Effort | 1 d |
-| Touches | sim (`Mechanism.cpp`, `Region.cpp`); wire: no |
+| Effort | 2 d (1 d mechanisms, 1 d holding, steps 8-18) |
+| Touches | sim (`Mechanism.cpp`, `Region.cpp`, `Blast.cpp`, `Replication.cpp`), scene (`Held`), physics (`Layer::Held`); wire: no; movement rule: no |
 
-**Read first** (about 40 KiB)
+**Read first** (about 70 KiB)
 - mechanisms.md "The look ray and the target", "What the server does with a Use edge" (steps 3-5 and the table),
-  "Linked mechanisms", "The prompt on the HUD".
+  "Linked mechanisms", "The prompt on the HUD", "One use key: E" (all of it except "Prediction and replication").
+- This pack's "Skeleton" part "Added on 2026-11-24".
 - `engine/src/voxel/World.cppm` `Raycast`, `WorldRayHit`.
+- `engine/src/physics/internal/PhysicsWorld.cpp` the layer filters (`LayerPairFilter`, `ObjectVsBroadPhaseFilter`,
+  `CharacterLayerFilter`, `LayerMaskFilter`) and the default `Raycast` mask; `engine/src/scene/internal/Scene.cpp`
+  `QueryBodies`, `CreateBody` (the Debris size rule, `SceneConfig::debrisBodyVoxels`); the crush loop of
+  `StepMechanisms` (`engine/src/sim/internal/Mechanism.cpp`, card 3).
+- `engine/src/sim/internal/Blast.cpp` steps "3." and "4."; `engine/src/sim/internal/Replication.cpp` `CountPieces`,
+  `EvictionCandidate`; `engine/src/sim/internal/Player.cpp` `LookDirection`, `YawRadians`, `QuantizeYaw`.
 
 **Steps**
 1. Ray against a box in a mechanism's frame (`RayBox(m, pose, box, inflateMetres, eye, dir, vs, tHit)`):
@@ -625,7 +793,94 @@ helper never shares a name with an engine type).
    {}", why)`, return {}. Else for each in order: `CreateVoxelObject({.model, .position = VoxelToWorld(spawnVoxel),
    .rotation = R0, .motion = Kinematic})`, `MakeMechanism(..., sim.Tick())`; then set `linked` from `link` indices.
 
-**Tests**
+Holding (steps 8-18; the declarations of "Skeleton", "Added on 2026-11-24"; `vs` = the voxel size, `dt` =
+`Config().fixedTimeStep`):
+
+8. **Layer `Held`** in physics as the skeleton says, `LayerMaskFilter` included. Nothing else in physics changes. In
+   `StepMechanisms`' crush loop (card 3), skip entities with `scene::Held` (design "Drop, throw and auto-drop").
+9. **`IsHoldableShape(sim, e)`**: `VoxelBody` and `RigidBody` present; no `Mechanism`, no `Held`; `s` = the model's
+   volume size: `s[i] * vs <= kHoldMaxExtent` for i = 0..2; `n` = solid voxel count (the count `CreateBody`'s size
+   rule uses): `scene.Config().debrisBodyVoxels <= n <= HoldMaxVoxels(vs)`. `HoldMaxVoxels(vs) =
+   uint32(llround(double(kHoldMaxVolume) / (double(vs) * vs * vs)))` (to the nearest: `floor` gives 599 at 0.1f by
+   float rounding). **`IsHoldable(sim, e, replicatedOnly)`**: `IsHoldableShape`, `RigidBody::motion == Dynamic`,
+   and with `replicatedOnly` a `NetId` with `value != 0`. A client never calls `IsHoldable` (its copies are
+   Kinematic and have no `NetId`): it passes its own hook (card 10).
+10. **`PickupPathClear(sim, e, anchor)`** and the thick sweep (one internal helper `SweepSphere(sim, from, dir, r,
+    maxT, tick)`, used here and by step 12): `r = max(0, 0.5f * (min(s) - 1) * vs)`; the voxels of the capsule's
+    world AABB (from .. from + dir * maxT, grown by r), z, y, x ascending; for each solid voxel centre `c`: `w = c -
+    from`, `b = dot(w, dir)`, `q = dot(w, w) - r^2`; inside already (`q <= 0`) -> 0; else if `b > 0` and `b^2 - q >=
+    0`: entry `b - sqrt(b^2 - q)`; the minimum over voxels, and over every mechanism block box (posed at
+    `PositionAt(tick)`, grown by `r / vs` voxels) the `RayBox` entry of step 1; `maxT` when none. `PickupPathClear`:
+    `from = anchor`, `dir` and `maxT` = the unit vector and the distance to the object's centre; clear when the
+    result is `maxT`.
+11. **`FindUseTarget`** becomes a pass over candidate sources (steps 2.2-2.5 above stay the mechanism source):
+    1. Candidates: (a) usable mechanisms as step 2.3, kind Mechanism; (b) bodies: `scene.QueryBodies(AABB of the
+       segment eye .. eye + dir * kUseReach)`, each `IsHoldableShape(sim, e)` and the owner test (`hooks &&
+       hooks->holdable ? hooks->holdable(e) : IsHoldable(sim, e, false)`) and `PickupPathClear(sim, e, eye -
+       (0, kHoldDrop, 0))` -> ray against its posed model box `[0, s)` (its `Transform`), inflated by
+       `kUseBoxInflate`, kind Holdable; (c) no rope source yet (a comment names the slot for `[mech-2]`).
+    2. Occluders: terrain (`limit`), every mechanism's block box (not for its own use box), and every body with
+       `Held` (its model box, not inflated; the caller's own held body never reaches here: E drops first).
+    3. Winner: the smallest distance `t < limit` and below every occluder; ties by the lower kind value, then the
+       lower key (`hooks && hooks->key ? hooks->key(e) : uint32_t(e)`; the mechanism source of step 2.3 uses the same
+       key). None: the nearest occluder within `limit` that is a non-usable mechanism -> kind Info (`info = true`),
+       or a held body -> kind HeldByOther; else false.
+    4. Set `out.kind` in every case; `out.info = out.kind == Info`.
+12. **`HoldPitch(p)`**: `int8_t(std::clamp<int32_t>(p, -kHoldPitchLimit, kHoldPitchLimit) / 256)`.
+    **`HoldAnchor(feet, tuning)`**: `dvec3(feet) + (0, tuning.eyeHeight - kHoldDrop, 0)`.
+    **`HeldPoseAt(sim, e, feet, yaw, hp, env, tick)`**:
+    - `a = HoldAnchor(feet, env.tuning)`; `dir = LookDirection(yaw, int16_t(hp * 256))`.
+    - `s` = model size; `h = 0.5f * length(vec3(s)) * vs`; `dMin = h + kHoldClearance`.
+    - `t = SweepSphere(sim, a, dir, r, kHoldDistance, tick)` (step 10's `r`).
+    - `d = clamp(t, dMin, kHoldDistance)`, `pinned = t < dMin`.
+    - `centre = a + dvec3(dir) * d`; then `centre.x = clamp(centre.x, env.area.min.x, env.area.max.x)`, `centre.z =
+      clamp(centre.z, env.area.min.y, env.area.max.y)` (unbounded offline: no change).
+    - `rot = angleAxis(YawRadians(uint16_t(yaw + held.relYaw)), vec3(0, 1, 0))`; `pose.position = centre - dvec3(rot
+      * (vec3(s) * vs * 0.5f))`; `pose.rotation = rot`.
+13. **`RelYawAtPickup(R, yaw)`**: `f = R * (0, 0, -1)`; if `f.x^2 + f.z^2 < 0.25f` then `r = R * (1, 0, 0)`, `objYaw
+    = atan2(-r.z, r.x)`, else `objYaw = atan2(-f.x, -f.z)`; return `uint16_t(QuantizeYaw(objYaw) - yaw)`.
+    **`BeginHold(sim, e, holder, yaw, T, lastChangeTick, anyChange, stoodOn, replicated, out)`**: `anyChange && T -
+    lastChangeTick < kHoldBusyTicks` -> Busy; `stoodOn` -> Busy; `!IsHoldable(sim, e, replicated)` -> (`Held` present ?
+    Busy : NoTarget). Else `relYaw = RelYawAtPickup(R, yaw)`; emplace `Held{holder, relYaw, T, 0}`;
+    `SetMotionType(Kinematic)` (keep `RigidBody::motion` Dynamic: it is the motion after the release);
+    `SetLayer(Held)`; `SetVelocity(0, 0)`. `out = {e, true, holder, relYaw, T}`. Return None.
+14. **`StepHeld(sim, e, holder, yaw, hp, env, tick, authority)`**: `p = HeldPoseAt(...)`;
+    `physics.MoveKinematic(body, p.pose.position, p.pose.rotation, dt)`. `authority`: `pinnedTicks = p.pinned ?
+    pinnedTicks + 1 : 0`; return `pinnedTicks >= kHoldPinnedTicks`. Else return false.
+15. **`EndHold(sim, e, reason, pose, v, anchor, env, tick, replicated, out)`** (server and offline only; `out.holder` /
+    `relYaw` from the `Held` component before it goes):
+    1. Fix-up, only when `anchor != nullptr` (Drop, Throw, Pinned, HolderDead; Damaged and HolderGone pass nullptr):
+       `Clear(pose)` = (a) no solid world voxel (`World::GetVoxel`) whose centre lies inside the oriented model box
+       at `pose` (visit the voxels of its world AABB, z, y, x ascending); (b) the box meets no mechanism's block box
+       at `PositionAt(tick)` (oriented boxes: the 15-axis separating-axis test); (c) `scene.QueryBodies(the box's
+       world AABB)` has no other entity whose body is in `Layer::Dynamic` (resting bodies; moving Rubble is
+       skipped) and whose `GetBounds` meets the box's world AABB; (d) no `env.playerFeet[i]` whose capsule AABB
+       (`PlayerBounds(feet, env.tuning)`) meets the box's world AABB. Not clear: `c` = the pose's centre, `u =
+       normalize(c - *anchor)`, `d = length(c - *anchor)`; for `d' = d - vs, d - 2 vs, ...` while `d' >=
+       kHoldReleaseMin`: the pose moved to centre `*anchor + u * d'`; the first clear one is taken. None clear: the
+       original pose.
+    2. Body: `RemoveComponent<Held>`; `SetTransform(pose, teleport)`; `SetMotionType(Dynamic)`; `vq =
+       QuantizeVelocity(v)` (move `net::QuantizeVelocity`'s formula to `sim` as `sim::QuantizeVelocity`, net keeps a
+       forwarding call); `SetVelocity(vq, 0)`; `SetLayer(replicated ? Rubble : Dynamic)`; `Activate`.
+    3. `out = {e, false, holder, relYaw, tick, uint8(reason), pose.position, pose.rotation, vq}`.
+16. **Blast and replication:** `Blast` step 3: an entity with `Held` whose posed model box (oriented) meets the
+    blast's sphere (the closest point of the box to `result.center` within `result.radius`) -> `EndHold(sim, e,
+    Damaged, its current pose, its current linear velocity, nullptr, env-less: a default `HoldEnv{}`, sim.Tick(), it
+    has a NetId, hc)`, `result.holdChanges.push_back(hc)`, then the damage as today; a held entity whose AABB the
+    sphere box meets but whose model box the sphere misses is skipped (no release, no damage). Step 4 (push) and
+    `MechanismBlast`'s push: skip entities with `Held`. `Replication.cpp`: `CountPieces` and `EvictionCandidate`
+    skip entities with `Held`.
+17. **`ReleaseVelocity(reason, holderVelocity, yaw, pitch)`**: Throw -> `holderVelocity + LookDirection(yaw, pitch) *
+    kThrowSpeed` (the real pitch, not `HoldPitch`); every other reason -> `holderVelocity`.
+    **`ApplyHoldChange(sim, e, c)`** (a client copy, which is and stays Kinematic): `c.hold` -> emplace `Held{c.holder,
+    c.relYaw, c.tick, 0}`, `Layer::Held`, velocity 0; else remove `Held`, `SetTransform(c.position, c.rotation,
+    teleport)`, velocity 0. No `SetMotionType`, no `Activate`, no fix-up (the server's pose is final). The layer after
+    a release (`MovingLayer`), `Copy::resting` / `held` and the samples are the client's (card 10 step 12).
+18. `UsePrompt`: kind Holdable -> `"[E] Pick up"`; HeldByOther -> greyed `"Held"`.
+    `HoldPrompt()` returns `"[E] Drop   [LMB] Throw"`. The caller shows greyed `"Occupied"` instead of `"[E] Pick up"` when the target's body is the
+    player's own ground body (`GetCharacterState(character).groundBody`).
+
+**Tests** (the thirteen `Use.*` above are unchanged)
 - `Use.TargetAtTheInputTick`: a door swinging open from tick 100; a ray that meets the leaf's pose at tick 110 and
   not at 120 hits at 110 and misses at 120 (and a second ray the reverse).
 - `Use.TerrainOccludes`: a `FillBox` wall between eye and door: no target; removed: the door.
@@ -648,13 +903,97 @@ helper never shares a name with an engine type).
 - `Use.AuthoringRuleRejectsAReachableLever`: a template with the lever 2 m from the gate's outer face:
   `CreateTemplateMechanisms` returns empty; at 3.5 m it makes both.
 
+Holding (suite `Hold`, written enabled in this card). Fixture `HoldYard` (a helper prefix, not an engine name): a
+`Simulation` at voxel size 0.1, stone ground `FillBox` up to y = 10.0 m over x, z in [-8, 8] m, a crate =
+`CreateVoxelObject(CrateModel(m, PlaygroundScale(0.1)))` (8^3 voxels, so `h = 0.5 * sqrt(192) * 0.1 = 0.69282`,
+`dMin = 0.79282`, sweep radius `r = 0.35`), holder feet (0, 10, 0), default `PlayerTuning` (eye y 11.62, anchor y
+11.12), `HoldEnv{tuning, PlayArea{}, {}}`, yaw 0 and pitch 0 (look -z) unless stated. A body placed in the air is not
+stepped by physics unless the test says so.
+- `Hold.CrateIsHoldableBigThingsAreNot`: `CrateModel(m, PlaygroundScale(vs))` at voxel sizes 0.1, 0.125, 0.15: true.
+  False for: a 13 x 4 x 4 planks box at 0.1 (1.3 m), a solid 9^3 stone cube at 0.1 (729 > `HoldMaxVoxels(0.1)` =
+  600), a 20-voxel piece at 0.1 (under `debrisBodyVoxels` 48), a door mechanism, a body with `motion` Kinematic, a
+  crate with `Held`; `replicatedOnly` true on a crate without `NetId`: false. A crate made Kinematic (as a client
+  copy): `IsHoldableShape` true, `IsHoldable` false. `HoldMaxVoxels(0.1) == 600`, `(0.125) == 307`, `(0.15) == 178`.
+- `Hold.NearestTargetWins`: a lever (2 x 6 x 2) with its use box 2.0 m ahead and the crate 1.2 m ahead on the same
+  ray: kind Holdable, the crate; the crate moved 2.4 m ahead (behind the lever): kind Mechanism; the crate moved so
+  that its inflated box and the lever's inflated use box are entered at the same distance (equal within 1e-6): kind
+  Mechanism (the lower kind wins a tie).
+- `Hold.ClosedDoorHidesACrateBehindIt`: a closed door 1.0 m ahead, the crate 2.0 m ahead: kind Mechanism (the door);
+  the door at p = maxPos (open, out of the ray): the crate.
+- `Hold.HeldByAnotherIsBusy`: `BeginHold(crate, holder 1)`; holder 0's ray meets the crate, a door behind it: kind
+  HeldByOther, not the door.
+- `Hold.CannotPassASlit`: a stone wall x [-2, 2], y [10, 13], z [-2.0, -1.6) m with a vertical slit x [-0.1, 0.1)
+  carved through it; the crate's centre at (0, 11.62, -2.4): the eye ray passes the slit and meets the crate, but
+  `PickupPathClear` is false and `FindUseTarget` gives kind None; the slit filled, then re-carved 1.0 m wide (x [-0.5,
+  0.5)): kind Holdable. The crate held, looking through the 0.2 m slit: `distance` 1.33520 within 1e-3 (the slit's
+  edge voxels at x = +-0.15 stop the sphere), the centre's z above -1.6 (the near side).
+- `Hold.CannotPickUpWhatAPlayerStandsOn`: `BeginHold(..., stoodOn = true, ...)` -> Busy and no `Held`; `stoodOn =
+  false` -> None.
+- `Hold.PoseFollowsTheHolder`: `relYaw` 0 (crate unrotated, holder yaw 0): centre (0, 11.12, -1.5) and position
+  (-0.4, 10.72, -1.9) within 1e-4, `pinned` false; holder yaw 16384: centre (-1.5, 11.12, 0) within 1e-4 and rotation
+  = `angleAxis(pi/2, +y)` within 1e-5; pitch 20000: `HoldPitch == 64`, centre (0, 12.18066, -1.06063) within 1e-3;
+  pitch -20000: `HoldPitch == -64`. `RelYawAtPickup` of the crate turned by 90 deg about +y, holder yaw 0: 16384.
+- `Hold.WallClampsTheDistance`: stone `FillBox` x [-2, 2], y [10, 13], z [-2.6, -1.6) m: `distance` 1.30489 within
+  1e-3 (the nearest voxel centre (+-0.05, 11.15, -1.65) enters the 0.35 m sphere), `pinned` false; the wall at z
+  [-2.2, -1.0): `distance` 0.79282, `pinned` true; terrain removed and a closed door whose block box face is 1.6 m
+  ahead: `distance` 1.25 within 1e-3 (the box grown by `r`).
+- `Hold.PlayAreaClampsTheHold`: `env.area = {(-1, -1), (1, 1)}`: centre (0, 11.12, -1.0) within 1e-4.
+- `Hold.HeldBodyMeetsNothing`: the crate held and posed through a second, resting crate and through the holder's own
+  capsule; 60 ticks of `StepHeld` + `StepPhysics`: the second crate's position is unchanged within 1e-4 and its
+  speed stays 0; a second player walking (moveZ 127) through the held crate's place moves more than 3.0 m in the 60
+  ticks; `physics.GetLayer` is Held; `physics.Raycast(eye, -z, 5)` (the default mask) does not hit the held crate's
+  body, and `Raycast(eye, -z, 5, LayerBit(Held))` does.
+- `Hold.DropKeepsPoseAndHolderVelocity`: `EndHold(Drop, pose, (2, 0, 0), &anchor, env, T, false, c)` in open air: no
+  `Held`, motion Dynamic, layer Dynamic (with `replicated` true: Rubble), velocity exactly (2, 0, 0), position exactly
+  `pose.position`; `c.hold == false`, `c.reason == 1`, `c.tick == T`.
+- `Hold.ThrowAddsSixAlongTheLook`: `ReleaseVelocity(Throw, (1, 0, 0), 0, 0)` == (1, 0, -6) within 1e-5; with pitch
+  32767 (straight up): (1, 6, 0) within 1e-4; `ReleaseVelocity(Drop, ...)` == the holder's velocity.
+- `Hold.ReleaseStepsOutOfAWall`: the wall at z [-2.2, -1.0), the pinned pose (d 0.79282): after `EndHold(Pinned, ...,
+  &anchor, ...)` the centre is at z -0.59282 within 1e-3 (two steps of 0.1 m back) and the box holds no solid voxel;
+  with `anchor == nullptr` the pose is unchanged.
+- `Hold.ReleaseAvoidsBodiesAndPlayers`: a second crate resting (`Layer::Dynamic`) with its centre at (0, 11.12,
+  -1.5): the release of the held crate at d 1.5 steps back until the two boxes' AABBs do not meet (centre z >= -0.7
+  within 1e-3); the second crate removed and `env.playerFeet = {(0, 10.5, -1.5)}`: the release steps back until the
+  box's AABB does not meet that capsule's `PlayerBounds`.
+- `Hold.PinnedForThirtyTicksDrops`: the wall at z [-2.2, -1.0): `StepHeld(authority)` returns false for calls 1-29
+  and true at call 30; with one unpinned call (holder yaw 32768: looking away) at call 15, still false at call 30,
+  false at call 44 and true at call 45.
+- `Hold.BusyAfterAChange`: `BeginHold(..., T, lastChangeTick = T - 11, anyChange = true, ...)` -> Busy; `T - 12` ->
+  None; `anyChange = false` -> None.
+- `Hold.DamageReleasesFirst`: a power-6, 1.2 m `Blast` centred on the held crate: `holdChanges` has one release with
+  reason 5 (Damaged); the surviving entity (if any) has no `Held` and motion Dynamic.
+- `Hold.PushDoesNotReleaseOrMove`: a `Blast` 2.0 m from the held crate (its sphere box misses the crate's bounds, its
+  push box meets them): the crate keeps `Held`; after `StepHeld` + `StepPhysics` its position equals the hold pose
+  within 1e-4. A second `Blast` placed off a corner of the crate, so that its sphere's AABB meets the crate's bounds
+  but the sphere misses the model box: the crate keeps `Held`, no release in `holdChanges`, no voxel removed.
+- `Hold.CrushSkipsAHeldBody`: a door closing over 72 ticks; the crate held with its box inside the door's block box
+  for the last 6 ticks: `StepMechanisms(authority)` crushes 0; the crate released there and the door closed again:
+  crushed at arrival (`crushed == 1`).
+- `Hold.TwoSimulationsAgree`: two fixtures, the same `BeginHold`, then 120 ticks of a scripted holder (walk forward,
+  yaw +200 per tick, pitch sweeping -20000..20000) with `StepHeld` + `StepPhysics`, then `EndHold(Throw)`: the held
+  body's transform equal bit for bit at every tick, and the two release `HoldChange`s equal.
+
 **Checks**
-1. build; 2. `tools/ctest.sh -R 'Use\.|Mechanism\.' --output-on-failure`; 3. `tools/ctest.sh`; 4. doc-check.
+1. build; 2. `tools/ctest.sh -R 'Use\.|Mechanism\.|Hold\.|Blast\.|Replication\.|Physics' --output-on-failure`;
+3. `tools/ctest.sh`; 4. doc-check (the ROADMAP test count).
+
+**Must not break**
+- `Blast.*`, `Replication.*` (ordinary objects: the held branch never runs without `Held`); `Physics.*` (the new
+  layer changes no other pair); `Mechanism.*` of card 3.
 
 **Done when**
-- [ ] The thirteen tests pass.
+- [ ] The thirteen `Use.*` tests and the twenty `Hold.*` tests pass.
 
 **Traps**
+- `RigidBody::motion` stays Dynamic while held (only the physics motion type is Kinematic): `IsHoldable` reads the
+  component, and `Held` excludes a held body. A client copy's `RigidBody::motion` is Kinematic from its creation:
+  never call `IsHoldable` for a client (card 10 passes its own hook).
+- The crush loop reads `RigidBody::motion == Dynamic`: without the `Held` skip it despawns a held crate.
+- A blast or the rubble caps can destroy a held entity: every cache of "the held entity" checks
+  `registry.valid(e)` before `all_of<scene::Held>(e)`.
+- `Blast.cppm` needs `<glm/gtc/quaternion.hpp>` in its global fragment for `HoldChange`.
+- `sim` cannot import `net`: put the velocity quantisation in `sim::QuantizeVelocity` (the formula of
+  `net::QuantizeVelocity`, 1/256 m/s, int16 per axis) and make the net one forward to it.
 - Every float here (eye, ray) decides only which mechanism and which side: server-decided and sent as integers, so
   it is allowed. The segment itself is integers.
 - Do not use `PhysicsWorld::Raycast` for targets (design "No physics raycast"): bodies other than mechanisms never
@@ -749,9 +1088,9 @@ helper never shares a name with an engine type).
 
 | | |
 |---|---|
-| Goal | In the offline game E uses, Q drops a crate, and the HUD shows what E will do |
+| Goal | In the offline game E uses, picks up and drops; LMB while holding throws; Q drops a crate; the HUD shows what E will do |
 | Depends on | cards 4, 5 |
-| Effort | 0.5 d |
+| Effort | 1 d |
 | Touches | sim (`kPlayerButtonMask`), game (`src/main.cpp`, `src/Session.cpp`); wire: no (no client sends the bit to a server that reads it yet); movement rule: no |
 
 **Read first** (about 40 KiB)
@@ -792,24 +1131,72 @@ helper never shares a name with an engine type).
 6. `src/Session.cpp`: the E latch becomes `PlayerButton_Use`, Q latches `PlayerButton_Crate`; tool line `Blast [LMB]
    Use [E]   Crate [Q]`; the scripted crate latch stays `PlayerButton_Crate`. (A session server ignores the Use bit
    until card 9.)
+7. **Holding, offline** (`src/main.cpp`; members `m_Held` (entity, `kNoEntity` when none), `m_HoldChangeTick`,
+   `m_AnyHoldChange`, `m_ThrowLatch`, `m_HoldNotice` / `m_HoldNoticeTick` for the auto-drop line). In step 4's block,
+   replacing the `r.pressed & PlayerButton_Use` branch (`env = HoldEnv{m_Tuning, PlayArea{}, {}}`: offline the play
+   area is unbounded and no other player exists):
+   ```
+   if m_Held != kNoEntity and (!registry.valid(m_Held) or !registry.all_of<scene::Held>(m_Held)):
+       m_Held = kNoEntity                       // a blast released or destroyed it, or the rubble caps removed it
+   eye, dir as in step 4; anchor = HoldAnchor(m_Player.position, m_Tuning); hp = HoldPitch(input.pitch)
+   if (r.pressed & Use) or m_ThrowLatch:
+       if m_Held != kNoEntity:
+           reason = m_ThrowLatch ? Throw : Drop             // a Use and a throw in one tick: one throw
+           pose = HeldPoseAt(sim, m_Held, m_Player.position, input.yaw, hp, env, tick).pose
+           EndHold(sim, m_Held, reason, pose, ReleaseVelocity(reason, m_Player.velocity, input.yaw, input.pitch),
+                   &anchor, env, tick, false, c); m_Held = kNoEntity; m_HoldChangeTick = tick; m_AnyHoldChange = true
+       else if (r.pressed & Use) and FindUseTarget(sim, eye, dir, tick, t):      // no hooks offline
+           Holdable: stoodOn = (physics.GetCharacterState(m_Character).groundBody == the target's body)
+                     m_UseResult = BeginHold(sim, t.entity, 0, input.yaw, tick, m_HoldChangeTick, m_AnyHoldChange,
+                                             stoodOn, false, c)
+                     on None: m_Held = t.entity, m_HoldChangeTick = tick, m_AnyHoldChange = true
+           Mechanism / Info: ApplyUse as step 4
+       else if (r.pressed & Use): m_UseResult = NoTarget
+       m_ThrowLatch = false
+   if m_Held != kNoEntity and StepHeld(sim, m_Held, m_Player, input.yaw, hp, env, tick, true):
+       EndHold(Pinned, the same pose, m_Player.velocity, &anchor, env, ...); m_Held = kNoEntity; m_HoldChangeTick = tick
+       m_HoldNotice = "Dropped - blocked"; m_HoldNoticeTick = tick
+   ```
+   This runs after `StepPlayer` and before `StepMechanisms` (and so before the engine's `StepPhysics`). Offline the
+   floor rule reads only the current ground body: no client replays exist. A `Damaged` release (the first line finds
+   `m_Held` without `Held` while the entity is valid) sets `m_HoldNotice = "Dropped - hit"`.
+8. **LMB while holding:** in `OnUpdate`'s left-click block, when `m_Held != kNoEntity`, set `m_ThrowLatch = true` and
+   neither `engine.Explode` nor `MechanismBlast` runs.
+9. **HUD:** while `m_Held != kNoEntity` the prompt is `HoldPrompt()` (white; amber `Rgba(255, 190, 60, 230)` while
+   `HeldPoseAt(...).pinned`) and no target search runs; else step 5's prompt, where `UsePrompt` now also gives
+   `[E] Pick up` and greyed `Held`, and greyed `Occupied` for the body under the player's feet (card 4 step 18). For
+   60 frames after an auto-drop, `m_HoldNotice` replaces the prompt.
+10. **`--hold-script`** (headless): frame 40, the scripted player 1.2 m south of the playground's first template crate
+    (the first `TemplateObject`; log its position), looking at it: a scripted Use edge; frames 41-160 walk north 5 m
+    (moveZ 127) holding it; frame 161 Use edge (drop); frame 200 Use edge (pick up again); frame 210 a scripted throw.
+    Log `Hold: picked up at tick N`, `Hold: dropped at (x, y, z)` (the centre of the crate's posed model box, not its
+    shape origin), `Hold: thrown at V m/s`, and `Expect`: both pick-ups `None`, the dropped centre within 1.6 m of the
+    holder's feet (x, z) at the drop, the crate's speed after the throw over 5 m/s. Add the flag and its lines to
+    `docs/verify.md`.
 
 **Checks**
 1. build; 2. `tools/ctest.sh`; 3. doc-check; 4. `VERIFY_SLOT=1 tools/verify.sh quick`; look at G3's screenshot: the
    tool line reads `Use [E]   Crate [Q]`.
+5. `./build/Shredborne --headless --validation --frames 260 --hold-script` - exit 0 and its three lines.
 
 **Docs**
 - `docs/owner-checks.md` (game): check 14's crate key E -> Q; `docs/two-pc-test-windows.md` checklist 6.3: "Q drops a
-  crate 3 m ahead"; `README.md` "Controls": E use, Q crate; `engine/docs/design/game-ui.md` keys.
+  crate 3 m ahead"; `README.md` "Controls": E use (doors, levers, pick up / drop), LMB while holding throws, Q crate;
+  `engine/docs/design/game-ui.md` keys and the prompts; `docs/verify.md` `--hold-script`.
 
 **Must not break**
 - G3 log lines (`Beam cut`, `HUD: N quads`, `on the ground`); `Movement.*` (the mask change makes no edge from bits
   that never come).
 
 **Done when**
-- [ ] Offline E calls `ApplyUse`, Q drops a crate; verify quick PASS; docs updated.
+- [ ] Offline E calls `ApplyUse`, picks up and drops; LMB while holding throws; Q drops a crate; `--hold-script`
+  exits 0; verify quick PASS; docs updated.
 
 **Traps**
-- Windowed behaviour (the prompt under a real mouse) is an owner check: say so in the report.
+- Windowed behaviour (the prompt under a real mouse, the held crate in view, the throw) is an owner check: say so in
+  the report.
+- `m_Held` is a cache: a blast can release the crate inside `engine.Explode` (`Damaged`); check the `Held` component
+  every tick before using it.
 
 ## Card 7: The yard in the offline game
 
@@ -937,30 +1324,58 @@ helper never shares a name with an engine type).
 7. Registry, `engine/docs/notes/net.md` section 2: event kind 37 `MechanismMove` [mech-1]; `EntityKind` 3 `Mechanism`;
    `PlayerButton` 16 `Use`; `UseResult` 0-6; `MechanismKind` 1-3 (4-6 reserved for `[mech-3]`); `MechanismFlag` 1, 2,
    4, 8; desc flags 1, 2, 4, 8. Replace the provisional sentence "then mechanisms' `MechanismMove` 40 and `RopeCut`
-   41" by the landed values ("`MechanismMove` 37 landed with [mech-1]; `RopeCut` takes the next free value with
-   [mech-2]") and the magic event numbers by "the next free values after 37" (the README plan: 38-40).
+   41" by the landed values ("`MechanismMove` 37, `EntityHold` 41 and `EntityRelease` 42 landed with [mech-1];
+   38-40 stay free for [mag-2]'s planned `ZoneStart`, `ZoneCancel`, `CastFx`; `RopeCut` takes the next free value
+   after 42 with [mech-2]"). Also: `ObjectSpawn` flag 2 `kObjectHeld`; `sim::HoldEnd` 1 `Drop`, 2 `Throw`, 3
+   `HolderDead`, 4 `HolderGone`, 5 `Damaged`, 6 `Pinned`; `kSnapshotPlayerBytes` 18. `engine/docs/llm/README.md`
+   "Values planned across the packs" already plans 41 and 42 (since 2026-11-24): check that the landed values match.
+8. **Holding on the wire** (design "One use key: E", "Prediction and replication"):
+   - `EventKind::EntityHold = 41`: `struct EntityHold { uint32_t netId; uint8_t holder; uint16_t relYaw; uint32_t
+     tick; }` = kind u8 + 4 + 1 + 2 + 4 = **12 B**.
+   - `EventKind::EntityRelease = 42`: `struct EntityRelease { uint32_t netId; uint32_t tick; uint8_t reason;
+     glm::vec3 position; glm::quat rotation; glm::vec3 velocity; }`: kind u8, netId u32, tick u32, reason u8,
+     position 3 x f32 and rotation 4 x f32 as `EntityRest` writes them, velocity 3 x i16 (`lround(v * 256)`) =
+     **44 B**. The decoder refuses reason 0 or `> sim::kMaxHoldEnd` and a non-finite pose.
+   - `Event` gains both. `HoldChange` <-> these two in `net` (a `ToEvent(const sim::HoldChange&, netId)` helper).
+   - `kObjectHeld = 2` in `ObjectSpawn::flags`; `ObjectSpawn` gains `uint8_t holder; uint16_t relYaw; uint32_t
+     holdSince;` written after the object's runs only when the flag is set (**+7 B**). A decoder refuses
+     `kObjectHeld` together with `kObjectResting`.
+   - `RemotePlayer` gains `int8_t holdPitch = 0;` (after `fight`); `kSnapshotPlayerBytes` + 1 (17 -> 18 on top of
+     `[wp-7]`); the decoder refuses values outside -64..64.
+   - `uint64_t HeldTerm(uint8_t holder, uint16_t relYaw, uint32_t since)` in `Messages.cppm`: `h =
+     voxel::HashMix64(0x484F4C44u, uint64(holder) | uint64(relYaw) << 8)`; `return voxel::HashMix64(h, since)`.
+   - `kProtocolVersion`'s comment line for 12 gains "EntityHold 41, EntityRelease 42, kObjectHeld, the remote
+     record's holdPitch".
 
 **Tests** (new file `engine/tests/net/MechanismNetTests.cpp`)
 - `Mechanisms.WireSizes`: `MechanismMove` encodes to 16 B; a mechanism spawn with 1 and with 8 segments encodes to
   the same object's `EntityKind::Object` spawn + 63 + 24 + 11 and + 63 + 24 + 88; a snapshot with an owner block
   is `kSnapshotOwnerBytes` (the `[wp-7]` value + 5) longer in its owner part; every value round-trips equal; a
-  decoder refuses a count of 0 and 9, a kind of 4, a useResult of 7, one trailing and one missing byte.
-- Extend `Wire.MessagesRoundTripAndRefuseTrailingOrMissingBytes` (or its successor) with one `MechanismMove`.
+  decoder refuses a count of 0 and 9, a kind of 4, a useResult of 7, one trailing and one missing byte. Holding:
+  `EntityHold` encodes to 12 B and `EntityRelease` to 44 B; a held object's spawn is its unheld spawn + 7;
+  `kSnapshotPlayerBytes` is the `[wp-7]` value + 1 and each remote record encodes to it; every value round-trips
+  equal (the release's velocity as `QuantizeVelocity`); refused: reason 0 and 7, `holdPitch` 65 and -65, a spawn
+  with both `kObjectHeld` and `kObjectResting`.
+- Extend `Wire.MessagesRoundTripAndRefuseTrailingOrMissingBytes` (or its successor) with one `MechanismMove`, one
+  `EntityHold` and one `EntityRelease`.
 
 **Checks**
 1. build; 2. `tools/ctest.sh -R 'Wire\.|Mechanisms\.' --output-on-failure`; 3. `tools/ctest.sh`; 4. doc-check.
 
 **Docs**
-- notes/net.md section 2 (above); CLAUDE.md section 5 "Sessions": add `EntityKind::Mechanism`, `MechanismMove` and
-  `UseResult` to the wire-format list (names only; the numbers stay in notes/net.md).
+- notes/net.md section 2 (above); CLAUDE.md section 5 "Sessions": add `EntityKind::Mechanism`, `MechanismMove`,
+  `EntityHold`, `EntityRelease`, `sim::HoldEnd` and `UseResult` to the wire-format list (names only; the numbers stay
+  in notes/net.md); llm/README's plan row (step 7).
 
 **Must not break**
 - `Session.*` builds refuse other protocols ("another build"); `SessionFile.BuildHashSeesThePlayerRuleRevision`.
 
 **Done when**
-- [ ] Protocol 12, the registry updated, `Mechanisms.WireSizes` green.
+- [ ] Protocol 12, the registry updated, `Mechanisms.WireSizes` green (with its holding part).
 
 **Traps**
+- Never take 38-40 for holding (the plan gives them to `[mag-2]`); if 41 or 42 is taken when you land, take the next
+  free values above 40 and write them in "Deviations".
 - Never reuse 37 if it is already taken when you land: take the next free value, write it in "Deviations" and in the
   README plan table (rule 8 of the guide).
 
@@ -968,16 +1383,18 @@ helper never shares a name with an engine type).
 
 | | |
 |---|---|
-| Goal | In a session E opens the yard's door for everyone, a lever runs the gate, and no gate is ever deleted by the byte budget |
+| Goal | In a session E opens the yard's door for everyone, a lever runs the gate, and no gate is ever deleted by the byte budget; E picks up, drops and LMB throws a crate, decided by the server |
 | Depends on | card 8 |
-| Effort | 1 d |
+| Effort | 1.5 d |
 | Touches | net (server, session file); wire: uses card 8's values |
 
 **Read first** (about 70 KiB; read sections, Server.cpp is over 60 KiB)
 - The server's `StepPlayers`, `OnInputs` (late inputs), `PlayerCrate`, `LateCast`, `EmitObjectEvents`, `DescribeObject`,
   `EmitObjectSpawn`, `TrackBodies`, `AwakeSamples`, the cast-run path (`grep -n 'ResolveRay\|RunCast'`), the baseline
   builder (`grep -n 'BaselineEntity'`), the entity check / list builders (`grep -n 'EntityModelTerm\|EntityListEntry'`),
-  `Server::Tick()`, the template start (`grep -n 'CreateTemplateObjects\|templ.objects'`).
+  `Server::Tick()`, the template start (`grep -n 'CreateTemplateObjects\|templ.objects'`). For holding also
+  `MakeBaselineEntity` (`ServerPeers.cpp`), `Server::Entities()`, `Server::AwakeBodies()` and the "carries a player"
+  test in `TrackBodies` (`ServerEntities.cpp`).
 - `engine/src/net/Session.cppm` `SessionConfig`, `ParseSession`, `FormatSession`.
 - mechanisms.md "What the server does with a Use edge", "The lead", "Replication" (server bullets).
 
@@ -993,7 +1410,8 @@ helper never shares a name with an engine type).
    `pl.lastUseTick = in.tick`; `at == nullptr || now - in.tick > sim::kUseStaleTicks` -> `useResult = Stale`, return;
    `eye = at->position + (0, eyeHeight, 0)`; `dir = LookDirection(in.yaw, in.pitch)`;
    `FindUseTarget(sim, eye, dir, in.tick, t)` false -> NoTarget; else `useResult = ApplyUse(sim, t, eye, now, UseLead(),
-   changes)`; each change -> `Emit(MechanismMove{NetIdOf(change.entity), change.segment})`; stats.
+   changes)`; each change -> `Emit(MechanismMove{NetIdOf(change.entity), change.segment})` (`NetIdOf(e)`: the
+   entity's `scene::NetId::value`); stats.
    `static_assert(sim::kUseStaleTicks < kStateHistory)`.
 3. Call it where crates are: `StepPlayers` after `StepPlayer`: `if (r.pressed & PlayerButton_Use) PlayerUse(*peer,
    input, &pl.state, now)`; the late path in `OnInputs`: `if (pressed & PlayerButton_Use) PlayerUse(p, in,
@@ -1024,6 +1442,67 @@ helper never shares a name with an engine type).
 13. `vortex_server` exit / stats line: `Mechanisms: server: N mechanisms, uses U (refused R), lead min A max B, moves
     M, crushed K, models over budget O, hits skipped S`.
 
+Holding (steps 14-21; design "One use key: E", "Where it runs", "Prediction and replication"; `NetIdOf(e)` below is
+the entity's `scene::NetId::value`, read with `TryGet<scene::NetId>`; `pl.last` is the player's last real input, the
+`sim::PlayerInput last` field of `Player`):
+
+14. `Player` gains `scene::Entity held = kNoEntity`, `uint32_t holdChangeTick = 0`, `bool anyHoldChange = false`,
+    `uint32_t autoReleaseTick = 0`, `uint32_t autoReleaseEcho = 0` (0: no echo window), `scene::Entity groundEntity =
+    kNoEntity`, `uint32_t groundTick = 0`. After each `StepPlayer`: if `GetCharacterState(character).groundBody` is a
+    replicated body's, `groundEntity` = its entity and `groundTick = now`. At the start of `StepPlayers` and of
+    `StepHolds`: a `held` that is no longer valid or lost its `scene::Held` component -> `kNoEntity` (the component is
+    the truth). `BodyTrack` gains `bool held = false`. `EmitHold(const sim::HoldChange& c)`: `Emit(EntityHold{...})`
+    or `Emit(EntityRelease{...})` with `NetIdOf(c.entity)`. A hold: `tracks[netId].held = true` and
+    `tracks[netId].resting = false` (`EntityHold` is the wake: no `EntityWake` is sent). A release:
+    `tracks[netId].held = false`, `resting` stays false (the next `TrackBodies` samples it and later rests it).
+    `stats.holds` / `stats.releases[reason]`. `HoldEnvFor()`: `{settings.player, sim::PlayAreaOf(region,
+    settings.player), the feet of every joined, living player in slot order}`.
+15. `PlayerUse` (step 2) starts:
+    - **Echo:** `if (pl.autoReleaseEcho && in.tick <= pl.autoReleaseTick + pl.autoReleaseEcho)`: `lastUseTick =
+      in.tick`, `useResult = None`, return (the edge is consumed; design "The echo of an auto-drop").
+    - **Drop:** `if (pl.held != kNoEntity)`: `useResult = None`; `EndHold(sim, pl.held, Drop, HeldPoseAt(...,
+      pl.state.position, in.yaw, HoldPitch(in.pitch), env, now).pose, ReleaseVelocity(Drop, pl.state.velocity, ...),
+      &anchor, env, now, true, c)` with `anchor = HoldAnchor(pl.state.position, settings.player)` (now, not `at`: the
+      hold is the server's state now); `EmitHold(c)`; `held = kNoEntity`; `holdChangeTick = now`, `anyHoldChange =
+      true`; return. The drop runs before the stale test: a drop is never refused.
+    - After the stale check, `FindUseTarget(sim, eye, dir, in.tick, t, &hooks)` with `hooks.holdable = [](e) {
+      return IsHoldable(sim, e, true); }` and `hooks.key = NetIdOf`; by `t.kind`: `Holdable` -> `stoodOn` = some
+      player (this one included) has `groundEntity == t.entity` and `now - groundTick <= kHoldGroundTicks`;
+      `useResult = BeginHold(sim, t.entity, slot, in.yaw, now, holdChangeTick, anyHoldChange, stoodOn, true, c)`, on
+      None `EmitHold(c)`, `held = t.entity`, `holdChangeTick = now`; `HeldByOther` -> `Busy`; `Mechanism` / `Info`
+      -> `ApplyUse` as step 2; `None` -> `NoTarget`.
+16. **The Cast edge while holding, and both edges:** in `StepPlayers` after `StepPlayer`, the holding branch runs
+    **before** the Use branch of step 3: `if (r.pressed & PlayerButton_Cast)` and the echo window of step 15 holds
+    for `input.tick` -> the Cast edge is consumed (no cast capture), and a Use edge of the same input too. Else `if
+    (pl.held != kNoEntity && (r.pressed & PlayerButton_Cast))`: `EndHold(Throw, the hold pose,
+    ReleaseVelocity(Throw, pl.state.velocity, input.yaw, input.pitch), &anchor, env, now, true, c)`, `EmitHold(c)`,
+    and the cast capture for `r.cast` is skipped (no queue entry, no rules seam, no charge, `lastCastTick` /
+    `castRejected` unchanged); a Use edge in the same input is consumed with it (`lastUseTick = input.tick`,
+    `useResult = None`; step 3's `PlayerUse` does not run). The late path (`LateCast` and the late `PlayerUse`): the
+    same tests on `pl.held` now and on the echo window; a throw replaces the late cast.
+17. `StepHolds()` in `Server::Tick()` after `RunCasts`, before `StepMechanisms` / `StepPhysics`: for each player in
+    slot order with `held`: `if (StepHeld(sim, held, pl.state, pl.last.yaw, HoldPitch(pl.last.pitch), env, now,
+    true))` -> `EndHold(Pinned, ...)`, `EmitHold`, `autoReleaseTick = now`, `autoReleaseEcho = EchoTicks(pl)`
+    (`ceil(RTT_p / dt) + max(margin_p, 0) + 2`, clamped to `kMechanismLeadMin..kMechanismLeadMax`: step 4's term for
+    this player alone). A dead player (`[wp-7]`, not stepped) has no `held` (step 18).
+18. **Auto-drops:** in the `[wp-7]` death path (`grep -n 'Dead\|respawn' engine/src/net/internal/Server*.cpp`), before
+    the death is applied: `held` -> `EndHold(HolderDead, ...)`. Where a player is removed (disconnect, kick, timeout):
+    `EndHold(HolderGone, its current transform, its current velocity, nullptr, ...)`. After every `sim::Blast` /
+    `MechanismBlast` the server emits `result.holdChanges` **before** the result's object events (a release, then
+    its `ObjectModel`), and for each sets the holder's `held = kNoEntity`, `autoReleaseTick = now` and
+    `autoReleaseEcho = EchoTicks(holder)`.
+19. `TrackBodies`, `AwakeSamples`, `Server::AwakeBodies`: skip tracks with `held` (no wake, no rest, no layer, no
+    sample, not awake). The `on_destroy<NetId>` observer of a held body clears its holder's `held` (the despawn tells
+    every client).
+20. Baseline / `ModelRequest` answer / spawn (`MakeBaselineEntity`, `DescribeObject`): a body with `scene::Held` sets
+    `kObjectHeld` with holder, relYaw, sinceTick, **never** `kObjectResting`, and its current pose (not the track's
+    rest pose). `Server::Entities()` reports a held body not resting (its track says so since step 14). Checks (step
+    11's place, the `EntityCheck` model term and the `EntityList` entries only): a body with `scene::Held` uses
+    `VolumeHash ^ HeldTerm(holder, relYaw, sinceTick)`; `EntityInfo::modelHash` of `Server::Entities()` stays
+    `VolumeHash`. Snapshots: each `RemotePlayer::holdPitch = HoldPitch(pl.last.pitch)`.
+21. The exit line gains `Hold: server: P pickups, D drops, T throws, A auto-drops (dead H, gone G, damaged M, pinned
+    N), refused R, echo edges E`.
+
 **Tests** (in `MechanismNetTests.cpp`, on `EntityTests.cpp`'s in-process server / bot set-up: copy its helpers with a
 `Yard` prefix)
 - `Use.RefusalReachesTheUser`: a client's use with no target gets `useResult == NoTarget` for its `lastUseTick` in
@@ -1033,9 +1512,28 @@ helper never shares a name with an engine type).
 - `Use.TargetAtTheInputTick` already covers the sim half; add `Mechanisms.LateUseUsesTheStateAtItsTick`: a use sent
   late (tick T - 10) by a player who moved since is resolved from `StateAt(T - 10)`'s eye (hits; with today's state
   it would miss).
+- `Hold.ServerPicksUpAndDrops`: a bot looks at a resting crate and presses Use: one `EntityHold` (its slot) in the
+  stream, `useResult` None, no `EntityWake`; `Server::Entities()` reports the crate not resting while held; no
+  `BodySample` for the crate's NetId in any snapshot while held (60 ticks); a `ModelRequest` answer for it carries
+  `kObjectHeld` and not `kObjectResting`; a second Use: one `EntityRelease` reason 1, then samples, then within 600
+  ticks one `EntityRest`.
+- `Hold.ThrowRunsNoCast`: holding, a Cast edge: an `EntityRelease` reason 2 with velocity = `QuantizeVelocity(state
+  velocity + look * 6)`; no cast ran (`stats` casts unchanged, `WorldHash` unchanged), `lastCastTick` unchanged; in a
+  deathmatch session the player's charges are unchanged. An input with both the Use and the Cast edge while holding:
+  one release, reason 2, and no use and no cast.
+- `Hold.HolderDeathDrops` (deathmatch session, a scripted lethal blast on the holder): `EntityRelease` reason 3 before
+  the death's effects; `Hold.HolderLeavingDrops`: the holder's peer disconnects: reason 4.
+- `Hold.NotCountedAsAwake`: 64 awake replicated bodies minus one plus a held crate: `TakePieceSlot` still answers
+  Replicate for one new piece; `Server::AwakeBodies()` does not count the held crate.
+- `Hold.NoOneLosesTheirFloor`: bot 1 stands on a crate, bot 0 presses Use at it: `useResult` Busy, no `EntityHold`;
+  bot 0 stands on it and presses Use: Busy; bot 1 steps off and bot 0 presses Use 20 ticks later: Busy, 31 ticks
+  later: None.
+- `Hold.AutoDropEchoIsConsumed`: a holder pinned for 30 ticks (`EntityRelease` reason 6); a Cast edge and then a Use
+  edge (at a door in reach) with input ticks inside the echo window: no cast (`stats` casts and `WorldHash`
+  unchanged), no `MechanismMove`; the same edges after the window: one cast, one `MechanismMove`.
 
 **Checks**
-1. build; 2. `tools/ctest.sh -R 'Mechanisms\.|Use\.|Entities\.|Replication\.|SessionFile\.' --output-on-failure`;
+1. build; 2. `tools/ctest.sh -R 'Mechanisms\.|Use\.|Hold\.|Entities\.|Replication\.|SessionFile\.|Fight\.' --output-on-failure`;
 3. `tools/ctest.sh`; 4. doc-check; 5. `VERIFY_SLOT=1 tools/verify.sh quick` (G11-G12 unchanged: no yard in
    `drill.session` / `arena250.session`).
 
@@ -1045,25 +1543,29 @@ helper never shares a name with an engine type).
   changed in place). "Chunk sync": the yard's ops go through `EmitOp`.
 
 **Done when**
-- [ ] Three tests green; verify quick PASS.
+- [ ] Ten tests green (three mechanism, seven holding); verify quick PASS.
 
 **Traps**
 - The decision tick is `now`; the target is found at `in.tick`. Do not mix them up: the segment starts at `now +
-  lead`, never in the past.
+  lead`, never in the past. A hold starts at `now` (no lead), and a drop always uses the state now.
+- A release is emitted before the `ObjectModel` of the same damage: a client must not re-make a held copy.
+- A held body's track must not stay `resting` from an earlier `EntityRest`: the drill's entity comparison
+  (`restStateMismatches`) and every baseline read that flag.
 
 ## Card 10: Client
 
 | | |
 |---|---|
-| Goal | A predicting client walks through a door that opens without a correction, and draws mechanisms where it collides with them |
+| Goal | A predicting client walks through a door that opens without a correction, and draws mechanisms where it collides with them; it predicts its own pick-up and drop and poses other players' held objects |
 | Depends on | card 9 |
-| Effort | 1 d |
+| Effort | 1.5 d |
 | Touches | net (client); wire: no |
 
 **Read first** (about 70 KiB, sections)
 - The client's entity event handler (`grep -n 'EntitySpawn\|ObjectModel\|EntityWake\|EntityRest' Client.cpp`),
   `MakeCopy`, `MoveCopies`, `Hold`, the baseline handler, the EntityCheck count, `FreshColliders`, `PredictTick`,
-  `Reconcile`, `Client::StepPlayer` (resume replay), `Client::RunTick`; `ClientStats`.
+  `Reconcile`, `Client::StepPlayer` (resume replay), `Client::RunTick`; `ClientStats`; `ApplyEntity`'s per-NetId
+  block and `MovingLayer` in `ClientEntities.cpp`; `RemoteBodies` and `RemotePlayerView` in `net/Prediction.cppm`.
 - mechanisms.md "Replication" ("Clients keep mechanisms apart from copies"), "The lead", "What the predicting client
   shows at once".
 
@@ -1098,6 +1600,75 @@ helper never shares a name with an engine type).
     agree` (agree = every mechanism's `PositionAt(t)` and newest segment equal to the server's for t = the last
     server tick) and `Mechanisms: bot N: late events E, corrections at mechanisms C`.
 
+Holding (steps 11-18; design "Prediction and replication"; client copies stay kinematic: never `Dynamic`,
+`SetVelocity` other than zero, or `Activate` on a copy):
+
+11. `Copy` gains `uint8_t motion = 2` (the server body's `physics::MotionType`: from `ObjectSpawn::motion` in
+    `MakeCopy`, updated by every `ObjectModel`'s `motion`) and `bool held = false`. The client keeps `netIdOf`
+    (`scene::Entity` -> NetId, filled in `MakeCopy`, erased with the copy). `Client` gains `HoldPending{uint32_t netId,
+    inputTick; bool drop}` (optional), `uint32_t heldNetId` (0 none, confirmed or predicted), `uint8_t latchedEdges`
+    (Use / Cast edges seen while a pick-up is pending) and `pendingReleases` (NetId -> the `EntityRelease` waiting
+    for the drawn holder, step 15). `RemoteBodies` gains `Restart(netId, tick)`: drop every buffered sample of the
+    body and refuse every sample of `tick` or older from now on, without marking it rested (`Rest`'s twin).
+    `RemotePlayerView` gains `int8_t holdPitch`, taken from the nearer sample in the remote-player interpolation, not
+    blended (as `fight`).
+12. **Events.** The per-NetId block of `ApplyEntity` (today the chain `holds_alternative<EntityRest> ? ... :
+    holds_alternative<EntityWake> ? ... : std::get<ObjectModel>`, which would throw `bad_variant_access` on a new
+    kind) becomes one helper, `EntityEventNetId(const Event&)`, that names every entity event of a NetId: `EntityRest`,
+    `EntityWake`, `ObjectModel`, `MechanismMove`, `EntityHold`, `EntityRelease`. The `seq <= base` drop and the
+    `Hold` deferral path apply to all of them (for `MechanismMove`, the base of the `mechanisms` entry). So a copy
+    re-made by a `BaselineEntity` with `kObjectHeld` or by a `ModelRequest` answer ignores holds and releases at or
+    below its base.
+    - `EntityHold` for a NetId in `copies`: `ApplyHoldChange(sim, e, {hold, holder, relYaw, tick})`, `copy.held =
+      true`, `copy.resting = false` (the event is the wake), `bodies.Restart(netId, hold.tick)`. `MoveCopies`,
+      samples, `EntityRest` and `EntityWake` skip a held copy. Holder == own slot: `heldNetId = netId`, pending
+      cleared, the latched edges go out (step 13).
+    - `EntityRelease`: own slot's object -> applied at once (step 14). Another holder's -> kept in
+      `pendingReleases` and applied by step 15. Applying it: `ApplyHoldChange` with the event's pose (a teleport, no
+      velocity), `copy.held = false`, `copy.resting = false`, `SetLayer(MovingLayer(...))` as `EntityWake` does,
+      `bodies.Restart(netId, release.tick)`; own: `heldNetId = 0`, pending cleared; reason `Pinned` or `Damaged` of
+      the own object: the HUD line `Dropped - blocked` / `Dropped - hit` for 1 s.
+    - Baseline / spawn with `kObjectHeld`: the same as an `EntityHold` after the copy is made. Despawn of a held
+      copy: own `heldNetId = 0`, its `pendingReleases` entry dropped.
+13. **Predicted pick-up and drop** (in `PredictTick`, after `StepPlayer`, only for the newest tick, never in
+    replays). The hooks of the client: `hooks.holdable = [](e) { return IsHoldableShape(sim, e) && the copy of
+    netIdOf[e] exists with motion == Dynamic and !held; }`, `hooks.key = netIdOf[e]`.
+    - Use edge, `heldNetId == 0`, no pending, `FindUseTarget(..., &hooks)` kind Holdable, and the target's body is
+      not the own `groundBody` (that one shows greyed `Occupied` and is sent unpredicted): `pending = {netId, tick,
+      false}`; `ApplyHoldChange(sim, e, {hold, own slot, RelYawAtPickup(R, input.yaw), tick})` (the copy stays
+      Kinematic); `heldNetId = netId`.
+    - Use or Cast edge (or both: one throw) with `heldNetId != 0`: `pending = {heldNetId, tick, true}`; stop posing;
+      the copy stays where it is, in `Layer::Held`, until `EntityRelease` (the hang, chosen: design open question 19).
+    - **Latching:** while a pick-up is pending (`pending && !pending.drop`), the client clears Use and Cast from the
+      input it steps and sends, and sets their bits in `latchedEdges` on every new press (an edge, even if the key is
+      up again before the answer). Confirmed (step 12): the next input carries the latched bits for one input (an
+      edge each; the server then sees a drop or a throw). Refused (step 14): `latchedEdges = 0` (a failed grab fires
+      nothing). No cast picture while `heldNetId != 0` or a pick-up is pending (wherever the client presents its
+      own cast edge: `grep -n 'cast' engine/src/net/internal/Client*.cpp src/Session.cpp`).
+14. **Resolve:** on each snapshot, after the events up to its `lastOpSeq`: a pending pick-up with `owner.lastUseTick >=
+    pending.inputTick` and no confirming `EntityHold` -> undo: remove `Held`, the copy back to the server's state (its
+    rest pose and `Layer::Dynamic` if it rests, else `MovingLayer` and waiting for samples), `heldNetId = 0`,
+    `latchedEdges = 0`, `stats.holdRefused++`, the prompt shows `useResult`. A pending drop resolves only on the
+    `EntityRelease` of that NetId (any reason: the server never refuses a drop, and an edge in the echo of an
+    auto-drop is consumed while that auto-drop's release resolves it).
+15. **Posing** in `RunTick` after `StepPlayer`, before `StepMechanisms` / `StepPhysics` (`env` = `HoldEnv{tuning,
+    sim::PlayAreaOf(region, tuning), {}}`; a client runs no fix-up, so no feet): own held copy (not pending a drop):
+    `StepHeld(sim, e, player, input.yaw, HoldPitch(input.pitch), env, nextTick - 1, false)`, and keep its
+    `HeldPose::pinned` for the HUD's amber prompt. Other holders: for each held copy whose holder is another slot, its
+    `RemotePlayers()` entry as the game draws it: `p = HeldPoseAt(sim, e, remote.position, remote.yaw,
+    remote.holdPitch, env, nextTick - 1)`; `scene.SetTransform(e, p.pose, teleport)`. No entry: leave it. **A pending
+    release of another holder** is applied (step 12) once the drawn time of that holder (the server tick the
+    remote-player interpolation draws) reaches `release.tick`, or 12 ticks (`RemoteBodies::kMaxDelayTicks`) after it
+    arrived, whichever comes first; until then the copy stays posed from the drawn holder.
+16. **Checks:** `Copy::modelHash` stays `VolumeHash` (it is what `Client::Entities()` reports to the drill's
+    comparison). Only where the client builds its `EntityCheck` model term and compares `EntityList` entries, a copy
+    with a confirmed hold (an applied `EntityHold`, not a predicted one) uses `VolumeHash ^ HeldTerm(holder, relYaw,
+    sinceTick)`.
+17. **The session game** (`src/Session.cpp`): the prompt `Occupied` and the auto-drop lines come from the client
+    (expose `Client::HoldNotice()` and the own pose's `pinned`); card 11 step 6a draws them.
+18. `stats` and the bot line: `Hold: bot N: P pickups, D drops, T throws, R refused, positions agree` (agree: every held
+    copy's holder and relYaw equal to the server's at the last tick).
+
 **Tests**
 - `Mechanisms.LateJoinerDerivesTheSamePosition`: two pending segments (start in the future); a client joining then
   computes the same `PositionAt` for every tick of the next 60 as the server.
@@ -1112,9 +1683,26 @@ helper never shares a name with an engine type).
 - `Mechanisms.EntityCheckCoversTheSegment`: drop one `MechanismMove` to one client (test hook of the harness): the
   next EntityCheck mismatches, the list names the door, the client's `ModelRequest` repairs it (its segments equal
   the server's afterwards), counted in `mechanismsRepaired`.
+- `Hold.PredictedPickupIsConfirmed`: RTT 100 ms; the client's prompt finds the crate's copy (kind Holdable, through
+  the client hooks: the copy is Kinematic and has no `scene::NetId`); the copy is Held from the tick of its Use edge;
+  the `EntityHold` confirms it (`heldNetId` unchanged, `holdRefused` 0); 0 corrections over 120 ticks of walking with
+  it; the copy's physics motion type stays Kinematic throughout, the drop included, and after the drop its pose
+  follows the server's samples (no sample of the release tick or older is taken).
+- `Hold.RefusedPickupIsUndone`: two clients press Use on one crate in the same server tick: the lower slot holds it;
+  the other's copy is back at the server's pose (rest pose within 1e-4) after the snapshot with its `lastUseTick`,
+  `holdRefused == 1`; a Use press and a Cast press made and released while pending (each shorter than the round
+  trip) never reach the server (no use, no cast in the server's log).
+- `Hold.RemoteHolderPosesTheObject`: client B's copy of client A's held crate is within 0.05 m of `HeldPoseAt` from B's
+  drawn view of A at every tick of 60; A walks at full speed and drops it: on B, the copy's jump at the release is
+  under 0.1 m (the release waits for the drawn A to reach its tick).
+- `Hold.LateJoinerSeesTheHold`: a client joins while a crate is held: its baseline copy is Held with the server's
+  holder and relYaw and not resting; after the drop its copy is at the release pose bit for bit, then follows the
+  server's samples.
+- `Hold.EntityCheckCoversTheHold`: drop one `EntityHold` to one client (the harness hook): its next EntityList
+  comparison names the crate, `ModelRequest` re-makes it held.
 
 **Checks**
-1. build; 2. `tools/ctest.sh -R 'Mechanisms\.|Movement\.|Entities\.|Client\.' --output-on-failure`;
+1. build; 2. `tools/ctest.sh -R 'Mechanisms\.|Hold\.|Movement\.|Entities\.|Client\.' --output-on-failure`;
 3. `tools/ctest.sh`; 4. doc-check; 5. `VERIFY_SLOT=1 tools/verify.sh quick`.
 
 **Must not break**
@@ -1122,19 +1710,24 @@ helper never shares a name with an engine type).
   CLAUDE.md "Movement": `FlushBox` before every step stays (it is inside `PrepareStep`).
 
 **Done when**
-- [ ] Six tests green; `Movement.*` unchanged.
+- [ ] Eleven tests green (six mechanism, five holding); `Movement.*` unchanged.
 
 **Traps**
 - Pose at the step's tick (`nextTick` or the replayed `k`), never at `Simulation::Tick()`: the client's simulation
   tick is not its predicted tick.
+- Never pose a held copy in a replay: it meets no character, and no player stood on it in the 30 ticks before the
+  pick-up (card 9 step 15), so the replayed states do not depend on it; a replay that teleports it would make it
+  jump back on screen.
+- Never make a copy Dynamic (a release included): `MoveCopies` drives copies with `MoveKinematic`, which refuses a
+  body that is not kinematic.
 
 ## Card 11: Session play and close
 
 | | |
 |---|---|
-| Goal | The owner can open the yard's door and run its gate with a friend; the stage is verified and documented |
+| Goal | The owner can open the yard's door, run its gate and carry crates with a friend; the stage is verified and documented |
 | Depends on | card 10 |
-| Effort | 1 d |
+| Effort | 1.5 d |
 | Touches | net (bot), game (`src/Session.cpp`), tools, docs |
 
 **Read first** (about 50 KiB)
@@ -1158,6 +1751,17 @@ helper never shares a name with an engine type).
 5. Lossy: the same with `--loss 0.05 --jitter-ms 30` - exit 0, `hashes equal`, `agree`, `Mechanisms: bot N: late
    events E, corrections at mechanisms C` with C <= E.
 6. `tools/session-check.sh` PASS (playground with the yard).
+6a. **Holding:** `BotSettings::holdEveryTicks` and `--bot-hold P`: every P ticks a bot walks to the nearest template
+    crate (1.2 m from it, looking at its centre), presses Use, walks 5 m towards the plaza holding it, then presses
+    Use again (drop); every third time it throws instead (a Cast edge). `src/Session.cpp`: the hold prompt (amber
+    while the own pose is pinned), `Dropped - blocked` / `Dropped - hit` for 1 s after an own auto-drop, greyed
+    `Occupied` for the body under the own feet, and
+    `[E] Pick up` / greyed `Held` as offline (card 6 step 9, `heldNetId` for "holding"); a refused pick-up shows its
+    `useResult` for 1 s. Drill: `vortex_server --session=engine/tools/server/sessions/playground.session --clients 2
+    --bot-hold 120 --drill 20 --delay-ms 40` - exit 0, `hashes equal`, both `Entities: ... agree`, `Hold: bot N: P
+    pickups, D drops, T throws, R refused, positions agree` with P >= 3 for both bots, `Hold: server:` with auto-drops
+    0 and `Movement` 0 corrections for both bots; the same with `--loss 0.05 --jitter-ms 30`: exit 0, `hashes equal`,
+    `agree`.
 7. Close: `grep -rn 'DISABLED_' engine/tests tests` shows no test of this stage;
    `DEPS_FROM=~/Projects/Shredborne/build/_deps tools/build.sh ci`; `VERIFY_SLOT=1 tools/verify.sh full --ci`;
    `VERIFY_SLOT=1 tools/verify.sh soak` in the background (report its result when it ends).
@@ -1167,15 +1771,20 @@ helper never shares a name with an engine type).
   to free, lead min / max, the drill numbers in "Budgets and costs" marked measured.
 - CLAUDE.md section 5 "Movement": "both sides call `sim::PoseMechanisms` and `sim::PushOutOfMechanisms` at the step's
   tick after `FlushBox` and before every player step (the client also before replays)"; "Replicated bodies": "a
-  mechanism is never ToRubble, never takes an awake slot or a snapshot sample"; test names
-  `Mechanism.PlayerStepIsTheSameReplayed`, `Mechanisms.NoCorrectionWalkingThroughAnOpeningGate`.
-- `docs/owner-checks.md`: a new check "E opens the yard door, the lever runs the gate, Q drops a crate; the prompt
-  reads right; a shot door falls off after a few hits" (windowed, owner's); game-ui.md the prompt; ROADMAP.md:
-  "Now" / "Next" (`[mech-1]` built), the test count, the measured values; `docs/verify.md`: `--bot-use`, the
-  `Mechanisms:` lines.
+  mechanism is never ToRubble, never takes an awake slot or a snapshot sample"; and for holding: "a held body is
+  kinematic in `Layer::Held` (meets nothing), posed from its holder on every side, sends no samples and takes no
+  awake slot; hold and release are events (`EntityHold`, `EntityRelease`), each works as a wake, and client copies
+  stay kinematic"; test names
+  `Mechanism.PlayerStepIsTheSameReplayed`, `Mechanisms.NoCorrectionWalkingThroughAnOpeningGate`,
+  `Hold.HeldBodyMeetsNothing`, `Hold.ServerPicksUpAndDrops`.
+- `docs/owner-checks.md`: a new check "E opens the yard door, the lever runs the gate, Q drops a crate; E picks up a
+  crate, it follows the view below the crosshair, E drops it, LMB throws it (it hangs about one ping first); a crate
+  cannot be pulled through an arrow slit; the prompt reads right; a shot door falls off after a few
+  hits" (windowed, owner's); game-ui.md the prompts; ROADMAP.md: "Now" / "Next" (`[mech-1]` built), the test count,
+  the measured values; `docs/verify.md`: `--bot-use`, `--bot-hold`, the `Mechanisms:` and `Hold:` lines.
 
 **Checks**
-1. Steps 4-7 above; their lines in the report.
+1. Steps 4-7 above (6a included); their lines in the report.
 
 **Must not break**
 - G11-G19 (drill and arena sessions have no yard); G16's correction bounds on the playground with the yard.
@@ -1196,3 +1805,11 @@ For notes/net.md section 2 and the guide's plan table (card 8): `kProtocolVersio
 `MechanismDescFlag` 1 `OneWay`, 2 `Usable`, 4 `Locked`, 8 `Warded`; owner block +5 B (`lastUseTick` u32,
 `useResult` u8); spawn desc 63 B, state 24 B + 11 B per segment; `MechanismMove` 16 B. Session file key
 `mechanisms` (server only, not wire). `kPlayerRuleRevision`: unchanged.
+
+Holding (added 2026-11-24): `EventKind` 41 `EntityHold` (12 B), 42 `EntityRelease` (44 B) - 38-40 stay planned for
+`[mag-2]`, and `[mech-2]`'s `RopeCut` takes the next free value after 42; `ObjectSpawn` flag 2 `kObjectHeld` (+7 B:
+holder u8, relYaw u16, sinceTick u32); `RemotePlayer::holdPitch` i8 (-64..64), `kSnapshotPlayerBytes` 17 -> 18;
+`sim::HoldEnd` 1 `Drop`, 2 `Throw`, 3 `HolderDead`, 4 `HolderGone`, 5 `Damaged`, 6 `Pinned` (`kObjectHeld` is never
+sent with `kObjectResting`). No new `UseResult`,
+`CastRejection` or owner-block byte. Not wire format: `physics::Layer::Held` 6, `sim::UseTargetKind` (0 None, 1
+Mechanism, 2 Info, 3 Holdable, 4 Rope reserved for `[mech-2]`, 5 HeldByOther).

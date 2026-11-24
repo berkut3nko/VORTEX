@@ -4,10 +4,10 @@
 
 | | |
 |---|---|
-| Status | Designed, nothing built or measured for it. |
-| Decided | - Owner's request (2026-11-17): "in game should be implemented rope with physics, in game action which moves objects such as door opening by clicking E on them or activating lever (for castle gates)".<br>- Us (this design, 2026-11-17), amended the same day after two critics' review: 27 findings, two pairs of them the same, so 25 distinct: 24 applied, two of those with a change, and 1 rejected in part ("Decision in brief").<br>- Us, placement in ROADMAP under the owner's standing rules (the owner may veto): stage 1 comes after the fight measurement (review WP8), so its yard is measured inside a known fight budget, and takes the protocol number after M2a's, because it changes the E key and adds a `PlayerButton`. |
+| Status | Designed. [mech-1] cards 1-3 built (engine `af50590`, `282ba04`, `46b29e0`: the skeleton, the timetable, posing, stepping, crush), cards 4-11 not built; nothing measured (the owner deferred the test runs and the measurements). Holding objects on E designed on 2026-11-24, built in [mech-1] (card 4 on). |
+| Decided | - Owner's request (2026-11-17): "in game should be implemented rope with physics, in game action which moves objects such as door opening by clicking E on them or activating lever (for castle gates)".<br>- Us (this design, 2026-11-17), amended the same day after two critics' review: 27 findings, two pairs of them the same, so 25 distinct: 24 applied, two of those with a change, and 1 rejected in part ("Decision in brief").<br>- Us, placement in ROADMAP under the owner's standing rules (the owner may veto): stage 1 comes after the fight measurement (review WP8), so its yard is measured inside a known fight budget, and takes the protocol number after M2a's, because it changes the E key and adds a `PlayerButton`.<br>- Owner's request (2026-11-24): "design all those actions on the button E: toggle a lever, open / close a door, hold a small object (it gets moved with the player's movement), rope actions; add it to card 4". Us, the same day (the owner may veto): 12 decisions, written as "One use key: E"; refined there with their reasons ("Decisions refined"), after a review of the holding design (32 findings) the same day. |
 | Next | [mech-1] door and gate (M-a offline, M-b session), in ROADMAP "Next" after WP8. [mech-2]..[mech-4] in ROADMAP "Later"; [mech-5] after M2. |
-| Open | Questions 1-15 in "Open questions" (each with the recommended answer; 1 and the fixed-or-adaptive part of 2 are settled). |
+| Open | Questions 1-20 in "Open questions" (each with the recommended answer; 1 and the fixed-or-adaptive part of 2 are settled). |
 | History | [design-review-2026-11-17.md](../history/mechanisms/design-review-2026-11-17.md): "Review of the design (2026-11-17)", the findings and where each was applied (cited in the text as "Review")<br>[before-rewrite-2026-11-18.md](../history/mechanisms/before-rewrite-2026-11-18.md): the original header and the sections this rewrite changed |
 | Marks | "Measured" = a number from `docs/ROADMAP.md` or a log; "est." or (e) = an estimate, replaced by a measurement in the stage named under "Stages". "Code" = read from the working tree of 2026-11-17 on engine `4855f85` / game `ad0fe69`, with networking stage 8 uncommitted in it (`src/net` line numbers may differ a little from `e21a84d`, which committed this design, and from `430fde0`); `file:line` references are to that tree and are not updated (`PW.cpp` = `src/physics/internal/PhysicsWorld.cpp`, `Server.cpp` / `Client.cpp` = `src/net/internal/`). |
 
@@ -24,7 +24,8 @@ server's data, or receives the result.** Mechanisms and ropes add no new kind of
 | Thing | What it is | Who decides | What travels | Players meet it |
 |---|---|---|---|---|
 | Door, portcullis, drawbridge, lever, button, winch | A **mechanism**: a kinematic replicated voxel object whose travel position is an integer function of (motion segment, tick) | Server, on a Use edge (or a link, a timer, a cut) | `MechanismMove` (16 B) per change; nothing in snapshots | At rest: solid. Moving: a ghost (doors, drops, drawbridges), except a gate rising out of its passage, which stays solid |
-| The use key | E = new `PlayerButton_Use = 16` (wire format, protocol bump). The crate moves to **Q** | Server, at the input's tick, with the same function the client uses for its prompt | One bit per input; the result in the snapshot owner block | - |
+| The use key | E = new `PlayerButton_Use = 16` (wire format, protocol bump): opens and closes doors, throws levers, picks up and drops small objects, and (from [mech-2]) releases a load rope. The crate moves to **Q** | Server, at the input's tick, with the same function the client uses for its prompt | One bit per input; the result in the snapshot owner block | - |
+| Held object (crate, barrel, small rubble) | A dynamic body made kinematic and **posed** in front of its holder every tick; a ghost while held | Server (pick up, drop, throw, auto-drop); every side poses it from the holder | `EntityHold` (12 B), `EntityRelease` (44 B); no samples while held | Never while held (a ghost); after the drop, as any stage-6 body |
 | Load rope (cage, chandelier, counterweight) | **One** Jolt `DistanceConstraint` (max length only) between a world anchor and a replicated load; no link bodies | Server physics; the load is an ordinary stage-6 body | Rope spawn (32 B, est.), `RopeCut` (12 B) | The load: as any stage-6 body |
 | Mechanism chain (portcullis, drawbridge) | A rope whose ends follow mechanism poses: no physics at all | Server (cuts only) | Rope spawn, `RopeCut` | Never (drawing only) |
 | Decorative rope, sway, wind, cut halves | Client-side Verlet strand (`vortex.fx`), drawn as instances of one shared link model | Each client, for itself | Nothing (the rope's spawn and cut are the server's) | Never |
@@ -39,8 +40,9 @@ server's data, or receives the result.** Mechanisms and ropes add no new kind of
   once on the HUD, in the lever's handle and as a short "unlatching" rattle; the motion itself eases out (fast start).
 - **Visible from the first stage:** the yard (a hut with a door, a wall with a portcullis and a lever) is part of the
   default offline game from stage 1 M-a and of `playground.session` from M-b, sited clear of every scripted area.
-- **Stage 1 (est. 9-10 days):** E opens a hinged door and a lever raises and drops a portcullis, offline and in a
-  session, with the damage rule (doors wear down hit by hit). Then ropes and the chain cut that jams a gate (stage 2),
+- **Stage 1 (est. 12-13 days):** E opens a hinged door and a lever raises and drops a portcullis, offline and in a
+  session, with the damage rule (doors wear down hit by hit); E also picks up, carries and drops a small object, and
+  LMB throws it (added 2026-11-24). Then ropes and the chain cut that jams a gate (stage 2),
   then winches, drawbridges, buttons (stage 3), then placement in the watch tower and the fort generator (stage 4).
   A player rope tool waits for M2 (stage 5, decided later).
 
@@ -93,6 +95,9 @@ UseTarget FindUseTarget(const World&, const MechanismView&, glm::vec3 eye, glm::
 // UseTarget: { netId, kind: None | Usable | Info, distance }
 ```
 
+The steps below are the mechanism part. Since 2026-11-24 the same function also finds holdable bodies and (from
+[mech-2]) rope targets: "One use key: E" gives the kinds and the order rule over all of them.
+
 1. **Reach:** `kUseReach` = 2.5 m from the eye (est.: a door handle from a standing player at arm's length plus a
    little forgiveness; tuned in stage 1).
 2. **Terrain occludes:** `World::Raycast(eye, dir, kUseReach)`; every target must be nearer than the terrain hit.
@@ -109,8 +114,9 @@ UseTarget FindUseTarget(const World&, const MechanismView&, glm::vec3 eye, glm::
    non-usable mechanism (a portcullis, a lever-driven gate leaf, a drawbridge), it is returned as an `Info` target:
    the prompt shows greyed `Gate - opened by a lever` / `Drawbridge - winch` and E does nothing (`NotUsable`).
 6. **No physics raycast:** use and block boxes are authored mechanism data; the body's size, layer and dents do not
-   matter for a use. Bodies other than mechanisms (a crate in front of a lever) do not block a use: forgiving, and one
-   less source of disagreement.
+   matter for a use. Bodies that are not use targets (a body too large to hold, local rubble in a session) do not
+   block a use: forgiving, and one less source of disagreement. A holdable body (a crate in front of a lever) is a
+   candidate itself, and the nearer of the two wins ("One use key: E").
 7. **Hysteresis (client prompt only):** the last target stays while the ray still hits its box inflated by 0.2 m,
    so the prompt does not flicker between two levers.
 
@@ -204,7 +210,8 @@ Offline the game calls the same `sim::ApplyUse(sim, user eye, look, tick, lead)`
 
 ### What the predicting client shows at once
 
-- It never predicts a mechanism's state (it is shared; two players can use one gate in the same tick).
+- It never predicts a mechanism's state (it is shared; two players can use one gate in the same tick). It does
+  predict its own pick-up and drop of a small object ("One use key: E", "Prediction and replication").
 - On the Use edge with a usable target in the prompt: the crosshair pulses, the prompt changes to the verb in
   progress (`Opening...`), the **lead cue** starts (below), and **a lever's handle is drawn thrown at once**. That is a
   picture only: the lever's body, and so its collision, stays at the timetable pose; a handle under 0.3 m drawn ahead
@@ -226,7 +233,455 @@ Offline the game calls the same `sim::ApplyUse(sim, user eye, look, tick, lead)`
 gate`, `[E] Press`, `Hold [E] Raise 40%`, greyed `Locked` / `Jammed` / `Broken`, greyed info lines (`Gate - opened by
 a lever`). The verb comes from the mechanism's kind and the direction its next segment would take. When a lever's
 target is out of view, the HUD shows `Gate raising` / `Gate dropping` for 2 s after the press. A few quads: the HUD's
-0.01 ms (measured) does not move measurably (est.).
+0.01 ms (measured) does not move measurably (est.). Holding adds `[E] Pick up`, `[E] Drop   [LMB] Throw` and the
+greyed `Held` and `Occupied` ("One use key: E", "The prompts").
+
+## One use key: E
+
+Added on 2026-11-24 (the owner's request in the header), revised the same day after a review of the design (32
+findings; "Decisions refined" gives the changes of numbers and rules). E is one key with one resolution: it opens and
+closes a door, throws a lever, picks up and drops a small object, and from [mech-2] releases a load rope. Q keeps
+spawning a crate (unchanged). In a session, characters move no bodies (`characterMovesBodies` false, CLAUDE.md
+"Replicated bodies") and that contract stays: holding is a server-decided action that poses the object, never
+character physics. `sim::StepPlayer` does not change (no weight slowdown); `kPlayerRuleRevision` stays 1.
+
+### What E does
+
+1. **While the player holds an object, E drops it**, whatever the look ray meets. No target search runs.
+2. Else `FindUseTarget` returns the nearest use target along the look ray (the order rule below), and E acts on it:
+   a mechanism (`ApplyUse`, unchanged), a holdable body (pick up), a rope target ([mech-2]).
+3. The server resolves E at the input's tick, as a mechanism use (eye and look from `StateAt(in.tick)`); it decides
+   at its tick `now`. The client's prompt and its predicted pick-up are predictions.
+4. **LMB while holding** runs no cast: it throws the object (below).
+5. **One input with both edges while holding** is one release, a throw: the Use edge and the Cast edge are both
+   consumed (no use, no cast).
+
+### The use targets and the order rule
+
+`UseTarget` gains a kind (`sim::UseTargetKind`, not wire format):
+
+| Kind | Value | What | E does |
+|---|---|---|---|
+| `None` | 0 | nothing in reach | refused `NoTarget` |
+| `Mechanism` | 1 | a usable mechanism's use box | `ApplyUse` |
+| `Info` | 2 | a non-usable mechanism's block box (a portcullis) | refused `NotUsable` (or `Locked`) |
+| `Holdable` | 3 | a body that passes the holdable rule | pick up |
+| `Rope` | 4 | reserved now; a load rope's cleat from [mech-2] | release the rope |
+| `HeldByOther` | 5 | a body another player holds | refused `Busy` |
+
+The order rule, the same for every kind (one pass; floats decide only which target, and the server sends the result
+as integers):
+
+1. `limit` = the terrain hit distance (`World::Raycast(eye, dir, kUseReach)`), else `kUseReach` (2.5 m).
+2. **Candidates** come from sources in a fixed order: usable mechanisms (use box, inflated by 0.1 m), holdable
+   bodies (the posed model box, inflated by 0.1 m, and only when the pick-up path is clear: "What can be held",
+   "The pick-up path"), rope targets ([mech-2]: the cleat box). Each gives a distance `t` along the ray.
+3. **Occluders:** the terrain (`limit`), every mechanism's block box at its pose at `tick` (a mechanism's own block
+   box does not hide its own use box), and every body held by another player (its posed model box, not inflated).
+   Bodies that are not candidates never occlude.
+4. A candidate counts when `t < limit` and `t <` every occluder's distance. The smallest `t` wins; ties go to the
+   lower kind value, then the lower key. **The key is the caller's:** a hook of `FindUseTarget` (`UseTargetHooks`)
+   gives it. The server keys by `scene::NetId::value`; a client keys its copies by the NetId it keeps for them in
+   `copies` (a client entity has no `scene::NetId` component), so both sides break a tie the same way; offline the
+   key is `uint32(entity)`.
+5. No candidate: the nearest occluder within `limit` that is a non-usable mechanism gives `Info`, one that is a body
+   held by another gives `HeldByOther`; else `None`.
+
+Why a held body occludes: without it, a client that predicts a pick-up of a crate another player took in the same
+tick would, on the server, open the door behind the crate. With it the server answers `Busy` and nothing else moves.
+[mech-2] adds its rope source to step 2 and changes no other step.
+
+Positions: mechanisms at their timetable pose at `tick` (exact, as before). Bodies have no history: the server takes
+them at their pose now (a late E pairs the eye at `in.tick` with a body pose up to 30 ticks newer, as casts do with
+terrain); a client takes its copies as it draws them.
+
+### What can be held
+
+Two tests, so that a client, whose copies are all kinematic and carry no `scene::NetId`, gives the same answer as the
+server:
+
+- **The shape test**, `sim::IsHoldableShape(simulation, entity)`, the same function on every side:
+  1. The entity has `VoxelBody` and `RigidBody`, no `scene::Mechanism` and no `scene::Held`.
+  2. Every axis of its model's size `<= kHoldMaxExtent` (1.25 m) in metres: `size[i] * vs <= 1.25`.
+  3. Its solid voxel count is at least `SceneConfig::debrisBodyVoxels` (the integer `CreateBody`'s size rule uses:
+     25 at 0.125 m, 48 at 0.1 m, 14 at 0.15 m; below it a piece is Debris) and at most
+     `HoldMaxVoxels(vs) = llround(kHoldMaxVolume / vs^3)` (`kHoldMaxVolume` 0.6 m^3, est.; rounded to the nearest,
+     because `floor` gives 599 at 0.1 m by float rounding). The counts are integers: the test is the same on every
+     side.
+- **The owner test**, per side, through the hook `UseTargetHooks::holdable`:
+  - Server and offline, `sim::IsHoldable(simulation, entity, replicatedOnly)`: the shape test, and `RigidBody::motion
+    == Dynamic` (a frozen body counts: its component stays Dynamic); with `replicatedOnly` (a session server) also a
+    `scene::NetId` with `value != 0`.
+  - A session client: the shape test, and the entity is a copy in `copies` whose server motion is Dynamic
+    (`Copy::motion`, kept from `ObjectSpawn::motion` and from every `ObjectModel`'s `motion`). The copy's own
+    `RigidBody::motion` is Kinematic and is not read. A client's own rubble is not in `copies` and cannot be held.
+- **The pick-up path** (a candidate test of `FindUseTarget`, so the prompt and the server agree): the sphere of
+  radius `r` swept from the hold anchor (below) to the object's centre meets no solid voxel ("The clamp" gives `r`
+  and the sweep). An object seen through an arrow slit, a murder hole or a gap under a door is not a candidate: it
+  could not come out through the gap.
+- **Not a player's floor:** a pick-up is refused `Busy` when the body was the ground body of any player (the holder
+  included) at any tick of the last `kHoldGroundTicks` (30). The server keeps, per player, the last replicated body
+  it stood on and the tick (`groundBody`, as `TrackBodies`' "carries a player" rule reads it). Why: the floor would
+  vanish under a player at once, which corrects that player's client and is a griefing tool (a defender pulls the
+  bottom crate of an attacker's stack). Why 30 ticks: a predicting client replays ticks before the pick-up with the
+  copy already a ghost; with this window no replay of the last 30 ticks (0.5 s, more than the round trip plus the
+  clock target of every link the lead clamp covers) stood on it. A client's prompt shows greyed `Occupied` for the
+  body under its own feet and does not predict that pick-up; for other players the server decides.
+
+Examples (from `CrateModel(m, PlaygroundScale(vs))` and the material table): the crate is holdable at every voxel
+size (0.8 m at 0.1 m voxels, 0.75 m at 0.125 m and 0.15 m; 296 solid voxels at 0.1 m = 0.30 m^3, 0.30 m^3 at
+0.125 m, 0.33 m^3 at 0.15 m: a frame model, about half solid); a solid 0.9 m stone cube (0.73 m^3) does not pass;
+beams, planks and ladders (over 1.25 m) do not.
+
+**The castle's movable objects** (the game's `docs/product/castle-layout-draft.md` section 8.1, 36 objects) against
+this stage. Holding covers 14 of the 36 objects, and only when their models are frame or hollow models under
+0.6 m^3 of solid voxels (a solid 1 m crate is 1 m^3 and fails). The product plan's item C2 ("grab, carry, push and
+drop", P1) is so not done after [mech-1]:
+
+| Object (count) | Size (e) | In [mech-1] | Later |
+|---|---|---|---|
+| Crate (8) | 1 m | held, if a frame model under 0.6 m^3 | - |
+| Barrel (6) | 0.8 m | held, if hollow or a frame model under 0.6 m^3 | rolling: a push action |
+| Beam (6) | 7 x 0.4 x 0.4 m | no (over 1.25 m) | drag, stage 5 |
+| Plank (10) | 4 x 0.5 x 0.125 m | no | drag, stage 5 |
+| Ladder (3) | 6 m | no | drag, and climb volumes, stage 5 |
+| Cart (2), hay wagon (1) | 2.5-4 m | no | push, stage 5 |
+
+### The hold pose
+
+Inputs: the holder's `PlayerState` (feet), its input's `yaw` (u16) and `pitch` (i16), `tuning.eyeHeight`, the held
+`scene::Held{holder, relYaw, sinceTick, pinnedTicks}`, the model size `s` (voxels), `vs`, and the play area
+(`sim::PlayAreaOf(region, tuning)` in a session, `PlayArea{}` offline).
+
+- **Hold pitch** (an integer, so every side uses the same value): `HoldPitch(pitch) = int8(clamp(pitch, -16384,
+  16384) / 256)` (C++ division, toward zero), so -64..64; the pose uses `pitchH = HoldPitch * 256` (at most 45 deg).
+  Other clients get it in the remote record (`holdPitch`, below).
+- **The hold anchor** is at chest height, not at the eye: `anchor = feet + (0, eyeHeight - kHoldDrop, 0)`
+  (`kHoldDrop` 0.5 m, est.); `dir = LookDirection(yaw, pitchH)`. Why: an object of 0.8-1.25 m held on the crosshair
+  at eye height covers 30-45 deg of the view, so the holder cannot see where it walks or aims a throw, and enemies
+  see a shield that casts pass through. Lower, the crosshair and the holder's head stay clear; the pitch still
+  lifts and lowers the object.
+- `h = 0.5 * length(vec3(s)) * vs` (half the model box's diagonal); `dMin = h + kHoldClearance` (0.1 m: the object
+  never contains the anchor).
+- `d` from the clamp (next subsection); `centre = anchor + dir * d`.
+- **The play area:** `centre.x` and `centre.z` are clamped into the play area (the same rectangle the feet stay in),
+  after the clamp. So a held object never goes past the play bounds, and a drop never leaves it where no player can
+  come back for it. A throw can still carry it out, as a blast's push can.
+- **Rotation:** `rot = angleAxis(YawRadians(uint16(yaw + relYaw)), +y)`: yaw only, no pitch or roll. The object is
+  levelled at pick-up and turns with its holder.
+- **Position** (the body's shape origin, the model's corner): `position = centre - rot * (vec3(s) * vs * 0.5)`.
+- **relYaw at pick-up** (`sim::RelYawAtPickup(R, yaw)`): `f = R * (0, 0, -1)` with R the body's rotation; if `f.x^2
+  + f.z^2 < 0.25` use `r = R * (1, 0, 0)` instead. `objYaw = atan2(-f.x, -f.z)` (or `atan2(-r.z, r.x)`); `relYaw =
+  uint16(QuantizeYaw(objYaw) - yaw)`. The server decides it once and sends it as an integer.
+
+Floats decide only the pose. The pose is never compared across machines: a held body meets nothing, and the release
+sends the server's pose.
+
+### The clamp
+
+A thick ray, not a thin one: the object is a sphere of radius `r` swept from the anchor along `dir`.
+
+- `r = 0.5 * (min(s) - 1) * vs`, at least 0 (half the smallest extent less half a voxel: an object resting on a floor
+  passes the pick-up path test; 0.35 m for the crate at 0.1 m).
+- `t` = the largest distance, up to `kHoldDistance` (1.5 m), at which the sphere centred on `anchor + dir * t` holds
+  no solid voxel centre, and the segment from the anchor to that centre meets no mechanism's block box (at its pose
+  at the tick) grown by `r`. The voxel part: for every solid voxel of the swept capsule's world AABB, the entry
+  distance of its centre into the moving sphere (a quadratic in `t`); `t` is the smallest. The visit order (z, y, x
+  ascending) does not change the minimum.
+- `d = clamp(t, dMin, kHoldDistance)`. **Pinned** when `t < dMin`: the object cannot stay out of the wall.
+  `static_assert(kHoldDistance >= 0.8660254 * kHoldMaxExtent + kHoldClearance)` (1.18 m) keeps a free hold possible
+  for every holdable size.
+- Why thick: a thin ray passes an arrow slit, a murder hole or a blasted hole narrower than the object, and the object
+  would be posed and dropped on the far side of the wall. A 0.35 m sphere does not pass a 0.2 m slit. Why block boxes
+  too: a closed door is not terrain.
+- The sphere is inside the object's box, so the box can still overlap a wall at its corners while held (it is a
+  ghost, by at most `h - r`). The release fixes that (below).
+- Cost: the capsule's AABB is about 2-4k voxels at 0.1 m (est.), one `GetVoxel` each; 20-60 us per held object per
+  tick (est.; "Budgets").
+
+### Layers while held and after
+
+- **While held:** kinematic, in a new `physics::Layer::Held` (value 6; physics only, not wire format) that meets no
+  body and no character. **Rays:** a ray sees it only when the ray's layer mask is exactly `LayerBit(Held)`
+  (`LayerMaskFilter`); the default `PhysicsWorld::Raycast` mask (0xFF) and every mask of today's callers do not see
+  it. The callers of the default mask today are the offline cast (`AimAction` with `OfflineAimRules`, `bodyLayers`
+  0), the client's cast picture ray (`src/Session.cpp`) and the editor's pick ray (`editor/internal/Tools.cpp`); a
+  session cast's mask is Dynamic | Rubble. So a holder cannot stand on its own crate and fly, cannot ram crates or
+  players with it, and every cast passes through a held object on every side. `MoveKinematic` to the pose every tick
+  gives it the holder's velocity for the drawn interpolation. The terrain guard never freezes it (L8: kinematic
+  bodies are exempt).
+- **After the release** (server and offline): Dynamic. In a session the existing rule: `Layer::Rubble` while it
+  moves, `Layer::Dynamic` once the server rests it (`EntityRest`). Offline: `Layer::Dynamic` (as every offline body).
+  A client's copy stays kinematic ("Prediction and replication").
+- `scene::QueryBodies` has no layer filter, so a blast sphere still finds a held body (auto-drop below).
+
+### Drop, throw and auto-drop
+
+Every end of a hold on the server and offline goes through one function, `sim::EndHold(simulation, entity, reason,
+pose, velocity, anchor, env, tick, replicated, out)`, with a reason (`sim::HoldEnd`, wire format):
+
+| `HoldEnd` | Value | When | Release velocity |
+|---|---|---|---|
+| `Drop` | 1 | E while holding | the holder's `PlayerState::velocity` |
+| `Throw` | 2 | LMB (the Cast edge) while holding, with or without a Use edge in the same input | the holder's velocity + `kThrowSpeed` (6 m/s) x `LookDirection(input.yaw, input.pitch)` (the real pitch: aim matters) |
+| `HolderDead` | 3 | the holder died ([wp-7] death path) | the holder's velocity |
+| `HolderGone` | 4 | the holder left, was removed, or lost its character | the body's current velocity |
+| `Damaged` | 5 | a cast's or blast's sphere meets the held body's posed model box: it is released first, then damaged | the body's current velocity |
+| `Pinned` | 6 | the clamp was pinned for `kHoldPinnedTicks` (30) ticks in a row | the holder's velocity |
+
+- **The release pose** is the hold pose of the decision tick (from the holder's state; for `HolderGone` and
+  `Damaged` the body's current pose). **The fix-up** (authority only; not for `HolderGone` and `Damaged`, which have
+  no anchor): the pose is clear when the posed model box holds no solid terrain voxel, meets no mechanism's block
+  box, meets no other body in `Layer::Dynamic` (a resting body; moving Rubble moves away by itself) and meets no
+  player's capsule (`env.playerFeet`; conservative: the capsule's world AABB against the box's world AABB). Not
+  clear: `d` steps down by one voxel at a time to 0.3 m and the first clear pose is taken; none clear: the pose
+  stays and Jolt's penetration recovery moves it. A drop against a wall or a stack so puts the object down between
+  the holder and it, and a drop onto a player does not start inside the player.
+- **The body:** `velocity = sim::QuantizeVelocity(v)` (the formula of `net::QuantizeVelocity`, the wire's 1/256 m/s,
+  so the server's body and the event agree), motion Dynamic, the layer above, activated. The `scene::Held` component
+  goes.
+- **Throw, the wire shape:** a release reason, not a new `CastRejection`. The throw is not a refused cast: the edge
+  never reaches the cast path, the owner block's `lastCastTick` / `castRejected` do not change (no "Cast not run"
+  line), no [wp-7] charge is spent and no `NoCharge` / `Dead` applies. `StepPlayer` still takes the edge as today
+  (`TakeCast`: the cooldown restarts when it was free), so a throw is followed by the normal 15-tick cast cooldown:
+  no change to `StepPlayer`. Also, `CastRejection` 6-10 are planned for [mag-2] (llm/README "Values planned").
+- **Pinned:** fires only when the object would have to enter a wall (see "Decisions refined").
+- **The echo of an auto-drop:** after a `Damaged` or `Pinned` release, the holder's client still shows the object
+  held for about one round trip, and an E or LMB pressed then is meant as a drop or a throw. The server so consumes
+  every Use and Cast edge of that player whose input tick is at most `autoReleaseTick + echo`, with `echo` the
+  player's own term of the lead formula (`ceil(RTT_p / dt) + max(margin_p, 0) + 2`, clamped 4..20 ticks): no use, no
+  cast, no charge (`lastUseTick` is set, `useResult` None). The client resolves its pending drop with the release it
+  gets. Cost: a deliberate E at a door in that window (at most 0.33 s) is lost once, after the HUD said `Dropped`.
+- **A drop and a throw are never refused**, at any input age: the drop runs before the stale test.
+- **Despawn of a held body** (budget, kill plane above the build ceiling, a rubble `Lifetime`) ends the hold with no
+  `EntityRelease`: the despawn says it on every side.
+- **The crush rule skips held bodies.** `StepMechanisms`' crush loop skips an entity with `scene::Held`: a ghost meets
+  nothing, and a crate in its holder's hands is not destroyed because the holder stands in a doorway. A crate
+  dropped in a closing door's path is an ordinary body again and is crushed as before: a crate cannot prop a door or
+  gate open. Blocking a door is the [mech-3] lock's job, not a crate's.
+- **Busy:** a pick-up is refused `Busy` less than `kHoldBusyTicks` (12) ticks after the same player's last hold
+  change (pick-up or release). A spammer so makes at most 5 hold / release pairs a second (280 B/s, below).
+- One held object per player; a held object is not a target for anyone else (`HeldByOther`, refused `Busy`).
+- Not in this stage: damage from a thrown or dropped object (the impacts of [si-2] may add it); a weight slowdown.
+
+### Where it runs
+
+| Owner | Pick-up, drop, throw | Pose every tick | Auto-drop |
+|---|---|---|---|
+| Server | `StepPlayers`, on the step's Use / Cast edge and on the late-input path (`PlayerUse`, `LateCast`) | `StepHolds` after `RunCasts`, before `StepMechanisms` and `StepPhysics`: per player in slot order, `StepHeld` from its state after the step and its input | `HolderDead` in the death path, `HolderGone` where a player is removed, `Damaged` in the blast's object loop, `Pinned` in `StepHolds` |
+| Predicting client | predicted on its own edges (below) | its own held body after its predicted step, before `StepPhysics` (`MoveKinematic`); other holders' bodies from the remote view it draws (`SetTransform`, teleport) | never: it applies `EntityRelease` |
+| Offline | the game's `OnFixedUpdate` on the E / Cast edge | after `StepPlayer`, before `StepMechanisms` | as the server, without `HolderGone` |
+
+Replays: a held body meets no character, and no player stood on it in the 30 ticks before the pick-up ("Not a
+player's floor"), so a replay of the last 30 ticks gives the same states whether the copy is a ghost or not. Only
+the newest predicted tick poses it. A replay longer than 30 ticks (a round trip over about 0.45 s) can correct once,
+as any late event does. `StepHeld` with `authority` false counts no pinned ticks.
+
+### Prediction and replication
+
+**The rest state of a held body.** A held body is neither resting nor awake. On the server its `BodyTrack` has
+`held` true and `resting` false from the pick-up: `EntityHold` works as the wake (no `EntityWake` is sent), and a
+client sets its copy `resting = false` on it. `Server::Entities()` so reports it not resting on both sides.
+Baselines, `ModelRequest` answers and `DescribeObject` never set `kObjectResting` for a body with `scene::Held` and
+always use its current pose. `Server::AwakeBodies` and `AwakeSamples` skip held tracks. At the release the track
+gets `held` false and stays not resting, so the next `TrackBodies` samples it and later emits its `EntityRest`.
+
+**Client copies stay kinematic.** A client's copy of a server body is kinematic and moves only from samples
+(`MoveCopies`, `RemoteBodies`). A hold or a release changes only its layer, its pose and which samples it takes:
+- On `EntityHold` (or a spawn with `kObjectHeld`): `scene::Held` emplaced, `Layer::Held`, `Copy::held` true,
+  `Copy::resting` false, and `RemoteBodies::Restart(netId, hold.tick)`: drop every buffered sample and refuse every
+  sample of `hold.tick` or older (a variant of `Rest` that does not mark the copy resting). Without the drop, a copy
+  that moved before the pick-up keeps old samples that `MoveCopies` would interpolate after the release.
+- On `EntityRelease`: `scene::Held` removed, the copy teleported to the event's pose, `Copy::held` false,
+  `Copy::resting` false, the moving layer (`MovingLayer`, as `EntityWake` sets it), velocity zero, and
+  `RemoteBodies::Restart(netId, release.tick)`. From then the server's samples drive it, then its `EntityRest`.
+- `Dynamic`, `SetVelocity` and `Activate` are for the server and offline only (`EndHold`).
+
+**The holder's own client:**
+- On its E edge with a `Holdable` prompt target (not greyed `Occupied`), it predicts the pick-up at once: `Held` on
+  the copy, `Layer::Held`, posed every tick from the predicted state (`pending = {netId, input tick}`).
+- On E or LMB while it holds (pending or confirmed), it predicts the release: it stops posing, keeps the copy where it
+  was in `Layer::Held`, and waits for `EntityRelease`. **The hang is chosen:** the copy hangs for about one round
+  trip plus the body sample delay (est. 0.15-0.3 s on the owner's LAN) before it falls or flies. A local ballistic
+  picture was rejected: a copy is kinematic and sample-driven, so when the samples take over (drawn up to 200 ms in
+  the past) the picture would jump back by that much flight. The owner's check names the hang (open question 19).
+- **Confirmed** by `EntityHold` for this NetId with its own slot. **Refused** when a snapshot's owner block reports
+  `lastUseTick >= pending tick` and no such `EntityHold` was applied by its `lastOpSeq`: `Held` and `Layer::Held` go,
+  the copy returns to the server's state (its rest pose, or a moving copy that waits for samples) and the prompt
+  shows the `useResult`. A pending drop resolves on the `EntityRelease` of that NetId (any reason).
+- **While a pick-up is pending, the client holds back Use and Cast.** It latches each new edge (a press seen while
+  pending, even if the key is up again before the answer). On a confirmed pick-up the next input carries the latched
+  edges once (a drop or a throw, as the player meant). **On a refused pick-up the latched edges are discarded:** a
+  failed grab never fires a blast and never uses the door behind the crate; the player presses again on what the
+  prompt now shows.
+
+**Other clients** apply `EntityHold` at its opSeq (the copy changes as above) and pose the copy from the holder's
+remote record as the client draws that player (position, yaw, `holdPitch`, the latter from the nearer sample, not
+blended). A holder missing from the snapshot leaves the copy where it was. **An `EntityRelease` waits for the drawn
+holder:** the client keeps posing the copy from the drawn holder until the drawn time of that player reaches the
+release tick, at most `RemoteBodies::kMaxDelayTicks` (12) ticks, then applies the release. Without the wait the
+object would jump ahead of its holder by the interpolation delay (about 0.5 m at 5 m/s and 100 ms, est.), and a throw
+would leave before the drawn throw.
+
+**Wire** (inside [mech-1]'s bump 11 -> 12, no second bump; values in llm/README "Values planned across the packs":
+event kinds 38-40 are planned for [mag-2], so these take 41 and 42):
+
+| Value | Bytes | Layout (little endian) |
+|---|---|---|
+| Event `EntityHold` = 41 | 12 | kind u8, netId u32 (the held body), holder u8 (slot), relYaw u16, tick u32 (the server tick the hold starts) |
+| Event `EntityRelease` = 42 | 44 | kind u8, netId u32, tick u32, reason u8 (`HoldEnd` 1-6), position 3 x f32 (raw bits), rotation 4 x f32 (raw bits, as `EntityRest`), velocity 3 x i16 (1/256 m/s) |
+| `ObjectSpawn` flag `kObjectHeld` = 2 | +7 | after the object bytes when set: holder u8, relYaw u16, sinceTick u32 (baselines and `ModelRequest` answers only; a new piece is never held); never with `kObjectResting` |
+| `RemotePlayer::holdPitch` | +1 | i8, `HoldPitch` of the player's last input, always sent; `kSnapshotPlayerBytes` 17 -> 18 |
+| `HoldEnd` 1-6 | - | wire format; a decoder refuses 0 and values over 6, and `holdPitch` outside -64..64 |
+
+- The release's velocity travels for the server's statistics, the HUD and later use; a client copy does not take it
+  (it waits for samples).
+- The owner block gains nothing for holding: the pick-up's answer is card 8's `lastUseTick` / `useResult` (no new
+  `UseResult` value: `None` accepted, `NoTarget`, `Busy`, `Stale`).
+- **No body samples while held** (both sides pose it from the holder).
+- **Stale events:** `EntityHold` and `EntityRelease` (and `MechanismMove`) are in the client's per-NetId stale-event
+  filter: dropped when `seq <= copy.base` (a copy re-made by a `BaselineEntity` with `kObjectHeld`, or by a
+  `ModelRequest` answer, ignores holds and releases at or below its base), held while the copy may still come.
+- `EntityHold` and `EntityRelease` are entity events: charged to `entityCredit`, never refused or delayed (state,
+  not pictures), as `MechanismMove`.
+- **Checks:** `Copy::modelHash` and `EntityInfo::modelHash` (the drill's entity comparison) stay `VolumeHash` on both
+  sides. `HeldTerm(holder, relYaw, sinceTick)` is applied only where the `EntityCheck` model term and the
+  `EntityList` entries are built (the server's check builder and the client's matching code), from the confirmed
+  `scene::Held`: `VolumeHash ^ HeldTerm`. A predicted, unconfirmed hold is not in the term. A client that lost a hold
+  or a release sees a wrong model and sends `ModelRequest`; the `BaselineEntity` answer carries `kObjectHeld` and
+  re-makes the copy (7b's path, unchanged).
+- **The awake cap (argued):** a held body is **not** counted in `CountPieces` / `TakePieceSlot`'s 64 awake
+  replicated bodies, nor taken by `EvictionCandidate`. The cap exists for snapshot bytes and contacts; a held body
+  sends no sample and meets nothing, and there is at most one per player. **At the release** it counts as any awake
+  body, with no cap test: the awake count can exceed 64 by at most the player count (8 players: 8 more samples of
+  31 B in a snapshot, 248 B, est.), until those bodies rest. Accepted: evicting a resting body for a drop would
+  despawn something a player sees for an object the player chose to put down.
+- **Joiners:** the baseline's spawn of a held body carries `kObjectHeld`; the joiner poses it from the holder's
+  remote record.
+- **Despawn:** the server's `on_destroy<NetId>` observer ends the hold (the player's held entity is a cache checked
+  every tick against the `scene::Held` component, which is the truth); clients drop it with the copy.
+
+### The prompts
+
+`HudCanvas` under the crosshair, play mode only:
+- While holding, always: `[E] Drop   [LMB] Throw` (white). The LMB part tells the player that LMB no longer blasts.
+  While the holder's own pose is pinned (the client's `HeldPose::pinned`, its own computation), the line is amber: a
+  warning before the 30-tick drop.
+- `Holdable` target: `[E] Pick up`. `HeldByOther`: greyed `Held`. The body under the player's own feet: greyed
+  `Occupied`. Mechanisms: the existing prompts.
+- A refused pick-up shows its reason for 1 s (`Busy`, `Out of reach`), as a refused use.
+- An auto-drop of the player's own object shows a line for 1 s: `Dropped - blocked` (`Pinned`), `Dropped - hit`
+  (`Damaged`). `EntityRelease` carries the reason.
+
+### Budgets
+
+| Item | Budget | CPU (est.) | Network |
+|---|---|---|---|
+| Held objects | one per player | `StepHeld` 20-60 us per held body per tick (the thick clamp: 2-4k voxels at 0.1 m; the swept-box tests of near mechanisms); a client also poses remote holds per tick | 0 in snapshots; +1 B per remote record (`holdPitch`) |
+| Pick-up, release | at most one pick-up per 12 ticks per player | `FindUseTarget` with bodies: one `QueryBodies` over the ray's box (a scan over every body today, est. 10-40 us with 300 bodies) and one pick-up path sweep per holdable candidate (est. 20-40 us) | 12 B + 44 B per pair; a spammer 280 B/s, a normal player under 50 B/s, charged to the 12 kB/s entity budget |
+| Release fix-up | per release | one oriented-box voxel test (about 1.4k voxels for a crate at 0.1 m, est. 30 us), one `QueryBodies` and the player capsules; at most 10 when pressed against a wall (0.3 ms, est.) | - |
+| Release over the awake cap | at most one body per player | - | up to 8 x 31 B per snapshot until they rest (est.) |
+
+### Rope actions (designed now, built in [mech-2])
+
+- **E on a load rope's cleat releases the rope.** A load rope with the `Cleat` flag has a use box around its world
+  anchor (the anchor voxel grown by 2 voxels on every side, no desc bytes). It is a `Rope` candidate in the order
+  rule. The server answers it through the cut path: `RopeCut{ropeId, tick, fraction 0 (the anchor end), flags
+  Released}`; the constraint goes, the load falls, each client drops the strand whole with the load (a picture). A
+  cut or released rope is no target. The busy rule of mechanisms applies per rope (12 ticks); there is no reopen.
+  Prompt `[E] Release rope`; a rope with no cleat is not a target (its rope can only be cut).
+- **E on a climbable rope is "grab to climb".** It needs climb volumes ([mech-5]): a `StepPlayer` change with a
+  `kPlayerRuleRevision` bump and a `PlayerFlag` bit. Until then a climbable rope is not a use target and shows no
+  prompt.
+- [mech-1] reserves `UseTargetKind::Rope` = 4 and builds `FindUseTarget` as a list of candidate sources (step 2 of
+  the order rule), so [mech-2] adds its source and changes no order rule.
+
+### Failure cases
+
+| Case | What happens |
+|---|---|
+| Two players press E on one crate in one tick | The first in slot order gets it; the other's pick-up is refused `Busy` (`HeldByOther`), its prediction undone |
+| A client predicts a pick-up the server refuses, then presses E or LMB again before the answer | The latched edges are discarded with the refusal: no door use, no blast; the player presses again |
+| A player tries to pick up the crate it or another player stands on (or stood on in the last 30 ticks) | Refused `Busy`; the own client shows greyed `Occupied` and does not predict it |
+| A crate seen through an arrow slit, a murder hole or a gap under a door | Not a candidate (the pick-up path sweep); a held crate is clamped at the wall face and cannot be dropped through |
+| The holder walks into a wall | The clamp pulls the object in to `dMin`; the prompt turns amber; pinned for 30 ticks drops it between the holder and the wall, `Dropped - blocked` |
+| Holding a crate across a closed door | The door's block box (grown by `r`) clamps it on the near side; it cannot be dropped through |
+| A late E (up to 30 ticks) at a moving crate | The eye is the input tick's, the crate is where it is now: a miss is `NoTarget`, as for a late cast |
+| E or LMB pressed just after a server auto-drop the client has not seen | Consumed by the echo window: no use, no cast, no charge |
+| Use and Cast edges in one input while holding | One throw; both edges consumed |
+| The held body's rubble `Lifetime` ends, or it rises over the build ceiling | Despawned: the hold ends on every side with the despawn |
+| A closing door's leaf passes a held crate | Not crushed (held bodies are skipped); dropped in the path, it is crushed as any body |
+| A blast's sphere meets the held body's model box | Released (`Damaged`) first, then damaged and pushed as any dynamic body |
+| A blast whose sphere box meets the held body's bounds but whose sphere misses its model box, or a push without damage | It stays held |
+| The holder dies or leaves | `HolderDead` / `HolderGone`: it falls where it was |
+| A client loses `EntityHold` or `EntityRelease` | Impossible on the reliable stream; a mismatch from a bug is found by the entity list (`HeldTerm`) and repaired by `ModelRequest` |
+| A drop onto a resting stack or onto a player | The fix-up steps the pose back until it meets no resting body and no capsule; none clear: Jolt's penetration recovery, as before |
+| The object is released overlapping the holder (no clear pose) | In a session it is Rubble while it falls (no character meets it); at rest it is Dynamic, as any body that lands on a player today |
+| A held object near the play bounds | Its centre is clamped into the play area: it cannot be dropped past the bounds (a throw still can) |
+| Many holders drop at once at the awake cap | The awake count exceeds 64 by at most the player count until they rest (argued above) |
+
+### Tests of the use key
+
+GPU-free (VortexSimTests, suite `Hold`; [mech-1] card 4):
+- `Hold.CrateIsHoldableBigThingsAreNot` (the crate at 0.1, 0.125 and 0.15 m; a 1.3 m box, a 0.9 m solid stone cube,
+  a 20-voxel piece at 0.1 m, a mechanism, a kinematic body, a held body: not; `replicatedOnly` refuses a body with no
+  NetId; the shape test passes a kinematic copy that the owner test refuses).
+- `Hold.NearestTargetWins` (a crate in front of a lever, then behind it; an exact tie goes to the mechanism).
+- `Hold.ClosedDoorHidesACrateBehindIt` (closed: the door; open: the crate).
+- `Hold.HeldByAnotherIsBusy` (kind `HeldByOther`; the door behind it is not the target).
+- `Hold.CannotPassASlit` (a wall with a 0.2 m slit, a crate behind it: not a candidate; a held crate looking through
+  the slit is clamped at the wall face).
+- `Hold.CannotPickUpWhatAPlayerStandsOn` (`BeginHold` with the body under a player: `Busy`).
+- `Hold.PoseFollowsTheHolder` (exact centre and yaw; the anchor 0.5 m below the eye; the pitch clamp at 45 deg).
+- `Hold.WallClampsTheDistance` (terrain and a closed door's block box; pinned below `dMin`).
+- `Hold.PlayAreaClampsTheHold` (a bounded play area: the centre stays inside).
+- `Hold.HeldBodyMeetsNothing` (a held crate posed through a resting crate and a walking player moves neither; a
+  default-mask raycast through it misses it).
+- `Hold.DropKeepsPoseAndHolderVelocity`, `Hold.ThrowAddsSixAlongTheLook`, `Hold.ReleaseStepsOutOfAWall`,
+  `Hold.ReleaseAvoidsBodiesAndPlayers`.
+- `Hold.PinnedForThirtyTicksDrops`, `Hold.BusyAfterAChange`, `Hold.DamageReleasesFirst`,
+  `Hold.PushDoesNotReleaseOrMove`, `Hold.CrushSkipsAHeldBody`.
+- `Hold.TwoSimulationsAgree` (the same inputs give the same poses and releases bit for bit).
+
+VortexNetTests ([mech-1] cards 8-10): `Mechanisms.WireSizes` (hold 12 B, release 44 B, held spawn +7 B, remote
+record +1 B, refusals), `Hold.ServerPicksUpAndDrops` (no samples while held; the track not resting; release,
+samples, rest), `Hold.ThrowRunsNoCast`, `Hold.HolderDeathDrops`, `Hold.HolderLeavingDrops`, `Hold.NotCountedAsAwake`,
+`Hold.NoOneLosesTheirFloor`, `Hold.AutoDropEchoIsConsumed`, `Hold.PredictedPickupIsConfirmed`,
+`Hold.RefusedPickupIsUndone`, `Hold.RemoteHolderPosesTheObject`, `Hold.LateJoinerSeesTheHold`,
+`Hold.EntityCheckCoversTheHold`. `Movement.NoCorrectionAbove2cmOnFlatGround` stays at 0.
+
+Headless ([mech-1] cards 6 and 11): `--hold-script` (offline: pick up a crate, walk 5 m, drop it, pick it up, throw
+it; logs `Hold: picked up at tick N`, `dropped at (x, y, z)` (the model box's centre), `thrown at v m/s`), and
+`vortex_server ... --bot-hold P` (bots pick up, carry, drop and throw crates: `Hold: bot N: P pickups, D drops, T
+throws, R refused`, `hashes equal`, `agree`). Windowed (the owner's): E picks up a crate, it follows the view below
+the crosshair, E drops it, LMB throws it, and the crate hangs about one ping before it falls.
+
+### Decisions refined
+
+1. **Holdable by volume, not by mass (80 kg).** The crate's physics mass is about 750 kg at 0.1 m voxels, 965 kg at
+   0.125 m and 1270 kg at 0.15 m (its iron edges: 80 of 296 voxels at 7800 kg/m^3), so an 80 kg rule would exclude
+   the main holdable. A solid-volume rule (`<= 0.6 m^3`, est.) is integer, the same for every voxel size within 10 %,
+   and still excludes a solid stone cube. A material-weighted rule is left for play tests (open question 16).
+2. **Auto-drop when pinned, not when "0.5 m short".** "0.5 m short of the hold point" fires for a crate at any wall
+   near the end of its reach (a corridor end) while the object is still clear of it, and for a small object it fires
+   at another distance. "Pinned" fires only when the object would have to enter the wall. Same 30 ticks.
+3. **A held body occludes and answers `Busy`** (the order rule): it removes the surprise door use after a refused
+   prediction.
+4. **Not counted in the awake cap** (argued in "Prediction and replication"); a release may exceed it by one body
+   per player.
+5. **Hold pitch clamped to 45 deg and sent as one byte per remote record**, so other clients pose a held object at
+   the holder's height without the full pitch; the hold pose uses the same byte on every side.
+6. **A thick clamp, not the decision's one ray** ("terrain clamping keeps it out of walls" needs it: a thin ray
+   passes slits and holes), and a pick-up path test.
+7. **The hold point at chest height** (`kHoldDrop` 0.5 m below the eye), not on the crosshair.
+8. **Not a player's floor:** a pick-up of a body a player stood on in the last 30 ticks is refused.
+9. **The hold centre stays in the play area**, so a drop cannot remove an object from the round.
+10. **"Damaged" means the blast's sphere meets the posed model box** (an oriented box test), not only the sphere's
+    AABB: a corner overlap of the boxes alone does not release.
+11. **Edges in the echo of an auto-drop are consumed**, and a Use and a Cast edge in one input while holding are one
+    throw.
+12. **The minimum size is `SceneConfig::debrisBodyVoxels`**, not the constant 25 (that integer is 25 only at
+    0.125 m).
 
 ## Mechanisms
 
@@ -358,7 +813,8 @@ are not allowed: one hop keeps "what moves when I pull this" obvious and the wor
   `Scene::Destroy` with fragments presented as for a blast. A crate cannot prop a gate open: fewer bugs, and the rule
   is readable. Bodies merely in the swing path are pushed by the kinematic leaf as today (`Rubble` meets Dynamic and
   Rubble). Test: `Mechanism.ClosingGateCrushesACrateInsteadOfLaunchingIt` (the crate's speed never exceeds the
-  gate's; it is gone at arrival).
+  gate's; it is gone at arrival). A body a player holds is skipped (a ghost; "One use key: E", "Drop, throw and
+  auto-drop"); dropped in the path it is crushed as any body.
 
 ### The one movement rule grows by one call
 
@@ -765,6 +1221,7 @@ GPU-free first (VortexSimTests unless noted), each written to fail against a stu
   still sends its `ObjectModel`), `Mechanisms.WinchToggleSpamMakesAtMostOneSegmentPerBusyPeriod` (stage 3),
   `Use.RefusalReachesTheUser`; `Movement.NoCorrectionAbove2cmOnFlatGround` and `Entities.OneScriptGivesTheSameBodiesTwice`
   stay as they are.
+- Holding (suite `Hold`, sim and net) and its headless runs: "One use key: E", "Tests of the use key".
 
 Headless (the owner sees these as screenshots and log lines):
 - `./build/Shredborne --headless --validation --frames 300 --mechanism-script --camera yard --screenshot yard.png`
@@ -793,14 +1250,14 @@ Stage 1 starts after the fight measurement (ROADMAP order), so after M2a's proto
 
 | Stage | Content | Acceptance | Est. |
 |---|---|---|---|
-| **1. Door and gate** (the smallest fun slice). M-a offline, M-b session | M-a: `scene::Mechanism` (with `modelOffset`), `sim` segment (`durationTicks`, two `uint32` ease tables) / pose / layer rule (ghost and rising) / `FindUseTarget` (occluders, info targets, authoring rule) / `ApplyUse` (closing wins, lead argument) / `PoseMechanisms` / `StepMechanisms` (crush) / arrival push-out; kinds Door, Portcullis, Lever; the damage rule (aimed hits, 0.3 m, hardness, no terrain carve, hinged part kept, Warded) and freed / broken; `PlayerButton_Use`, crate on Q (every file in the list above); HUD prompt, info lines, lever throw and lead cue; the yard in the default offline game (`--no-mechanisms`; scripts' numbers confirmed or re-recorded). M-b: `EntityKind::Mechanism`, `MechanismMove`, owner block, `PlayerUse` on both paths, the per-use lead, the client `mechanisms` map, server resting tracks, the entity-budget rule, baseline with segments, EntityCheck / EntityList term, the yard in `playground.session`, `--bot-use` | All stage-1 tests; the yard headless run and `--mechanism-blast` exit 0 with their lines (hits to free each door recorded) and a screenshot with the door open and the gate up; the default game run's three lines; the lossless and lossy drills as above; `tools/session-check.sh` still PASS; the owner's checklist in `game-ui.md` gains "E opens the yard door, the lever runs the gate, Q drops a crate" (windowed: the owner's) | 9-10 days (M-a 5, M-b 4-5) |
-| **2. Ropes** | Constraint wrapper; load ropes (a cage and a chandelier in the yard); `EntityKind::Rope`, `RopeCut` by ray, by sphere, by anchor and by despawn; the portcullis chain drawn, and **its cut drops and jams the gate**; `GatherRopes` instances and the link models (a `rope` material: `MaterialTableHash` and `buildHash` change); cut halves; `--rope-stress`. **Last, cut first if the stage overruns:** decorative strands with wind and sleep (`fx::RopeStrand`, the 24-strand cap) | Rope tests; `--rope-script` exits 0; rope GPU and BVH cost measured at `--rope-stress 26` with and without `--no-ropes` and within budget; the drill with `--bot-casts` cutting ropes ends `hashes equal` and `agree` | 6-7 days |
+| **1. Door and gate** (the smallest fun slice). M-a offline, M-b session | M-a: `scene::Mechanism` (with `modelOffset`), `sim` segment (`durationTicks`, two `uint32` ease tables) / pose / layer rule (ghost and rising) / `FindUseTarget` (occluders, info targets, authoring rule) / `ApplyUse` (closing wins, lead argument) / `PoseMechanisms` / `StepMechanisms` (crush) / arrival push-out; kinds Door, Portcullis, Lever; the damage rule (aimed hits, 0.3 m, hardness, no terrain carve, hinged part kept, Warded) and freed / broken; `PlayerButton_Use`, crate on Q (every file in the list above); HUD prompt, info lines, lever throw and lead cue; the yard in the default offline game (`--no-mechanisms`; scripts' numbers confirmed or re-recorded); **holding** ("One use key: E", added 2026-11-24): the order rule over kinds, `IsHoldable`, the hold pose and clamp, `Layer::Held`, drop / throw / auto-drop, the prompts, `--hold-script`. M-b: `EntityKind::Mechanism`, `MechanismMove`, owner block, `PlayerUse` on both paths, the per-use lead, the client `mechanisms` map, server resting tracks, the entity-budget rule, baseline with segments, EntityCheck / EntityList term, the yard in `playground.session`, `--bot-use`; for holding `EntityHold`, `EntityRelease`, `kObjectHeld`, `holdPitch`, the client's predicted pick-up, `HeldTerm`, `--bot-hold` | All stage-1 tests; the yard headless run and `--mechanism-blast` exit 0 with their lines (hits to free each door recorded) and a screenshot with the door open and the gate up; the default game run's three lines; the lossless and lossy drills as above; `tools/session-check.sh` still PASS; the owner's checklist in `game-ui.md` gains "E opens the yard door, the lever runs the gate, Q drops a crate; E picks up a crate, E drops it, LMB throws it" (windowed: the owner's); `--hold-script` and the `--bot-hold` drill with their lines | 12-13 days (M-a 7, M-b 5-6; holding adds about 3 days, est.) |
+| **2. Ropes** | Constraint wrapper; load ropes (a cage and a chandelier in the yard); `EntityKind::Rope`, `RopeCut` by ray, by sphere, by anchor and by despawn; the portcullis chain drawn, and **its cut drops and jams the gate**; `GatherRopes` instances and the link models (a `rope` material: `MaterialTableHash` and `buildHash` change); cut halves; `--rope-stress`; **E on a load rope's cleat releases it** (the `Rope` use-target source, `RopeCut` with `Released`, prompt `[E] Release rope`; "One use key: E", "Rope actions"). **Last, cut first if the stage overruns:** decorative strands with wind and sleep (`fx::RopeStrand`, the 24-strand cap) | Rope tests; `--rope-script` exits 0; rope GPU and BVH cost measured at `--rope-stress 26` with and without `--no-ropes` and within budget; the drill with `--bot-casts` cutting ropes ends `hashes equal` and `agree` | 6-7 days |
 | **3. Siege kit** | Winch (hold, crew once per 12 ticks, release hysteresis, HUD ring), drawbridge (riders fall when it rises after the lead cue), both drawbridge chains cut drop it, Button, auto-return sally door, `Locked` from the session file; gate-under-fire bytes measured | Tests; a yard gatehouse drill with bots holding the winch, cutting chains and shooting the gate: `modelsToRubble` counts no mechanism, event bytes per hit recorded | 4-5 days |
 | **4. Placement** | The watch tower door in the default playground (tower / neck scripts re-measured and their CLAUDE.md numbers updated); worldgen W3 gatehouse kit sockets and keep loads from plan indices | Default runs unchanged except the recorded numbers; a generated fort with working gates in a session | 3 days + W3 |
-| **5. Later (after M2)** | Climb volumes for ropes and ladders; team locks (`ownerTeam`); crush damage to players; warding release; a player rope tool if still wanted | Decided then | - |
+| **5. Later (after M2)** | Climb volumes for ropes and ladders, with **E on a climbable rope = grab to climb** (a `StepPlayer` change: `kPlayerRuleRevision` bump); a drag action for beams, planks and ladders; team locks (`ownerTeam`); crush damage to players; warding release; a player rope tool if still wanted | Decided then | - |
 
-Total for stages 1-4 without W3: est. 22-25 days (the first version said 19-21; the review's rules cost about 3-4
-days, mostly in stage 1).
+Total for stages 1-4 without W3: est. 25-28 days (the first version said 19-21; the review's rules cost about 3-4
+days, mostly in stage 1; holding, added 2026-11-24, about 3 more).
 
 ## Coordination with other work
 
@@ -846,6 +1303,15 @@ days, mostly in stage 1).
 | Staged damage models for big gates | New data and code before the carve path is measured; carving is what players expect from this game |
 | Pristine mechanisms derived from a plan on clients (0 join bytes) | Needs the generator's plans on clients; the baseline is cheap enough for template counts. Revisit with W3 |
 | A player rope tool in the first stages | See "A player rope tool": movement contract, griefing before teams, unproven fun |
+| Holding by physics (a spring or a constraint that pulls the body to the hold point) | The character would push the body and the body the character: in a session that breaks "characters move no bodies", and Jolt is not deterministic across machines, so the holder would be corrected. Posing is exact on every side and meets nothing |
+| A held object that stays solid (a shield, a step) | Every client would need the holder's exact pose at the predicted tick; a solid held crate carries its holder upwards (carry-flying) and rams players. A ghost has none of these |
+| A weight slowdown while holding | A change to `StepPlayer` and a `kPlayerRuleRevision` bump for a small gain |
+| Holdable by mass (80 kg) | Voxel physics masses: the crate is 750-1270 kg by its iron edges ("Decisions refined" 1) |
+| A throw as a refused cast (`CastRejection`) | It is not a refusal; it would show "Cast not run", and [mag-2] plans `CastRejection` 6-10 |
+| E as "use, else drop the crate" (context) | Still rejected: Q keeps the crate. Holding is a target kind, not a fallback |
+| A one-ray hold clamp (the decision as first written) | It passes arrow slits, murder holes and blasted holes narrower than the object: crates go through walls. The thick clamp and the pick-up path test cost about 20-60 us more per held object (est.) |
+| A client copy made Dynamic on release | Client copies are kinematic and sample-driven; a simulated copy would differ from the server's body and fight `MoveCopies` |
+| Evict a resting body when a release exceeds the awake cap | It despawns something a player sees for an object a player chose to put down; the overshoot is at most one body per player |
 
 ## Open questions (each with the recommended answer)
 
@@ -875,3 +1341,18 @@ days, mostly in stage 1).
     change).
 15. **Rewind casts at moving mechanisms for queued casts?** -> No (see "Review", rejected in part); reconsider if
     play shows shots through a closing door that the shooter saw closed.
+16. **Holdable by solid volume only, or weighted by material?** -> Volume (0.6 m^3, est.) in [mech-1]: the crate's
+    voxel mass is not a game weight. If play tests want iron things too heavy to lift, a rule on `sum(density)` with
+    a cap tuned to the crate comes later (no wire change: the rule is the same function on every side).
+17. **Hold distance 1.5 m, hold drop 0.5 m below the eye, throw speed 6 m/s, pitch clamp 45 deg?** -> Start there;
+    the owner's windowed check tunes them (none is wire format; `kThrowSpeed` and the clamp change only the server's numbers and the client's
+    prediction, which follows the same constants in one build).
+18. **Should a thrown or dropped object deal damage?** -> Not in [mech-1]. With [si-2]'s impacts, as for any falling
+    body; never a special rule for held objects.
+19. **The hang of a predicted drop or throw (about one ping plus the body delay): keep it?** -> Keep it in [mech-1]
+    and name it in the owner's check. If the owner finds throws laggy, the next step is a holder-side picture that
+    keeps the copy in `Layer::Held` on a ballistic path and blends into the samples over 100 ms (no wire change).
+20. **Should a session cast stop on a held object?** -> No in [mech-1]: every cast passes through it on every side,
+    and the chest-height hold point keeps the holder's head visible. If play shows held crates read as cover, the
+    session cast mask gains `Layer::Held`, so a shot at a held crate explodes on it and releases it (`Damaged`): no
+    wire change, but the server's pose of the crate lags the shooter's view as for any moving body.

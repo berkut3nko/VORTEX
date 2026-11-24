@@ -34,7 +34,7 @@ Rules every document follows:
 | [design/lod.md](design/lod.md) | plan (distance budgets, terrain LOD levels) | designed | code read at `ec073a8` | 17 |
 | [design/fx-budget.md](design/fx-budget.md) | plan (effects in fights) | designed | code read at `ec073a8` | 17 |
 | [design/fog.md](design/fog.md) | decision + plan (volumetric fog) | designed | code read at `71dc23e` | 52 |
-| [design/mechanisms.md](design/mechanisms.md) | decision + plan (use key, doors, gates, ropes) | designed | code read on 2026-11-17 (committed as `e21a84d`) | 83 |
+| [design/mechanisms.md](design/mechanisms.md) | decision + plan (use key, doors, gates, held objects, ropes) | designed | code read on 2026-11-17 (committed as `e21a84d`) | 126 |
 | [design/spread.md](design/spread.md) | decision + plan (lockstep fire and liquid, no randomness) | designed | code read at `e21a84d` | 73 |
 | [design/worldgen.md](design/worldgen.md) | decision + plan (regions built from structures) | designed | code read on 2026-11-17 (committed as `c970f16`) | 74 |
 | [design/rendezvous.md](design/rendezvous.md) | decision + plan (internet sessions without a public IP: STUN, UDP hole punching, Cloudflare D1) | designed | code read at `a23af7a` (committed as `84ac7e7`) | 36 |
