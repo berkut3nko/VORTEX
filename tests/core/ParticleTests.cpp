@@ -660,7 +660,9 @@ TEST(Particles, AdditiveSoftDiscAndUnlitFlagsReachTheGpuData) {
     ASSERT_TRUE(ps.Emit(bright));
     ASSERT_TRUE(ps.Emit(plain));
 
-    const std::vector<GpuParticle> data = Render(ps);   // farthest first: plain, bright, additive
+    // Blended particles sorted far to near, then additive ones in pool order ([wp-8] Decision 9):
+    // plain, then additive (emitted first), then bright.
+    const std::vector<GpuParticle> data = Render(ps);
     ASSERT_EQ(data.size(), 3u);
 
     EXPECT_FLOAT_EQ(data[0].color.a, 1.0f);
@@ -669,15 +671,15 @@ TEST(Particles, AdditiveSoftDiscAndUnlitFlagsReachTheGpuData) {
     EXPECT_FLOAT_EQ(data[0].params.z, 0.0f);
 
     EXPECT_FLOAT_EQ(data[1].color.a, 0.0f);
-    EXPECT_FLOAT_EQ(data[1].params.x, 7.5f);
-    EXPECT_FLOAT_EQ(data[1].params.y, 1.0f);
-    EXPECT_FLOAT_EQ(data[1].params.z, 1.0f);
+    EXPECT_GE(data[1].params.x, 1.0f);       // additive particles always emit
+    EXPECT_FLOAT_EQ(data[1].color.r, 1.0f);
+    EXPECT_FLOAT_EQ(data[1].color.g, 0.5f);
+    EXPECT_FLOAT_EQ(data[1].color.b, 0.25f);
 
     EXPECT_FLOAT_EQ(data[2].color.a, 0.0f);
-    EXPECT_GE(data[2].params.x, 1.0f);       // additive particles always emit
-    EXPECT_FLOAT_EQ(data[2].color.r, 1.0f);
-    EXPECT_FLOAT_EQ(data[2].color.g, 0.5f);
-    EXPECT_FLOAT_EQ(data[2].color.b, 0.25f);
+    EXPECT_FLOAT_EQ(data[2].params.x, 7.5f);
+    EXPECT_FLOAT_EQ(data[2].params.y, 1.0f);
+    EXPECT_FLOAT_EQ(data[2].params.z, 1.0f);
     for (const GpuParticle& g : data) EXPECT_FLOAT_EQ(g.params.w, 0.0f);
 }
 

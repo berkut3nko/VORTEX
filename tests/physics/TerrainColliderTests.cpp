@@ -418,7 +418,7 @@ TEST(TerrainColliders, CharacterWalksAndClimbsSmallStep) {
     EXPECT_NEAR(state.position.y, f.ground, 0.03f);
 }
 
-// [wp-8] (fx-budget.md "Collider starvation"): a chunk edited every frame still gets colliders
+// [wp-8] (fx-budget.md "Where one blast costs time today (verified in code)", its "Collider starvation" item): a chunk edited every frame still gets colliders
 // (the newest cook result wins), and what rests on it stays on it.
 TEST(TerrainColliders, AChunkEditedEveryFrameGetsACollider) {
     Fixture f;                                    // ground at voxel 40 (y = 20 m), chunks are 16 m
