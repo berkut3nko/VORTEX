@@ -70,7 +70,7 @@ TEST(RunStats, PerfLineNamesEveryPassInOrder) {
 }
 
 // [wp-8]: the `Fx:` exit line names every blast and particle phase once, in its order.
-TEST(RunStats, DISABLED_FxLineNamesEveryPhase) {
+TEST(RunStats, FxLineNamesEveryPhase) {
     FxSummary fx;
     fx.blasts = 2;
     for (RunStats* r : {&fx.carve, &fx.search, &fx.neck, &fx.ops, &fx.objects, &fx.present, &fx.particlesUpdate,

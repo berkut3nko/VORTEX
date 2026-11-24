@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Status | Designed, nothing built or measured for it (no `FxDirector`, no `--stress-fx`). Some defects it lists were fixed by other work: rubble lifetimes by size and caps (shred.md stage 1e: `scene::SceneConfig` `debrisLifetime`, `rubbleMediumLifetime`, `rubbleLargeLifetime`, `maxDebris`, `maxRubbleBodies`), crumbs as particles instead of entities (`scene::MinPieceVoxels`, 8 voxels at 0.125 m), the island search on cached cell graphs (shred.md stage 4). |
+| Status | Stage 1's tools are built, not yet measured ([wp-8]): the game's `--stress-fx N`, the run-wide `Fx:` exit line (`vortex::FxSummary`: per-blast phase times, particle update and build per frame) and the `FxStress:` idle / fight lines (docs/verify.md). No `FxDirector`. Some defects it lists were fixed by other work: rubble lifetimes by size and caps (shred.md stage 1e: `scene::SceneConfig` `debrisLifetime`, `rubbleMediumLifetime`, `rubbleLargeLifetime`, `maxDebris`, `maxRubbleBodies`), crumbs as particles instead of entities (`scene::MinPieceVoxels`, 8 voxels at 0.125 m), the island search on cached cell graphs (shred.md stage 4). |
 | Decided | - Us (this design, 2026-11-10): a cast splits into a simulation half (queued, coalesced, bounded, never dropped) and a presentation half (same frame, scaled or dropped, never delayed); effect lights leave the ray-traced pass; particle pool 8192 with LOD and a load factor ("Decision").<br>- Us, in the project review of 2026-11-17 (section 6.2; the owner may veto): the fx caps are ours to set; stages 1-2 come with the fight measurement (review WP8). |
 | Next | [fx-1] measurement and [fx-2] cheap wins, in ROADMAP "Next" [wp-8] "fight measurement + fx-budget 1-2 + 10 clients". |
 | Open | The questions in "Open questions for the game" (unanswered; settled by the recommended reading when the stage starts). |
@@ -178,6 +178,9 @@ exceeds 40% of the overdraw budget. Designers set counts and caps, never budgets
    collider scan; `--stress-fx N` (N blasts in one frame, then 3 per second for 10 s); log
    "particles", "lighting", "composite" pass times. *Verify:* headless run prints the table;
    numbers replace the estimates above and fix the order of stage 2 items.
+   *As built ([wp-8]):* per-call wall-clock timers instead of `ProfileScope` (its samples are summed
+   per frame); the per-blast times come from `sim::BlastTimes`, and the `Fx:` exit line and the two
+   `FxStress:` lines (idle and fight CPU frame and GPU sum) report them (docs/verify.md). Not yet run.
 2. **Cheap wins, no new system.** Effect lights in composite with merge and axis clip; debris
    sample 400 -> 96; island margin 12, early-out, minimum island size; alpha-only sort; flat
    varying; pool 8192; `Lifetime` on pieces and islands; collider `installedGeneration` fix.

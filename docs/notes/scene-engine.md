@@ -42,8 +42,9 @@ measurements, is `docs/history/notes/scene-engine-2026-11-18.md`.
   (5 callbacks), `Engine` accessors (shortcuts into its `Simulation()`), `Tick`, `TerrainReady`, `StepAlpha`,
   `Explode`, `PresentBlast`, `SetTickSource`, `Hud`, `SetImGuiInput`.
 - `src/engine/internal/Engine.cpp` - `ApplyCommandLine`, `Impl` (config, input, the simulation, then the graphics
-  objects), `Initialize`, `Explode` (= `PresentBlast(sim::Blast(...))`), `PresentBlast` (the `Blast:` line), `Run`
-  (the only frame loop), exit statistics, exit code.
+  objects), `Initialize`, `Explode` (= `PresentBlast(sim::Blast(...))`), `PresentBlast` (the `Blast:` line when
+  `SetBlastLog` is on; every blast feeds `FxSummary`), `Run` (the only frame loop; particle update and build times,
+  `LastFrameTimes`), exit statistics (`Perf:`, `Fx:`), exit code.
 - `src/engine/internal/Gather.cpp` - the two gather functions; they read `Scene::Registry()` only.
 - Libraries: `scene` + `sim` are `VortexSim` (Core + Physics + EnTT, no GPU); `engine` + `editor` are `VortexEngine`.
 - `tests/sim/BlastTests.cpp` - suites `WorldOps` and `Blast` (incl. the two-simulation hash acceptance); helpers
@@ -389,7 +390,9 @@ Engine and blasts
   applied; it doubles the search cost and must stay off in the game.
 - `SimulationConfig::sessionServer` (set by `ServerConfig` only) turns the flood's "chunk not loaded" from a deferral
   into an error: counted in `IslandSearchStats::attachedByUnloaded`, `Log::Error`, the piece stays.
-- `Engine::PresentBlast` logs one `Blast:` line per blast (`Blast (late search):` for a retry result): ms per phase
+- `Engine::PresentBlast` adds every blast (late searches included) to the run-wide `FxSummary` (the `Fx:` exit line,
+  [wp-8]) and, only when `Engine::SetBlastLog(true)` (default off; the game sets it for offline headless runs and
+  `--blast-log`), logs one `Blast:` line per blast (`Blast (late search):` for a retry result): ms per phase
   (`BlastTimes` from `sim::Blast` plus its own present time), flood and graph counters, deferral, skipped chunks,
   edited chunks + rubble slots and the bytes they upload (36 936 B each), and the rubble counts (`rubble S small,
   B/48 bodies, N/600 slots`, + crumbled pieces of that blast). Times are wall clock and logged only;

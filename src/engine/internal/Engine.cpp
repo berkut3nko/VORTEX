@@ -144,6 +144,7 @@ namespace vortex {
         // Run-wide effect statistics for the `Fx:` exit line ([wp-8]).
         FxSummary fx;
         bool blastLog = false;   // Engine::SetBlastLog
+        Engine::FrameTimes lastFrameTimes;   // Engine::LastFrameTimes
         uint64_t lastTimingSerial = 0;
         // The GPU clock, read every 60 frames (perf.md M0: an integrated GPU's clock explains its timings).
         std::filesystem::path gpuClockFile;
@@ -227,6 +228,16 @@ namespace vortex {
         const sim::BlastTimes& t = blast.times;
         const sim::IslandSearchStats& q = blast.search;
         const uint32_t carved = (!blast.ops.empty() && blast.ops[0].op.kind == sim::WorldOpKind::CarveSphere) ? blast.ops[0].result.changed : 0u;
+        // Every presented blast feeds the `Fx:` line, late searches included: the frame pays for them too.
+        FxSummary& fx = m_Impl->fx;
+        ++fx.blasts;
+        fx.carve.Add(t.carveMs);
+        fx.search.Add(t.searchMs);
+        fx.neck.Add(t.neckMs);
+        fx.ops.Add(t.opsMs);
+        fx.objects.Add(t.objectsMs);
+        fx.present.Add(presentMs);
+        if (!m_Impl->blastLog) return;
         if (blast.deferred && blast.ops.empty() && blast.deferredGivenUp == 0) return;
         // The island search: the cell graph (shred.md stage 4, the default) or the stage-1 voxel search.
         const std::string search =
@@ -391,7 +402,9 @@ namespace vortex {
             }
 
             app.OnUpdate(*this, dt);
+            const double particlesStart = NowSeconds();
             sim.Particles().Update(dt, [&world = sim.World()](const glm::dvec3& p) { return world.IsSolidAt(p); });
+            s.fx.particlesUpdate.Add((NowSeconds() - particlesStart) * 1000.0);
             app.OnGui(*this);
             s.ui.EndFrame();
 
@@ -400,7 +413,11 @@ namespace vortex {
             GatherInstances(sim.Scene(), s.instances);
             s.lights.clear();
             GatherLights(sim.Scene(), s.lights);
+            const double buildStart = NowSeconds();
             sim.Particles().BuildRenderData(sim.World().WindowOrigin(), camera.position, s.gpuParticles);
+            s.fx.particlesBuild.Add((NowSeconds() - buildStart) * 1000.0);
+            s.fx.particlesMax = std::max(s.fx.particlesMax, sim.Particles().AliveCount());
+            s.fx.particlesCapacity = sim.Particles().Capacity();
 
             graphics::FrameInput in;
             in.camera = camera;
@@ -431,9 +448,13 @@ namespace vortex {
                 const graphics::RenderStats& rs = s.renderer.Stats();
                 s.perf.fenceWait.Add(rs.fenceWaitMs);
                 // The pass times of a frame slot arrive once (two frames later): count each reading once.
+                s.lastFrameTimes.gpuSumMs = 0.0;
                 if (rs.timingSerial != s.lastTimingSerial) {
                     s.lastTimingSerial = rs.timingSerial;
-                    for (const graphics::PassTiming& p : rs.passes) s.perf.GpuPass(p.name).Add(p.milliseconds);
+                    for (const graphics::PassTiming& p : rs.passes) {
+                        s.perf.GpuPass(p.name).Add(p.milliseconds);
+                        if (p.name != "upload") s.lastFrameTimes.gpuSumMs += p.milliseconds;
+                    }
                 }
             }
 
@@ -451,7 +472,8 @@ namespace vortex {
             }
 
             Profiler::EndFrame();
-            s.perf.cpuFrame.Add((NowSeconds() - frameStart) * 1000.0);
+            s.lastFrameTimes.cpuFrameMs = (NowSeconds() - frameStart) * 1000.0;
+            s.perf.cpuFrame.Add(s.lastFrameTimes.cpuFrameMs);
             if (lastFrame) break;
         }
 
@@ -512,6 +534,7 @@ namespace vortex {
         }
         // Every run, windowed included, leaves its numbers (docs/verify.md "Game (offline, headless)", the `Perf:` line).
         Log::Info("{}", FormatPerfLine(s.perf, s.renderer.PresentModeLabel()));
+        if (s.fx.blasts > 0) Log::Info("{}", FormatFxLine(s.fx));
         if (s.gpuClock.Count() > 0) {
             const std::optional<long> maxMhz = ReadInteger(s.gpuClockFile.parent_path() / "gt_max_freq_mhz");
             Log::Info("GPU clock: {} samples, p50 {:.0f} MHz, min {:.0f}, max {:.0f}{}", s.gpuClock.Count(), s.gpuClock.Percentile(50),
@@ -574,7 +597,8 @@ namespace vortex {
     }
     scene::Scene& Engine::Scene() { return m_Impl->sim.Scene(); }
 
-    void Engine::SetBlastLog(bool on) { m_Impl->blastLog = on; }   // [wp-8] card 2 fills this (the Blast: line gate)
+    void Engine::SetBlastLog(bool on) { m_Impl->blastLog = on; }
+    Engine::FrameTimes Engine::LastFrameTimes() const { return m_Impl->lastFrameTimes; }
     const FxSummary& Engine::Fx() const { return m_Impl->fx; }
     void Engine::AddSkippedBlast() { ++m_Impl->fx.skipped; }
 

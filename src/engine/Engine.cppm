@@ -234,6 +234,16 @@ export namespace vortex {
         /// @brief For --stress-fx: blasts skipped by the script, added to the `Fx:` line.
         void AddSkippedBlast();
 
+        /// @brief What the last finished pass of the frame loop cost ([wp-8]: the `FxStress:` lines).
+        struct FrameTimes {
+            double cpuFrameMs = 0.0;   ///< Wall time of the frame loop's pass (the `Perf:` line's CPU frame sample).
+            /// Sum of the GPU pass times that arrived in this frame, "upload" excluded (as the `Perf:` line's GPU
+            /// sum); 0 when no reading arrived (a frame slot's times arrive once, frames later).
+            double gpuSumMs = 0.0;
+        };
+        /// @brief The times of the last finished frame; all 0 before the first frame ends.
+        FrameTimes LastFrameTimes() const;
+
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;

@@ -80,9 +80,19 @@ namespace vortex {
                            upload != nullptr ? upload->Percentile(50) : 0.0, presentMode);
     }
 
+    namespace {
+        /// `p50 a p99 b max c ms` of one per-blast phase of the `Fx:` line.
+        std::string BlastPhase(const RunStats& r) {
+            return std::format("p50 {:.2f} p99 {:.2f} max {:.2f} ms", r.Percentile(50), r.Percentile(99), r.Max());
+        }
+    }
+
     std::string FormatFxLine(const FxSummary& fx) {
-        // [wp-8] card 2 fills this
-        (void) fx;
-        return "Fx: 0 blasts";
+        return std::format("Fx: {} blasts ({} skipped); carve {}, search {}, neck {}, ops {}, objects {}, present {}; particles update p50 {:.2f} "
+                           "p99 {:.2f} ms, build p50 {:.2f} p99 {:.2f} ms, alive at most {} of {}; effect lights at most {}",
+                           fx.blasts, fx.skipped, BlastPhase(fx.carve), BlastPhase(fx.search), BlastPhase(fx.neck), BlastPhase(fx.ops),
+                           BlastPhase(fx.objects), BlastPhase(fx.present), fx.particlesUpdate.Percentile(50), fx.particlesUpdate.Percentile(99),
+                           fx.particlesBuild.Percentile(50), fx.particlesBuild.Percentile(99), fx.particlesMax, fx.particlesCapacity,
+                           fx.effectLightsMax);
     }
 }
