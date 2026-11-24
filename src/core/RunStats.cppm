@@ -57,4 +57,23 @@ export namespace vortex {
      * `presentMode`: "headless", "fifo", "fifo-relaxed", ...
      */
     std::string FormatPerfLine(const PerfSummary& perf, std::string_view presentMode);
+
+    /// @brief What the `Fx:` exit line reports (Engine fills it; one sample per blast or per frame as noted).
+    struct FxSummary {
+        uint32_t blasts = 0;            ///< Engine::PresentBlast calls (late searches included).
+        uint32_t skipped = 0;           ///< --stress-fx blasts whose 15 rays all missed.
+        RunStats carve, search, neck, ops, objects, present;   ///< per blast, from sim::BlastTimes and the present time
+        RunStats particlesUpdate;       ///< per frame: ParticleSystem::Update
+        RunStats particlesBuild;        ///< per frame: ParticleSystem::BuildRenderData
+        uint32_t particlesMax = 0;      ///< most particles alive in one frame
+        uint32_t particlesCapacity = 0; ///< the particle pool's capacity
+        uint32_t effectLightsMax = 0;   ///< most effect lights after the merge in one frame ([wp-8] card 4)
+    };
+
+    /**
+     * @brief The `Fx:` line printed at the end of a run that presented at least one blast:
+     * `Fx: B blasts (S skipped); carve p50 a p99 b max c ms, search ..., neck ..., ops ..., objects ..., present
+     * ...; particles update p50 .. p99 .. ms, build p50 .. p99 .. ms, alive at most M of C; effect lights at most E`.
+     */
+    std::string FormatFxLine(const FxSummary& fx);
 }

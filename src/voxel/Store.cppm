@@ -40,6 +40,8 @@ export namespace vortex::voxel {
 
         /// @brief Flags a slot for GPU re-upload. Call after modifying its chunk.
         void MarkDirty(uint32_t slot);
+        /// @brief MarkDirty for an edit (a blast, a FillBox): TakeDirty returns edited slots first.
+        void MarkEdited(uint32_t slot);
         /// @brief Returns and clears the list of slots modified since the last call.
         std::vector<uint32_t> TakeDirty();
         bool HasDirty() const { return !m_DirtyList.empty(); }

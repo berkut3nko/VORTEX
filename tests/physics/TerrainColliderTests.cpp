@@ -417,3 +417,30 @@ TEST(TerrainColliders, CharacterWalksAndClimbsSmallStep) {
     EXPECT_LT(state.position.x, 5.5f);
     EXPECT_NEAR(state.position.y, f.ground, 0.03f);
 }
+
+// [wp-8] (fx-budget.md "Collider starvation"): a chunk edited every frame still gets colliders
+// (the newest cook result wins), and what rests on it stays on it.
+TEST(TerrainColliders, DISABLED_AChunkEditedEveryFrameGetsACollider) {
+    Fixture f;                                    // ground at voxel 40 (y = 20 m), chunks are 16 m
+    ASSERT_TRUE(f.initialized);
+    const glm::dvec3 focus(0.0, 21.0, 0.0);
+    f.Stream(focus, 20.0f);
+    const glm::vec3 spot(4.25f, f.ground, 4.25f);             // voxel (8.5, 40, 8.5)
+    const BodyId box = f.DropBox(spot + glm::vec3(0.0f, 1.0f, 0.0f));
+    f.Step(240);
+    ASSERT_NEAR(f.physics.GetState(box).position.y, f.ground + 0.5f, 0.05f);
+
+    // Every frame one voxel about 3 m east of the box, in the same chunk, a different one each time.
+    const std::array<glm::dvec3, 1> points = {focus};
+    for (int frame = 0; frame < 60; ++frame) {
+        const glm::vec3 voxel(14.5f, 39.5f - static_cast<float>(frame / 12), 2.5f + static_cast<float>(frame % 12));
+        ASSERT_EQ(f.world->CarveSphere(voxel, 0.5f, 100.0f), 1u) << frame;
+        f.colliders->Update(points, 20.0f);
+        f.jobs.WaitIdle();
+        f.physics.Step(kStep);
+    }
+
+    const math::AABB inChunk(glm::vec3(1.0f, 17.0f, 1.0f), glm::vec3(15.0f, 31.0f, 15.0f));   // chunk (0, 1, 0)
+    EXPECT_TRUE(f.colliders->HasCollider(inChunk));
+    EXPECT_GT(f.physics.GetState(box).position.y, f.ground + 0.4f);
+}

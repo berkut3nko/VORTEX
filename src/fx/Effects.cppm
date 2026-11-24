@@ -3,6 +3,8 @@ module;
 #include <glm/glm.hpp>
 
 #include <cstdint>
+#include <span>
+#include <vector>
 
 export module vortex.fx:effects;
 
@@ -37,7 +39,25 @@ export namespace vortex::fx {
     /// @brief Complete explosion at `position`: fireball, sparks, smoke. `radius` in metres.
     void SpawnExplosion(ParticleSystem& particles, const glm::dvec3& position, float radius);
 
-    /// @brief Debris + dust for a destroyed voxel of the given linear colour.
+    /// @brief Debris + dust for a destroyed voxel of the given linear colour. `dust` false leaves out
+    /// the dust ([wp-8] card 5).
     void SpawnVoxelBreak(ParticleSystem& particles, const glm::dvec3& voxelCenter, const glm::vec3& color,
-                         float voxelSize, const glm::vec3& impulse = glm::vec3(0.0f));
+                         float voxelSize, const glm::vec3& impulse = glm::vec3(0.0f), bool dust = true);
+
+    /// @brief An unshadowed effect light (blast flash) as the merge sees it. World metres.
+    struct EffectLightIn {
+        glm::dvec3 position{0.0};
+        glm::vec3 color{1.0f};
+        float intensity = 0.0f;
+        float radius = 0.0f;
+        glm::dvec3 clipMin{0.0}, clipMax{0.0};   ///< world box the light reaches (from the axis rays)
+    };
+
+    /// @brief At most this many effect lights reach the GPU in one frame ([wp-8] card 4).
+    inline constexpr uint32_t kMaxEffectLights = 8;
+
+    /// @brief Merges `lights` into at most kMaxEffectLights (fx-budget.md "Effect lights"; [wp-8] card 4
+    /// gives the rule). Deterministic: score order, ties by input index.
+    void MergeEffectLights(std::span<const EffectLightIn> lights, const glm::dvec3& camera,
+                           std::vector<EffectLightIn>& out);
 }

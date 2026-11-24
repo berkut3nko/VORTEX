@@ -226,6 +226,14 @@ export namespace vortex {
         /// @brief Shows an outcome of the rules seam: PresentBlast for each of its blasts, in order ([wp-6]).
         void PresentOutcome(const sim::ActionOutcome& outcome);
 
+        /// @brief Print the per-blast `Blast:` line for every blast this engine presents (Decision 3
+        /// of [wp-8]: default false; the game turns it on for offline runs and with `--blast-log`).
+        void SetBlastLog(bool on);
+        /// @brief The run-wide effect statistics (the `Fx:` line is printed at exit when blasts > 0).
+        const FxSummary& Fx() const;
+        /// @brief For --stress-fx: blasts skipped by the script, added to the `Fx:` line.
+        void AddSkippedBlast();
+
     private:
         struct Impl;
         std::unique_ptr<Impl> m_Impl;

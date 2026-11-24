@@ -118,6 +118,8 @@ export namespace vortex::graphics {
         float intensity = 5.0f;
         float radius = 8.0f;                     ///< Range of influence in metres.
         float sourceRadius = 0.1f;               ///< Size of the emitter (soft shadows).
+        bool effect = false;                     ///< Unshadowed effect light: composite pass only ([wp-8] card 4).
+        glm::dvec3 clipMin{0.0}, clipMax{0.0};   ///< effect only: world box the light reaches
     };
 
     /// @brief One chunk of a dynamic voxel object to draw this frame.

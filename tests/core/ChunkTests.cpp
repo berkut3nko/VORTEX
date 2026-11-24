@@ -125,3 +125,18 @@ TEST(ChunkStore, AllocFreeAndDirtyTracking) {
     store.Alloc();
     EXPECT_EQ(store.Alloc(), ChunkStore::kInvalidSlot);   // exhausted, reported instead of crashing
 }
+
+// [wp-8]: edited slots (a blast, a FillBox) are uploaded before streamed ones, each slot once.
+TEST(ChunkStore, DISABLED_EditedSlotsAreTakenFirst) {
+    ChunkStore store(4);
+    for (int i = 0; i < 4; ++i) ASSERT_NE(store.Alloc(), ChunkStore::kInvalidSlot);
+    store.TakeDirty();                     // the allocations
+    store.MarkDirty(1);
+    store.MarkDirty(2);
+    store.MarkEdited(3);
+    store.MarkDirty(3);
+    store.MarkEdited(2);
+    EXPECT_EQ(store.TakeDirty(), (std::vector<uint32_t>{3, 2, 1}));
+    EXPECT_TRUE(store.TakeDirty().empty());
+    EXPECT_FALSE(store.HasDirty());
+}

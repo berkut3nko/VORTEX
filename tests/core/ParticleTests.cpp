@@ -809,3 +809,21 @@ TEST(Effects, ImpulseThrowsDebrisAlongIt) {
     ASSERT_GT(debris, 0u);
     EXPECT_GT(sumX / static_cast<float>(debris), 0.2f);
 }
+
+// [wp-8]: blended particles are sorted back to front; additive ones (alpha 0, order-free) follow
+// unsorted, in pool order.
+TEST(Particles, DISABLED_BlendedSortedAdditiveAppended) {
+    ParticleSystem ps(16);
+    for (const double x : {1.0, 3.0, 2.0}) ASSERT_TRUE(ps.Emit(Inert(glm::dvec3(x, 0.0, 0.0))));
+    for (const double x : {0.5, 5.0}) {
+        ParticleDesc additive = Inert(glm::dvec3(x, 0.0, 0.0));
+        additive.flags = ParticleFlag_Additive;
+        ASSERT_TRUE(ps.Emit(additive));
+    }
+    const std::vector<GpuParticle> data = Render(ps);
+    ASSERT_EQ(data.size(), 5u);
+    const float expected[] = {3.0f, 2.0f, 1.0f, 0.5f, 5.0f};
+    for (size_t i = 0; i < 5; ++i) EXPECT_FLOAT_EQ(data[i].positionSize.x, expected[i]) << i;
+    for (size_t i = 0; i < 3; ++i) EXPECT_GT(data[i].color.a, 0.0f) << i;
+    for (size_t i = 3; i < 5; ++i) EXPECT_EQ(data[i].color.a, 0.0f) << i;
+}

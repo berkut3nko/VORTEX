@@ -59,6 +59,11 @@ namespace vortex::voxel {
         m_DirtyList.push_back(slot);
     }
 
+    void ChunkStore::MarkEdited(uint32_t slot) {
+        // [wp-8] card 6 fills this
+        MarkDirty(slot);
+    }
+
     std::vector<uint32_t> ChunkStore::TakeDirty() {
         std::vector<uint32_t> out = std::move(m_DirtyList);
         m_DirtyList.clear();

@@ -113,6 +113,8 @@ export namespace vortex::scene {
         float radius = 8.0f;                  ///< Range of influence in metres.
         float sourceRadius = 0.1f;            ///< Size of the emitter (soft shadows).
         glm::vec3 offset{0.0f};               ///< Metres, in the entity's rotated frame.
+        bool effect = false;                  ///< Unshadowed effect light: drawn in the composite pass ([wp-8] card 4).
+        glm::vec3 clipMin{0.0f}, clipMax{0.0f};   ///< effect only: reach box relative to the light, metres
     };
 
     /**

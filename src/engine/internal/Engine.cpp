@@ -141,6 +141,9 @@ namespace vortex {
         bool initialized = false;
         // Run-wide statistics for the `Perf:` exit line (perf.md M0).
         PerfSummary perf;
+        // Run-wide effect statistics for the `Fx:` exit line ([wp-8]).
+        FxSummary fx;
+        bool blastLog = false;   // Engine::SetBlastLog
         uint64_t lastTimingSerial = 0;
         // The GPU clock, read every 60 frames (perf.md M0: an integrated GPU's clock explains its timings).
         std::filesystem::path gpuClockFile;
@@ -570,6 +573,10 @@ namespace vortex {
         m_Impl->playBounds = glm::dvec4(bounds->min.x, bounds->min.y, bounds->max.x, bounds->max.y);
     }
     scene::Scene& Engine::Scene() { return m_Impl->sim.Scene(); }
+
+    void Engine::SetBlastLog(bool on) { m_Impl->blastLog = on; }   // [wp-8] card 2 fills this (the Blast: line gate)
+    const FxSummary& Engine::Fx() const { return m_Impl->fx; }
+    void Engine::AddSkippedBlast() { ++m_Impl->fx.skipped; }
 
     void Engine::ApplySettings(const GameSettings& settings, const GameSettings& previous) {
         graphics::RenderSettings& rs = m_Impl->renderer.Settings();

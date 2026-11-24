@@ -79,4 +79,10 @@ namespace vortex {
                            perf.fenceWait.Percentile(99), f.CountOver(25.0), f.CountOver(33.0), sum, passes,
                            upload != nullptr ? upload->Percentile(50) : 0.0, presentMode);
     }
+
+    std::string FormatFxLine(const FxSummary& fx) {
+        // [wp-8] card 2 fills this
+        (void) fx;
+        return "Fx: 0 blasts";
+    }
 }

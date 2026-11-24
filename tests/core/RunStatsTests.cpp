@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <initializer_list>
 #include <string>
 
 import vortex.core;
@@ -66,4 +67,26 @@ TEST(RunStats, PerfLineNamesEveryPassInOrder) {
               "Perf: 0 frames; CPU frame p50 0.00 p99 0.00 max 0.00 ms, world p50 0.00 p99 0.00 ms, simulation p50 0.00 p99 0.00 ms, "
               "fence wait p50 0.00 p99 0.00 ms; over 25 ms 0, over 33 ms 0; GPU sum p50 0.00 ms (none); upload p50 0.00 ms; "
               "present headless");
+}
+
+// [wp-8]: the `Fx:` exit line names every blast and particle phase once, in its order.
+TEST(RunStats, DISABLED_FxLineNamesEveryPhase) {
+    FxSummary fx;
+    fx.blasts = 2;
+    for (RunStats* r : {&fx.carve, &fx.search, &fx.neck, &fx.ops, &fx.objects, &fx.present, &fx.particlesUpdate,
+                        &fx.particlesBuild})
+        r->Add(1.0);
+    fx.particlesMax = 10;
+    fx.particlesCapacity = 8192;
+    const std::string line = FormatFxLine(fx);
+    EXPECT_EQ(line.rfind("Fx: 2 blasts (0 skipped); ", 0), 0u) << line;
+    size_t previous = 0;
+    for (const char* name : {"carve ", "search ", "neck ", "ops ", "objects ", "present ", "particles update ", "build "}) {
+        const size_t at = line.find(name);
+        ASSERT_NE(at, std::string::npos) << name << " in " << line;
+        EXPECT_GT(at, previous) << name;
+        EXPECT_EQ(line.find(name, at + 1), std::string::npos) << name;
+        previous = at;
+    }
+    EXPECT_NE(line.find("alive at most 10 of 8192"), std::string::npos) << line;
 }

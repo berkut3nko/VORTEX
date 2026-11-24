@@ -766,3 +766,49 @@ TEST(Rules, ARayAtAnEnemysChestTakesTheCastThere) {
     (void)sim::AimAction(a.simulation, request, sim::OfflineAimRules(), offline, duel);
     EXPECT_EQ(offline.player, 0);
 }
+
+// [wp-8] (fx-budget.md "Effect lights"): the flash is an unshadowed effect light, range 4 r, with
+// an axis clip box from six rays. Power 0 carves nothing, so the wall stays 1 m east of the centre.
+TEST(Blast, DISABLED_TheFlashIsAnEffectLightClippedByWalls) {
+    Arena a;
+    ASSERT_TRUE(a.initialized);
+    const int g = kGroundVoxels;
+    ApplyAll(a.World(), std::vector<sim::WorldOp>{sim::WorldOp::Box({10, g, -30}, {13, g + 60, 30}, a.Ids().stone)});
+    // Centre (0, 10, 0) m: 2 m above the ground, 1 m west of the wall; radius 12 voxels = 1.2 m.
+    const sim::BlastResult blast = sim::Blast(a.simulation, voxel::SphereQ{glm::ivec3(0, (g + 20) * 16, 0), 12 * 16}, 0);
+    ASSERT_FALSE(blast.ops.empty());
+    EXPECT_EQ(blast.ops[0].result.changed, 0u);
+    sim::PresentBlast(a.simulation, blast);
+
+    const auto view = a.simulation.Scene().Registry().view<scene::PointLight>();
+    ASSERT_EQ(view.size(), 1u);
+    const scene::PointLight& flash = view.get<scene::PointLight>(view.front());
+    EXPECT_TRUE(flash.effect);
+    EXPECT_FLOAT_EQ(flash.radius, 4.0f * blast.radius);
+    EXPECT_NEAR(flash.clipMax.x, 1.0f, kVoxel);                 // the wall
+    EXPECT_FLOAT_EQ(flash.clipMax.z, 4.8f);                     // open: the full range
+    EXPECT_NEAR(flash.clipMin.y, -2.0f, kVoxel);                // the ground
+}
+
+// [wp-8] (fx-budget.md "Particle cost"): at most 96 debris bursts per carving operation, dust on
+// every fourth: 96 x 6 + 24 x 2 = 624 particles per operation at the reference voxel size.
+TEST(Blast, DISABLED_PresentBlastSamplesAtMost96Bursts) {
+    Arena a;
+    ASSERT_TRUE(a.initialized);
+    // A 12-voxel sphere centred on the ground's surface carves a half ball of about 3600 voxels.
+    const sim::BlastResult blast =
+        sim::Blast(a.simulation, voxel::SphereQ{glm::ivec3(8, kGroundVoxels * 16, 8), 12 * 16}, kStrong);
+    ASSERT_EQ(blast.ops[0].op.kind, sim::WorldOpKind::CarveSphere);
+    ASSERT_GT(blast.ops[0].result.changed, 2000u);
+    uint32_t carvingOps = 0;
+    for (const sim::AppliedOp& applied : blast.ops)
+        if (applied.op.kind == sim::WorldOpKind::CarveSphere || applied.op.kind == sim::WorldOpKind::ClearMask) ++carvingOps;
+
+    sim::BlastResult debrisOnly = blast;
+    debrisOnly.deferred = true;                                 // no explosion, no flash
+    fx::ParticleSystem& particles = a.simulation.Particles();
+    particles.Clear();
+    sim::PresentBlast(a.simulation, debrisOnly);
+    EXPECT_GT(particles.AliveCount(), 0u);
+    EXPECT_LE(particles.AliveCount(), carvingOps * (96u * 6u + 24u * 2u));
+}

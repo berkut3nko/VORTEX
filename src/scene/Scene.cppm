@@ -184,6 +184,8 @@ export namespace vortex::scene {
         float sourceRadius = 0.1f;
         float lifetime = 0.0f;                ///< Seconds; 0 = persistent (no Lifetime component).
         float decay = 0.0f;                   ///< Lifetime::lightDecay; only used when lifetime > 0.
+        bool effect = false;                  ///< Unshadowed effect light, drawn in the composite pass ([wp-8] card 4).
+        glm::vec3 clipMin{0.0f}, clipMax{0.0f};   ///< effect only: reach box relative to the light, metres
     };
 
     /// @brief What the rubble of a scene holds now, and what its budget did (Scene::Rubble).

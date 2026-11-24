@@ -5,6 +5,8 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <span>
+#include <vector>
 
 module vortex.fx;
 
@@ -284,7 +286,8 @@ namespace vortex::fx {
     }
 
     void SpawnVoxelBreak(ParticleSystem& particles, const glm::dvec3& voxelCenter, const glm::vec3& color,
-                         float voxelSize, const glm::vec3& impulse) {
+                         float voxelSize, const glm::vec3& impulse, bool withDust) {
+        (void) withDust;   // [wp-8] card 5 fills this
         const float size = (std::isfinite(voxelSize) && voxelSize > 0.0f) ? voxelSize : 0.1f;
         const float scale = std::clamp(size / 0.1f, 0.25f, 4.0f);   // relative to the reference voxel
 
@@ -307,5 +310,13 @@ namespace vortex::fx {
         dust.particle.sizeEnd *= scale;
         dust.positionJitter = glm::vec3(size * 0.5f);
         particles.Burst(dust, voxelCenter, ScaledCount(1.0f, 1.0f, scale, 4));
+    }
+
+    void MergeEffectLights(std::span<const EffectLightIn> lights, const glm::dvec3& camera,
+                           std::vector<EffectLightIn>& out) {
+        // [wp-8] card 4 fills this
+        (void) lights;
+        (void) camera;
+        out.clear();
     }
 }
