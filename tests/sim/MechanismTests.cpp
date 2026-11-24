@@ -225,7 +225,7 @@ namespace {
 //  The timetable
 // =================================================================================================
 
-TEST(Mechanism, DISABLED_PositionIsAFunctionOfTick) {
+TEST(Mechanism, PositionIsAFunctionOfTick) {
     const scene::MechanismDesc door = MakeDoorDesc();
     {
         const scene::Mechanism m = MakeTimetable(door, {100, 0, 1024, 36, 0});
@@ -284,7 +284,7 @@ TEST(Mechanism, DISABLED_PositionIsAFunctionOfTick) {
     }
 }
 
-TEST(Mechanism, DISABLED_DurationIsIntegerExact) {
+TEST(Mechanism, DurationIsIntegerExact) {
     const scene::MechanismDesc door = MakeDoorDesc();
     EXPECT_EQ(sim::SegmentDuration(0, 1024, door), 36);
     EXPECT_EQ(sim::SegmentDuration(1024, 0, door), 36);
@@ -296,7 +296,7 @@ TEST(Mechanism, DISABLED_DurationIsIntegerExact) {
     EXPECT_EQ(sim::SegmentDuration(320, 0, MakeGateDesc()), 45);
 }
 
-TEST(Mechanism, DISABLED_ReversalKeepsPositionContinuous) {
+TEST(Mechanism, ReversalKeepsPositionContinuous) {
     const scene::MechanismDesc door = MakeDoorDesc();
     const scene::Mechanism opening = MakeTimetable(door, {100, 0, 1024, 36, 0});
     for (uint32_t start = 101; start <= 135; ++start) {
@@ -313,7 +313,7 @@ TEST(Mechanism, DISABLED_ReversalKeepsPositionContinuous) {
     }
 }
 
-TEST(Mechanism, DISABLED_RingHoldsTheLeadAndTheStaleWindow) {
+TEST(Mechanism, RingHoldsTheLeadAndTheStaleWindow) {
     const scene::MechanismDesc door = MakeDoorDesc();
     const scene::MechanismSegment spawn{0, 0, 0, 0, 0};
     scene::Mechanism m = MakeTimetable(door, spawn);

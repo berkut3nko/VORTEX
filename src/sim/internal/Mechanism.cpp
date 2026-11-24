@@ -3,6 +3,7 @@ module;
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <string>
@@ -31,52 +32,133 @@ namespace vortex::sim {
         return "unknown";
     }
 
-    // [mech-1] card 2 fills these
-    const std::array<uint32_t, 65> kEaseOut{};
-    const std::array<uint32_t, 65> kEaseSmooth{};
+    namespace {
+        constexpr std::array<uint32_t, 65> MakeEaseOut() {
+            std::array<uint32_t, 65> t{};
+            for (int64_t i = 0; i < 65; ++i) t[static_cast<size_t>(i)] = static_cast<uint32_t>(16 * (4096 - (64 - i) * (64 - i)));
+            return t;
+        }
 
-    uint32_t Ease(const std::array<uint32_t, 65>& /*table*/, uint32_t /*k*/, uint32_t /*D*/) {
-        // [mech-1] card 2 fills this
-        return 0;
+        constexpr std::array<uint32_t, 65> MakeEaseSmooth() {
+            std::array<uint32_t, 65> t{};
+            for (int64_t i = 0; i < 65; ++i) t[static_cast<size_t>(i)] = static_cast<uint32_t>((96 * i * i - i * i * i) / 2);
+            return t;
+        }
+
+        constexpr bool EaseTableIsValid(const std::array<uint32_t, 65>& t) {
+            if (t[0] != 0 || t[64] != 65536) return false;
+            for (size_t i = 1; i < t.size(); ++i)
+                if (t[i] < t[i - 1]) return false;
+            return true;
+        }
+
+        static_assert(EaseTableIsValid(MakeEaseOut()));
+        static_assert(EaseTableIsValid(MakeEaseSmooth()));
+        static_assert(MakeEaseOut()[1] == 2032 && MakeEaseOut()[32] == 49152 && MakeEaseOut()[63] == 65520);
+        static_assert(MakeEaseSmooth()[1] == 47 && MakeEaseSmooth()[32] == 32768 && MakeEaseSmooth()[63] == 65488);
+
+        int32_t AbsOf(int32_t v) { return v < 0 ? -v : v; }
+
+        /// The newest segment with startTick <= tick, or nullptr when every segment starts later.
+        const MechanismSegment* SegmentAt(const MechanismTrack& track, uint32_t tick) {
+            for (uint32_t i = track.count; i > 0; --i)
+                if (track.ring[i - 1].startTick <= tick) return &track.ring[i - 1];
+            return nullptr;
+        }
+
+        bool BoxIsValid(const scene::MechanismBox& box) {
+            for (int a = 0; a < 3; ++a)
+                if (box.min[a] < 0 || box.min[a] >= box.max[a] || box.max[a] > 255) return false;
+            return true;
+        }
+
+        bool Refuse(std::string* why, const char* reason) {
+            if (why) *why = reason;
+            return false;
+        }
     }
 
-    const std::array<uint32_t, 65>& EaseTableFor(const MechanismDesc& /*desc*/, const MechanismSegment& /*segment*/) {
-        // [mech-1] card 2 fills this
+    const std::array<uint32_t, 65> kEaseOut = MakeEaseOut();
+    const std::array<uint32_t, 65> kEaseSmooth = MakeEaseSmooth();
+
+    uint32_t Ease(const std::array<uint32_t, 65>& table, uint32_t k, uint32_t D) {
+        const uint64_t f = static_cast<uint64_t>(k) * 64u;
+        const uint64_t i = f / D;
+        const uint64_t r = f % D;
+        const int64_t lo = table[i];
+        const int64_t hi = table[i + 1];
+        return static_cast<uint32_t>(lo + (hi - lo) * static_cast<int64_t>(r) / static_cast<int64_t>(D));
+    }
+
+    const std::array<uint32_t, 65>& EaseTableFor(const MechanismDesc& desc, const MechanismSegment& segment) {
+        if (desc.kind == MechanismKind::Portcullis && segment.targetPos > segment.startPos) return kEaseSmooth;
         return kEaseOut;
     }
 
-    bool IsOpening(const MechanismDesc& /*desc*/, int16_t /*from*/, int16_t /*to*/) {
-        // [mech-1] card 2 fills this
-        return false;
+    bool IsOpening(const MechanismDesc& desc, int16_t from, int16_t to) {
+        if (desc.kind == MechanismKind::Door) return AbsOf(to) > AbsOf(from);
+        return to > from;
     }
 
-    uint16_t SegmentDuration(int16_t /*from*/, int16_t /*to*/, const MechanismDesc& /*desc*/) {
-        // [mech-1] card 2 fills this
-        return 0;
+    uint16_t SegmentDuration(int16_t from, int16_t to, const MechanismDesc& desc) {
+        if (from == to) return 0;
+        const int64_t range = static_cast<int64_t>(desc.maxPos) - desc.minPos;
+        if (range <= 0) return 0;
+        const int64_t full = IsOpening(desc, from, to) ? desc.openTicks : desc.closeTicks;
+        const int64_t delta = AbsOf(static_cast<int32_t>(to) - static_cast<int32_t>(from));
+        const int64_t d = (delta * full + range - 1) / range;
+        return static_cast<uint16_t>(std::min<int64_t>(d, 65535));
     }
 
-    int16_t PositionAt(const Mechanism& /*m*/, uint32_t /*tick*/) {
-        // [mech-1] card 2 fills this
-        return 0;
+    int16_t PositionAt(const Mechanism& m, uint32_t tick) {
+        const MechanismSegment* s = SegmentAt(m.track, tick);
+        if (!s) return m.track.ring[0].startPos;
+        const uint32_t k = tick - s->startTick;
+        if (k >= s->durationTicks) return s->targetPos;
+        const int64_t e = Ease(EaseTableFor(m.desc, *s), k, s->durationTicks);
+        return static_cast<int16_t>(s->startPos + (static_cast<int64_t>(s->targetPos) - s->startPos) * e / 65536);
     }
 
-    bool IsMoving(const MechanismTrack& /*track*/, uint32_t /*tick*/) {
-        // [mech-1] card 2 fills this
-        return false;
+    bool IsMoving(const MechanismTrack& track, uint32_t tick) {
+        const MechanismSegment* s = SegmentAt(track, tick);
+        return s && s->durationTicks > 0 && tick < s->startTick + s->durationTicks;
     }
 
-    uint32_t ArrivalTick(const MechanismTrack& /*track*/) {
-        // [mech-1] card 2 fills this
-        return 0;
+    uint32_t ArrivalTick(const MechanismTrack& track) {
+        if (track.count == 0) return 0;
+        return track.Newest().startTick + track.Newest().durationTicks;
     }
 
-    void PushSegment(MechanismTrack& /*track*/, const MechanismSegment& /*segment*/) {
-        // [mech-1] card 2 fills this
+    void PushSegment(MechanismTrack& track, const MechanismSegment& segment) {
+        constexpr uint8_t kSticky = scene::MechanismFlag_Locked | scene::MechanismFlag_Jammed | scene::MechanismFlag_Freed |
+                                    scene::MechanismFlag_Broken;
+        MechanismSegment s = segment;
+        if (track.count > 0) s.flags = static_cast<uint8_t>(s.flags | (track.Newest().flags & kSticky));
+        if (track.count == kMechanismSegments) {
+            for (uint32_t i = 1; i < kMechanismSegments; ++i) track.ring[i - 1] = track.ring[i];
+            track.ring[kMechanismSegments - 1] = s;
+        } else {
+            track.ring[track.count++] = s;
+        }
     }
 
-    bool ValidateMechanismDesc(const MechanismDesc& /*desc*/, const glm::ivec3& /*modelSize*/, std::string* /*why*/) {
-        // [mech-1] card 2 fills this
-        return false;
+    bool ValidateMechanismDesc(const MechanismDesc& desc, const glm::ivec3& /*modelSize*/, std::string* why) {
+        const uint8_t kind = static_cast<uint8_t>(desc.kind);
+        if (kind < static_cast<uint8_t>(MechanismKind::Door) || kind > static_cast<uint8_t>(MechanismKind::Lever))
+            return Refuse(why, "unknown kind");
+        if (desc.minPos >= desc.maxPos) return Refuse(why, "minPos is not below maxPos");
+        if (desc.axis > 5) return Refuse(why, "axis is not 0-5");
+        if (desc.pushAxis > 5) return Refuse(why, "pushAxis is not 0-5");
+        if (desc.autoReturnTicks != 0) return Refuse(why, "autoReturnTicks is not 0");
+        if (desc.openTicks == 0 || desc.closeTicks == 0) return Refuse(why, "a full-travel time is 0");
+        if (!BoxIsValid(desc.useBox)) return Refuse(why, "use box is empty or out of 0-255");
+        if (!BoxIsValid(desc.blockBox)) return Refuse(why, "block box is empty or out of 0-255");
+        if (!BoxIsValid(desc.hingeBox)) return Refuse(why, "hinge box is empty or out of 0-255");
+        const bool usable = (desc.flags & scene::MechanismDesc_Usable) != 0;
+        if (desc.kind == MechanismKind::Portcullis && usable) return Refuse(why, "a portcullis is not usable");
+        if (desc.kind != MechanismKind::Portcullis && !usable) return Refuse(why, "a door or a lever must be usable");
+        if (desc.anchorCount != 0 && desc.anchorCount != 2) return Refuse(why, "anchorCount is not 0 or 2");
+        return true;
     }
 
     MechanismPose PoseAt(const Mechanism& /*m*/, int16_t /*p*/, float /*voxelSize*/) {
