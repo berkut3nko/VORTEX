@@ -403,4 +403,19 @@ namespace vortex::sim {
             out.push_back(simulation.Scene().CreateVoxelObject({.model = o.model, .position = glm::vec3(o.position)}));
         return out;
     }
+
+    RegionTemplate MechanismYardTemplate(voxel::World& /*world*/, const voxel::WorldMaterials& /*m*/, const glm::ivec3& /*plazaAnchor*/) {
+        // [mech-1] card 7 fills this
+        return {};
+    }
+
+    std::vector<scene::Entity> CreateTemplateMechanisms(Simulation& /*simulation*/, const RegionTemplate& /*t*/) {
+        // [mech-1] card 4 fills this
+        return {};
+    }
+
+    bool CheckMechanismAuthoring(const RegionTemplate& /*t*/, float /*voxelSize*/, std::string* /*why*/) {
+        // [mech-1] card 4 fills this
+        return false;
+    }
 }

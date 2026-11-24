@@ -465,6 +465,11 @@ namespace vortex::scene {
 
     // --- destruction -----------------------------------------------------------------------------
 
+    DamageResult Scene::Damage(Entity entity, const glm::dvec3& center, float radius, const DamageOptions& /*options*/) {
+        // [mech-1] card 5 fills this
+        return Damage(entity, center, radius);
+    }
+
     DamageResult Scene::Damage(Entity entity, const glm::dvec3& center, float radius) {
         Impl& s = *m_Impl;
         DamageResult result;

@@ -23,6 +23,7 @@ export namespace vortex::sim {
         /// edge: a crate (the game's E key) dropped in front of the eye; a session server makes it
         /// (networking stage 6), nothing is predicted.
         PlayerButton_Crate = 8,
+        PlayerButton_Use = 16,   ///< edge: E, a use (mechanisms.md); the crate moves to Q
     };
     inline constexpr uint8_t kPlayerButtonMask = 15;
 

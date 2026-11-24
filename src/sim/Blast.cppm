@@ -163,6 +163,12 @@ export namespace vortex::sim {
         glm::ivec3 offset{0};
     };
 
+    /// @brief A segment a mechanism took: what the server sends as MechanismMove ([mech-1]).
+    struct MechanismChange {
+        scene::Entity entity = scene::kNoEntity;
+        scene::MechanismSegment segment;
+    };
+
     /**
      * @brief Everything sim::Blast did: the replicated operations in their order plus what the
      * presentation (PresentBlast) needs.
@@ -217,6 +223,8 @@ export namespace vortex::sim {
         /// Replication only: NetIds of Detach operations whose server body could not be made (out of
         /// bodies, above the ceiling): the server despawns them at once.
         std::vector<uint32_t> lostNetIds;
+        /// Segments the blast's mechanism damage made (Freed / Broken), in the order they happened ([mech-1]).
+        std::vector<MechanismChange> mechanismChanges;
         glm::dvec3 center{0.0};        ///< The blast as applied (after quantisation), world metres.
         float radius = 0.0f;           ///< Metres, after quantisation.
 

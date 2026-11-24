@@ -170,6 +170,16 @@ export namespace vortex::sim {
         glm::dvec3 position{0.0};             ///< World metres of the model origin.
     };
 
+    /// @brief A mechanism of a template ([mech-1]): spawned after the objects, linked by index.
+    struct TemplateMechanism {
+        std::shared_ptr<voxel::VoxelModel> model;
+        glm::ivec3 spawnVoxel{0};             ///< World voxel of the model origin at p = 0.
+        uint8_t quarterTurns = 0;             ///< Spawn rotation about +y, 0-3.
+        scene::MechanismDesc desc;
+        int16_t initialPos = 0;
+        int32_t link = -1;                    ///< A lever's target: an index into RegionTemplate::mechanisms.
+    };
+
     /**
      * @brief The set-up of a region, split by who runs what (docs/design/networking.md stage 3):
      * `ops` change the terrain and run on the server only (operations 1..k of the session's
@@ -181,6 +191,7 @@ export namespace vortex::sim {
         std::vector<WorldOp> ops;
         std::vector<TemplateLight> lights;
         std::vector<TemplateObject> objects;
+        std::vector<TemplateMechanism> mechanisms;   ///< Offline and server entities, made after the objects ([mech-1]).
         glm::dvec3 spawn{0.0};
         glm::ivec3 anchor{0};                  ///< The template's own reference voxel (the plaza centre).
         /// The template found a place for itself (the playground: a level site above the sea inside
@@ -224,4 +235,11 @@ export namespace vortex::sim {
     std::vector<scene::Entity> CreateTemplateLights(Simulation& simulation, const RegionTemplate& t);
     /// @brief Creates the template's objects (dynamic bodies) in order.
     std::vector<scene::Entity> CreateTemplateObjects(Simulation& simulation, const RegionTemplate& t);
+
+    /// @brief The yard ([mech-1]): a hut with a door, and a wall with a portcullis and a lever, north of the playground's plaza.
+    RegionTemplate MechanismYardTemplate(voxel::World& world, const voxel::WorldMaterials& m, const glm::ivec3& plazaAnchor);
+    /// @brief Creates a template's mechanisms in order and links them; empty (logged) if the authoring rule fails.
+    std::vector<scene::Entity> CreateTemplateMechanisms(Simulation& simulation, const RegionTemplate& t);
+    /// @brief The authoring rule: every lever's use box is at least kUseReach + 0.5 m from its target's outer face.
+    bool CheckMechanismAuthoring(const RegionTemplate& t, float voxelSize, std::string* why = nullptr);
 }

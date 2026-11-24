@@ -229,6 +229,15 @@ export namespace vortex::scene {
         /// ObjectModel (networking stage 6).
         glm::ivec3 keptOffset{0};
         physics::MotionType keptMotion = physics::MotionType::Dynamic;
+        uint32_t keptBoxVoxels = 0;       ///< DamageOptions::keepByBox: voxels of the keep box in the kept piece (0: none held).
+    };
+
+    /// @brief Options of the mechanism damage rule (docs/design/mechanisms.md "The damage rule").
+    struct DamageOptions {
+        uint16_t powerQ = 0xFFFF;             ///< a voxel with hardness * 16 > powerQ survives (CarveSphereQ's rule); 0xFFFF: no power limit
+        bool keepByBox = false;               ///< the piece with the most voxels in [keepMin, keepMax) keeps the entity
+        glm::ivec3 keepMin{0}, keepMax{0};    ///< current model voxels
+        bool keepMotion = false;              ///< the kept piece keeps the motion type even when split, and is never a fragment
     };
 
     /**
@@ -408,6 +417,8 @@ export namespace vortex::scene {
          * destructible voxel or the entity is invalid, stale or not damageable.
          */
         DamageResult Damage(Entity entity, const glm::dvec3& center, float radius);
+        /// @brief Damage with the mechanism damage rule's options (DamageOptions; [mech-1]).
+        DamageResult Damage(Entity entity, const glm::dvec3& center, float radius, const DamageOptions& options);
 
         // --- per frame ---------------------------------------------------------------------------
 

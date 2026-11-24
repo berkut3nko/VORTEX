@@ -4,6 +4,7 @@ module;
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -151,6 +152,88 @@ export namespace vortex::scene {
         bool piece = false;
         uint32_t bornTick = 0;        ///< Simulation tick it was made on: the eviction order (oldest first).
         DespawnReason despawn = DespawnReason::Destroyed;
+    };
+
+    // ---------------------------------------------------------------------------------------------
+    //  Mechanisms ([mech-1], docs/design/mechanisms.md "Mechanisms"). The data lives here, the
+    //  functions in vortex.sim (sim:mechanism re-exports these types).
+    // ---------------------------------------------------------------------------------------------
+
+    /// @brief Kinds of mechanism (docs/design/mechanisms.md "Mechanisms"). Values are wire format.
+    enum class MechanismKind : uint8_t {
+        Door = 1,         ///< hinge about a vertical axis, opens away from the user
+        Portcullis = 2,   ///< slide up, driven by a lever (an Info target)
+        Lever = 3,        ///< hinge, a small throw that drives its linked target
+    };
+    /// @brief State flags carried in every segment. Locked, Jammed, Freed and Broken stay set once set. Wire format.
+    enum MechanismFlag : uint8_t {
+        MechanismFlag_Locked = 1,
+        MechanismFlag_Jammed = 2,
+        MechanismFlag_Freed = 4,
+        MechanismFlag_Broken = 8,
+    };
+    /// @brief Authoring flags of a MechanismDesc. Wire format.
+    enum MechanismDescFlag : uint8_t {
+        MechanismDesc_OneWay = 1,   ///< a door opens to maxPos only
+        MechanismDesc_Usable = 2,   ///< E acts on it (doors, levers); a portcullis is an Info target
+        MechanismDesc_Locked = 4,   ///< spawns with MechanismFlag_Locked
+        MechanismDesc_Warded = 8,   ///< damage skips it entirely
+    };
+
+    /// @brief One motion of a mechanism (wire: 4 + 2 + 2 + 2 + 1 = 11 bytes).
+    struct MechanismSegment {
+        uint32_t startTick = 0;       ///< tick the motion starts
+        int16_t startPos = 0;         ///< p at startTick
+        int16_t targetPos = 0;        ///< == startPos when durationTicks == 0
+        uint16_t durationTicks = 0;   ///< D; 0 = stopped at startPos
+        uint8_t flags = 0;            ///< MechanismFlag
+        friend bool operator==(const MechanismSegment&, const MechanismSegment&) = default;
+    };
+
+    inline constexpr uint32_t kMechanismSegments = 8;
+
+    /// @brief The last kMechanismSegments segments, ring[0] oldest .. ring[count - 1] newest; count >= 1 once spawned.
+    struct MechanismTrack {
+        std::array<MechanismSegment, kMechanismSegments> ring{};
+        uint8_t count = 0;
+        const MechanismSegment& Newest() const { return ring[count - 1]; }
+    };
+
+    /// @brief A box of the original model, voxels [min, max) (wire: 6 x uint8).
+    struct MechanismBox {
+        glm::ivec3 min{0}, max{0};
+        friend bool operator==(const MechanismBox&, const MechanismBox&) = default;
+    };
+
+    /// @brief What a mechanism is (wire: 63 bytes). Model-space fields are in the ORIGINAL model's voxels.
+    struct MechanismDesc {
+        MechanismKind kind = MechanismKind::Door;
+        uint8_t flags = 0;                     ///< MechanismDescFlag
+        glm::ivec3 pivotQ{0};                  ///< hinge point, 1/16 voxel (wire 3 x int16)
+        uint8_t axis = 2;                      ///< motion axis: 0 +x, 1 -x, 2 +y, 3 -y, 4 +z, 5 -z
+        int16_t minPos = 0, maxPos = 0;        ///< travel range; hinge: 4096 = one turn; slide: 1/16 voxel
+        uint16_t openTicks = 0;                ///< ticks for the whole range when opening
+        uint16_t closeTicks = 0;               ///< ticks for the whole range when closing
+        uint16_t autoReturnTicks = 0;          ///< 0 in [mech-1]
+        MechanismBox useBox, blockBox, hingeBox;
+        uint8_t pushAxis = 4;                  ///< model axis (0-5) a landing pushes players along
+        uint8_t anchorCount = 0;               ///< 0 or 2
+        std::array<glm::ivec3, 2> anchors{};   ///< world voxels the hinge rests in (wire 2 x 3 x int32)
+        friend bool operator==(const MechanismDesc&, const MechanismDesc&) = default;
+    };
+
+    /// @brief A mechanism: a kinematic voxel object on a timetable (docs/design/mechanisms.md "The model").
+    struct Mechanism {
+        MechanismDesc desc;
+        glm::ivec3 spawnVoxel{0};              ///< world voxel of the original model origin at p = 0
+        uint8_t quarterTurns = 0;              ///< spawn rotation about +y, 0-3
+        glm::ivec3 modelOffset{0};             ///< voxels: the sum of every DamageResult::keptOffset
+        MechanismTrack track;
+        Entity linked = kNoEntity;             ///< a lever's target ([mech-1]: at most one)
+        uint32_t linkedNetId = 0;              ///< the same in a session (0 offline)
+        uint32_t lastDecisionTick = 0;         ///< server and offline: the busy rule
+        bool anyDecision = false;
+        math::AABB swept;                      ///< world bounds over the whole travel
     };
 
     /**
