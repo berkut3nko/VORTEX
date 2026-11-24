@@ -1,5 +1,6 @@
 module;
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -42,9 +43,11 @@ export namespace vortex::voxel {
         void MarkDirty(uint32_t slot);
         /// @brief MarkDirty for an edit (a blast, a FillBox): TakeDirty returns edited slots first.
         void MarkEdited(uint32_t slot);
-        /// @brief Returns and clears the list of slots modified since the last call.
-        std::vector<uint32_t> TakeDirty();
-        bool HasDirty() const { return !m_DirtyList.empty(); }
+        /// @brief Returns and clears the slots modified since the last call, each slot once: the
+        /// MarkEdited slots first (in marking order), then the other MarkDirty slots. When
+        /// `editedFirst` is given, it receives how many leading entries are edited slots.
+        std::vector<uint32_t> TakeDirty(size_t* editedFirst = nullptr);
+        bool HasDirty() const { return !m_DirtyList.empty() || !m_EditedList.empty(); }
 
         uint32_t Capacity() const { return static_cast<uint32_t>(m_Chunks.size()); }
         uint32_t UsedCount() const { return m_Used; }
@@ -54,8 +57,11 @@ export namespace vortex::voxel {
     private:
         std::vector<std::unique_ptr<Chunk>> m_Chunks;
         std::vector<uint32_t> m_FreeList;      // LIFO, lowest slots first after construction
+        // Per slot: bit 0 listed in m_DirtyList, bit 1 listed in m_EditedList; kTaken only inside TakeDirty.
+        static constexpr uint8_t kListedDirty = 1, kListedEdited = 2, kTaken = 4;
         std::vector<uint8_t> m_DirtyFlag;
         std::vector<uint32_t> m_DirtyList;
+        std::vector<uint32_t> m_EditedList;
         uint32_t m_Used = 0;
         uint32_t m_HighWater = 0;
     };

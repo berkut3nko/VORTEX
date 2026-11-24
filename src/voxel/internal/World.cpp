@@ -1547,7 +1547,7 @@ namespace vortex::voxel {
                     if (failed && report) report->unsynced.push_back(coord);
                     if (changed > 0) {
                         if (report) report->changed.push_back(coord);
-                        m_Store.MarkDirty(cell->slot);
+                        m_Store.MarkEdited(cell->slot);
                         cell->modified = true;
                         DropKeptBytes(index);     // the bytes a resident buried chunk kept are stale now
                         ChunkChange& change = QueueChange(*cell);

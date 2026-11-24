@@ -207,7 +207,9 @@ On the GPU all palettes form one array: material index = `palette * 256 + id`.
 `voxel::ChunkStore` is a pool of chunks addressed by **slot**. The slot is the identity of a
 chunk everywhere: the world grid stores slots, objects reference slots, the CPU tracer resolves
 slots and the renderer mirrors slot `i` at offset `i` of its GPU buffers. Anything that changes
-a chunk calls `MarkDirty(slot)`; the renderer drains `TakeDirty()` once per frame.
+a chunk calls `MarkDirty(slot)`; a terrain edit (`World::EditRegion`) calls `MarkEdited(slot)` instead. The
+renderer drains `TakeDirty()` once per frame: edited slots come first, and `SyncVoxelData` puts them at the front of
+its upload queue, so a crater shows on the next frame while the world streams ([wp-8]).
 
 ### 4.3 World
 

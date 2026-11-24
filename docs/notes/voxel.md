@@ -70,7 +70,9 @@ uint32 pairs; the `trace.glsl` offsets (`VX_OCC_BLOCK_OFFSET = 2`, `VX_OCC_VOXEL
 - `Free` neither removes the slot from the dirty list nor lowers `HighWaterMark()`: consumers of `TakeDirty()` must
   tolerate unallocated slots.
 - Exactly one consumer drains `TakeDirty()` (the renderer, `SyncVoxelData` in `Renderer.cpp`); a second drain steals
-  uploads. Whoever edits a chunk in place must call `MarkDirty(slot)`.
+  uploads. Whoever edits a chunk in place must call `MarkDirty(slot)`. A terrain edit calls `MarkEdited(slot)`
+  (`World::EditRegion`): `TakeDirty(&editedFirst)` returns those slots first, each slot once, and the renderer
+  uploads them before streamed slots. Streaming and chunk-sync installs keep `MarkDirty`.
 
 **World** (`World.cpp`).
 - The public interface is main-thread only. Workers run only `World::LoadJob`, which touches only `World::Shared`

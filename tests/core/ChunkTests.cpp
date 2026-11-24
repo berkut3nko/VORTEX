@@ -127,7 +127,7 @@ TEST(ChunkStore, AllocFreeAndDirtyTracking) {
 }
 
 // [wp-8]: edited slots (a blast, a FillBox) are uploaded before streamed ones, each slot once.
-TEST(ChunkStore, DISABLED_EditedSlotsAreTakenFirst) {
+TEST(ChunkStore, EditedSlotsAreTakenFirst) {
     ChunkStore store(4);
     for (int i = 0; i < 4; ++i) ASSERT_NE(store.Alloc(), ChunkStore::kInvalidSlot);
     store.TakeDirty();                     // the allocations

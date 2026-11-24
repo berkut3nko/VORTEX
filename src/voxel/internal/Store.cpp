@@ -1,5 +1,6 @@
 module;
 
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -54,20 +55,30 @@ namespace vortex::voxel {
     }
 
     void ChunkStore::MarkDirty(uint32_t slot) {
-        if (slot >= m_DirtyFlag.size() || m_DirtyFlag[slot]) return;
-        m_DirtyFlag[slot] = 1;
+        if (slot >= m_DirtyFlag.size() || (m_DirtyFlag[slot] & kListedDirty)) return;
+        m_DirtyFlag[slot] |= kListedDirty;
         m_DirtyList.push_back(slot);
     }
 
     void ChunkStore::MarkEdited(uint32_t slot) {
-        // [wp-8] card 6 fills this
-        MarkDirty(slot);
+        if (slot >= m_DirtyFlag.size() || (m_DirtyFlag[slot] & kListedEdited)) return;
+        m_DirtyFlag[slot] |= kListedEdited;
+        m_EditedList.push_back(slot);
     }
 
-    std::vector<uint32_t> ChunkStore::TakeDirty() {
-        std::vector<uint32_t> out = std::move(m_DirtyList);
-        m_DirtyList.clear();
+    std::vector<uint32_t> ChunkStore::TakeDirty(size_t* editedFirst) {
+        std::vector<uint32_t> out;
+        out.reserve(m_EditedList.size() + m_DirtyList.size());
+        for (uint32_t slot : m_EditedList) {
+            out.push_back(slot);
+            m_DirtyFlag[slot] = kTaken;
+        }
+        if (editedFirst) *editedFirst = out.size();
+        for (uint32_t slot : m_DirtyList)
+            if (m_DirtyFlag[slot] != kTaken) out.push_back(slot);
         for (uint32_t slot : out) m_DirtyFlag[slot] = 0;
+        m_EditedList.clear();
+        m_DirtyList.clear();
         return out;
     }
 }

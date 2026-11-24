@@ -877,7 +877,9 @@ namespace vortex::graphics {
             voxels.capacity = 0;
         }
 
-        void EnqueueSlot(uint32_t slot) {
+        /// `front`: an edited slot ([wp-8]) is uploaded before the streamed ones. A slot that is
+        /// queued already gets a second entry at the front; the upload loop skips the later one.
+        void EnqueueSlot(uint32_t slot, bool front = false) {
             VoxelGpu& v = voxels;
             if (slot >= v.capacity) {
                 if (ReportOnce("slot-capacity")) {
@@ -885,9 +887,13 @@ namespace vortex::graphics {
                 }
                 return;
             }
-            if (v.queued[slot]) return;
+            if (v.queued[slot] && !front) return;
             v.queued[slot] = 1;
-            v.pending.push_back(slot);
+            if (front) {
+                v.pending.push_front(slot);
+            } else {
+                v.pending.push_back(slot);
+            }
         }
 
         /// Forgets everything the GPU mirror holds (after a frame whose commands never executed).
@@ -930,7 +936,11 @@ namespace vortex::graphics {
             v.gridValid = false;
             stats.chunkUploads = 0;
 
-            for (uint32_t slot : store.TakeDirty()) EnqueueSlot(slot);
+            size_t editedCount = 0;
+            const std::vector<uint32_t> dirty = store.TakeDirty(&editedCount);
+            for (size_t i = editedCount; i < dirty.size(); ++i) EnqueueSlot(dirty[i]);
+            // Pushed to the front in reverse, so the edited slots upload in their marking order.
+            for (size_t i = editedCount; i-- > 0;) EnqueueSlot(dirty[i], true);
 
             // --- what has to be staged -----------------------------------------------------------
             const std::span<const voxel::GpuMaterial> materialData = input.materials->GpuData();
@@ -972,6 +982,7 @@ namespace vortex::graphics {
             while (!v.pending.empty() && uploads < budget && cursor + kChunkBytes <= frame.staging.size) {
                 const uint32_t slot = v.pending.front();
                 v.pending.pop_front();
+                if (!v.queued[slot]) continue;   // the later entry of a slot EnqueueSlot put at the front
                 v.queued[slot] = 0;
                 const voxel::Chunk* chunk = store.TryGet(slot);
                 if (chunk == nullptr) {

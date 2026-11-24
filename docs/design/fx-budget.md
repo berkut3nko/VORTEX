@@ -204,6 +204,11 @@ exceeds 40% of the overdraw budget. Designers set counts and caps, never budgets
    every fourth burst only: at most 96 x 6 + 24 x 2 = 624 particles per operation at 0.1 m voxels.
    `BuildRenderData` sorts only the blended particles and appends the additive ones in pool order.
    `particles.frag` reads the shape from a flat varying, so its stage no longer binds `u_Particles`.
+   *As built ([wp-8], uploads and colliders; not yet tested):* `World::EditRegion` marks its slots with
+   `ChunkStore::MarkEdited`; `TakeDirty` returns edited slots first and `SyncVoxelData` puts them at the
+   front of the upload queue (the per-frame budget is unchanged). This item of stage 3 ("edited uploads
+   first") is done here. The collider fix was in the code already (`InstallResults` takes any result newer
+   than the installed generation); `TerrainColliders.AChunkEditedEveryFrameGetsACollider` pins it.
 3. **`FxDirector`.** Queues and caps, region merge, per-entity damage coalescing, LOD + load
    factor, overdraw budget and clamp, swap on upload, edited uploads first. *Verify:*
    `--stress-fx 10` worst CPU frame for destruction + effects <= 4 ms, GPU effects <= 4 ms; all

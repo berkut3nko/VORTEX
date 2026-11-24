@@ -420,7 +420,7 @@ TEST(TerrainColliders, CharacterWalksAndClimbsSmallStep) {
 
 // [wp-8] (fx-budget.md "Collider starvation"): a chunk edited every frame still gets colliders
 // (the newest cook result wins), and what rests on it stays on it.
-TEST(TerrainColliders, DISABLED_AChunkEditedEveryFrameGetsACollider) {
+TEST(TerrainColliders, AChunkEditedEveryFrameGetsACollider) {
     Fixture f;                                    // ground at voxel 40 (y = 20 m), chunks are 16 m
     ASSERT_TRUE(f.initialized);
     const glm::dvec3 focus(0.0, 21.0, 0.0);
