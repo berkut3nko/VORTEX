@@ -236,6 +236,14 @@ export namespace vortex::scene {
         math::AABB swept;                      ///< world bounds over the whole travel
     };
 
+    /// @brief A body a player holds (docs/design/mechanisms.md "One use key: E"). Its presence is the truth.
+    struct Held {
+        uint8_t holder = 0;                    ///< session slot; 0 offline
+        uint16_t relYaw = 0;                   ///< object yaw - holder yaw at the pick-up (PlayerInput yaw units)
+        uint32_t sinceTick = 0;                ///< the tick the hold started
+        uint16_t pinnedTicks = 0;              ///< consecutive pinned ticks (authority only)
+    };
+
     /**
      * @brief Marks a voxel object as rubble: a piece left over by destruction that nobody will
      * miss. Scene::Update removes rubble (see SceneConfig: the lifetimes by size,

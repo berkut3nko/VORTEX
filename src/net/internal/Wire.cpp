@@ -217,14 +217,7 @@ namespace vortex::net {
 
     // --- events -----------------------------------------------------------------------------------
 
-    glm::vec3 QuantizeVelocity(const glm::vec3& v) {
-        glm::vec3 q;
-        for (int a = 0; a < 3; ++a) {
-            const float x = std::isfinite(v[a]) ? std::clamp(v[a] * kVelocityQuanta, -32767.0f, 32767.0f) : 0.0f;
-            q[a] = static_cast<float>(static_cast<int16_t>(std::lround(x))) / kVelocityQuanta;
-        }
-        return q;
-    }
+    glm::vec3 QuantizeVelocity(const glm::vec3& v) { return sim::QuantizeVelocity(v); }   // one formula ([mech-1] releases)
 
     namespace {
         void WriteIvec3(ByteWriter& out, const glm::ivec3& v) {

@@ -5,6 +5,8 @@ module;
 
 #include <array>
 #include <cstdint>
+#include <functional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -104,13 +106,28 @@ export namespace vortex::sim {
     /// @brief Before StepPhysics: moving mechanisms MoveKinematic to pose(tick + 1); with `authority` the crush rule and anchors.
     MechanismStepResult StepMechanisms(Simulation& simulation, uint32_t tick, bool authority);
 
+    /// @brief What E meets (docs/design/mechanisms.md "One use key: E"). Not wire format.
+    enum class UseTargetKind : uint8_t { None = 0, Mechanism = 1, Info = 2, Holdable = 3, Rope = 4, HeldByOther = 5 };
+
     struct UseTarget {
         scene::Entity entity = scene::kNoEntity;
-        bool info = false;          ///< a non-usable mechanism (a portcullis): the prompt's info line
+        bool info = false;          ///< kind == Info: a non-usable mechanism (a portcullis), the prompt's info line
         float distance = 0.0f;      ///< metres from the eye
+        UseTargetKind kind = UseTargetKind::None;
     };
-    /// @brief The mechanism the look ray picks at `tick` (terrain occludes, bodies do not).
-    bool FindUseTarget(const Simulation& simulation, const glm::dvec3& eye, const glm::vec3& dir, uint32_t tick, UseTarget& out);
+
+    /// @brief What differs per side in FindUseTarget (design "The order rule", "What can be held").
+    struct UseTargetHooks {
+        /// The owner test of a holdable body (after IsHoldableShape). Empty: IsHoldable(sim, e, false).
+        std::function<bool(scene::Entity)> holdable;
+        /// The tie key. Empty: the NetId value when the entity has one, else the entity id.
+        std::function<uint32_t(scene::Entity)> key;
+    };
+    /// @brief The nearest target of any kind the look ray picks at `tick`: a usable mechanism's use box, a
+    /// holdable body; terrain, block boxes and bodies held by others occlude. Info and HeldByOther when only
+    /// a non-usable mechanism or a held body is in front. `hooks`: the per-side owner test and tie key.
+    bool FindUseTarget(const Simulation& simulation, const glm::dvec3& eye, const glm::vec3& dir, uint32_t tick, UseTarget& out,
+                       const UseTargetHooks* hooks = nullptr);
     /// @brief The prompt's hysteresis: the ray still meets `entity`'s use box inflated by `inflate` metres.
     bool RayMeetsUseBox(const Simulation& simulation, scene::Entity entity, const glm::dvec3& eye, const glm::vec3& dir,
                         uint32_t tick, float inflate);
@@ -135,4 +152,77 @@ export namespace vortex::sim {
     float DistanceToMechanism(const Simulation& simulation, scene::Entity entity, const glm::dvec3& point);
     /// @brief Offline and server: frees a door or portcullis (Dynamic, no Mechanism component) or breaks a lever.
     void ReleaseMechanism(Simulation& simulation, scene::Entity entity, uint32_t tick, uint8_t flag, std::vector<MechanismChange>& changes);
+
+    // ---------------------------------------------------------------------------------------------
+    //  Holding a small object with E (docs/design/mechanisms.md "One use key: E").
+    // ---------------------------------------------------------------------------------------------
+
+    inline constexpr float kHoldDistance = 1.5f, kHoldClearance = 0.1f, kHoldMaxExtent = 1.25f;   ///< metres
+    inline constexpr float kHoldDrop = 0.5f;               ///< metres: the hold anchor below the eye
+    inline constexpr float kHoldMaxVolume = 0.6f;          ///< m^3 of solid voxels
+    inline constexpr uint32_t kHoldPinnedTicks = 30, kHoldBusyTicks = 12;
+    inline constexpr uint32_t kHoldGroundTicks = 30;       ///< a body stood on this recently is not a pick-up
+    inline constexpr int16_t kHoldPitchLimit = 16384;      ///< 45 deg in PlayerInput pitch units
+    inline constexpr float kThrowSpeed = 6.0f;             ///< m/s along the look
+    inline constexpr float kHoldReleaseMin = 0.3f;         ///< metres: the release fix-up's nearest centre
+    static_assert(kHoldDistance >= 0.8660254f * kHoldMaxExtent + kHoldClearance);
+
+    /// @brief Why a hold ended (EntityRelease). Values are wire format.
+    enum class HoldEnd : uint8_t { Drop = 1, Throw = 2, HolderDead = 3, HolderGone = 4, Damaged = 5, Pinned = 6 };
+    inline constexpr uint8_t kMaxHoldEnd = 6;
+
+    /// @brief Where a hold is posed and released besides the holder: the play area and the other players.
+    struct HoldEnv {
+        PlayerTuning tuning;
+        PlayArea area;                         ///< sim::PlayAreaOf(region, tuning) in a session; PlayArea{} offline
+        std::span<const glm::vec3> playerFeet; ///< every player's feet (the release fix-up's capsules)
+    };
+
+    /// @brief clamp(pitch, -kHoldPitchLimit, kHoldPitchLimit) / 256.
+    int8_t HoldPitch(int16_t pitch);
+    /// @brief llround(kHoldMaxVolume / vs^3): the most solid voxels a holdable body may have.
+    uint32_t HoldMaxVoxels(float voxelSize);
+    /// @brief The object's yaw at the pick-up less the holder's, in PlayerInput yaw units.
+    uint16_t RelYawAtPickup(const glm::quat& rotation, uint16_t holderYaw);
+    /// @brief feet + (0, eyeHeight - kHoldDrop, 0): where a hold hangs from.
+    glm::dvec3 HoldAnchor(const glm::vec3& feet, const PlayerTuning& tuning);
+    /// @brief Every side: VoxelBody and RigidBody, no Mechanism, no Held, every extent at most kHoldMaxExtent,
+    /// solid voxels in [debrisBodyVoxels, HoldMaxVoxels].
+    bool IsHoldableShape(const Simulation& simulation, scene::Entity entity);
+    /// @brief Server and offline: the shape test, RigidBody::motion == Dynamic, and with `replicatedOnly` a NetId != 0.
+    bool IsHoldable(const Simulation& simulation, scene::Entity entity, bool replicatedOnly);
+    /// @brief The pick-up path: the sphere of the object's radius swept from `anchor` to its centre meets no solid
+    /// voxel and no mechanism block box.
+    bool PickupPathClear(const Simulation& simulation, scene::Entity entity, const glm::dvec3& anchor);
+
+    struct HeldPose {
+        MechanismPose pose;          ///< shape origin and rotation
+        float distance = 0.0f;       ///< d: anchor to the object's centre
+        bool pinned = false;
+    };
+    /// @brief The pose of `held` for a holder at `feet` looking (yaw, holdPitch * 256); mechanisms at `tick` clamp it.
+    HeldPose HeldPoseAt(const Simulation& simulation, scene::Entity held, const glm::vec3& feet, uint16_t yaw, int8_t holdPitch,
+                        const HoldEnv& env, uint32_t tick);
+    /// @brief Authority: picks `entity` up for `holder` (None, Busy or NoTarget); `out` is the EntityHold. `stoodOn`:
+    /// a player stood on the body within kHoldGroundTicks (the caller knows; offline the own ground body now).
+    UseResult BeginHold(Simulation& simulation, scene::Entity entity, uint8_t holder, uint16_t yaw, uint32_t tick,
+                        uint32_t lastChangeTick, bool anyChange, bool stoodOn, bool replicated, HoldChange& out);
+    /// @brief Every tick after the players: MoveKinematic to the pose; with `authority` counts pinned ticks and
+    /// returns true at kHoldPinnedTicks (the caller ends the hold Pinned).
+    bool StepHeld(Simulation& simulation, scene::Entity entity, const PlayerState& holder, uint16_t yaw, int8_t holdPitch,
+                  const HoldEnv& env, uint32_t tick, bool authority);
+    /// @brief Server and offline: ends the hold at `pose` (a fix-up out of walls, bodies and players), Dynamic,
+    /// quantised `velocity`; `out` is the EntityRelease. `anchor` (the holder's; nullptr for Damaged and
+    /// HolderGone) enables the fix-up.
+    void EndHold(Simulation& simulation, scene::Entity entity, HoldEnd reason, const MechanismPose& pose, const glm::vec3& velocity,
+                 const glm::dvec3* anchor, const HoldEnv& env, uint32_t tick, bool replicated, HoldChange& out);
+    /// @brief Throw: the holder's velocity plus kThrowSpeed along the look; every other reason: the holder's velocity.
+    glm::vec3 ReleaseVelocity(HoldEnd reason, const glm::vec3& holderVelocity, uint16_t yaw, int16_t pitch);
+    /// @brief A client copy (kinematic, never simulated): `hold` emplaces Held and Layer::Held; a release removes
+    /// Held and teleports to the release pose. The layer after a release and the samples are the caller's (net).
+    void ApplyHoldChange(Simulation& simulation, scene::Entity entity, const HoldChange& change);
+    /// @brief "[E] Drop   [LMB] Throw".
+    std::string HoldPrompt();
+    /// @brief A velocity as the wire carries it: int16 per axis in 1/256 m/s (net::QuantizeVelocity forwards here).
+    glm::vec3 QuantizeVelocity(const glm::vec3& velocity);
 }

@@ -2,6 +2,7 @@ module;
 
 #include <entt/entt.hpp>
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <array>
@@ -637,6 +638,26 @@ namespace vortex::sim {
             scene.QueryBodies(math::AABB(center - glm::vec3(radius), center + glm::vec3(radius)), caught);
             const bool replicate = simulation.Config().replication.enabled;
             for (const scene::Entity entity : caught) {
+                // A held body ([mech-1], mechanisms.md "One use key: E"): released first when the sphere meets
+                // its posed model box, then damaged as any object; untouched when only the boxes' bounds meet.
+                if (scene.TryGet<scene::Held>(entity)) {
+                    const scene::Transform* transform = scene.TryGet<scene::Transform>(entity);
+                    const scene::VoxelBody* voxels = scene.TryGet<scene::VoxelBody>(entity);
+                    const scene::RigidBody* rigid = scene.TryGet<scene::RigidBody>(entity);
+                    if (!transform || !voxels || !voxels->model || !rigid) continue;
+                    const float vs = world.VoxelSize();
+                    const glm::vec3 size = glm::vec3(voxels->model->Volume().Size()) * vs;
+                    const glm::vec3 local = glm::conjugate(transform->current.rotation) * (glm::vec3(result.center) - transform->current.position);
+                    const glm::vec3 closest = glm::clamp(local, glm::vec3(0.0f), size);
+                    if (glm::length(local - closest) > static_cast<float>(result.radius)) continue;
+                    MechanismPose pose;
+                    pose.position = glm::dvec3(transform->current.position);
+                    pose.rotation = transform->current.rotation;
+                    HoldChange release;
+                    EndHold(simulation, entity, HoldEnd::Damaged, pose, physics.GetState(rigid->body).linearVelocity, nullptr, HoldEnv{},
+                            simulation.Tick(), scene.TryGet<scene::NetId>(entity) != nullptr, release);
+                    result.holdChanges.push_back(release);
+                }
                 // A replicated object that Damage destroys broke apart (its remains are fragments).
                 uint32_t netId = 0;
                 if (scene::NetId* id = replicate ? scene.TryGet<scene::NetId>(entity) : nullptr) {
@@ -694,6 +715,7 @@ namespace vortex::sim {
         // 4. Push bodies outwards (the new pieces included) and wake what rested nearby.
         for (const auto [entity, body] : scene.Registry().view<const scene::RigidBody>().each()) {
             if (!physics.IsValid(body.body)) continue;
+            if (scene.Registry().all_of<scene::Held>(entity)) continue;   // posed by its holder: no push
             const glm::vec3 push = BlastPush(center, radius, physics.GetState(body.body).position);
             if (push == glm::vec3(0.0f)) continue;
             physics.AddImpulse(body.body, push * physics.GetMass(body.body));

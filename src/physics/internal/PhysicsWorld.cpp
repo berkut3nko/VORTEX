@@ -149,7 +149,8 @@ namespace vortex::physics {
         constexpr JPH::ObjectLayer kLayerCharacter = static_cast<JPH::ObjectLayer>(Layer::Character);
         constexpr JPH::ObjectLayer kLayerRubble = static_cast<JPH::ObjectLayer>(Layer::Rubble);
         constexpr JPH::ObjectLayer kLayerBounds = static_cast<JPH::ObjectLayer>(Layer::Bounds);
-        constexpr JPH::ObjectLayer kLayerCount = 6;
+        constexpr JPH::ObjectLayer kLayerHeld = static_cast<JPH::ObjectLayer>(Layer::Held);
+        constexpr JPH::ObjectLayer kLayerCount = 7;
 
         constexpr JPH::BroadPhaseLayer kBroadPhaseNonMoving(0);
         constexpr JPH::BroadPhaseLayer kBroadPhaseMoving(1);
@@ -178,7 +179,7 @@ namespace vortex::physics {
             bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer broadPhase) const override {
                 // Static objects only ever need to be tested against things that move; the walls of
                 // SetCharacterWalls against nothing (characters query them themselves).
-                if (layer == kLayerBounds) return false;
+                if (layer == kLayerBounds || layer == kLayerHeld) return false;
                 return layer != kLayerStatic || broadPhase == kBroadPhaseMoving;
             }
         };
@@ -188,6 +189,7 @@ namespace vortex::physics {
             bool ShouldCollide(JPH::ObjectLayer a, JPH::ObjectLayer b) const override {
                 if (a == kLayerStatic && b == kLayerStatic) return false;
                 if (a == kLayerBounds || b == kLayerBounds) return false;   // only characters meet them
+                if (a == kLayerHeld || b == kLayerHeld) return false;       // a held object meets nothing
                 if (a == kLayerDebris && b == kLayerDebris) return false;
                 // Rubble (a session client's own lumps and its moving copies of server bodies,
                 // networking stage 6) meets the world, ordinary bodies and itself only.
@@ -209,6 +211,7 @@ namespace vortex::physics {
                 // bodies, a server's moving bodies) never meets a character, whatever the mask says;
                 // the walls of SetCharacterWalls always do.
                 if (layer == kLayerBounds) return true;
+                if (layer == kLayerHeld) return false;
                 return layer != kLayerCharacter && layer != kLayerRubble && layer < 8 && ((m_Mask >> layer) & 1u) != 0;
             }
 
@@ -221,6 +224,8 @@ namespace vortex::physics {
         public:
             explicit LayerMaskFilter(uint8_t mask) : m_Mask(mask) {}
             bool ShouldCollide(JPH::ObjectLayer layer) const override {
+                // A held object is seen only by a query that asks for it alone (mask == LayerBit(Held)).
+                if (layer == kLayerHeld) return m_Mask == static_cast<uint8_t>(1u << kLayerHeld);
                 return layer != kLayerBounds && layer < 8 && ((m_Mask >> layer) & 1u) != 0;
             }
 

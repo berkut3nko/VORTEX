@@ -615,7 +615,7 @@ namespace {
     const glm::vec3 kLookMinusZ{0.0f, 0.0f, -1.0f};
 }
 
-TEST(Use, DISABLED_TargetAtTheInputTick) {
+TEST(Use, TargetAtTheInputTick) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     const Entity door = MakeYardDoor(f, kYardDoorSpawn);
@@ -645,7 +645,7 @@ TEST(Use, DISABLED_TargetAtTheInputTick) {
     EXPECT_FALSE(sim::FindUseTarget(f.simulation, eye120, down, 110, t));
 }
 
-TEST(Use, DISABLED_TerrainOccludes) {
+TEST(Use, TerrainOccludes) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     const Entity door = MakeYardDoor(f, kYardDoorSpawn);
@@ -659,7 +659,7 @@ TEST(Use, DISABLED_TerrainOccludes) {
     EXPECT_EQ(t.entity, door);
 }
 
-TEST(Use, DISABLED_ReachLimit) {
+TEST(Use, ReachLimit) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     const Entity door = MakeYardDoor(f, kYardDoorSpawn);
@@ -672,7 +672,7 @@ TEST(Use, DISABLED_ReachLimit) {
     EXPECT_FALSE(sim::FindUseTarget(f.simulation, glm::dvec3(0.5, 13.0, face + 2.7), kLookMinusZ, 10, t));
 }
 
-TEST(Use, DISABLED_NearestOfTwo) {
+TEST(Use, NearestOfTwo) {
     {
         YardField f;
         ASSERT_TRUE(f.initialized);
@@ -698,7 +698,7 @@ TEST(Use, DISABLED_NearestOfTwo) {
     }
 }
 
-TEST(Use, DISABLED_SmallLeverIsUsable) {
+TEST(Use, SmallLeverIsUsable) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     const Entity lever = MakeYardLever(f, {0, kGroundVoxels, 0});
@@ -709,7 +709,7 @@ TEST(Use, DISABLED_SmallLeverIsUsable) {
     EXPECT_FALSE(t.info);
 }
 
-TEST(Use, DISABLED_ClosedGateBlocksTheLeverBehindIt) {
+TEST(Use, ClosedGateBlocksTheLeverBehindIt) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     const Entity gate = MakeYardGate(f, {-8, kGroundVoxels, 0});            // z 0..0.125 m, closed
@@ -728,7 +728,7 @@ TEST(Use, DISABLED_ClosedGateBlocksTheLeverBehindIt) {
     EXPECT_FALSE(t.info);
 }
 
-TEST(Use, DISABLED_GateIsAnInfoTarget) {
+TEST(Use, GateIsAnInfoTarget) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     const Entity gate = MakeYardGate(f, {-8, kGroundVoxels, 0});
@@ -746,7 +746,7 @@ TEST(Use, DISABLED_GateIsAnInfoTarget) {
     EXPECT_TRUE(greyed);
 }
 
-TEST(Use, DISABLED_DoorOpensAwayFromTheUser) {
+TEST(Use, DoorOpensAwayFromTheUser) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     const Entity front = MakeYardDoor(f, {0, kGroundVoxels, 0});
@@ -778,7 +778,7 @@ TEST(Use, DISABLED_DoorOpensAwayFromTheUser) {
     EXPECT_EQ(use(oneBack, -1.5).targetPos, 1024) << "OneWay ignores the side";
 }
 
-TEST(Use, DISABLED_LeverDrivesItsTargets) {
+TEST(Use, LeverDrivesItsTargets) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     const Entity gate = MakeYardGate(f, {-8, kGroundVoxels, 0});
@@ -817,7 +817,7 @@ TEST(Use, DISABLED_LeverDrivesItsTargets) {
     EXPECT_EQ(broken[0].segment.targetPos, 512);
 }
 
-TEST(Use, DISABLED_RefusalsInOrder) {
+TEST(Use, RefusalsInOrder) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     const glm::dvec3 eye = kFrontEye;
@@ -851,7 +851,7 @@ TEST(Use, DISABLED_RefusalsInOrder) {
     EXPECT_STREQ(sim::ToString(sim::UseResult::NoTarget), "out of reach");
 }
 
-TEST(Use, DISABLED_OpenCannotInterruptAClose) {
+TEST(Use, OpenCannotInterruptAClose) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     const Entity gate = MakeYardGate(f, {-8, kGroundVoxels, 0}, 320);      // raised
@@ -879,7 +879,7 @@ TEST(Use, DISABLED_OpenCannotInterruptAClose) {
     EXPECT_EQ(changes[1].segment.targetPos, 320);
 }
 
-TEST(Use, DISABLED_CloseInterruptsAnOpen) {
+TEST(Use, CloseInterruptsAnOpen) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     const Entity door = MakeYardDoor(f, kYardDoorSpawn);
@@ -918,7 +918,7 @@ namespace {
     }
 }
 
-TEST(Use, DISABLED_AuthoringRuleRejectsAReachableLever) {
+TEST(Use, AuthoringRuleRejectsAReachableLever) {
     YardField f;
     ASSERT_TRUE(f.initialized);
     const sim::RegionTemplate reachable = MakeYardGateTemplate(f.Ids(), 2.0);
@@ -1210,4 +1210,569 @@ TEST(Mechanism, DISABLED_TwoSimulationsFedTheSameInputsAgree) {
         EXPECT_GT(static_cast<uint32_t>(a.tracks[i].count), 1u) << "every mechanism moved, " << i;
     }
     EXPECT_EQ(a.worldHash, b.worldHash);
+}
+
+// =================================================================================================
+//  Holding a small object with E (mechanisms.md "One use key: E")
+// =================================================================================================
+
+namespace {
+    constexpr float kHoldVoxel = 0.1f;
+    const glm::vec3 kHoldFeet{0.0f, 10.0f, 0.0f};
+    const glm::vec3 kHoldLook{0.0f, 0.0f, -1.0f};
+    const glm::dvec3 kHoldEye{0.0, 11.62, 0.0};
+
+    /// A simulation on flat stone ground (top at y = 10 m), its window loaded at the origin.
+    struct HoldYard {
+        explicit HoldYard(float voxelSize = kHoldVoxel) : simulation(Config(voxelSize)) {
+            voxel::MaterialLibrary scratch;
+            const voxel::WorldMaterials ids = voxel::RegisterDefaultWorldMaterials(scratch);
+            const int ground = static_cast<int>(std::lround(10.0 / static_cast<double>(voxelSize)));
+            initialized = simulation.Initialize(voxel::CreateFlatGenerator(ground, ids.stone, ids.stone));
+            if (initialized) simulation.World().LoadBlocking(glm::dvec3(0.0, 10.0, 0.0));
+        }
+        HoldYard(const HoldYard&) = delete;
+        HoldYard& operator=(const HoldYard&) = delete;
+
+        static sim::SimulationConfig Config(float voxelSize) {
+            sim::SimulationConfig config = YardConfig();
+            config.world.voxelSize = voxelSize;
+            return config;
+        }
+        scene::Scene& Scene() { return simulation.Scene(); }
+        const voxel::WorldMaterials& Ids() const { return simulation.WorldMaterialIds(); }
+        void Apply(const sim::WorldOp& op) { EXPECT_TRUE(sim::ApplyOp(simulation.World(), op).Complete()); }
+        /// The voxel of a point given in metres (0.1 m voxels).
+        static glm::ivec3 V(const glm::dvec3& p) {
+            return {static_cast<int>(std::lround(p.x / kHoldVoxel)), static_cast<int>(std::lround(p.y / kHoldVoxel)),
+                    static_cast<int>(std::lround(p.z / kHoldVoxel))};
+        }
+        void Stone(const glm::dvec3& min, const glm::dvec3& max) { Apply(sim::WorldOp::Box(V(min), V(max), Ids().stone)); }
+        void Air(const glm::dvec3& min, const glm::dvec3& max) { Apply(sim::WorldOp::Box(V(min), V(max), 0)); }
+
+        /// A crate (8^3 voxels at 0.1 m) with its centre at `centre`.
+        Entity Crate(const glm::dvec3& centre, physics::MotionType motion = physics::MotionType::Dynamic) {
+            const auto model = sim::CrateModel(Ids(), sim::PlaygroundScale(simulation.World().VoxelSize()));
+            const glm::vec3 half = glm::vec3(model->Volume().Size()) * (0.5f * simulation.World().VoxelSize());
+            return Scene().CreateVoxelObject({.model = model, .position = glm::vec3(centre) - half, .motion = motion});
+        }
+        glm::dvec3 CentreOf(Entity e) {
+            const scene::Transform* t = Scene().TryGet<scene::Transform>(e);
+            const scene::VoxelBody* v = Scene().TryGet<scene::VoxelBody>(e);
+            const glm::vec3 half = glm::vec3(v->model->Volume().Size()) * (0.5f * simulation.World().VoxelSize());
+            return glm::dvec3(t->current.position) + glm::dvec3(t->current.rotation * half);
+        }
+        sim::HoldEnv Env() const { return sim::HoldEnv{sim::PlayerTuning{}, sim::PlayArea{}, {}}; }
+        physics::BodyId Body(Entity e) { return Scene().TryGet<scene::RigidBody>(e)->body; }
+
+        sim::Simulation simulation;
+        bool initialized = false;
+    };
+
+    /// A door (8 x 16 x 3 voxels) with its spawn voxel `spawn`, at travel position `p`.
+    Entity HoldYardDoor(HoldYard& y, const glm::ivec3& spawn, int16_t p = 0) {
+        const Entity e = y.Scene().CreateVoxelObject({.model = MakeSolidModel(kDoorSize, y.Ids().planks, "door"),
+                                                      .position = glm::vec3(y.simulation.World().VoxelToWorld(spawn)),
+                                                      .motion = physics::MotionType::Kinematic});
+        if (e == kNoEntity || !sim::MakeMechanism(y.simulation, e, MakeDoorDesc(), spawn, 0, p, 0)) return kNoEntity;
+        return e;
+    }
+
+    /// A lever (2 x 6 x 2 voxels) with its spawn voxel `spawn`.
+    Entity HoldYardLever(HoldYard& y, const glm::ivec3& spawn) {
+        const Entity e = y.Scene().CreateVoxelObject({.model = MakeSolidModel(kLeverSize, y.Ids().wood, "lever"),
+                                                      .position = glm::vec3(y.simulation.World().VoxelToWorld(spawn)),
+                                                      .motion = physics::MotionType::Kinematic});
+        if (e == kNoEntity || !sim::MakeMechanism(y.simulation, e, MakeLeverDesc(), spawn, 0, 0, 0)) return kNoEntity;
+        return e;
+    }
+
+    sim::UseTarget HoldFind(HoldYard& y, const glm::dvec3& eye, const glm::vec3& dir = kHoldLook) {
+        sim::UseTarget t;
+        sim::FindUseTarget(y.simulation, eye, dir, y.simulation.Tick(), t);
+        return t;
+    }
+
+    glm::dvec3 HeldCentre(const sim::HeldPose& p) { return p.pose.position + glm::dvec3(p.pose.rotation * glm::vec3(0.4f)); }
+}
+
+TEST(Hold, CrateIsHoldableBigThingsAreNot) {
+    for (const float vs : {0.1f, 0.125f, 0.15f}) {
+        HoldYard y(vs);
+        ASSERT_TRUE(y.initialized);
+        const Entity crate = y.Crate({0.0, 12.0, -3.0});
+        ASSERT_NE(crate, kNoEntity);
+        EXPECT_TRUE(sim::IsHoldable(y.simulation, crate, false)) << vs;
+    }
+    EXPECT_EQ(sim::HoldMaxVoxels(0.1f), 600u);
+    EXPECT_EQ(sim::HoldMaxVoxels(0.125f), 307u);
+    EXPECT_EQ(sim::HoldMaxVoxels(0.15f), 178u);
+
+    HoldYard y;
+    ASSERT_TRUE(y.initialized);
+    const auto object = [&](const glm::ivec3& size, uint8_t material, physics::MotionType motion = physics::MotionType::Dynamic) {
+        return y.Scene().CreateVoxelObject({.model = MakeSolidModel(size, material, "box"), .position = {2.0f, 12.0f, -3.0f}, .motion = motion});
+    };
+    EXPECT_FALSE(sim::IsHoldable(y.simulation, object({13, 4, 4}, y.Ids().planks), false)) << "1.3 m long";
+    EXPECT_FALSE(sim::IsHoldable(y.simulation, object({9, 9, 9}, y.Ids().stone), false)) << "729 > 600 voxels";
+    EXPECT_FALSE(sim::IsHoldable(y.simulation, object({5, 2, 2}, y.Ids().stone), false)) << "under debrisBodyVoxels";
+    EXPECT_FALSE(sim::IsHoldable(y.simulation, HoldYardDoor(y, {40, 100, 0}), false)) << "a mechanism";
+    EXPECT_FALSE(sim::IsHoldable(y.simulation, object({4, 4, 4}, y.Ids().wood, physics::MotionType::Kinematic), false)) << "kinematic";
+
+    const Entity copy = y.Crate({-2.0, 12.0, -3.0}, physics::MotionType::Kinematic);
+    EXPECT_TRUE(sim::IsHoldableShape(y.simulation, copy)) << "a client copy passes the shape test";
+    EXPECT_FALSE(sim::IsHoldable(y.simulation, copy, false));
+
+    const Entity crate = y.Crate({0.0, 12.0, -3.0});
+    EXPECT_FALSE(sim::IsHoldable(y.simulation, crate, true)) << "replicatedOnly: no NetId";
+    sim::HoldChange c;
+    ASSERT_EQ(sim::BeginHold(y.simulation, crate, 0, 0, 10, 0, false, false, false, c), sim::UseResult::None);
+    EXPECT_FALSE(sim::IsHoldable(y.simulation, crate, false)) << "already held";
+}
+
+TEST(Hold, NearestTargetWins) {
+    // The lever (x -0.1..0.1, y 11.3..11.9, z -2.3..-2.1): its inflated use box is entered 2.0 m ahead.
+    {
+        HoldYard y;
+        ASSERT_TRUE(y.initialized);
+        ASSERT_NE(HoldYardLever(y, {-1, 113, -23}), kNoEntity);
+        const Entity crate = y.Crate({0.0, 11.62, -1.7});   // its inflated box is entered 1.2 m ahead
+        const sim::UseTarget t = HoldFind(y, kHoldEye);
+        EXPECT_EQ(t.kind, sim::UseTargetKind::Holdable);
+        EXPECT_EQ(t.entity, crate);
+        EXPECT_NEAR(t.distance, 1.2f, 1.0e-3f);
+    }
+    {
+        HoldYard y;
+        ASSERT_TRUE(y.initialized);
+        const Entity lever = HoldYardLever(y, {-1, 113, -23});
+        ASSERT_NE(lever, kNoEntity);
+        y.Crate({0.0, 11.62, -2.9});                        // behind the lever
+        const sim::UseTarget t = HoldFind(y, kHoldEye);
+        EXPECT_EQ(t.kind, sim::UseTargetKind::Mechanism);
+        EXPECT_EQ(t.entity, lever);
+    }
+}
+
+TEST(Hold, ClosedDoorHidesACrateBehindIt) {
+    for (const int16_t p : {int16_t{0}, int16_t{1024}}) {
+        HoldYard y;
+        ASSERT_TRUE(y.initialized);
+        // The door at x -0.6..0.2 (hinge at x -0.6), z -1.3..-1.0; the eye and the crate on x = 0.
+        const Entity door = HoldYardDoor(y, {-6, 105, -13}, p);
+        ASSERT_NE(door, kNoEntity);
+        const Entity crate = y.Crate({0.0, 11.62, -2.5});
+        const sim::UseTarget t = HoldFind(y, kHoldEye);
+        if (p == 0) {
+            EXPECT_EQ(t.kind, sim::UseTargetKind::Mechanism);
+            EXPECT_EQ(t.entity, door);
+        } else {
+            EXPECT_EQ(t.kind, sim::UseTargetKind::Holdable) << "the open door is out of the ray";
+            EXPECT_EQ(t.entity, crate);
+        }
+    }
+}
+
+TEST(Hold, HeldByAnotherIsBusy) {
+    HoldYard y;
+    ASSERT_TRUE(y.initialized);
+    const Entity crate = y.Crate({0.0, 11.62, -1.5});
+    ASSERT_NE(HoldYardDoor(y, {-4, 105, -25}), kNoEntity);
+    sim::HoldChange c;
+    ASSERT_EQ(sim::BeginHold(y.simulation, crate, 1, 0, 10, 0, false, false, false, c), sim::UseResult::None);
+    const sim::UseTarget t = HoldFind(y, kHoldEye);
+    EXPECT_EQ(t.kind, sim::UseTargetKind::HeldByOther);
+    EXPECT_EQ(t.entity, crate);
+    bool greyed = false;
+    EXPECT_EQ(sim::UsePrompt(y.simulation, t, 10, greyed), "Held");
+    EXPECT_TRUE(greyed);
+}
+
+TEST(Hold, CannotPassASlit) {
+    HoldYard y;
+    ASSERT_TRUE(y.initialized);
+    y.Stone({-2.0, 10.0, -2.0}, {2.0, 13.0, -1.6});
+    y.Air({-0.1, 10.0, -2.0}, {0.1, 13.0, -1.6});
+    const Entity crate = y.Crate({0.0, 11.62, -2.4});
+    EXPECT_FALSE(sim::PickupPathClear(y.simulation, crate, sim::HoldAnchor(kHoldFeet, sim::PlayerTuning{})));
+    sim::UseTarget t;
+    EXPECT_FALSE(sim::FindUseTarget(y.simulation, kHoldEye, kHoldLook, y.simulation.Tick(), t));
+    EXPECT_EQ(t.kind, sim::UseTargetKind::None);
+
+    y.Stone({-0.1, 10.0, -2.0}, {0.1, 13.0, -1.6});
+    y.Air({-0.5, 10.0, -2.0}, {0.5, 13.0, -1.6});
+    EXPECT_EQ(HoldFind(y, kHoldEye).kind, sim::UseTargetKind::Holdable) << "a 1.0 m opening";
+
+    y.Stone({-0.5, 10.0, -2.0}, {0.5, 13.0, -1.6});
+    y.Air({-0.1, 10.0, -2.0}, {0.1, 13.0, -1.6});
+    sim::HoldChange c;
+    ASSERT_EQ(sim::BeginHold(y.simulation, crate, 0, 0, 10, 0, false, false, false, c), sim::UseResult::None);
+    const sim::HeldPose p = sim::HeldPoseAt(y.simulation, crate, kHoldFeet, 0, 0, y.Env(), y.simulation.Tick());
+    EXPECT_NEAR(p.distance, 1.33520f, 1.0e-3f) << "the slit's edge voxels stop the sphere";
+    EXPECT_GT(HeldCentre(p).z, -1.6) << "the centre stays on the near side";
+}
+
+TEST(Hold, CannotPickUpWhatAPlayerStandsOn) {
+    HoldYard y;
+    ASSERT_TRUE(y.initialized);
+    const Entity crate = y.Crate({0.0, 10.4, -1.5});
+    sim::HoldChange c;
+    EXPECT_EQ(sim::BeginHold(y.simulation, crate, 0, 0, 10, 0, false, true, false, c), sim::UseResult::Busy);
+    EXPECT_EQ(y.Scene().TryGet<scene::Held>(crate), nullptr);
+    EXPECT_EQ(sim::BeginHold(y.simulation, crate, 0, 0, 10, 0, false, false, false, c), sim::UseResult::None);
+    EXPECT_NE(y.Scene().TryGet<scene::Held>(crate), nullptr);
+}
+
+TEST(Hold, PoseFollowsTheHolder) {
+    HoldYard y;
+    ASSERT_TRUE(y.initialized);
+    const Entity crate = y.Crate({3.0, 10.4, 3.0});
+    sim::HoldChange c;
+    ASSERT_EQ(sim::BeginHold(y.simulation, crate, 0, 0, 10, 0, false, false, false, c), sim::UseResult::None);
+    EXPECT_EQ(c.relYaw, 0u);
+
+    const sim::HeldPose a = sim::HeldPoseAt(y.simulation, crate, kHoldFeet, 0, 0, y.Env(), 10);
+    EXPECT_NEAR(HeldCentre(a).x, 0.0, 1.0e-4);
+    EXPECT_NEAR(HeldCentre(a).y, 11.12, 1.0e-4);
+    EXPECT_NEAR(HeldCentre(a).z, -1.5, 1.0e-4);
+    EXPECT_NEAR(a.pose.position.x, -0.4, 1.0e-4);
+    EXPECT_NEAR(a.pose.position.y, 10.72, 1.0e-4);
+    EXPECT_NEAR(a.pose.position.z, -1.9, 1.0e-4);
+    EXPECT_FALSE(a.pinned);
+
+    const sim::HeldPose b = sim::HeldPoseAt(y.simulation, crate, kHoldFeet, 16384, 0, y.Env(), 10);
+    EXPECT_NEAR(HeldCentre(b).x, -1.5, 1.0e-4);
+    EXPECT_NEAR(HeldCentre(b).z, 0.0, 1.0e-4);
+    const glm::quat quarter = glm::angleAxis(1.5707963f, glm::vec3(0.0f, 1.0f, 0.0f));
+    EXPECT_NEAR(std::abs(glm::dot(b.pose.rotation, quarter)), 1.0f, 1.0e-5f);
+
+    EXPECT_EQ(sim::HoldPitch(20000), 64);
+    EXPECT_EQ(sim::HoldPitch(-20000), -64);
+    const sim::HeldPose up = sim::HeldPoseAt(y.simulation, crate, kHoldFeet, 0, sim::HoldPitch(20000), y.Env(), 10);
+    EXPECT_NEAR(HeldCentre(up).y, 12.18066, 1.0e-3);
+    EXPECT_NEAR(HeldCentre(up).z, -1.06063, 1.0e-3);
+
+    EXPECT_EQ(sim::RelYawAtPickup(glm::angleAxis(1.5707963f, glm::vec3(0.0f, 1.0f, 0.0f)), 0), 16384u);
+}
+
+TEST(Hold, WallClampsTheDistance) {
+    HoldYard y;
+    ASSERT_TRUE(y.initialized);
+    const Entity crate = y.Crate({3.0, 10.4, 3.0});
+    sim::HoldChange c;
+    ASSERT_EQ(sim::BeginHold(y.simulation, crate, 0, 0, 10, 0, false, false, false, c), sim::UseResult::None);
+
+    y.Stone({-2.0, 10.0, -2.6}, {2.0, 13.0, -1.6});
+    sim::HeldPose p = sim::HeldPoseAt(y.simulation, crate, kHoldFeet, 0, 0, y.Env(), 10);
+    EXPECT_NEAR(p.distance, 1.30489f, 1.0e-3f);
+    EXPECT_FALSE(p.pinned);
+
+    y.Air({-2.0, 10.0, -2.6}, {2.0, 13.0, -1.6});
+    y.Stone({-2.0, 10.0, -2.2}, {2.0, 13.0, -1.0});
+    p = sim::HeldPoseAt(y.simulation, crate, kHoldFeet, 0, 0, y.Env(), 10);
+    EXPECT_NEAR(p.distance, 0.79282f, 1.0e-4f);
+    EXPECT_TRUE(p.pinned);
+
+    y.Air({-2.0, 10.0, -2.2}, {2.0, 13.0, -1.0});
+    ASSERT_NE(HoldYardDoor(y, {-4, 105, -19}), kNoEntity);   // block box z -1.9 .. -1.6
+    p = sim::HeldPoseAt(y.simulation, crate, kHoldFeet, 0, 0, y.Env(), 10);
+    EXPECT_NEAR(p.distance, 1.25f, 1.0e-3f) << "the door's block box grown by the sweep radius";
+}
+
+TEST(Hold, PlayAreaClampsTheHold) {
+    HoldYard y;
+    ASSERT_TRUE(y.initialized);
+    const Entity crate = y.Crate({3.0, 10.4, 3.0});
+    sim::HoldChange c;
+    ASSERT_EQ(sim::BeginHold(y.simulation, crate, 0, 0, 10, 0, false, false, false, c), sim::UseResult::None);
+    sim::HoldEnv env = y.Env();
+    env.area.min = {-1.0f, -1.0f};
+    env.area.max = {1.0f, 1.0f};
+    const sim::HeldPose p = sim::HeldPoseAt(y.simulation, crate, kHoldFeet, 0, 0, env, 10);
+    EXPECT_NEAR(HeldCentre(p).x, 0.0, 1.0e-4);
+    EXPECT_NEAR(HeldCentre(p).y, 11.12, 1.0e-4);
+    EXPECT_NEAR(HeldCentre(p).z, -1.0, 1.0e-4);
+}
+
+TEST(Hold, HeldBodyMeetsNothing) {
+    HoldYard y;
+    ASSERT_TRUE(y.initialized);
+    const std::array<glm::dvec3, 1> focus = {glm::dvec3(0.0, 10.0, 0.0)};
+    y.simulation.UpdateStreaming(focus);
+    y.simulation.Terrain().Flush();
+    const Entity resting = y.Crate({0.0, 10.4, -1.5});
+    for (int i = 0; i < 60; ++i) y.simulation.Step(focus);    // it settles
+    const glm::dvec3 restAt = y.CentreOf(resting);
+
+    const Entity crate = y.Crate({3.0, 10.4, 3.0});
+    sim::HoldChange c;
+    ASSERT_EQ(sim::BeginHold(y.simulation, crate, 0, 0, y.simulation.Tick(), 0, false, false, false, c), sim::UseResult::None);
+    EXPECT_EQ(y.simulation.Physics().GetLayer(y.Body(crate)), physics::Layer::Held);
+
+    // 1. The held crate posed through the resting one for 60 ticks: the resting crate does not move.
+    sim::PlayerState holder;
+    holder.position = kHoldFeet;
+    for (int i = 0; i < 60; ++i) {
+        sim::StepHeld(y.simulation, crate, holder, 0, 0, y.Env(), y.simulation.Tick(), true);
+        y.simulation.Step(focus);
+    }
+    EXPECT_NEAR(y.CentreOf(resting).x, restAt.x, 1.0e-4);
+    EXPECT_NEAR(y.CentreOf(resting).y, restAt.y, 1.0e-4);
+    EXPECT_NEAR(y.CentreOf(resting).z, restAt.z, 1.0e-4);
+    EXPECT_NEAR(glm::length(y.simulation.Physics().GetState(y.Body(resting)).linearVelocity), 0.0f, 1.0e-4f);
+
+    // 2. The lane cleared, a second player walks along -z from z = 1 m through the held crate's place.
+    y.Scene().Destroy(resting);
+    holder.position = {0.0f, 10.0f, 0.0f};
+    const sim::PlayerTuning tuning;
+    sim::PlayerState walker;
+    walker.position = {0.0f, 10.0f, 1.0f};
+    const physics::CharacterId character = y.simulation.Physics().CreateCharacter(sim::PlayerCharacterDesc(walker.position, tuning));
+    sim::PlayerInput walk;
+    walk.moveZ = 127;
+    for (int i = 0; i < 60; ++i) {
+        const uint32_t tick = y.simulation.Tick();
+        y.simulation.Terrain().FlushBox(sim::PlayerReach(walker.position, tuning));
+        sim::StepPlayer(y.simulation.Physics(), y.simulation.Terrain(), character, walker, walk, tuning, sim::PlayArea{},
+                        y.simulation.Config().fixedTimeStep);
+        sim::StepHeld(y.simulation, crate, holder, 0, -64, y.Env(), tick, true);   // held low, across the walker's capsule
+        y.simulation.Step(focus);
+    }
+    EXPECT_GT(1.0f - walker.position.z, 3.0f) << "the walker passed through the held crate";
+
+    // 3. Rays: held level again, only a query that asks for Layer::Held alone sees it.
+    sim::StepHeld(y.simulation, crate, holder, 0, 0, y.Env(), y.simulation.Tick(), true);
+    y.simulation.StepPhysics();
+    const glm::vec3 from = glm::vec3(kHoldEye) - glm::vec3(0.0f, 0.5f, 0.0f);
+    EXPECT_FALSE(y.simulation.Physics().Raycast(from, kHoldLook, 1.2f).hit) << "the default mask does not see it";
+    const physics::RayHit seen = y.simulation.Physics().Raycast(from, kHoldLook, 5.0f, physics::LayerBit(physics::Layer::Held));
+    EXPECT_TRUE(seen.hit);
+    EXPECT_EQ(seen.body, y.Body(crate));
+}
+
+TEST(Hold, DropKeepsPoseAndHolderVelocity) {
+    for (const bool replicated : {false, true}) {
+        HoldYard y;
+        ASSERT_TRUE(y.initialized);
+        const Entity crate = y.Crate({0.0, 13.0, -1.5});
+        sim::HoldChange c;
+        ASSERT_EQ(sim::BeginHold(y.simulation, crate, 0, 0, 10, 0, false, false, false, c), sim::UseResult::None);
+        sim::MechanismPose pose;
+        pose.position = {-0.4, 12.6, -1.9};
+        const glm::dvec3 anchor = sim::HoldAnchor({0.0f, 11.5f, 0.0f}, sim::PlayerTuning{});
+        sim::EndHold(y.simulation, crate, sim::HoldEnd::Drop, pose, {2.0f, 0.0f, 0.0f}, &anchor, y.Env(), 20, replicated, c);
+        EXPECT_EQ(y.Scene().TryGet<scene::Held>(crate), nullptr);
+        EXPECT_EQ(y.simulation.Physics().GetLayer(y.Body(crate)), replicated ? physics::Layer::Rubble : physics::Layer::Dynamic);
+        EXPECT_EQ(y.simulation.Physics().GetState(y.Body(crate)).linearVelocity, glm::vec3(2.0f, 0.0f, 0.0f));
+        EXPECT_EQ(y.Scene().TryGet<scene::Transform>(crate)->current.position, glm::vec3(pose.position));
+        EXPECT_FALSE(c.hold);
+        EXPECT_EQ(c.reason, 1u);
+        EXPECT_EQ(c.tick, 20u);
+    }
+}
+
+TEST(Hold, ThrowAddsSixAlongTheLook) {
+    const glm::vec3 a = sim::ReleaseVelocity(sim::HoldEnd::Throw, {1.0f, 0.0f, 0.0f}, 0, 0);
+    EXPECT_NEAR(a.x, 1.0f, 1.0e-5f);
+    EXPECT_NEAR(a.y, 0.0f, 1.0e-5f);
+    EXPECT_NEAR(a.z, -6.0f, 1.0e-5f);
+    const glm::vec3 b = sim::ReleaseVelocity(sim::HoldEnd::Throw, {1.0f, 0.0f, 0.0f}, 0, 32767);
+    EXPECT_NEAR(b.x, 1.0f, 1.0e-4f);
+    EXPECT_NEAR(b.y, 6.0f, 1.0e-4f);
+    EXPECT_NEAR(b.z, 0.0f, 1.0e-4f);
+    EXPECT_EQ(sim::ReleaseVelocity(sim::HoldEnd::Drop, {1.0f, 2.0f, 3.0f}, 0, 0), glm::vec3(1.0f, 2.0f, 3.0f));
+}
+
+TEST(Hold, ReleaseStepsOutOfAWall) {
+    for (const bool fix : {true, false}) {
+        HoldYard y;
+        ASSERT_TRUE(y.initialized);
+        const Entity crate = y.Crate({3.0, 10.4, 3.0});
+        sim::HoldChange c;
+        ASSERT_EQ(sim::BeginHold(y.simulation, crate, 0, 0, 10, 0, false, false, false, c), sim::UseResult::None);
+        y.Stone({-2.0, 10.0, -2.2}, {2.0, 13.0, -1.0});
+        const sim::HeldPose p = sim::HeldPoseAt(y.simulation, crate, kHoldFeet, 0, 0, y.Env(), 10);
+        ASSERT_TRUE(p.pinned);
+        const glm::dvec3 anchor = sim::HoldAnchor(kHoldFeet, sim::PlayerTuning{});
+        sim::EndHold(y.simulation, crate, sim::HoldEnd::Pinned, p.pose, glm::vec3(0.0f), fix ? &anchor : nullptr, y.Env(), 10, false, c);
+        if (fix)
+            EXPECT_NEAR(static_cast<double>(c.position.z) + 0.4, -0.59282, 1.0e-3) << "two steps of 0.1 m back";
+        else
+            EXPECT_NEAR(c.position.z, static_cast<float>(p.pose.position.z), 1.0e-6f) << "no fix-up without an anchor";
+    }
+}
+
+TEST(Hold, ReleaseAvoidsBodiesAndPlayers) {
+    {
+        HoldYard y;
+        ASSERT_TRUE(y.initialized);
+        y.Crate({0.0, 11.12, -1.5});                         // a second crate, in Layer::Dynamic
+        const Entity crate = y.Crate({3.0, 10.4, 3.0});
+        sim::HoldChange c;
+        ASSERT_EQ(sim::BeginHold(y.simulation, crate, 0, 0, 10, 0, false, false, false, c), sim::UseResult::None);
+        const sim::HeldPose p = sim::HeldPoseAt(y.simulation, crate, kHoldFeet, 0, 0, y.Env(), 10);
+        const glm::dvec3 anchor = sim::HoldAnchor(kHoldFeet, sim::PlayerTuning{});
+        sim::EndHold(y.simulation, crate, sim::HoldEnd::Drop, p.pose, glm::vec3(0.0f), &anchor, y.Env(), 10, false, c);
+        EXPECT_GE(static_cast<double>(c.position.z) + 0.4, -0.7 - 1.0e-3);
+    }
+    {
+        HoldYard y;
+        ASSERT_TRUE(y.initialized);
+        const Entity crate = y.Crate({3.0, 10.4, 3.0});
+        sim::HoldChange c;
+        ASSERT_EQ(sim::BeginHold(y.simulation, crate, 0, 0, 10, 0, false, false, false, c), sim::UseResult::None);
+        const std::array<glm::vec3, 1> feet = {glm::vec3(0.0f, 10.5f, -1.5f)};
+        sim::HoldEnv env = y.Env();
+        env.playerFeet = feet;
+        const sim::HeldPose p = sim::HeldPoseAt(y.simulation, crate, kHoldFeet, 0, 0, env, 10);
+        const glm::dvec3 anchor = sim::HoldAnchor(kHoldFeet, sim::PlayerTuning{});
+        sim::EndHold(y.simulation, crate, sim::HoldEnd::Drop, p.pose, glm::vec3(0.0f), &anchor, env, 10, false, c);
+        const math::AABB capsule = sim::PlayerBounds(feet[0], sim::PlayerTuning{});
+        EXPECT_GE(c.position.z, capsule.max.z - 1.0e-4f) << "stepped back until the box clears the capsule";
+    }
+}
+
+TEST(Hold, PinnedForThirtyTicksDrops) {
+    for (const bool lookAway : {false, true}) {
+        HoldYard y;
+        ASSERT_TRUE(y.initialized);
+        const Entity crate = y.Crate({3.0, 10.4, 3.0});
+        sim::HoldChange c;
+        ASSERT_EQ(sim::BeginHold(y.simulation, crate, 0, 0, 10, 0, false, false, false, c), sim::UseResult::None);
+        y.Stone({-2.0, 10.0, -2.2}, {2.0, 13.0, -1.0});
+        sim::PlayerState holder;
+        holder.position = kHoldFeet;
+        const int calls = lookAway ? 45 : 30;
+        for (int call = 1; call <= calls; ++call) {
+            const uint16_t yaw = (lookAway && call == 15) ? uint16_t{32768} : uint16_t{0};
+            const bool drop = sim::StepHeld(y.simulation, crate, holder, yaw, 0, y.Env(), static_cast<uint32_t>(10 + call), true);
+            EXPECT_EQ(drop, call == calls) << "call " << call;
+        }
+    }
+}
+
+TEST(Hold, BusyAfterAChange) {
+    HoldYard y;
+    ASSERT_TRUE(y.initialized);
+    const Entity crate = y.Crate({0.0, 10.4, -1.5});
+    sim::HoldChange c;
+    EXPECT_EQ(sim::BeginHold(y.simulation, crate, 0, 0, 100, 100 - 11, true, false, false, c), sim::UseResult::Busy);
+    EXPECT_EQ(sim::BeginHold(y.simulation, crate, 0, 0, 100, 100 - 12, true, false, false, c), sim::UseResult::None);
+    const Entity other = y.Crate({2.0, 10.4, -1.5});
+    EXPECT_EQ(sim::BeginHold(y.simulation, other, 1, 0, 100, 100, false, false, false, c), sim::UseResult::None);
+}
+
+TEST(Hold, DamageReleasesFirst) {
+    HoldYard y;
+    ASSERT_TRUE(y.initialized);
+    const Entity crate = y.Crate({0.0, 11.12, -1.5});
+    sim::HoldChange c;
+    ASSERT_EQ(sim::BeginHold(y.simulation, crate, 0, 0, 10, 0, false, false, false, c), sim::UseResult::None);
+    const sim::BlastResult blast = sim::Blast(y.simulation, sim::BlastDesc{y.CentreOf(crate), 1.2f, 6.0f});
+    ASSERT_EQ(blast.holdChanges.size(), 1u);
+    EXPECT_FALSE(blast.holdChanges[0].hold);
+    EXPECT_EQ(blast.holdChanges[0].reason, static_cast<uint8_t>(sim::HoldEnd::Damaged));
+    if (y.Scene().IsValid(crate)) {
+        EXPECT_EQ(y.Scene().TryGet<scene::Held>(crate), nullptr);
+        EXPECT_EQ(y.Scene().TryGet<scene::RigidBody>(crate)->motion, physics::MotionType::Dynamic);
+    }
+}
+
+TEST(Hold, PushDoesNotReleaseOrMove) {
+    HoldYard y;
+    ASSERT_TRUE(y.initialized);
+    const Entity crate = y.Crate({3.0, 10.4, 3.0});
+    sim::HoldChange c;
+    ASSERT_EQ(sim::BeginHold(y.simulation, crate, 0, 0, 10, 0, false, false, false, c), sim::UseResult::None);
+    sim::PlayerState holder;
+    holder.position = kHoldFeet;
+    sim::StepHeld(y.simulation, crate, holder, 0, 0, y.Env(), 10, true);
+    y.simulation.StepPhysics();
+    const uint32_t solid = y.Scene().TryGet<scene::VoxelBody>(crate)->model->SolidCount();
+
+    // 2.0 m beside the crate's centre: the sphere's box misses the crate, the push reaches it.
+    const sim::BlastResult far = sim::Blast(y.simulation, sim::BlastDesc{glm::dvec3(2.0, 11.12, -1.5), 1.0f, 2.0f});
+    EXPECT_TRUE(far.holdChanges.empty());
+    EXPECT_NE(y.Scene().TryGet<scene::Held>(crate), nullptr);
+    // Off a corner: the sphere's box meets the crate's bounds, the sphere misses its model box.
+    const sim::BlastResult corner = sim::Blast(y.simulation, sim::BlastDesc{glm::dvec3(0.85, 11.97, -0.65), 0.6f, 2.0f});
+    EXPECT_TRUE(corner.holdChanges.empty());
+    EXPECT_NE(y.Scene().TryGet<scene::Held>(crate), nullptr);
+    EXPECT_EQ(y.Scene().TryGet<scene::VoxelBody>(crate)->model->SolidCount(), solid);
+
+    sim::StepHeld(y.simulation, crate, holder, 0, 0, y.Env(), 11, true);
+    y.simulation.StepPhysics();
+    const sim::HeldPose p = sim::HeldPoseAt(y.simulation, crate, kHoldFeet, 0, 0, y.Env(), 11);
+    const glm::vec3 at = y.Scene().TryGet<scene::Transform>(crate)->current.position;
+    EXPECT_NEAR(at.x, static_cast<float>(p.pose.position.x), 1.0e-4f);
+    EXPECT_NEAR(at.y, static_cast<float>(p.pose.position.y), 1.0e-4f);
+    EXPECT_NEAR(at.z, static_cast<float>(p.pose.position.z), 1.0e-4f);
+}
+
+TEST(Hold, CrushSkipsAHeldBody) {
+    HoldYard y;
+    ASSERT_TRUE(y.initialized);
+    // The door at x -0.4..0.4, z -1.6..-1.3, open, closing from tick 20; the held crate lies in its block box.
+    const Entity door = HoldYardDoor(y, {-4, 100, -16}, 1024);
+    ASSERT_NE(door, kNoEntity);
+    sim::PushSegment(y.Scene().TryGet<scene::Mechanism>(door)->track, {20, 1024, 0, 36, 0});
+    const Entity crate = y.Crate({0.0, 10.4, -1.45});
+    sim::HoldChange c;
+    ASSERT_EQ(sim::BeginHold(y.simulation, crate, 0, 0, 10, 0, false, false, false, c), sim::UseResult::None);
+    uint32_t crushed = 0;
+    for (uint32_t tick = 20; tick <= 60; ++tick) crushed += sim::StepMechanisms(y.simulation, tick, true).crushed;
+    EXPECT_EQ(crushed, 0u);
+    EXPECT_TRUE(y.Scene().IsValid(crate));
+
+    sim::MechanismPose here;
+    here.position = glm::dvec3(y.Scene().TryGet<scene::Transform>(crate)->current.position);
+    sim::EndHold(y.simulation, crate, sim::HoldEnd::Drop, here, glm::vec3(0.0f), nullptr, y.Env(), 60, false, c);
+    sim::PushSegment(y.Scene().TryGet<scene::Mechanism>(door)->track, {80, 0, 1024, 36, 0});
+    sim::PushSegment(y.Scene().TryGet<scene::Mechanism>(door)->track, {140, 1024, 0, 36, 0});
+    for (uint32_t tick = 140; tick <= 176; ++tick) crushed += sim::StepMechanisms(y.simulation, tick, true).crushed;
+    EXPECT_EQ(crushed, 1u) << "released, it is crushed at the arrival";
+}
+
+TEST(Hold, TwoSimulationsAgree) {
+    struct HoldRun {
+        std::vector<glm::vec3> positions;
+        std::vector<glm::quat> rotations;
+        sim::HoldChange release;
+    };
+    const auto run = [] {
+        HoldRun out;
+        HoldYard y;
+        EXPECT_TRUE(y.initialized);
+        const Entity crate = y.Crate({0.0, 10.4, -1.5});
+        sim::HoldChange c;
+        EXPECT_EQ(sim::BeginHold(y.simulation, crate, 0, 0, 10, 0, false, false, false, c), sim::UseResult::None);
+        sim::PlayerState holder;
+        holder.position = kHoldFeet;
+        uint16_t yaw = 0;
+        for (int i = 0; i < 120; ++i) {
+            holder.position.z -= 0.05f;
+            yaw = static_cast<uint16_t>(yaw + 200);
+            const int16_t pitch = static_cast<int16_t>(-20000 + (40000 * i) / 119);
+            sim::StepHeld(y.simulation, crate, holder, yaw, sim::HoldPitch(pitch), y.Env(), static_cast<uint32_t>(10 + i), true);
+            y.simulation.StepPhysics();
+            const scene::Transform* t = y.Scene().TryGet<scene::Transform>(crate);
+            out.positions.push_back(t->current.position);
+            out.rotations.push_back(t->current.rotation);
+        }
+        const sim::HeldPose p = sim::HeldPoseAt(y.simulation, crate, holder.position, yaw, 0, y.Env(), 130);
+        const glm::dvec3 anchor = sim::HoldAnchor(holder.position, sim::PlayerTuning{});
+        sim::EndHold(y.simulation, crate, sim::HoldEnd::Throw, p.pose, sim::ReleaseVelocity(sim::HoldEnd::Throw, glm::vec3(0.0f), yaw, 0),
+                     &anchor, y.Env(), 130, false, out.release);
+        return out;
+    };
+    const HoldRun a = run();
+    const HoldRun b = run();
+    ASSERT_EQ(a.positions.size(), b.positions.size());
+    for (size_t i = 0; i < a.positions.size(); ++i) {
+        EXPECT_EQ(a.positions[i], b.positions[i]) << i;
+        EXPECT_EQ(a.rotations[i], b.rotations[i]) << i;
+    }
+    EXPECT_EQ(a.release.position, b.release.position);
+    EXPECT_EQ(a.release.velocity, b.release.velocity);
+    EXPECT_EQ(a.release.reason, b.release.reason);
 }

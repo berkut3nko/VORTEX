@@ -1,11 +1,15 @@
 module;
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <format>
+#include <limits>
 #include <memory>
 #include <string>
 #include <utility>
@@ -16,6 +20,7 @@ module vortex.sim;
 import vortex.core;
 import vortex.math;
 import vortex.voxel;
+import vortex.physics;
 import vortex.scene;
 
 namespace vortex::sim {
@@ -409,13 +414,111 @@ namespace vortex::sim {
         return {};
     }
 
-    std::vector<scene::Entity> CreateTemplateMechanisms(Simulation& /*simulation*/, const RegionTemplate& /*t*/) {
-        // [mech-1] card 4 fills this
-        return {};
+    namespace {
+        glm::quat QuarterTurns(uint8_t turns) {
+            constexpr double kPi = 3.14159265358979323846;
+            return glm::angleAxis(static_cast<float>(turns * (kPi / 2.0)), glm::vec3(0.0f, 1.0f, 0.0f));
+        }
+
+        glm::vec3 AxisUnit(uint8_t axis) {
+            switch (axis) {
+                case 0: return {1.0f, 0.0f, 0.0f};
+                case 1: return {-1.0f, 0.0f, 0.0f};
+                case 2: return {0.0f, 1.0f, 0.0f};
+                case 3: return {0.0f, -1.0f, 0.0f};
+                case 4: return {0.0f, 0.0f, 1.0f};
+                default: return {0.0f, 0.0f, -1.0f};
+            }
+        }
+
+        /// A template mechanism as a timetable at rest at its initial position (no entity).
+        Mechanism TemplateAtRest(const TemplateMechanism& tm) {
+            Mechanism m;
+            m.desc = tm.desc;
+            m.spawnVoxel = tm.spawnVoxel;
+            m.quarterTurns = tm.quarterTurns;
+            PushSegment(m.track, {0, tm.initialPos, tm.initialPos, 0, 0});
+            return m;
+        }
+
+        /// The 8 world corners of an original-model voxel box of `m` at `pose`.
+        std::array<glm::dvec3, 8> PosedCorners(const MechanismPose& pose, const scene::MechanismBox& box, float voxelSize) {
+            std::array<glm::dvec3, 8> out{};
+            for (int c = 0; c < 8; ++c) {
+                const glm::vec3 local((c & 1) ? box.max.x : box.min.x, (c & 2) ? box.max.y : box.min.y, (c & 4) ? box.max.z : box.min.z);
+                out[static_cast<size_t>(c)] = pose.position + glm::dvec3(pose.rotation * (local * voxelSize));
+            }
+            return out;
+        }
     }
 
-    bool CheckMechanismAuthoring(const RegionTemplate& /*t*/, float /*voxelSize*/, std::string* /*why*/) {
-        // [mech-1] card 4 fills this
-        return false;
+    std::vector<scene::Entity> CreateTemplateMechanisms(Simulation& simulation, const RegionTemplate& t) {
+        std::string why;
+        if (!CheckMechanismAuthoring(t, simulation.World().VoxelSize(), &why)) {
+            Log::Error("Mechanisms: template refused: {}", why);
+            return {};
+        }
+        std::vector<scene::Entity> made;
+        made.reserve(t.mechanisms.size());
+        for (const TemplateMechanism& tm : t.mechanisms) {
+            const scene::Entity e = simulation.Scene().CreateVoxelObject({.model = tm.model,
+                                                                         .position = glm::vec3(simulation.World().VoxelToWorld(tm.spawnVoxel)),
+                                                                         .rotation = QuarterTurns(tm.quarterTurns),
+                                                                         .motion = physics::MotionType::Kinematic});
+            if (e != scene::kNoEntity &&
+                !MakeMechanism(simulation, e, tm.desc, tm.spawnVoxel, tm.quarterTurns, tm.initialPos, simulation.Tick())) {
+                simulation.Scene().Destroy(e);
+                made.push_back(scene::kNoEntity);
+                continue;
+            }
+            made.push_back(e);
+        }
+        for (size_t i = 0; i < t.mechanisms.size(); ++i) {
+            const int32_t link = t.mechanisms[i].link;
+            if (link < 0 || static_cast<size_t>(link) >= made.size() || made[i] == scene::kNoEntity) continue;
+            if (Mechanism* m = simulation.Scene().TryGet<Mechanism>(made[i])) m->linked = made[static_cast<size_t>(link)];
+        }
+        return made;
+    }
+
+    bool CheckMechanismAuthoring(const RegionTemplate& t, float voxelSize, std::string* why) {
+        const float required = kUseReach + 0.5f;
+        for (size_t i = 0; i < t.mechanisms.size(); ++i) {
+            const TemplateMechanism& lever = t.mechanisms[i];
+            if (lever.desc.kind != MechanismKind::Lever || lever.link < 0) continue;
+            if (static_cast<size_t>(lever.link) >= t.mechanisms.size()) {
+                if (why) *why = std::format("lever {} links to a missing mechanism {}", i, lever.link);
+                return false;
+            }
+            const TemplateMechanism& gate = t.mechanisms[static_cast<size_t>(lever.link)];
+            const Mechanism g = TemplateAtRest(gate);
+            const Mechanism l = TemplateAtRest(lever);
+            const MechanismPose gPose = PoseAt(g, gate.initialPos, voxelSize);
+            const MechanismPose lPose = PoseAt(l, lever.initialPos, voxelSize);
+
+            glm::vec3 n = QuarterTurns(gate.quarterTurns) * AxisUnit(gate.desc.pushAxis);
+            n.y = 0.0f;
+            if (glm::length(n) < 0.5f) continue;   // a vertical push axis has no outer face to measure from
+            n = glm::normalize(n);
+
+            const std::array<glm::dvec3, 8> gCorners = PosedCorners(gPose, gate.desc.blockBox, voxelSize);
+            glm::dvec3 cG(0.0);
+            for (const glm::dvec3& c : gCorners) cG += c / 8.0;
+            double hG = 0.0;
+            for (const glm::dvec3& c : gCorners) hG = std::max(hG, std::abs(glm::dot(c - cG, glm::dvec3(n))));
+
+            const std::array<glm::dvec3, 8> lCorners = PosedCorners(lPose, lever.desc.useBox, voxelSize);
+            glm::dvec3 cL(0.0);
+            for (const glm::dvec3& c : lCorners) cL += c / 8.0;
+            const double side = glm::dot(cL - cG, glm::dvec3(n)) >= 0.0 ? 1.0 : -1.0;
+            const glm::dvec3 plane = cG - glm::dvec3(n) * (side * hG);
+            double nearest = std::numeric_limits<double>::max();
+            for (const glm::dvec3& c : lCorners) nearest = std::min(nearest, std::abs(glm::dot(c - plane, glm::dvec3(n))));
+            if (nearest < required) {
+                if (why) *why = std::format("lever {} reachable through its gate ({:.1f} m < {:.1f} m)", i, nearest, required);
+                return false;
+            }
+        }
+        return true;
     }
 }

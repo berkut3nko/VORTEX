@@ -40,6 +40,9 @@ export namespace vortex::physics {
         /// The walls of PhysicsWorld::SetCharacterWalls (a session's play area): every character meets
         /// them whatever its layer mask says; no body collides with them and no ray sees them.
         Bounds,
+        /// A held object ([mech-1], mechanisms.md "One use key: E"): meets no body and no character, and only
+        /// a ray whose layer mask is exactly LayerBit(Held) sees it.
+        Held,
     };
 
     /// @brief The bit of `layer` in a layer mask (PhysicsConfig::characterLayers).

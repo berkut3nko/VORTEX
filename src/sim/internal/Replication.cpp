@@ -46,6 +46,7 @@ namespace vortex::sim {
         const physics::PhysicsWorld& physics = const_cast<Simulation&>(simulation).Physics();
         for (const auto [entity, id] : registry.view<const scene::NetId>().each()) {
             if (registry.all_of<scene::Mechanism>(entity)) continue;     // kinematic: always awake to Jolt, never a piece slot
+            if (registry.all_of<scene::Held>(entity)) continue;          // posed by its holder: not awake, never evicted
             const scene::RigidBody* body = registry.try_get<scene::RigidBody>(entity);
             const bool awake = body && IsAwake(physics, body->body);
             c.awakeBodies += awake ? 1u : 0u;
@@ -72,6 +73,7 @@ namespace vortex::sim {
             std::tuple<int, uint32_t, uint32_t> bestKey{2, 0, 0};
             for (const auto [entity, id] : registry.view<const scene::NetId>().each()) {
                 if (registry.all_of<scene::Mechanism>(entity)) continue;
+                if (registry.all_of<scene::Held>(entity)) continue;    // posed by its holder: never evicted
                 if (!id.piece) continue;
                 const scene::RigidBody* body = registry.try_get<scene::RigidBody>(entity);
                 const bool awake = body && IsAwake(physics, body->body);

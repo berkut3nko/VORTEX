@@ -1,6 +1,7 @@
 module;
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -169,6 +170,20 @@ export namespace vortex::sim {
         scene::MechanismSegment segment;
     };
 
+    /// @brief A hold or a release: what the server sends as EntityHold / EntityRelease ([mech-1]).
+    struct HoldChange {
+        scene::Entity entity = scene::kNoEntity;
+        bool hold = false;           ///< true: EntityHold; false: EntityRelease
+        uint8_t holder = 0;
+        uint16_t relYaw = 0;
+        uint32_t tick = 0;
+        uint8_t reason = 0;          ///< sim::HoldEnd (a release)
+        glm::vec3 position{0.0f};    ///< the release pose (shape origin) and velocity (quantised)
+        glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        glm::vec3 velocity{0.0f};
+        friend bool operator==(const HoldChange&, const HoldChange&) = default;
+    };
+
     /**
      * @brief Everything sim::Blast did: the replicated operations in their order plus what the
      * presentation (PresentBlast) needs.
@@ -225,6 +240,7 @@ export namespace vortex::sim {
         std::vector<uint32_t> lostNetIds;
         /// Segments the blast's mechanism damage made (Freed / Broken), in the order they happened ([mech-1]).
         std::vector<MechanismChange> mechanismChanges;
+        std::vector<HoldChange> holdChanges;   ///< releases (Damaged) the blast made, before its object events
         glm::dvec3 center{0.0};        ///< The blast as applied (after quantisation), world metres.
         float radius = 0.0f;           ///< Metres, after quantisation.
 
