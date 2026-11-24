@@ -126,6 +126,18 @@ set(ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 set(JPH_USE_DX12 OFF CACHE BOOL "" FORCE)                        # GPU compute backends are unused
 set(JPH_USE_VK OFF CACHE BOOL "" FORCE)
 set(JPH_USE_MTL OFF CACHE BOOL "" FORCE)
+# Jolt picks its instruction-set flags (-mavx2 ...) by CMAKE_SYSTEM_PROCESSOR. On Windows CMake reads it from
+# the environment once, at the first configure, and keeps it in CMakeSystem.cmake: a first configure from a
+# shell without PROCESSOR_ARCHITECTURE left it empty for good, and the build lost every -m flag. Take the
+# compiler's target instead (OS_PLATFORM reads the same environment variable).
+if(NOT CMAKE_SYSTEM_PROCESSOR AND NOT CMAKE_CROSSCOMPILING AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    execute_process(COMMAND "${CMAKE_CXX_COMPILER}" -dumpmachine OUTPUT_VARIABLE _vortex_target
+                    OUTPUT_STRIP_TRAILING_WHITESPACE RESULT_VARIABLE _vortex_target_result)
+    if(_vortex_target_result EQUAL 0 AND _vortex_target MATCHES "^([^-]+)-")
+        set(CMAKE_SYSTEM_PROCESSOR "${CMAKE_MATCH_1}")
+        message(STATUS "VORTEX: CMAKE_SYSTEM_PROCESSOR was empty; the compiler targets '${CMAKE_SYSTEM_PROCESSOR}'")
+    endif()
+endif()
 FetchContent_Declare(JoltPhysics
     GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
     GIT_TAG        v5.6.0

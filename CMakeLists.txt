@@ -72,6 +72,11 @@ get_target_property(_VORTEX_JOLT_OPTIONS Jolt INTERFACE_COMPILE_OPTIONS)
 if(_VORTEX_JOLT_OPTIONS)
     target_compile_options(vortex_options INTERFACE ${_VORTEX_JOLT_OPTIONS})
 endif()
+# The start-up CPU check and BuildInfo assume AVX2: an x86 build without Jolt's -mavx2 is a configure mistake
+# (an empty CMAKE_SYSTEM_PROCESSOR, see cmake/Dependencies.cmake), never a build to run.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$" AND NOT MSVC AND NOT "-mavx2" IN_LIST _VORTEX_JOLT_OPTIONS)
+    message(FATAL_ERROR "VORTEX: Jolt publishes no -mavx2 for '${CMAKE_SYSTEM_PROCESSOR}' (options: '${_VORTEX_JOLT_OPTIONS}')")
+endif()
 # Determinism floor (docs/design/networking.md, stage 0): Jolt's flags include -mfma, and Clang
 # by default contracts a*b+c into one fused operation where it sees fit, which rounds differently
 # from the two separate operations. With contraction off every engine TU computes the same floats
