@@ -12,6 +12,45 @@
 | Effort | 12-13 d (e): M-a 7, M-b 5-6 (holding about 3 d of it) |
 | Changes | `net::kProtocolVersion` 11 -> **12** (card 8); `PlayerButton_Use = 16`, `kPlayerButtonMask` 15 -> 31 (card 6); `EntityKind::Mechanism = 3`, `EventKind::MechanismMove = 37`, owner block +5 B (card 8). Holding (card 8, the same bump): `EventKind::EntityHold = 41`, `EventKind::EntityRelease = 42` (38-40 are `[mag-2]`'s in the plan), `ObjectSpawn` flag `kObjectHeld = 2` (+7 B), `RemotePlayer::holdPitch` (+1 B: `kSnapshotPlayerBytes` 17 -> 18), `sim::HoldEnd` 1-6. Not wire: `physics::Layer::Held = 6` (card 4), `sim::UseTargetKind`. `sim::kPlayerRuleRevision`: **unchanged** (mechanisms are posed before `StepPlayer`, held objects after it, never inside it). `buildHash`: only through `kProtocolVersion`. No new gate |
 
+## State and the session part in brief (2026-11-24)
+
+**Built (cards 1-7, the offline part):** engine `af50590` .. `21016b4`, game up to `434799a`. Tests and
+`tools/verify.sh quick` pass on the Windows PC; the owner checked doors and the lever in a window. Where the build
+differs from this pack:
+- `UseTarget::kind` is the last field (after `distance`), so `{entity, info, distance}` initialisers stay valid.
+- A cast that hits a mechanism becomes a `MechanismBlast` in the rules seam (`sim::ResolveAction`, `ActionAim::body`),
+  not in the game's click handler: the server's cast path (card 9) gets it without new code.
+- `DamageMechanism` and `MechanismBlast` live in `Blast.cpp` and share its piece handling (`TakeDamagePieces`).
+- The yard door's hinge column is wood, not iron: iron (hardness 8) never breaks to the cast power 6. Its hinge box is
+  the whole column, so `--mechanism-blast` casts along the column (door freed after 7 casts, lever after 1).
+- `--camera yard` looks down from above the gate wall: the hut stands behind the wall, so eye height cannot see its door.
+
+**Not built (cards 8-11, the session part).** What it does, in order:
+1. **Card 8, the wire (protocol 11 -> 12, one bump for everything below).** A mechanism is a new entity kind
+   (`EntityKind::Mechanism = 3`) that a client spawns from its whole `MechanismDesc` and segment ring, so a late
+   joiner derives every pose itself. A use that the server accepts becomes one `MechanismMove` event (16 B: the
+   NetId and the new segment) per moved mechanism. The owner block gains the last use's result and tick (+5 B), so a
+   refused E shows "Locked", "Busy" or "Out of reach". Holding adds `EntityHold` (41, 12 B) and `EntityRelease`
+   (42, 44 B), the `kObjectHeld` spawn flag for late joiners, and a 1-byte `holdPitch` per remote player (17 -> 18
+   B). notes/net.md section 2 lists every value.
+2. **Card 9, the server.** The server reads the Use edge at the input's tick (stale after 30 ticks: `Stale`), runs
+   `FindUseTarget` with the server's hooks (NetId tie keys, replicated bodies only) and either `ApplyUse` (doors,
+   levers) or `BeginHold` / `EndHold` (crates). The lead (4-20 ticks) is chosen per use from what the server measures
+   of its clients, so a door starts to move when every client can show it from its start. Mechanisms are never
+   deleted by the entity byte budget and never count as awake pieces. Every tick after the players, the server
+   poses held bodies (`StepHeld`), drops them when pinned, when the holder dies or leaves, or when a blast hits them,
+   and sends the releases. A session file opts in with `mechanisms = 1` (`playground.session` does; the drill and
+   arena files do not, so G11-G19 keep their numbers).
+3. **Card 10, the client.** Mechanisms are kept apart from body copies: the client poses them from the segment ring
+   at its predicted tick, so a predicting player walks through a door that opens and collides with a gate exactly
+   where the server has it (no corrections). It predicts its own pick-up and drop (and holds back further E and LMB
+   presses until the server answers), poses other players' held objects from their remote records, and applies a
+   release when its drawn copy of the holder reaches that tick. Entity checks and lists include mechanisms and the
+   held state, so a wrong copy is repaired by the existing path.
+4. **Card 11, session play and close.** `vortex_bot --bot-use` and `--bot-hold` exercise doors, the lever and
+   crates in drills (hashes and entities must agree), `tools/session-check.sh` keeps passing, and the owner runs the
+   yard with a friend over the LAN (owner checks). ROADMAP, CLAUDE.md and the docs get the stage's final state.
+
 ## Before you start
 
 - Committed, in both repositories: `[wp-7]` and `[wp-8]` (`git log --oneline | grep '\[wp-7\]'` and `'\[wp-8\]'` in
