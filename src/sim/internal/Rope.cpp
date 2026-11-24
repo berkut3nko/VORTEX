@@ -78,6 +78,13 @@ namespace vortex::sim {
         return (glm::dvec3(anchorVoxel) + glm::dvec3(0.5, 0.0, 0.5)) * vs;
     }
 
+    float RopeStubLength(const Simulation& simulation, const Rope& rope) {
+        if (!rope.cut) return 0.0f;
+        const voxel::World& world = simulation.World();
+        if (world.IsChunkLoaded(voxel::VoxelToChunk(rope.anchorVoxel)) && world.GetVoxel(rope.anchorVoxel) == 0) return 0.0f;
+        return rope.cutFraction * rope.length;
+    }
+
     std::vector<scene::Entity> RopesInOrder(const scene::Scene& scene) {
         std::vector<scene::Entity> out;
         for (const scene::Entity e : scene.Registry().view<const scene::Rope>()) out.push_back(e);

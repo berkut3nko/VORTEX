@@ -49,6 +49,9 @@ export namespace vortex::sim {
     scene::Entity CreateChainRope(Simulation& simulation, const glm::ivec3& anchorVoxel, scene::Entity mechanism, const glm::vec3& attachVoxel);
     /// @brief The two ends of an uncut rope now (anchor, attach); false when the load or mechanism is gone.
     bool RopeEnds(const Simulation& simulation, scene::Entity rope, glm::dvec3& anchor, glm::dvec3& attach);
+    /// @brief Metres of a cut rope still hanging from its anchor: cutFraction x length while the anchor voxel is solid, 0
+    /// once it is air (the anchor fell or was carved: the stub goes with it), 0 for an uncut rope.
+    float RopeStubLength(const Simulation& simulation, const Rope& rope);
     /// @brief Every rope entity in a fixed order (entity id).
     std::vector<scene::Entity> RopesInOrder(const scene::Scene& scene);
 

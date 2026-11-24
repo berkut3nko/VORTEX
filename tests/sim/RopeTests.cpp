@@ -191,6 +191,19 @@ TEST(Rope, AnchorAirOrLoadGoneCutsTheRope) {
     EXPECT_FLOAT_EQ(y.cuts[1].fraction, 1.0f);
 }
 
+TEST(Rope, CutStubGoesWithItsAnchor) {
+    RopeYard y;
+    ASSERT_TRUE(y.initialized);
+    const Entity rope = y.HangCrate(0, 0);
+    ASSERT_NE(rope, kNoEntity);
+    EXPECT_FLOAT_EQ(sim::RopeStubLength(y.simulation, y.RopeOf(rope)), 0.0f) << "uncut: no stub";
+    sim::CutRope(y.simulation, rope, 0.6f, sim::RopeCutCause::Sphere, 10);
+    EXPECT_NEAR(sim::RopeStubLength(y.simulation, y.RopeOf(rope)), 1.2f, 1.0e-3f) << "0.6 of 2 m hangs from the anchor";
+    // The beam that held it is carved away: the stub goes with it (no rope hanging in the air).
+    ASSERT_TRUE(sim::ApplyOp(y.simulation.World(), sim::WorldOp::Box({-1, 140, -2}, {2, 142, 2}, 0)).Complete());
+    EXPECT_FLOAT_EQ(sim::RopeStubLength(y.simulation, y.RopeOf(rope)), 0.0f);
+}
+
 TEST(Rope, CleatReleasesWithE) {
     RopeYard y;
     ASSERT_TRUE(y.initialized);

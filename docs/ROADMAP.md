@@ -281,7 +281,7 @@ never been measured.
 
 ## State
 
-Tests: **909** in ctest: 901 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
+Tests: **910** in ctest: 902 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
 game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts), `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
 `Tools.DocCheck`, `Tools.DocCheckSelftest`, `Tools.SessionCheckVerdict` and `Tools.VerifyAssertions` (WP2's checks
 and their self-tests), `Tools.RendezvousWorker` (the rendezvous Worker under `node --test`, registered when `node` is

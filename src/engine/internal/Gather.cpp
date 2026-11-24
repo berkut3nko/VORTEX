@@ -79,7 +79,8 @@ namespace vortex {
             const voxel::VoxelModel& link = isChain ? chain : rope;
             const glm::dvec3 anchor = sim::RopeAnchorPoint(simulation.World(), r.anchorVoxel);
             if (r.cut) {
-                const double stub = static_cast<double>(r.cutFraction * r.length);
+                // The anchor part of a cut rope hangs from its anchor while the anchor stands; it goes with the anchor.
+                const double stub = static_cast<double>(sim::RopeStubLength(simulation, r));
                 if (stub > 0.05) AddLink(link, anchor, anchor - glm::dvec3(0.0, stub, 0.0), thickness, out);
             } else {
                 glm::dvec3 a, b;
