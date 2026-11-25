@@ -153,6 +153,20 @@ namespace vortex::voxel {
         ids.torch        = add("torch",        Srgb(255, 190, 110),   0.60f,  500.0f,  0.3f, 0.10f, 0, 12.0f);
         ids.glass        = add("glass",        Srgb(200, 230, 235),   0.05f, 2500.0f,  0.5f, 0.01f);
         ids.bedrock      = add("bedrock",      Srgb(40, 40, 44),      0.90f, 3000.0f, 1.0e9f, 0.10f, MaterialFlag_Indestructible);
+        // Nature (land.md "Nature"). Foliage has no collision (TerrainColliders skip it): a player walks through it.
+        constexpr uint32_t kSoft = MaterialFlag_Flammable | MaterialFlag_Foliage;
+        ids.moss         = add("moss",         Srgb(70, 108, 46),     0.95f, 1200.0f,  0.6f, 0.18f, MaterialFlag_Flammable);
+        ids.litter       = add("litter",       Srgb(86, 64, 42),      0.95f, 1300.0f,  0.6f, 0.20f, MaterialFlag_Flammable);
+        ids.mud          = add("mud",          Srgb(74, 60, 46),      0.55f, 1700.0f,  0.5f, 0.10f);
+        ids.gravel       = add("gravel",       Srgb(140, 136, 128),   0.90f, 1800.0f,  1.0f, 0.28f);
+        ids.deadwood     = add("deadwood",     Srgb(122, 108, 90),    0.90f,  550.0f,  1.0f, 0.14f, MaterialFlag_Flammable);
+        ids.needles      = add("needles",      Srgb(36, 80, 50),      0.90f,  200.0f,  0.2f, 0.16f, kSoft);
+        ids.reed         = add("reed",         Srgb(150, 158, 82),    0.90f,  150.0f,  0.1f, 0.18f, kSoft);
+        ids.fern         = add("fern",         Srgb(66, 128, 56),     0.90f,  150.0f,  0.1f, 0.18f, kSoft);
+        ids.flowerYellow = add("flower_yellow", Srgb(232, 196, 58),   0.90f,  100.0f,  0.1f, 0.12f, kSoft);
+        ids.flowerViolet = add("flower_violet", Srgb(150, 92, 192),   0.90f,  100.0f,  0.1f, 0.12f, kSoft);
+        ids.mushroom     = add("mushroom",     Srgb(204, 172, 140),   0.90f,  300.0f,  0.1f, 0.10f, kSoft);
+        ids.barkPale     = add("bark_pale",    Srgb(214, 208, 194),   0.85f,  650.0f,  1.4f, 0.16f, MaterialFlag_Flammable);
 
         // Bond strengths, kg/m^2: compression / shear / tension (docs/design/shred.md Part 4b,
         // "Material strengths"). A free column of height h holds while density x h <= C, a
@@ -186,6 +200,13 @@ namespace vortex::voxel {
         strength(ids.torch, 20000, 8000, 8000);
         strength(ids.leaves, 10000, 5000, 5000);
         strength(ids.leavesAutumn, 10000, 5000, 5000);
+        strength(ids.moss, 50000, 8000, 2000);
+        strength(ids.litter, 50000, 8000, 2000);
+        strength(ids.mud, 40000, 4000, 800);
+        strength(ids.gravel, 40000, 5000, 800);
+        strength(ids.deadwood, 50000, 20000, 20000);
+        strength(ids.barkPale, 80000, 30000, 30000);
+        for (const uint8_t soft : {ids.needles, ids.reed, ids.fern, ids.flowerYellow, ids.flowerViolet, ids.mushroom}) strength(soft, 10000, 5000, 5000);
         return ids;
     }
 }

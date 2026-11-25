@@ -650,13 +650,17 @@ namespace vortex::voxel {
             put(std::bit_cast<uint32_t>(f.delta[i]) ^ uint64_t(f.surface[i]) << 32 ^ uint64_t(f.detail[i]) << 40);
         }
         put(std::bit_cast<uint32_t>(m.site.x) ^ uint64_t(std::bit_cast<uint32_t>(m.site.z)) << 32);
-        put(std::bit_cast<uint32_t>(m.site.fieldHeight) ^ uint64_t(m.site.placed) << 32);
+        put(std::bit_cast<uint32_t>(m.site.keepGround) ^ uint64_t(m.site.placed) << 32 ^ uint64_t(uint32_t(m.site.gate)) << 40);
+        put(std::bit_cast<uint32_t>(m.site.gateGround));
+        for (int k = 0; k < kSiteDirections; ++k) {
+            put(std::bit_cast<uint32_t>(m.site.curtain[size_t(k)]) ^ uint64_t(std::bit_cast<uint32_t>(m.site.inner[size_t(k)])) << 32);
+        }
         for (const LandPoint& p : m.points) {
             put(std::bit_cast<uint32_t>(p.x) ^ uint64_t(std::bit_cast<uint32_t>(p.z)) << 32);
             put(uint64_t(p.kind));
         }
         for (const LandRoad& road : m.roads) {
-            put(uint64_t(road.from) << 8 | road.to);
+            put(uint64_t(road.from) << 8 | road.to | uint64_t(road.trail) << 16);
             for (size_t i = 0; i < road.x.size(); ++i) {
                 put(std::bit_cast<uint32_t>(road.x[i]) ^ uint64_t(std::bit_cast<uint32_t>(road.z[i])) << 32);
                 put(std::bit_cast<uint32_t>(road.bed[i]));

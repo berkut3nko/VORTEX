@@ -26,6 +26,7 @@ namespace {
     constexpr uint8_t kSurface = 2;
     constexpr uint8_t kRock = 3;
     constexpr uint8_t kWater = 4;
+    constexpr uint8_t kLeaves = 5;
 
     /// A flat world (voxels below `groundVoxels` are solid) with physics and terrain colliders.
     struct Fixture {
@@ -41,6 +42,9 @@ namespace {
             materials.Set(kWorldPalette, kSurface, Material{}, "surface");
             materials.Set(kWorldPalette, kRock, hard, "rock");
             materials.Set(kWorldPalette, kWater, liquid, "water");
+            Material leaves;
+            leaves.flags = MaterialFlag_Foliage;
+            materials.Set(kWorldPalette, kLeaves, leaves, "leaves");
             world = std::make_unique<World>(config, store, jobs, CreateFlatGenerator(groundVoxels, surfaceId, kRock), &materials);
 
             PhysicsConfig physicsConfig;
@@ -249,6 +253,23 @@ TEST(TerrainColliders, BuildingOnTheGroundAddsCollision) {
         EXPECT_NEAR(side.position.x, 4.0f, 2e-3f);
         EXPECT_NEAR(side.normal.x, 1.0f, 1e-3f);
     }
+}
+
+// land.md "Nature": foliage (leaves, needles, reeds, ferns, flowers) has no terrain collision, so players walk through
+// plants and debris falls through a canopy; wood, rock and the ground beneath stay solid.
+TEST(TerrainColliders, FoliageHasNoCollision) {
+    Fixture f;
+    ASSERT_TRUE(f.initialized);
+    const glm::dvec3 focus(0.0, 21.0, 0.0);
+    f.Stream(focus, 20.0f);
+    f.world->FillBox({-10, 40, -10}, {-2, 48, -2}, kLeaves);   // a bush 4 m high on the ground
+    f.world->FillBox({4, 40, 4}, {8, 44, 8}, kRock);
+    f.Sync(focus, 20.0f);
+    EXPECT_NEAR(f.RayDown(-5.0f, -5.0f, 50.0f), f.ground, 2e-3f);       // through the leaves to the ground
+    EXPECT_NEAR(f.RayDown(3.0f, 3.0f, 50.0f), 22.0f, 2e-3f);           // the rock is solid
+    const BodyId box = f.DropBox({-3.0f, f.ground + 6.0f, -3.0f}, 0.4f);
+    f.Step(240);
+    EXPECT_NEAR(f.physics.GetState(box).position.y, f.ground + 0.4f, 0.05f);   // fell through the bush, rests on the ground
 }
 
 TEST(TerrainColliders, CollidersFollowTheFocus) {

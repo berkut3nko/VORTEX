@@ -260,7 +260,8 @@ namespace vortex::physics {
             if (filter && materials.Revision() == filterRevision) return;
             filterRevision = materials.Revision();
             auto fresh = std::make_shared<const voxel::CollisionFilter>(
-                voxel::CollisionFilter::FromMaterials(materials, voxel::kWorldPalette, voxel::MaterialFlag_Liquid));
+                voxel::CollisionFilter::FromMaterials(materials, voxel::kWorldPalette,
+                                                      voxel::MaterialFlag_Liquid | voxel::MaterialFlag_Foliage));
             const bool changed = filter && filter->collidable != fresh->collidable;
             filter = std::move(fresh);
             if (!changed) return;

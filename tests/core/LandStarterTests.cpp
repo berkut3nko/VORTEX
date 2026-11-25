@@ -21,8 +21,8 @@ using namespace vortex::voxel;
 namespace {
     constexpr int kW = 200, kH = 160;    // 5 m pixels: 1000 x 800 m
 
-    /// A ridge in the west (mountain, region 6), a grass plain east of it (region 2, the starter region), the sea in the
-    /// south.
+    /// A ridge in the west (mountain, region 6), a grass plain east of it (region 2, the starter region) with a mountain
+    /// knoll on it (region 6: Hollowkeep's site), the sea in the south.
     LandSource RidgeAndPlain() {
         LandSource s;
         s.width = kW;
@@ -46,6 +46,14 @@ namespace {
                     s.heights[i] = 3.0f + float(x - 70) * 0.02f + float(140 - z) * 0.03f;
                     s.biomes[i] = uint8_t(LandBiome::Grassland);
                     s.regions[i] = 2;
+                    // The knoll: 90 m wide at its foot, 32 m high, a little lower to the south (a spur's shape).
+                    const float dx = float(x - 110), dz = float(z - 60);
+                    const float d = std::sqrt(dx * dx + dz * dz);
+                    if (d < 18.0f) {
+                        s.heights[i] += 32.0f * (1.0f - d / 18.0f) - (dz > 0.0f ? dz * 0.2f : 0.0f);
+                        s.biomes[i] = uint8_t(LandBiome::Mountain);
+                        s.regions[i] = 6;
+                    }
                 }
             }
         s.starterRegion = 2;
@@ -59,15 +67,10 @@ namespace {
 
     float Ground(const LandMap& m, float mx, float mz) { return LandCoarseHeight(m, mx, mz) + LandFineDelta(m, mx, mz); }
 
-    /// Map metres of a draft point (X east, Z south of the castle's middle), turned by the site's rotation (0: the
-    /// draft's north faces west).
-    glm::vec2 Draft(const LandSite& site, float X, float Z) {
-        switch (site.rotation & 3) {
-        case 0: return glm::vec2(site.x + Z, site.z - X);
-        case 1: return glm::vec2(site.x + X, site.z + Z);
-        case 2: return glm::vec2(site.x - Z, site.z + X);
-        default: return glm::vec2(site.x - X, site.z - Z);
-        }
+    /// Where the castle's road ends: 14 m outside the gate.
+    glm::vec2 ApproachOf(const LandSite& site) {
+        return glm::vec2(site.x, site.z) + LandSiteDirection(site.gate) * site.curtain[size_t(site.gate)] +
+               LandSiteGateAxis(site) * LandSiteBridgeSpan(site);
     }
 
     const LandPoint* Find(const LandMap& m, LandPointKind kind) {
@@ -85,35 +88,35 @@ TEST(LandStarter, GoldenHash) {
     EXPECT_EQ(hash, kLandStarterGoldenHash);
 }
 
-TEST(LandStarter, TheSiteKeepsTheCastleDraftsHeights) {
+// The owner's rules (2026-11-25): no macro flattening; walls along the contours; only the keep's and the gatehouse's
+// pads graded.
+TEST(LandStarter, TheSiteKeepsTheNaturalSlope) {
     const LandMap& m = Baked();
     ASSERT_FALSE(m.fine.Empty());
     ASSERT_TRUE(m.site.placed);
-    // castle-layout-draft.md section 5, in metres above the approach field.
-    struct Spot {
-        float X, Z, height;
-        const char* what;
-    };
-    // The approach field and the castle's footprint are set exactly.
-    for (const Spot s : {Spot{0, -60, 0, "approach field"}, Spot{-20, -20, 0, "outer ward"}, Spot{10, 20, 5, "inner ward"}}) {
-        const glm::vec2 p = Draft(m.site, s.X, s.Z);
-        EXPECT_NEAR(Ground(m, p.x, p.y), m.site.fieldHeight + s.height, 0.02f) << s.what;
+    const LandSite& site = m.site;
+    // The keep's pad is level, 18 x 18 m.
+    for (const glm::vec2 o : {glm::vec2(0.0f), glm::vec2(8.0f, 8.0f), glm::vec2(-8.0f, 8.0f), glm::vec2(8.0f, -8.0f), glm::vec2(-8.0f, -8.0f)})
+        EXPECT_NEAR(Ground(m, site.x + o.x, site.z + o.y), site.keepGround, 0.02f);
+    // The walls stay in their bands; the inner wall at least 7 m inside the curtain.
+    float lo = 1.0e9f, hi = -1.0e9f;
+    for (int k = 0; k < kSiteDirections; ++k) {
+        EXPECT_GE(site.curtain[size_t(k)], 16.0f);
+        EXPECT_LE(site.curtain[size_t(k)], 42.0f);
+        EXPECT_GE(site.inner[size_t(k)], 11.0f);
+        EXPECT_LE(site.inner[size_t(k)], site.curtain[size_t(k)] - 7.0f + 1.0e-3f);
+        // The relief inside the curtain is the land's own: it falls from the keep's pad towards the walls.
+        const glm::vec2 d = LandSiteDirection(k);
+        for (float f = 0.6f; f <= 1.0f; f += 0.2f) {
+            const float g = Ground(m, site.x + d.x * site.curtain[size_t(k)] * f, site.z + d.y * site.curtain[size_t(k)] * f);
+            lo = std::min(lo, g);
+            hi = std::max(hi, g);
+        }
     }
-    // The east slope, 6 m down over 14 m, its edge moved by up to 4 m of noise: at X = 40 it is 4-12 m out.
-    const glm::vec2 east = Draft(m.site, 40.0f, 0.0f);
-    EXPECT_LE(Ground(m, east.x, east.y), m.site.fieldHeight - 6.0f * 4.0f / 14.0f + 0.02f);
-    EXPECT_GE(Ground(m, east.x, east.y), m.site.fieldHeight - 6.0f * 12.0f / 14.0f - 0.02f);
-    // The ravines below the cliffs: at the draft's depth or at most 4 m deeper.
-    for (const Spot s : {Spot{0, 50, -12, "south ravine"}, Spot{-42, 0, -11, "west stream bed"}}) {
-        const glm::vec2 p = Draft(m.site, s.X, s.Z);
-        EXPECT_LE(Ground(m, p.x, p.y), m.site.fieldHeight + s.height + 0.02f) << s.what;
-        EXPECT_GE(Ground(m, p.x, p.y), m.site.fieldHeight + s.height - 4.02f) << s.what;
-    }
-    // The neck faces higher ground than the tip (the spur leads down from the ridge).
-    const glm::vec2 neck = Draft(m.site, 0.0f, -100.0f), tip = Draft(m.site, 0.0f, 70.0f);
-    EXPECT_GT(Ground(m, neck.x, neck.y), Ground(m, tip.x, tip.y));
-    // The field stands above the plain the castle looks over.
-    EXPECT_GT(m.site.fieldHeight, 10.0f);
+    EXPECT_GT(hi - lo, 4.0f) << "the castle's ground keeps its slope";
+    EXPECT_LT(lo, site.keepGround - 3.0f) << "the ground falls away from the keep";
+    // The keep stands above the plain it looks over.
+    EXPECT_GT(site.keepGround, 15.0f);
 }
 
 TEST(LandStarter, EveryRoadReachesItsPointWithinTheGrade) {
@@ -127,11 +130,14 @@ TEST(LandStarter, EveryRoadReachesItsPointWithinTheGrade) {
         const LandPoint& from = m.points[road.from];
         const LandPoint& to = m.points[road.to];
         EXPECT_EQ(from.kind, LandPointKind::Village);
+        EXPECT_EQ(road.trail, to.kind == LandPointKind::Cave || to.kind == LandPointKind::Landmark);
+        const float grade = road.trail ? st.trailMaxGrade : st.roadMaxGrade;
         ASSERT_GE(road.x.size(), 2u);
         EXPECT_LT(std::abs(road.x.front() - from.x) + std::abs(road.z.front() - from.z), 2.0f);
         glm::vec2 target(to.x, to.z);
         if (to.kind == LandPointKind::Castle) {
-            target = Draft(m.site, 0.0f, -60.0f);   // the road ends on the approach field
+            target = ApproachOf(m.site);   // the road ends at the far end of the bridge over the ditch
+            EXPECT_NEAR(road.bed.back(), m.site.gateGround, 1.0e-3f) << "the road meets the bridge at the gate's level";
             ++toCastle;
         }
         toLanding += to.kind == LandPointKind::Landing;
@@ -141,13 +147,36 @@ TEST(LandStarter, EveryRoadReachesItsPointWithinTheGrade) {
             // At most a cell's diagonal from the last point, never up or down more than the grade.
             const float dx = std::abs(road.x[a] - road.x[a - 1]), dz = std::abs(road.z[a] - road.z[a - 1]);
             ASSERT_TRUE(dx <= 1.0f && dz <= 1.0f);
-            EXPECT_LE(std::abs(road.bed[a] - road.bed[a - 1]), st.roadMaxGrade * std::sqrt(dx * dx + dz * dz) + 1.0e-4f);
+            EXPECT_LE(std::abs(road.bed[a] - road.bed[a - 1]), grade * std::sqrt(dx * dx + dz * dz) + 1.0e-4f);
         }
-        EXPECT_LE(road.maxGrade, st.roadMaxGrade + 1.0e-4f);
+        EXPECT_LE(road.maxGrade, grade + 1.0e-4f);
     }
     EXPECT_EQ(toCastle, 1);
     EXPECT_EQ(toLanding, 1);
     EXPECT_EQ(toCave, 1);
+}
+
+TEST(LandStarter, RoutesMeetAtOneHeight) {
+    // Where a later road or trail runs on an earlier one (a junction, a shared stretch), both beds agree: no step at a
+    // crossroad. Two points within 0.5 m differ at most by the grade over the distance between them.
+    const LandMap& m = Baked();
+    const LandSettings st;
+    ASSERT_GE(m.roads.size(), 2u);
+    int shared = 0;
+    for (size_t r = 1; r < m.roads.size(); ++r)
+        for (size_t a = 0; a < m.roads[r].x.size(); ++a)
+            for (size_t e = 0; e < r; ++e) {
+                const LandRoad& earlier = m.roads[e];
+                for (size_t b = 0; b < earlier.x.size(); ++b) {
+                    const float dx = m.roads[r].x[a] - earlier.x[b], dz = m.roads[r].z[a] - earlier.z[b];
+                    const float d = std::sqrt(dx * dx + dz * dz);
+                    if (d > 0.5f) continue;
+                    ++shared;
+                    const float grade = m.roads[r].trail ? st.trailMaxGrade : st.roadMaxGrade;
+                    EXPECT_LE(std::abs(m.roads[r].bed[a] - earlier.bed[b]), grade * d + 0.02f) << "road " << r << " point " << a << " on road " << e;
+                }
+            }
+    EXPECT_GT(shared, 10);
 }
 
 TEST(LandStarter, TheCaveLiesUnderRockAndIsCarved) {
@@ -185,7 +214,7 @@ TEST(LandStarter, ColumnClassesAgreeAroundTheCaveAndTheSite) {
     auto a = std::make_unique<Chunk>(), b = std::make_unique<Chunk>();
     const float chunkMetres = kChunkSize * s.voxelSize;
     for (const glm::vec2 at : {glm::vec2(map->cave.x[1], map->cave.z[1]), glm::vec2(map->cave.x[0], map->cave.z[0]),
-                               glm::vec2(map->site.x - 40.0f, map->site.z)}) {
+                               glm::vec2(map->site.x, map->site.z)}) {
         const int cx = int(std::floor((at.x + s.origin.x) / chunkMetres)), cz = int(std::floor((at.y + s.origin.y) / chunkMetres));
         for (int dz = -1; dz <= 1; ++dz)
             for (int dx = -1; dx <= 1; ++dx) {

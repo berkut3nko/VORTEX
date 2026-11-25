@@ -111,6 +111,12 @@ export namespace vortex::voxel {
         uint8_t grass = 0, grassDry = 0, dirt = 0, stone = 0, stoneDark = 0, sand = 0, snow = 0, water = 0;
         uint8_t wood = 0, leaves = 0, leavesAutumn = 0, planks = 0, brick = 0, iron = 0, gold = 0;
         uint8_t crystal = 0, lava = 0, torch = 0, glass = 0, bedrock = 0;
+        /// Nature (land.md "Nature"): ground cover (moss, litter, mud, gravel), deadwood, and foliage (needles, reed,
+        /// fern, flowers, mushroom). Appended after the ids above, so those keep their values; not in a session's
+        /// Welcome (the material table is part of the build hash).
+        uint8_t moss = 0, litter = 0, mud = 0, gravel = 0, deadwood = 0;
+        uint8_t needles = 0, reed = 0, fern = 0, flowerYellow = 0, flowerViolet = 0, mushroom = 0;
+        uint8_t barkPale = 0;   ///< a birch-like trunk
     };
 
     /// @brief Fills the world palette with a starter set of natural and building materials.

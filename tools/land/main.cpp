@@ -122,9 +122,13 @@ int main(int argc, char** argv) {
         Log::Info("Land: starter region {}: fine grid {} x {} m at ({}, {}) in {:.2f} s", map.starterRegion, f.width, f.height, f.x0, f.z0,
                   t.starter);
         if (map.site.placed) {
-            static const char* const kNeck[4] = {"west", "north", "east", "south"};
-            Log::Info("Land: site at ({:.1f}, {:.1f}) m, neck to the {}, field {:.1f} m, fit {:.1f} m^2", map.site.x, map.site.z,
-                      kNeck[map.site.rotation & 3], map.site.fieldHeight, map.site.searchCost);
+            float lo = 1.0e9f, hi = 0.0f;
+            for (const float r : map.site.curtain) {
+                lo = std::min(lo, r);
+                hi = std::max(hi, r);
+            }
+            Log::Info("Land: site at ({:.1f}, {:.1f}) m, keep ground {:.1f} m, gate towards direction {} (x 15 degrees), curtain {:.0f}-{:.0f} m from the keep",
+                      map.site.x, map.site.z, map.site.keepGround, map.site.gate, lo, hi);
         } else {
             Log::Warn("Land: no site found for Hollowkeep");
         }
@@ -134,8 +138,9 @@ int main(int argc, char** argv) {
         }
         Log::Info("Land: {} point(s): {}", map.points.size(), points);
         for (const LandRoad& road : map.roads) {
-            Log::Info("Land: road {} -> {}: {:.0f} m, max grade {:.3f}, {} ford cell(s)", LandPointName(map.points[road.from].kind),
-                      LandPointName(map.points[road.to].kind), road.length, road.maxGrade, road.fordCells);
+            Log::Info("Land: {} {} -> {}: {:.0f} m, max grade {:.3f}, {} ford cell(s), {} bridge cell(s)", road.trail ? "trail" : "road",
+                      LandPointName(map.points[road.from].kind), LandPointName(map.points[road.to].kind), road.length, road.maxGrade,
+                      road.fordCells, road.bridgeCells);
         }
         if (map.cave.placed) {
             Log::Info("Land: cave from ({:.1f}, {:.1f}, {:.1f}) to ({:.1f}, {:.1f}, {:.1f}) m", map.cave.x[0], map.cave.y[0], map.cave.z[0],

@@ -112,7 +112,7 @@ grid adds height and hardness for the starter region (about 1 MB raw, e).
 | L0-L1 | Land, biomes, regions and the raw height from the drawn map (`[land-1]`, built: world-map.md) | the map files | land / sea, biomes, regions, raw height |
 | L3 | Erosion (option C): stream power on the coarse grid (valleys and ranges), slumping of slopes over the talus angle, then droplet erosion (gullies and fans), with rock hardness from strata bands so hard layers stay as cliffs (`[land-2]`, built) | raw height, hardness | eroded height |
 | L4 | Water: closed basins get an outlet (breaching), the rest of each basin is a lake at its spill height or a filled puddle; rivers where flow passes a threshold, as flat reaches with steps; the sea at 0 m (`[land-2]`, built) | eroded height | water levels, flow, river lines |
-| L6 | Starter region detail: the fine grid (1 m) from the coarse one, strata, a fine erosion pass, and the starter site template blended in (see below) | coarse fields, template | fine height, hardness |
+| L6 | Starter region detail: the fine grid (1 m) from the coarse one, strata, a fine erosion pass, and the castle site's two graded pads blended in (see below) | coarse fields, template | fine height, hardness |
 | L7 | Points of interest: scored candidates per region (castle site, village, cave, crossing, landmark), with spacing | all fields | points |
 | L8 | Roads: A\* between points, slope and water costs, switchbacks, bridges and fords | points, height, water | road lines |
 | L9 | Image: the map image for review and for map.md | all | image |
@@ -212,6 +212,21 @@ mountain ridge (region 6) and ends above the starter grassland. Why this site:
 - The ridge gives the spur its height with no cut terrain: the castle sees over the whole grassland to the sea.
 - Later regions add other site types (ria, island, river crossing, hillside) with their own templates.
 
+**Built on the slope (the owner's rules, 2026-11-25).** The first site carved the draft's landform into the land as
+one flat 96 x 136 m rectangle, which read as a cube on the ridge. Medieval builders had no earthmoving machines and
+built around the land, so now:
+1. no macro flattening: the relief across the site stays the land's own;
+2. the curtain wall is a polygon along a natural contour of the spur or knoll, not a rectangle;
+3. foundations go down, terrain never comes up: every wall, tower and building reaches 1.5 m below its own ground,
+   and a wall is taller where the ground falls;
+4. tiers: the keep on the high point, the inner courtyard inside the inner wall, the outer bailey between the walls,
+   joined by the gates and the ground's own slope;
+5. micro-grading only: level pads under the keep (18 x 18 m) and the gatehouse (14 x 10 m), blended outward over the
+   angle of repose (1.5 m of run per metre of rise) with a noisy edge.
+
+The castle draft's fixed heights (field 0 m, a 5 m rock step, 11-12 m cliffs) become what the chosen hill gives; its
+parts, routes and necks stay.
+
 ### The starter region as built (`[land-4]`)
 
 `voxel::BakeLandStarter` (`engine/src/voxel/internal/LandStarter.cpp`; `BakeLand` calls it when
@@ -225,30 +240,46 @@ coarse bake (`LandStarter.GoldenHash` pins it).
 2. **Strata cliffs:** where the coarse cell is hard (hardness 9 or more, dry) and the slope is over 0.4, 4 m bands
    become benches and cliffs (60 % of each band's height rises gently, the last 40 % steeply), fully over a slope of
    0.8.
-3. **Hollowkeep's site:** the castle draft's landform (`voxel::LandSiteTemplate`, in draft metres): the approach
-   field (0 m, 96 m wide, 40 m deep north of the castle), the outer ward (0 m) and the inner ward on its rock step
-   (+5 m) set exactly; the east slope 6 m down over 14 m set exactly; the west and south cliffs to the ravines
-   (-11 m and -12 m), whose floors are cut down to the draft and filled up to at most 4 m below it. The core
-   (X +-48 m, Z -80..56 m) has weight 1; a 30 m skirt fades it out, round at the corners; outside the castle's
-   footprint the edges wander by up to 4 m of integer-hash noise (less near the footprint, which stays a rectangle
-   for the walls). The search tries every 8 m of the fine grid and 4 rotations: the middle on mountain ground
-   (any ground outside the starter region if no mountain spot fits), the tip within 150 m of the starter region,
-   the neck's natural ground at least 5 m above the tip's (the neck faces the ridge), the field 8-45 m above the
-   starter region's mean and at most 85 m (the keep's roof stays under the build ceiling); the best least-squares
-   fit of the exact parts wins (ties: rotation, row, column).
+3. **Hollowkeep's site** (`voxel::LandSite`): the search tries every 8 m of the fine grid for a keep point: on
+   mountain ground (any ground outside the starter region if none fits); the ground 50 m out lies 4 m or more below
+   it in at least 14 of 24 directions (a spur or a knoll); the ground within 6 m departs at most 3 m (a pad needs
+   only micro-grading); 10-60 m above the starter region's mean and at most 85 m; dry within 46 m; the side away from
+   the neck within 150 m of the starter region. The most fall, the least grading and the nearest win. The neck (and
+   the gate) faces the highest ground 50 m out. In each of 24 directions (15 degrees, a literal cos / sin table:
+   `voxel::LandSiteDirection`) the curtain wall's radius is where the ground first lies 7 m below the keep's, less
+   2 m (16-42 m), and the inner wall's where it lies 3 m below (11 m to the curtain less 7 m); both smoothed twice
+   round the circle. Only two pads are graded (rules above); everything inside the curtain keeps its height and
+   loses its plants (surface `Site`).
 4. **Points of interest (L7):** village (level dry ground of the starter region, 120-400 m from the approach field,
    near fresh water); landing (dry starter ground at the sea, nearest the village); cave (a slope of 0.5-1.4 outside
    the starter region, 120-450 m from the village, with rock over a 26 m tunnel falling 2 m and a 5 m chamber; harder
    ground first); landmark (the highest dry ground of the fine grid); crossings where a road meets a river.
 5. **The cave:** a tunnel of radius 2.2 m uphill into the slope from its mouth, a chamber of radius 5 m at its end,
    both with flat floors; the generator carves it and lowers the column classes it crosses.
-6. **Roads (L8):** A\* on the fine grid from the village to the approach field, the landing and the cave. A step costs
-   its length times 1 + 30 grade^2 up to the grade limit (0.15) and 60 more per unit of grade above it, so switchbacks
-   win where the slope allows them; sea, lakes and the castle's footprint are closed; a river step costs 6 m more
-   (a ford). The line is smoothed over 7 cells. The bed is the mean of the ground's upper and lower grade envelopes
-   (fords 0.3 m under the river's water), averaged over up to 9 m, then held to 0.15 per metre by a forward pass:
-   every step of every road is at most 0.15 (`LandStarter.EveryRoadReachesItsPointWithinTheGrade`). It is stamped
-   1.6 m either side as dirt, with 2.4 m shoulders.
+6. **Roads and trails (L8):** A\* on the fine grid from the village: roads to the castle bridge's far end (its last point fixed
+   at the gatehouse pad's level, \`LandSite::gateGround\`) and the landing
+   first, then trails (footpaths) to the cave and the landmark, so that routes look made by people, not by a ruler
+   (the owner's feedback, 2026-11-25). A step costs its length times the ground's cost (1-2.1: noise of 45 m and
+   15 m, better and worse ground) or 0.35 on a road already made (later roads and trails join and branch off earlier
+   ones: a network), plus 30 grade^2 up to the grade limit (`roadMaxGrade` 0.16, about 1:6; `trailMaxGrade` 0.35)
+   and 400 per unit of grade above it (switchbacks), plus 12 side-slope^2 (routes follow the contours); sea, lakes
+   and the castle's footprint are closed; a river step costs 6 m more. The line is smoothed twice over 7 cells.
+   Crossings: a trail fords a river 0.3 m under its water; a road crosses on a timber bridge, whose deck over each run
+   of river points is level at the higher bank, 0.9-3 m over the water (`LandRoad::bridgeCells`). Points within 1.5 m
+   of a route already laid (each fine cell within 2 cells of one keeps its nearest point; the search then takes that
+   route's point nearest to this one) are fixed to its bed, and a bridge's points to its deck, when the grade lets the
+   route reach them from the last fixed point (beside a hairpin, two legs of a road lie close at different heights:
+   one wins), so junctions and shared stretches have one height (`LandStarter.RoutesMeetAtOneHeight`; on the first
+   map the largest difference between routes within 0.5 m fell from 5.7 m to 0.12 m). The bed of the free points is
+   the mean of the ground's upper and lower grade envelopes, averaged over up to 9 m, then held to the limit per metre
+   by a forward pass inside the band the fixed points allow: every step is at most the route's limit
+   (`LandStarter.EveryRoadReachesItsPointWithinTheGrade`). A road is stamped 1.6 m either side as dirt, a trail
+   0.9 m (on a steep trail the voxels make rough steps); the ground beside slopes to the bed as an embankment or a cut
+   of 1 in 2 (1.5 m plus twice the height between bed and ground, at most 8 m), so a route never stands on a wall.
+   Under a bridge the river is not stamped. The generator builds each bridge from the road's points over the water
+   and 2 more on each bank: a 3.4 m plank deck 0.3 m thick at the bed's height (at least 0.4 m over the water), a rail
+   0.9 m high on posts every 2 m, piles to the river bed every 4 m. On the first map: the castle road 941 m, the
+   landing road 496 m (a bridge of 6 cells), the cave trail 568 m and the landmark trail 711 m.
 
 **The owner's points (`points.json`):** `vortex_land` writes the bake's points to `build/land/points.json`
 (`{"kind": "village", "x": 2428.5, "z": 784.5}`, map metres from the map's corner). Copied into the map folder
@@ -261,7 +292,8 @@ points.json (Decision 3).
 neck to the west, field 17.0 m, at the ridge's southern foot above the grassland's south-west corner (fit
 125.9 m^2: the ridge face near the grassland is steep, so the site moves much land; the owner can place it with
 points.json). Village (2428, 784), landing (2518, 1098), cave mouth (2308, 784) at 57.6 m, landmark (2210, 836).
-Roads: to the castle 265 m, to the landing 364 m with a ford of 6 cells, to the cave 322 m; each at most 0.150.
+Roads (after the network rules): to the castle 264 m, to the landing 382 m with a ford of 9 cells, to the cave
+388 m; each at most 0.120; the castle and cave roads share their first stretch from the village.
 The player starts in the village (`voxel::LandSpawn`). The review picture is `build/land/land_starter.png`
 (relief, water, roads in brown, the site's ground lighter, points as squares).
 
@@ -269,6 +301,122 @@ Known limits of this first pass: the site's cliffs are straight planes of stone;
 edge noise leaves thin rock fins; the castle stands on a block 10-15 m above low ground at this site; no fine
 erosion pass yet; the village, landing and landmark are points only (their structures come with worldgen.md's
 stages).
+
+### Hollowkeep's greybox
+
+`sim::HollowkeepTemplate(map, land settings)` (`engine/src/sim/internal/Hollowkeep.cpp`) builds the castle as boxes
+(the draft's section 9: greybox first), every box from 1.5 m below its own ground (`voxel::LandHeight`):
+- the curtain (2.5 m thick) and the inner wall (2 m) along the site's polygons, one column every 0.5 m; each run's
+  wall walk is its highest ground plus 8.8 m (8 m for the inner wall), so the walks step down the slope; a dark
+  battered plinth to 1.2 m over the ground; a 1.2 m parapet with merlons every 2 m on the outer side;
+- towers at every third corner of the curtain (none beside the gate): 6 x 6 m, 14 m over their highest ground,
+  hollow from the bailey's ground, two timber floors, a door on the bailey side;
+- the gatehouse on its pad, squared to the gate's direction: 14 x 8 m, 14 m high, a 4 m passage, the timber upper
+  room (N3), the portcullis slot, the portcullis ([mech-1]) and its lever 6 m inside;
+- the ditch across the neck: one trench outside the curtain's 4 edges around the gate, 4-10 m out along the ray from
+  the keep, its floor level at 5 m under the gate's ground, 3 m wide, with 1:1 sides (nothing is dug where the ground
+  already lies that low), cut on a 0.5 m grid of 0.6 m columns so no ground stands between the cuts; a level timber
+  bridge on the gate's line from 3 m out of the gate to 1 m past the trench (`voxel::LandSiteBridgeSpan`), on two
+  trestles, open to the sky (a cutting where the far bank rises); the castle road ends at its far end at the
+  gatehouse pad's level and cuts through the neck where the ground is higher; the player arrives there (the
+  drawbridge waits for [mech-3]);
+- the keep on its pad: 16 x 16 m, 22 m high, 3 m walls (dark stone to 8 m, brick above), the sanctum's keel floor
+  (bedrock), timber floors at 5, 11 and 17 m, a door towards the gate, merlons on top.
+
+The game builds it at the start whenever the map has a site (`Hollowkeep: built N operations, M mechanisms at
+(x, y, z) m in T s`; `--no-hollowkeep` leaves it out; `--camera hollowkeep` looks at it from the open side). On the
+first map: the keep at map metres (2260.5, 524.5), 44.7 m, on a spur at the ridge's north end, the gate west to the
+ridge, the curtain 16-34 m from the keep, 2773 operations in 1.7 s. Tests: `Hollowkeep.*` (every tall structure
+reaches below its own ground; the wall walk steps; the portcullis and lever pass the authoring rule) and
+`LandStarter.TheSiteKeepsTheNaturalSlope`. Not yet: the bell tower, the stables and their culvert, the scaffold, the
+postern, doors as mechanisms, the objects of the draft's section 8, a session. The detailed castle that replaces this
+greybox (wall anatomy, roofs, interiors, the bailey, 3 material tiers, bypass loops, set pieces) is designed in
+[fortress.md](fortress.md), `[fort-1]`..`[fort-5]`.
+
+## Nature
+
+The owner's rules for filling the land (2026-11-25), as voxels. Built in `[land-6]` (2026-11-25) for the coarse map and
+the starter region alike: `PlaceNature` and the ground cover in `engine/src/voxel/internal/LandGenerator.cpp`.
+
+**Getting through plants (our decision, 2026-11-25).** Solid voxel vegetation makes a forest a maze, so plant matter
+has three kinds, each with one rule:
+- **Wood and rock** (trunks, deadwood, logs, boulders, cairns): solid. Cover, obstacles, destructible like every
+  material.
+- **Foliage** (leaves, needles, reeds, ferns, flowers, mushrooms: `MaterialFlag_Foliage`): no terrain collision, as
+  water. Players walk through a bush and debris falls through a canopy; rays and casts still meet it, so a bush is
+  concealment, not protection, and a blast clears it. `TerrainColliders` skip `MaterialFlag_Liquid |
+  MaterialFlag_Foliage`; `sim::kPlayerRuleRevision` is 2 (a player near plants moves differently than before).
+- **Ground cover** (moss, litter, mud, gravel): the top voxels' material, no height.
+- No slowdown in undergrowth (it would change the movement rule again); later, if play wants it.
+- Heights keep the view clear: shrubs under 1.1 m and reeds under 1.2 m (below the 1.6 m eye), every canopy from
+  2.4 m up, ground-hugging patches 1-3 voxels high.
+
+**The four layers, as built:**
+1. **Geology and water:** scree (gravel cover) on slopes of 0.35-0.6 below hard strata, bare stone on steeper hard
+   ground and over 1.15 slope; cobbles (gravel) on river and lake beds, mud flats on fresh-water shores; half-buried
+   boulders (0.5-1.6 m, 30 % of their radius in the ground, mossy tops in forests).
+   **The coast** (the owner's feedback, 2026-11-25): the distance to the nearest sea cell's centre (up to 12 m, smooth
+   along the coast) shapes it. The beach reaches up to 0.8-2.4 m above the sea (noise of 18 m), less with the
+   distance, so its width wanders; shingle (gravel) in patches of 9 m noise; bare stone on slopes over 0.7 within
+   10 m (sea cliffs); rocks in the sea's shallows (6 % of the 3 m cells down to 1.5 m deep); on the coast dune grass
+   tufts, a few boulders and driftwood logs (no moss).
+2. **Plants in strata:** trees ("Trees" below), nurse logs (deadwood, moss on the back, mushrooms and ferns beside),
+   shrubs of 2-4 ragged lumps under 1.1 m, fern patches, flower patches (yellow or violet) on grassland, mushroom
+   rings; the forest floor is litter (dark), moss and grass in patches of a few metres (litter on about a fifth).
+3. **Life:** not yet (animal trails, burrows, bones; birds and insects need effects and sound).
+4. **History:** cairns of four stacked stones 2.8 m beside every road, one every 90 m, alternating sides. Wagon ruts,
+   ruined walls and monoliths come with worldgen's structures.
+
+**The rules, as built:**
+- **Two grids:** trees on a jittered 6 m grid ("Trees"); the plants and rocks below them on a jittered 3 m grid, at
+  most one feature per cell, by the biome's odds (forest: 15 % shrub, 15 % fern, 3 % each mushrooms, boulder, log;
+  grassland: 18 % flowers, 3 % shrub; mountain: boulders, shrubs; desert and rocky isles: a few boulders).
+- **70 / 30:** a slow density field (value noise of 40 m) gives about 30 % of the ground the full odds and the rest a
+  quarter of them: dense pockets and open ground.
+- **Masks (combat hygiene):** nothing on the fine grid's roads and Hollowkeep's site; only reeds in and beside fresh
+  water (0.5 m deep at most, its bank up to 0.6 m above); no tall feature on slopes over 0.8; nothing under 1.2 m
+  above the sea but reeds and rocks; no soft plant (shrub, fern, flowers, mushrooms, log) on bare ground: slopes over
+  1.1, hard strata over 0.3, mountain ground above 43 m or over 0.5 (the owner's feedback: bushes on the grey
+  mountains read wrong), only boulders there; conifers below 70 m and dead trees below 60 m on mountains. The sandbox overwrites
+  what stands on its plaza.
+- **Glue:** the mixed ground cover around features stands in for decals (moss on boulders and logs, litter under
+  the forest, mud along water).
+- Pure integer hashes and arithmetic, as the rest of the sampling: `LandSampling.GoldenHash` pins it.
+
+### Trees
+
+The owner's feedback (2026-11-25): no round "olive" crowns on sticks, no strict geometric forms. The research
+(Weber and Penn 1995, Runions et al. 2007, Palubicki et al. 2009, Veloren's and Vintage Story's tree generators)
+points to a parametric skeleton: tapered wood segments in two levels and ragged leaf clumps at the branch tips,
+deterministic and cheap enough for a per-chunk generator. Space colonisation stays for a later "hero oak".
+
+- **Species** (on the 6 m grid; chance per cell: forest 0.8, dark forest 0.85, mountain 0.2, grassland 0.05):
+  - oak: 7-10.5 m, trunk flare, a fork at 40-50 % of the height into 3-5 crooked two-segment limbs, two side
+    branches per limb, a clump at every tip and one over the fork;
+  - birch: 8-11 m, slim pale trunk (`bark_pale`), sometimes two stems, 7 short rising branches with small clumps;
+  - spruce: 9-12 m, a straight leader, whorls every 0.5-0.8 m of 4-5 drooping branches with needle slabs, 15 % of
+    whorls missing;
+  - pine: 9-12 m, a bare bent trunk, 4-6 branches high up with flat needle clumps;
+  - snag: a broken deadwood trunk with splinters and stubs (5 % of trees, 10 % on mountains).
+- **In patches:** a 35 m noise picks the species (forest: oak, birch, spruce bands; dark forest: spruce and pine;
+  grassland: lone oaks and birches; mountain: spruce low, pine above 45 m, none above 70 m).
+- **Age:** 60 m noise scales a tree by 0.75-1.0; in the sparse pockets by 0.85 more; on mountains above 45 m by 0.7.
+- **On slopes:** the foot is the lowest of 5 ground samples less 0.3 m; above a slope of 0.15 the lowest 1.2 m leans
+  downhill and the trunk goes up again (pistol butt), and three roots run downhill and to the sides into the ground.
+  No tree on slopes over 0.9.
+- **Clear of play:** the trunk's cell and 8 directions at 1.5, 3 and 4.5 m around it are natural ground without water
+  (a trail 0.9 m wide passing diagonally slipped between 4 samples at 4 m), so trunks, roots and canopies never stand
+  on or hang over a road, a trail, the castle site or a bank; every clump's foot stays 2.4 m above the tree's ground.
+- **Determinism:** branch azimuths turn by the golden angle as fixed (cos, sin) constants, lengths and jitters from
+  integer hashes, directions normalised with sqrt: no libm function.
+
+**Materials:** appended to the world palette (`WorldMaterials`: moss, litter, mud, gravel, deadwood, bark_pale;
+foliage: needles, reed, fern, flower_yellow, flower_violet, mushroom), so the older ids keep their values; they are not in
+a session's Welcome (the material table is in the build hash).
+
+**Measured (2026-11-25, m):** chunk generation 54 us per chunk over 32 x 32 columns around the village (the built-in
+terrain 201 us); headless shots in `build/land/t-*.png`. Not yet: a windowed walk
+(owner check 26 covers it), life, wagon ruts, puddles, monoliths.
 
 ## Points of interest and roads
 
@@ -278,7 +426,7 @@ stages).
   point seen from far).
 - **Spacing:** at least one candidate per kind per region, at most N (recipe), with a minimum distance.
 - **Roads:** A\* on the coarse grid between the points of each region and to the neighbours' crossings. The cost of a
-  step grows with slope (a road climbs at most about 1:8; steeper ground turns into switchbacks), is high across water
+  step grows with slope (a road climbs at most about 1:6, a trail 0.35; steeper ground turns into switchbacks), is high across water
   except at a crossing, and is infinite at cliffs. The road bed is stamped as terrain (worldgen.md's spine), a bridge is
   a structure record at the crossing, a ford a shallow reach.
 - **Per restart:** the points and the roads are baked with the map; the same seed gives the same roads.
@@ -370,6 +518,7 @@ today's generator".
 | `[land-3]` | Voxels from the map, offline: the coarse grid everywhere, biome materials, water at its levels; walking the island in the offline game. **Built** ("From the map to voxels") | chunk generation cost (done: 50 us per chunk, the built-in terrain 205-226 us); golden hash of the sampling (done: `LandSampling.GoldenHash`); the owner walks it (owner check 26) |
 | `[land-4]` | The starter region: the fine grid, strata cliffs, Hollowkeep's site template, points of interest, roads (L6-L8). **Built** ("The starter region as built") | the castle draft's heights hold on the site (done: `LandStarter.TheSiteKeepsTheCastleDraftsHeights`); roads reach every point (done: `LandStarter.EveryRoadReachesItsPointWithinTheGrade`); the owner walks it (owner check 27) |
 | `[land-5]` | In a session: the server and each client bake the map from their own files; the join compares the baked map hash (and names what differs); clients generate from their own bake; the bake's and the sampling's golden hashes join `buildHash`; the map id covers points.json. **Built** ("The map in a session") | a client with an edited map file is refused with the reason (done: UDP run and `LandSession.AClientWithOtherMapFilesOrNoneFails`); world hashes equal across clients (done: the drill, `hashes equal`); the bake time on the UHD 620 laptop (the owner, check 28); a restart with the same files gives the same world (the golden hashes) |
+| `[land-6]` | Nature: plants in strata, rocks, ground cover, cairns; foliage without collision. **Built** ("Nature") | the masks keep roads and the site clear (done: the shots); foliage has no collision (done: `TerrainColliders.FoliageHasNoCollision`); chunk cost under the built-in terrain's (done: 60 us against 200 us); the owner walks it (owner check 26) |
 
 The order relative to the ROADMAP (`[wg-W1]`, `[mag-1]`, the demo work) is the owner's call; `[land-1]` is a tool and
 touches no runtime code.

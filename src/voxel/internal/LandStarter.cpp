@@ -1,6 +1,9 @@
 module;
 
+#include <glm/glm.hpp>
+
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -20,10 +23,6 @@ import vortex.core;
 namespace vortex::voxel {
 
     namespace {
-        constexpr float kFieldDraftZ = -60.0f;      // the approach field's middle in draft metres (north of the ditch)
-        constexpr float kSkirt = 30.0f;             // the site template fades out over this many metres
-        constexpr float kCoreX = 48.0f, kCoreNorth = -80.0f, kCoreSouth = 56.0f;
-        constexpr float kFootprintX = 34.0f, kFootprintZ = 42.0f;   // the castle's walls and a 2 m margin: no road
         constexpr float kEdgeFade = 16.0f;          // the fine grid's correction fades to 0 over its outer metres
 
         /// Smooth value noise in [0, 1) from integer hashes (no libm); x and z in lattice steps.
@@ -79,26 +78,6 @@ namespace vortex::voxel {
             bool Wet(float mx, float mz) const { return m.waterKind[Coarse(mx, mz)] != WaterKind::None; }
         };
 
-        void SiteToMap(const LandSite& site, float X, float Z, float& mx, float& mz) {
-            // Rotation 0: the draft's north (-Z) faces west (-x); each step turns it a quarter clockwise on the map.
-            switch (site.rotation & 3) {
-            case 0: mx = site.x + Z, mz = site.z - X; break;
-            case 1: mx = site.x + X, mz = site.z + Z; break;
-            case 2: mx = site.x - Z, mz = site.z + X; break;
-            default: mx = site.x - X, mz = site.z - Z; break;
-            }
-        }
-
-        void MapToSite(const LandSite& site, float mx, float mz, float& X, float& Z) {
-            const float dx = mx - site.x, dz = mz - site.z;
-            switch (site.rotation & 3) {
-            case 0: X = -dz, Z = dx; break;
-            case 1: X = dx, Z = dz; break;
-            case 2: X = dz, Z = -dx; break;
-            default: X = -dx, Z = -dz; break;
-            }
-        }
-
         /// Coarse distance (metres, 8-neighbour steps) to the nearest cell that `source` accepts.
         template <class Source>
         std::vector<float> CoarseDistance(const LandMap& m, Source source) {
@@ -131,40 +110,82 @@ namespace vortex::voxel {
             return d;
         }
 
-        /// The site's field height for a centre and a rotation: a least-squares fit over the exact part of the template
-        /// (the field and the castle's footprint), and its cost: the mean squared metres the land must move there, plus
-        /// what must be cut where the template only cuts. False when the core is not dry or not inside the fine grid.
-        bool FitSite(const Fine& g, LandSite& site) {
-            double sum = 0.0;
-            int n = 0, all = 0;
-            for (float Z = kCoreNorth; Z <= kCoreSouth; Z += 8.0f)
-                for (float X = -kCoreX; X <= kCoreX; X += 8.0f) {
-                    float mx, mz, t, w;
-                    LandSurface s;
-                    float slack;
-                    SiteToMap(site, X, Z, mx, mz);
-                    if (!g.Inside(mx, mz, kSkirt + 8.0f) || g.Wet(mx, mz)) return false;
-                    LandSiteTemplate(X, Z, t, w, s, slack);
-                    ++all;
-                    if (slack > 0.0f) continue;
-                    sum += double(g.At(mx, mz) - t);
-                    ++n;
+        /// The curtain's radius towards a point (the nearest direction's), for masks.
+        float CurtainToward(const LandSite& site, float mx, float mz) {
+            return site.curtain[size_t(LandSiteNearestDirection(mx - site.x, mz - site.z))];
+        }
+
+        /// Inside the curtain wall plus `margin` metres.
+        bool InsideCurtain(const LandSite& site, float mx, float mz, float margin) {
+            if (!site.placed) return false;
+            const float d = std::sqrt((mx - site.x) * (mx - site.x) + (mz - site.z) * (mz - site.z));
+            return d <= CurtainToward(site, mx, mz) + margin;
+        }
+
+        /// Where the castle's road ends: at the far end of the bridge over the ditch, on the gate's axis.
+        void Approach(const LandSite& site, float& ax, float& az) {
+            const glm::vec2 d = LandSiteDirection(site.gate), axis = LandSiteGateAxis(site);
+            const float r = site.curtain[size_t(site.gate)], span = LandSiteBridgeSpan(site);
+            ax = site.x + d.x * r + axis.x * span;
+            az = site.z + d.y * r + axis.y * span;
+        }
+
+        /// What a keep point offers (land.md "The starter region"): in how many of the 24 directions the ground 50 m out lies
+        /// 4 m or more below it (a spur or a knoll falls away on most sides), the direction of the highest ground there
+        /// (the neck), and how far the ground within 6 m departs from it (the keep pad's grading).
+        struct SpurShape {
+            int fall = 0;
+            int neck = 0;
+            float neckHeight = -1.0e30f;
+            float rough = 0.0f;
+        };
+
+        SpurShape ShapeAt(const Fine& g, float x, float z) {
+            SpurShape s;
+            const float g0 = g.At(x, z);
+            for (int k = 0; k < kSiteDirections; ++k) {
+                const glm::vec2 d = LandSiteDirection(k);
+                const float h = g.At(x + d.x * 50.0f, z + d.y * 50.0f);
+                if (h < g0 - 4.0f) ++s.fall;
+                if (h > s.neckHeight) {
+                    s.neckHeight = h;
+                    s.neck = k;
                 }
-            site.fieldHeight = float(sum / double(n));
-            double cost = 0.0;
-            for (float Z = kCoreNorth; Z <= kCoreSouth; Z += 8.0f)
-                for (float X = -kCoreX; X <= kCoreX; X += 8.0f) {
-                    float mx, mz, t, w;
-                    LandSurface s;
-                    float slack;
-                    SiteToMap(site, X, Z, mx, mz);
-                    LandSiteTemplate(X, Z, t, w, s, slack);
-                    double d = double(g.At(mx, mz)) - double(site.fieldHeight + t);
-                    if (d < 0.0) d = std::min(0.0, d + double(slack));
-                    cost += d * d;
+            }
+            for (int k = 0; k < kSiteDirections; k += 3) {
+                const glm::vec2 d = LandSiteDirection(k);
+                s.rough = std::max(s.rough, std::abs(g.At(x + d.x * 6.0f, z + d.y * 6.0f) - g0));
+            }
+            return s;
+        }
+
+        /// Micro-grading (the owner's rule 5): a level pad of half sizes (hx, hz) around (cx, cz), blended outward over the
+        /// angle of repose (1.5 m of run per metre of rise, plus 1 m) with a noisy edge; the pad itself is locked.
+        void GradePad(Fine& g, float cx, float cz, float hx, float hz, float level) {
+            const LandFine& f = g.f;
+            const float reach = 16.0f;
+            const int i0 = std::max(0, int(std::floor(cx - hx - reach - float(f.x0)))), i1 = std::min(f.width - 1, int(std::ceil(cx + hx + reach - float(f.x0))));
+            const int j0 = std::max(0, int(std::floor(cz - hz - reach - float(f.z0)))), j1 = std::min(f.height - 1, int(std::ceil(cz + hz + reach - float(f.z0))));
+            for (int j = j0; j <= j1; ++j)
+                for (int i = i0; i <= i1; ++i) {
+                    const uint32_t c = f.Index(i, j);
+                    const float mx = g.Mx(i), mz = g.Mz(j);
+                    const float ox = std::max(0.0f, std::abs(mx - cx) - hx), oz = std::max(0.0f, std::abs(mz - cz) - hz);
+                    const float out = std::sqrt(ox * ox + oz * oz);
+                    if (out <= 0.0f) {
+                        g.h[c] = level;
+                        g.f.surface[c] = LandSurface::Site;
+                        g.f.detail[c] = 0;
+                        g.locked[c] = 1;
+                        continue;
+                    }
+                    const float edge = out + (HashNoise(0x7061u, mx / 5.0f, mz / 5.0f) - 0.5f) * 2.0f;
+                    const float run = 1.5f * std::abs(g.h[c] - level) + 1.0f;
+                    if (edge >= run) continue;
+                    const float w = 1.0f - SmoothStep(0.0f, run, std::max(0.0f, edge));
+                    g.h[c] += (level - g.h[c]) * w;
+                    g.f.detail[c] = uint8_t(std::min(float(g.f.detail[c]), (1.0f - w) * 255.0f));
                 }
-            site.searchCost = float(cost / double(all));
-            return true;
         }
 
         void PlaceSite(const LandSource& source, Fine& g, LandMap& m, float starterMean) {
@@ -173,85 +194,99 @@ namespace vortex::voxel {
                 if (p.kind == LandPointKind::Castle) fromFile = &p;
             const uint8_t starter = uint8_t(m.starterRegion);
             const std::vector<float> toStarter = CoarseDistance(m, [&](uint32_t i) { return m.regions[i] == starter; });
-            auto natural = [&](const LandSite& s, float X, float Z) {
-                float mx, mz;
-                SiteToMap(s, X, Z, mx, mz);
-                return g.At(mx, mz);
-            };
             LandSite best;
             if (fromFile) {
-                // The owner's castle: the rotation whose neck faces the highest ground.
-                for (int r = 0; r < 4; ++r) {
-                    LandSite c;
-                    c.x = fromFile->x;
-                    c.z = fromFile->z;
-                    c.rotation = r;
-                    if (!FitSite(g, c)) continue;
-                    if (!best.placed || natural(c, 0.0f, -70.0f) > natural(best, 0.0f, -70.0f)) {
-                        best = c;
-                        best.placed = true;
-                    }
-                }
+                best.x = fromFile->x;
+                best.z = fromFile->z;
+                best.placed = g.Inside(best.x, best.z, 60.0f);
+                best.gate = ShapeAt(g, best.x, best.z).neck;
             } else {
-                // A spur of the ridge over the starter region (the owner's answer 9): the middle on mountain ground (any
-                // ground outside the starter region when no mountain spot fits), the tip (50 m beyond the middle, away
-                // from the neck) within 150 m of the starter region, the neck's natural ground at least 5 m above the
-                // tip's, the field 8-45 m above the starter region's mean and at most 85 m; the best fit, in the order rotation,
-                // row, column.
+                // A spur or a knoll over the starter region (the owner's answer 9 and rules of 2026-11-25): on mountain
+                // ground first (any ground outside the starter region when no mountain spot fits); the ground 50 m out falls
+                // 4 m or more in at least 14 of 24 directions; the keep's ground within 6 m departs at most 3 m (micro-grading
+                // only); the keep 10-60 m above the starter region's mean and at most 85 m; dry ground within 46 m; the side
+                // away from the neck within 150 m of the starter region. Best: the most fall, the least grading, nearer.
                 for (int pass = 0; pass < 2 && !best.placed; ++pass)
-                for (int r = 0; r < 4; ++r)
                     for (int j = 0; j < g.f.height; j += 8)
                         for (int i = 0; i < g.f.width; i += 8) {
-                            LandSite c;
-                            c.x = g.Mx(i);
-                            c.z = g.Mz(j);
-                            c.rotation = r;
-                            const uint32_t centre = g.Coarse(c.x, c.z);
+                            const float x = g.Mx(i), z = g.Mz(j);
+                            if (!g.Inside(x, z, 60.0f)) continue;
+                            const uint32_t centre = g.Coarse(x, z);
                             if (m.regions[centre] == starter) continue;
                             if (pass == 0 && m.biomes[centre] != uint8_t(LandBiome::Mountain)) continue;
-                            float tx, tz;
-                            SiteToMap(c, 0.0f, 50.0f, tx, tz);
-                            if (toStarter[g.Coarse(tx, tz)] > 150.0f) continue;
-                            if (natural(c, 0.0f, -70.0f) < natural(c, 0.0f, 50.0f) + 5.0f) continue;
-                            if (!FitSite(g, c) || c.fieldHeight < starterMean + 8.0f) continue;
-                            // Not far above the village, and the keep (27 m) well under the build ceiling.
-                            if (c.fieldHeight > std::min(starterMean + 45.0f, 85.0f)) continue;
-                            if (!best.placed || c.searchCost < best.searchCost) {
-                                best = c;
+                            const float g0 = g.At(x, z);
+                            if (g0 < starterMean + 10.0f || g0 > std::min(starterMean + 60.0f, 85.0f)) continue;
+                            const SpurShape s = ShapeAt(g, x, z);
+                            if (s.fall < 14 || s.rough > 3.0f) continue;
+                            const glm::vec2 nd = LandSiteDirection(s.neck);
+                            const float tx = x - nd.x * 50.0f, tz = z - nd.y * 50.0f;
+                            const float near = toStarter[g.Coarse(tx, tz)];
+                            if (near > 150.0f) continue;
+                            bool dry = true;
+                            for (int k = 0; k < kSiteDirections && dry; k += 2) {
+                                const glm::vec2 d = LandSiteDirection(k);
+                                dry = !g.Wet(x + d.x * 46.0f, z + d.y * 46.0f) && !g.Wet(x + d.x * 23.0f, z + d.y * 23.0f);
+                            }
+                            if (!dry) continue;
+                            const float cost = -float(s.fall) + 1.5f * s.rough + near / 100.0f;
+                            if (!best.placed || cost < best.searchCost) {
+                                best = LandSite{};
                                 best.placed = true;
+                                best.x = x;
+                                best.z = z;
+                                best.gate = s.neck;
+                                best.searchCost = cost;
                             }
                         }
             }
+            if (!best.placed) {
+                m.site = best;
+                return;
+            }
+            // The walls trace contours: march out from the keep until the ground lies 7 m (curtain) or 3 m (inner wall)
+            // below it; smooth the radii round the circle twice.
+            const float g0 = g.At(best.x, best.z);
+            best.keepGround = g0;
+            for (int k = 0; k < kSiteDirections; ++k) {
+                const glm::vec2 d = LandSiteDirection(k);
+                float curtain = 34.0f, inner = 0.0f;
+                for (float r = 10.0f; r <= 46.0f; r += 1.0f) {
+                    const float h = g.At(best.x + d.x * r, best.z + d.y * r);
+                    if (inner == 0.0f && h < g0 - 3.0f) inner = r - 1.0f;
+                    if (h < g0 - 7.0f) {
+                        curtain = r - 2.0f;
+                        break;
+                    }
+                }
+                best.curtain[size_t(k)] = std::clamp(curtain, 16.0f, 42.0f);
+                best.inner[size_t(k)] = inner == 0.0f ? 0.6f * best.curtain[size_t(k)] : inner;
+            }
+            for (int pass = 0; pass < 2; ++pass) {
+                std::array<float, kSiteDirections> c = best.curtain, n = best.inner;
+                for (int k = 0; k < kSiteDirections; ++k) {
+                    const size_t a = size_t((k + kSiteDirections - 1) % kSiteDirections), b = size_t((k + 1) % kSiteDirections);
+                    c[size_t(k)] = 0.25f * best.curtain[a] + 0.5f * best.curtain[size_t(k)] + 0.25f * best.curtain[b];
+                    n[size_t(k)] = 0.25f * best.inner[a] + 0.5f * best.inner[size_t(k)] + 0.25f * best.inner[b];
+                }
+                best.curtain = c;
+                best.inner = n;
+            }
+            for (int k = 0; k < kSiteDirections; ++k)
+                best.inner[size_t(k)] = std::clamp(best.inner[size_t(k)], 11.0f, best.curtain[size_t(k)] - 7.0f);
             m.site = best;
-            if (!best.placed) return;
-            const float reach = std::max(kCoreX, std::max(-kCoreNorth, kCoreSouth)) + kSkirt + 2.0f;
+
+            // Micro-grading only: the keep's pad (18 x 18 m) and the gatehouse's (14 x 10 m, across the gate).
+            GradePad(g, best.x, best.z, 9.0f, 9.0f, g0);
+            const glm::vec2 gd = LandSiteDirection(best.gate);
+            const float gx = best.x + gd.x * best.curtain[size_t(best.gate)], gz = best.z + gd.y * best.curtain[size_t(best.gate)];
+            const bool alongX = std::abs(gd.x) >= std::abs(gd.y);
+            m.site.gateGround = g.At(gx, gz);
+            GradePad(g, gx, gz, alongX ? 5.0f : 7.0f, alongX ? 7.0f : 5.0f, m.site.gateGround);
+            // No plants inside the walls: the castle's ground keeps its height and loses its trees and rocks.
             for (int j = 0; j < g.f.height; ++j)
                 for (int i = 0; i < g.f.width; ++i) {
-                    const float mx = g.Mx(i), mz = g.Mz(j);
-                    if (std::abs(mx - best.x) > reach || std::abs(mz - best.z) > reach) continue;
-                    float X, Z, t, w;
-                    LandSurface s;
-                    float slack;
-                    MapToSite(best, mx, mz, X, Z);
-                    // Outside the castle's footprint the edges wander by up to 4 m, so the cliffs' feet, the ravines and
-                    // the skirt do not follow straight lines; the footprint stays a rectangle for the walls.
-                    // The move shrinks near the footprint (at most 2/3 of the distance to it), so no point moves into it.
-                    const float outside = std::max(std::abs(X) - 32.0f, std::abs(Z) - 40.0f);
-                    if (outside > 0.0f) {
-                        const float scale = std::min(1.0f, outside / 6.0f);
-                        X += (HashNoise(0x5173u, mx / 9.0f, mz / 9.0f) - 0.5f) * 8.0f * scale;
-                        Z += (HashNoise(0x5174u, mx / 9.0f, mz / 9.0f) - 0.5f) * 8.0f * scale;
-                    }
-                    LandSiteTemplate(X, Z, t, w, s, slack);
-                    if (w <= 0.0f) continue;
                     const uint32_t c = g.f.Index(i, j);
-                    const float target = std::clamp(g.h[c], best.fieldHeight + t - slack, best.fieldHeight + t);
-                    g.h[c] += (target - g.h[c]) * w;
-                    g.f.detail[c] = uint8_t(std::min(g.f.detail[c], uint8_t((1.0f - w) * 255.0f)));
-                    if (w >= 1.0f) {
-                        g.f.surface[c] = s;
-                        g.locked[c] = 1;
-                    }
+                    if (g.f.surface[c] == LandSurface::Natural && InsideCurtain(best, g.Mx(i), g.Mz(j), 3.0f)) g.f.surface[c] = LandSurface::Site;
                 }
         }
 
@@ -304,14 +339,9 @@ namespace vortex::voxel {
             float fieldX = 0.0f, fieldZ = 0.0f;
             if (m.site.placed) {
                 pts.push_back({LandPointKind::Castle, m.site.x, m.site.z, fromFile(LandPointKind::Castle) != nullptr});
-                SiteToMap(m.site, 0.0f, kFieldDraftZ, fieldX, fieldZ);
+                Approach(m.site, fieldX, fieldZ);
             }
-            auto inSite = [&](float mx, float mz) {
-                if (!m.site.placed) return false;
-                float X, Z;
-                MapToSite(m.site, mx, mz, X, Z);
-                return std::abs(X) <= kCoreX + 10.0f && Z >= kCoreNorth - 10.0f && Z <= kCoreSouth + 10.0f;
-            };
+            auto inSite = [&](float mx, float mz) { return InsideCurtain(m.site, mx, mz, 20.0f); };
             const std::vector<float> fresh = DistanceToFreshWater(m);
             const uint8_t starter = uint8_t(m.starterRegion);
 
@@ -417,10 +447,14 @@ namespace vortex::voxel {
 
         }
 
-        /// A* on the fine grid from `a` to `b` (map metres): a step costs its length times 1 + 30 grade^2 up to maxGrade,
-        /// and 60 more per unit of grade above it (a cut the bed must make, so switchbacks win where the slope allows
-        /// them); sea, lakes and the castle are closed; a river step costs 6 m more (a ford).
-        bool FindRoad(const Fine& g, const LandMap& m, float ax, float az, float bx, float bz, float maxGrade, std::vector<uint32_t>& path) {
+        /// A* on the fine grid from `a` to `b` (map metres), so that routes look like people made them, not a ruler:
+        /// - a step costs its length times the ground's cost (1 to 2.1: slow noise of 45 m and 15 m, better and worse
+        ///   ground) or a third of a metre on a road already made (later roads join and branch off earlier ones);
+        /// - plus 30 grade^2 up to maxGrade and 400 per unit of grade above it (switchbacks win where the slope allows);
+        /// - plus 12 side-slope^2 (roads follow the contours, not the fall line);
+        /// - sea, lakes and the castle are closed; a river step costs 6 m more (a ford).
+        bool FindRoad(const Fine& g, const LandMap& m, float ax, float az, float bx, float bz, float maxGrade,
+                      const std::vector<uint8_t>& onRoad, std::vector<uint32_t>& path) {
             const LandFine& f = g.f;
             const uint32_t n = uint32_t(f.width) * uint32_t(f.height);
             auto cellOf = [&](float mx, float mz) {
@@ -433,12 +467,7 @@ namespace vortex::voxel {
                 const float mx = g.Mx(int(c % uint32_t(f.width))), mz = g.Mz(int(c / uint32_t(f.width)));
                 const WaterKind w = m.waterKind[g.Coarse(mx, mz)];
                 if (w == WaterKind::Sea || w == WaterKind::Lake) return true;
-                if (m.site.placed) {
-                    float X, Z;
-                    MapToSite(m.site, mx, mz, X, Z);
-                    if (std::abs(X) <= kFootprintX && std::abs(Z) <= kFootprintZ) return true;
-                }
-                return false;
+                return InsideCurtain(m.site, mx, mz, 3.0f);
             };
             std::vector<float> cost(n, 1.0e30f);
             std::vector<uint32_t> from(n, UINT32_MAX);
@@ -446,14 +475,15 @@ namespace vortex::voxel {
             std::priority_queue<Item, std::vector<Item>, std::greater<Item>> open;
             const float gx = g.Mx(int(goal % uint32_t(f.width))), gz = g.Mz(int(goal / uint32_t(f.width)));
             cost[start] = 0.0f;
-            open.push({Distance(g.Mx(int(start % uint32_t(f.width))), g.Mz(int(start / uint32_t(f.width))), gx, gz), start});
+            constexpr float kLeast = 0.35f;   // the cheapest metre (a road already made): keeps the heuristic admissible
+            open.push({kLeast * Distance(g.Mx(int(start % uint32_t(f.width))), g.Mz(int(start / uint32_t(f.width))), gx, gz), start});
             static constexpr int dx[8] = {1, -1, 0, 0, 1, 1, -1, -1}, dz[8] = {0, 0, 1, -1, 1, -1, 1, -1};
             while (!open.empty()) {
                 const auto [fc, c] = open.top();
                 open.pop();
                 if (c == goal) break;
                 const int ci = int(c % uint32_t(f.width)), cj = int(c / uint32_t(f.width));
-                if (fc > cost[c] + Distance(g.Mx(ci), g.Mz(cj), gx, gz) + 1.0e-3f) continue;
+                if (fc > cost[c] + kLeast * Distance(g.Mx(ci), g.Mz(cj), gx, gz) + 1.0e-3f) continue;
                 for (int k = 0; k < 8; ++k) {
                     const int ni = ci + dx[k], nj = cj + dz[k];
                     if (ni < 2 || nj < 2 || ni >= f.width - 2 || nj >= f.height - 2) continue;
@@ -462,13 +492,20 @@ namespace vortex::voxel {
                     const float step = k < 4 ? 1.0f : 1.41421356f;
                     const float grade = std::abs(g.h[nc] - g.h[c]) / step;
                     const float within = std::min(grade, maxGrade);
-                    float add = step * (1.0f + 30.0f * within * within + 60.0f * (grade - within));
+                    const float mx = g.Mx(ni), mz = g.Mz(nj);
+                    const float ground = onRoad[nc] ? kLeast
+                                                    : 1.0f + 0.7f * HashNoise(0x524fu, mx / 45.0f, mz / 45.0f) +
+                                                          0.4f * HashNoise(0x5250u, mx / 15.0f, mz / 15.0f);
+                    const float sx = 0.5f * (g.h[f.Index(ni + 1, nj)] - g.h[f.Index(ni - 1, nj)]);
+                    const float sz = 0.5f * (g.h[f.Index(ni, nj + 1)] - g.h[f.Index(ni, nj - 1)]);
+                    const float side = std::abs(-sx * float(dz[k]) + sz * float(dx[k])) / step;
+                    float add = step * (ground + 30.0f * within * within + 400.0f * (grade - within) + 12.0f * side * side);
                     if (m.waterKind[g.Coarse(g.Mx(ni), g.Mz(nj))] == WaterKind::River) add += 6.0f * step;
                     const float nc2 = cost[c] + add;
                     if (nc2 < cost[nc]) {
                         cost[nc] = nc2;
                         from[nc] = c;
-                        open.push({nc2 + Distance(g.Mx(ni), g.Mz(nj), gx, gz), nc});
+                        open.push({nc2 + kLeast * Distance(mx, mz, gx, gz), nc});
                     }
                 }
             }
@@ -487,34 +524,58 @@ namespace vortex::voxel {
             if (village < 0) return;
             const LandFine& f = g.f;
             float fieldX = 0.0f, fieldZ = 0.0f;
-            if (m.site.placed) SiteToMap(m.site, 0.0f, kFieldDraftZ, fieldX, fieldZ);
+            if (m.site.placed) Approach(m.site, fieldX, fieldZ);
             const size_t pointCount = m.points.size();
+            std::vector<uint8_t> onRoad(size_t(f.width) * size_t(f.height), 0);
+            // The routes already laid, per fine cell within 2 cells of one: its nearest point (route, index). A later
+            // road or trail takes that point's bed where it runs on or beside an earlier route, so junctions and shared
+            // stretches have one height.
+            std::vector<int32_t> laidRoute(size_t(f.width) * size_t(f.height), -1);
+            std::vector<uint32_t> laidPoint(laidRoute.size(), 0);
+            std::vector<float> laidDistance(laidRoute.size(), 1.0e30f);
+            // Roads first (the castle, the landing), then trails (the cave, the landmark), which may follow the roads.
+            for (int pass = 0; pass < 2; ++pass)
             for (size_t k = 0; k < pointCount; ++k) {
                 const LandPoint& p = m.points[k];
-                if (p.kind != LandPointKind::Castle && p.kind != LandPointKind::Landing && p.kind != LandPointKind::Cave) continue;
+                const bool trail = p.kind == LandPointKind::Cave || p.kind == LandPointKind::Landmark;
+                const bool toCastle = p.kind == LandPointKind::Castle;   // read now: a crossing added below moves m.points
+                if (pass != int(trail)) continue;
+                if (p.kind != LandPointKind::Castle && p.kind != LandPointKind::Landing && !trail) continue;
                 const float tx = p.kind == LandPointKind::Castle ? fieldX : p.x, tz = p.kind == LandPointKind::Castle ? fieldZ : p.z;
+                if (tx < float(f.x0) + 3.0f || tz < float(f.z0) + 3.0f || tx > float(f.x0 + f.width) - 3.0f || tz > float(f.z0 + f.height) - 3.0f)
+                    continue;   // outside the fine grid
+                const float maxGrade = trail ? st.trailMaxGrade : st.roadMaxGrade;
                 std::vector<uint32_t> path;
-                if (!FindRoad(g, m, m.points[size_t(village)].x, m.points[size_t(village)].z, tx, tz, st.roadMaxGrade, path)) continue;
+                if (!FindRoad(g, m, m.points[size_t(village)].x, m.points[size_t(village)].z, tx, tz, maxGrade, onRoad, path)) continue;
+                for (uint32_t c : path) onRoad[c] = 1;
                 LandRoad road;
                 road.from = uint8_t(village);
                 road.to = uint8_t(k);
-                // The line: the path's cell centres, smoothed over 7 cells (the ends stay), so the road's edges follow
-                // a curve and not the grid's steps.
+                road.trail = trail;
+                // The line: the path's cell centres, smoothed twice over 7 cells (the ends stay), so the road bends in
+                // curves and not the grid's steps.
                 std::vector<float> cx, cz;
                 for (uint32_t c : path) {
                     cx.push_back(g.Mx(int(c % uint32_t(f.width))));
                     cz.push_back(g.Mz(int(c / uint32_t(f.width))));
                 }
-                for (size_t a = 0; a < cx.size(); ++a) {
-                    const size_t r = std::min<size_t>(3, std::min(a, cx.size() - 1 - a));
-                    float sx = 0.0f, sz = 0.0f;
-                    for (size_t b = a - r; b <= a + r; ++b) {
-                        sx += cx[b];
-                        sz += cz[b];
+                for (int pass = 0; pass < 2; ++pass) {
+                    std::vector<float> sxv(cx.size()), szv(cz.size());
+                    for (size_t a = 0; a < cx.size(); ++a) {
+                        const size_t r = std::min<size_t>(3, std::min(a, cx.size() - 1 - a));
+                        float sx = 0.0f, sz = 0.0f;
+                        for (size_t b = a - r; b <= a + r; ++b) {
+                            sx += cx[b];
+                            sz += cz[b];
+                        }
+                        sxv[a] = sx / float(2 * r + 1);
+                        szv[a] = sz / float(2 * r + 1);
                     }
-                    road.x.push_back(sx / float(2 * r + 1));
-                    road.z.push_back(sz / float(2 * r + 1));
+                    cx.swap(sxv);
+                    cz.swap(szv);
                 }
+                road.x = cx;
+                road.z = cz;
                 std::vector<float> raw;
                 bool inRiver = false;
                 for (size_t a = 0; a < road.x.size(); ++a) {
@@ -529,35 +590,134 @@ namespace vortex::voxel {
                 // metre) averaged, so it cuts hills and fills dips; a moving average over up to 9 m; then a forward
                 // pass that holds every step to maxGrade exactly.
                 const size_t len = raw.size();
-                for (size_t a = 0; a < len; ++a) {
-                    const uint32_t coarse = g.Coarse(road.x[a], road.z[a]);
-                    if (m.waterKind[coarse] == WaterKind::River) {
-                        raw[a] = m.water[coarse] - 0.3f;
-                        ++road.fordCells;
+                // A trail fords a river 0.3 m under its water. A road crosses on a timber bridge: its deck over each run
+                // of river points is level at the higher bank (the ground before and after the run), at least 0.9 m and
+                // at most 3 m over the water.
+                constexpr float kNoDeck = -1.0e30f;
+                std::vector<float> deck(len, kNoDeck);
+                for (size_t a = 0; a < len;) {
+                    if (m.waterKind[g.Coarse(road.x[a], road.z[a])] != WaterKind::River) {
+                        ++a;
+                        continue;
                     }
+                    size_t e = a;
+                    float water = -1.0e30f;
+                    while (e < len && m.waterKind[g.Coarse(road.x[e], road.z[e])] == WaterKind::River) {
+                        water = std::max(water, m.water[g.Coarse(road.x[e], road.z[e])]);
+                        ++e;
+                    }
+                    const float bank = std::max(a > 0 ? raw[a - 1] : water, e < len ? raw[e] : water);
+                    const float level = std::clamp(bank, water + 0.9f, water + 3.0f);
+                    for (size_t k = a; k < e; ++k) {
+                        if (trail) {
+                            raw[k] = m.water[g.Coarse(road.x[k], road.z[k])] - 0.3f;
+                            ++road.fordCells;
+                        } else {
+                            raw[k] = level;
+                            deck[k] = level;
+                            ++road.bridgeCells;
+                        }
+                    }
+                    a = e;
+                }
+                // The castle road ends at the bridge's level: the gatehouse pad's (a cutting through the neck if needed).
+                if (toCastle && m.site.placed && len > 0) deck[len - 1] = m.site.gateGround;
+                // Points on or beside a bed already laid are fixed to it, and a bridge's points to its deck, when the
+                // grade lets the road reach it from the last fixed point (beside a hairpin two legs of a road lie close at
+                // different heights: one wins).
+                std::vector<uint8_t> fixed(len, 0);
+                float lastBed = 0.0f, along = 1.0e30f;
+                for (size_t a = 0; a < len; ++a) {
+                    if (a > 0) along += Distance(road.x[a], road.z[a], road.x[a - 1], road.z[a - 1]);
+                    const int i = int(std::floor(road.x[a] - float(f.x0))), j = int(std::floor(road.z[a] - float(f.z0)));
+                    if (i < 0 || j < 0 || i >= f.width || j >= f.height) continue;
+                    const uint32_t c = f.Index(i, j);
+                    if (laidRoute[c] < 0) {
+                        if (deck[a] <= kNoDeck || std::abs(deck[a] - lastBed) > maxGrade * along + 1.0e-4f) continue;
+                        raw[a] = deck[a];
+                        fixed[a] = 1;
+                        lastBed = deck[a];
+                        along = 0.0f;
+                        continue;
+                    }
+                    const LandRoad& other = m.roads[size_t(laidRoute[c])];
+                    // The cell's nearest point, then the earlier route's point nearest to this one around it.
+                    size_t b = laidPoint[c];
+                    float near = Distance(road.x[a], road.z[a], other.x[b], other.z[b]);
+                    const size_t first = b >= 3 ? b - 3 : 0, last = std::min(other.x.size() - 1, b + 3);
+                    for (size_t e = first; e <= last; ++e) {
+                        const float d = Distance(road.x[a], road.z[a], other.x[e], other.z[e]);
+                        if (d < near) {
+                            near = d;
+                            b = e;
+                        }
+                    }
+                    if (near > 1.5f) continue;
+                    const float bed = other.bed[b];
+                    if (std::abs(bed - lastBed) > maxGrade * along + 1.0e-4f) continue;
+                    raw[a] = bed;
+                    fixed[a] = 1;
+                    lastBed = bed;
+                    along = 0.0f;
                 }
                 std::vector<float> step(len, 0.0f), upper = raw, lower = raw;
                 for (size_t a = 1; a < len; ++a) step[a] = Distance(road.x[a], road.z[a], road.x[a - 1], road.z[a - 1]);
                 for (size_t a = 1; a < len; ++a) {
-                    upper[a] = std::max(upper[a], upper[a - 1] - st.roadMaxGrade * step[a]);
-                    lower[a] = std::min(lower[a], lower[a - 1] + st.roadMaxGrade * step[a]);
+                    if (fixed[a]) continue;
+                    upper[a] = std::max(upper[a], upper[a - 1] - maxGrade * step[a]);
+                    lower[a] = std::min(lower[a], lower[a - 1] + maxGrade * step[a]);
                 }
                 for (size_t a = len - 1; a-- > 0;) {
-                    upper[a] = std::max(upper[a], upper[a + 1] - st.roadMaxGrade * step[a + 1]);
-                    lower[a] = std::min(lower[a], lower[a + 1] + st.roadMaxGrade * step[a + 1]);
+                    if (fixed[a]) continue;
+                    upper[a] = std::max(upper[a], upper[a + 1] - maxGrade * step[a + 1]);
+                    lower[a] = std::min(lower[a], lower[a + 1] + maxGrade * step[a + 1]);
                 }
                 std::vector<float> mid(len);
                 for (size_t a = 0; a < len; ++a) mid[a] = 0.5f * (upper[a] + lower[a]);
                 road.bed.resize(len);
                 for (size_t a = 0; a < len; ++a) {
+                    if (fixed[a]) {
+                        road.bed[a] = raw[a];
+                        continue;
+                    }
                     const size_t r = std::min<size_t>(4, std::min(a, len - 1 - a));
                     float sum = 0.0f;
                     for (size_t b = a - r; b <= a + r; ++b) sum += mid[b];
                     road.bed[a] = sum / float(2 * r + 1);
                 }
+                // The band the fixed points allow (at most maxGrade per metre away from each), then a forward pass
+                // that holds every step to maxGrade inside that band.
+                std::vector<float> hiBand(len, 1.0e30f), loBand(len, -1.0e30f);
+                for (size_t a = 0; a < len; ++a)
+                    if (fixed[a]) hiBand[a] = loBand[a] = raw[a];
                 for (size_t a = 1; a < len; ++a) {
-                    const float most = st.roadMaxGrade * step[a];
-                    road.bed[a] = std::clamp(road.bed[a], road.bed[a - 1] - most, road.bed[a - 1] + most);
+                    hiBand[a] = std::min(hiBand[a], hiBand[a - 1] + maxGrade * step[a]);
+                    loBand[a] = std::max(loBand[a], loBand[a - 1] - maxGrade * step[a]);
+                }
+                for (size_t a = len - 1; a-- > 0;) {
+                    hiBand[a] = std::min(hiBand[a], hiBand[a + 1] + maxGrade * step[a + 1]);
+                    loBand[a] = std::max(loBand[a], loBand[a + 1] - maxGrade * step[a + 1]);
+                }
+                for (size_t a = 0; a < len; ++a) {
+                    if (fixed[a]) continue;
+                    float b = road.bed[a];
+                    if (a > 0) b = std::min(std::max(b, road.bed[a - 1] - maxGrade * step[a]), road.bed[a - 1] + maxGrade * step[a]);
+                    road.bed[a] = std::min(std::max(b, loBand[a]), hiBand[a]);
+                }
+                for (size_t a = 0; a < len; ++a) {
+                    const int ci = int(std::floor(road.x[a] - float(f.x0))), cj = int(std::floor(road.z[a] - float(f.z0)));
+                    for (int dj = -2; dj <= 2; ++dj)
+                        for (int di = -2; di <= 2; ++di) {
+                            const int i = ci + di, j = cj + dj;
+                            if (i < 0 || j < 0 || i >= f.width || j >= f.height) continue;
+                            const uint32_t c = f.Index(i, j);
+                            const float d = Distance(g.Mx(i), g.Mz(j), road.x[a], road.z[a]);
+                            if (d < laidDistance[c]) {
+                                laidDistance[c] = d;
+                                laidRoute[c] = int32_t(m.roads.size());
+                                laidPoint[c] = uint32_t(a);
+                            }
+                        }
                 }
                 for (size_t a = 1; a < len; ++a) {
                     const float step = Distance(road.x[a], road.z[a], road.x[a - 1], road.z[a - 1]);
@@ -566,14 +726,16 @@ namespace vortex::voxel {
                 }
                 m.roads.push_back(std::move(road));
             }
-            // Stamp the beds: 1.6 m either side is road at the bed's height, shoulders blend over the next 2.4 m.
+            // Stamp the beds: 1.6 m either side is road at the bed's height (0.9 m for a trail); the ground beside it slopes to the bed as an
+            // embankment or a cut of 1 in 2 (1.5 m plus twice the height between bed and ground, at most 8 m), so a road
+            // sits in the land and never stands on a wall.
             const uint32_t n = uint32_t(f.width) * uint32_t(f.height);
-            std::vector<float> nearest(n, 1.0e30f), bed(n, 0.0f);
+            std::vector<float> nearest(n, 1.0e30f), bed(n, 0.0f), half(n, 1.6f);
             for (const LandRoad& road : m.roads)
                 for (size_t a = 0; a < road.x.size(); ++a) {
                     const int ci = int(std::floor(road.x[a] - float(f.x0))), cj = int(std::floor(road.z[a] - float(f.z0)));
-                    for (int dj = -4; dj <= 4; ++dj)
-                        for (int di = -4; di <= 4; ++di) {
+                    for (int dj = -10; dj <= 10; ++dj)
+                        for (int di = -10; di <= 10; ++di) {
                             const int i = ci + di, j = cj + dj;
                             if (i < 0 || j < 0 || i >= f.width || j >= f.height) continue;
                             const uint32_t c = f.Index(i, j);
@@ -581,20 +743,25 @@ namespace vortex::voxel {
                             if (d < nearest[c]) {
                                 nearest[c] = d;
                                 bed[c] = road.bed[a];
+                                half[c] = road.trail ? 0.9f : 1.6f;
                             }
                         }
                 }
             for (uint32_t c = 0; c < n; ++c) {
-                if (nearest[c] > 4.0f || g.locked[c]) continue;
+                if (nearest[c] > 9.6f || g.locked[c]) continue;
                 const float mx = g.Mx(int(c % uint32_t(f.width))), mz = g.Mz(int(c / uint32_t(f.width)));
                 const WaterKind w = m.waterKind[g.Coarse(mx, mz)];
                 if (w == WaterKind::Sea || w == WaterKind::Lake) continue;
-                if (nearest[c] <= 1.6f) {
+                if (w == WaterKind::River && half[c] > 1.0f) continue;   // under a road's bridge the river stays
+                if (nearest[c] <= half[c]) {
                     g.h[c] = bed[c];
                     g.f.surface[c] = LandSurface::Road;
                     g.f.detail[c] = 0;
                 } else {
-                    const float wgt = (4.0f - nearest[c]) / 2.4f;
+                    const float shoulder = std::min(8.0f, 1.5f + 2.0f * std::abs(bed[c] - g.h[c]));
+                    const float out = (nearest[c] - half[c]) / shoulder;
+                    if (out >= 1.0f) continue;
+                    const float wgt = 1.0f - SmoothStep(0.0f, 1.0f, out);
                     g.h[c] += (bed[c] - g.h[c]) * wgt;
                     g.f.detail[c] = uint8_t(std::min(float(g.f.detail[c]), (1.0f - wgt) * 255.0f));
                 }
@@ -602,29 +769,68 @@ namespace vortex::voxel {
         }
     }
 
-    void LandSiteTemplate(float X, float Z, float& height, float& weight, LandSurface& surface, float& slack) {
-        surface = LandSurface::Natural;
-        slack = 0.0f;
-        // Distance outside the core rectangle, for the skirt (round at the corners).
-        const float ox = std::max(0.0f, std::abs(X) - kCoreX), oz = std::max(0.0f, std::max(kCoreNorth - Z, Z - kCoreSouth));
-        const float out = std::sqrt(ox * ox + oz * oz);
-        weight = out <= 0.0f ? 1.0f : 1.0f - SmoothStep(0.0f, kSkirt, out);
-        if (Z < -40.0f) {
-            height = 0.0f;                                   // the approach field
-            surface = LandSurface::Site;
-        } else if (std::abs(X) <= 32.0f && Z <= 40.0f) {
-            height = Z >= 5.0f ? 5.0f : 0.0f;                // outer ward 0 m, the rock step, inner ward 5 m
-            surface = LandSurface::Site;
-        } else if (Z > 40.0f) {
-            height = Z < 41.0f ? -12.0f * (Z - 40.0f) : -12.0f;   // the south cliff to the ravine
-            slack = Z < 41.0f ? 0.0f : 4.0f;
-        } else if (X < -32.0f) {
-            height = X > -33.0f ? -11.0f * (-32.0f - X) : -11.0f;  // the west cliff to the stream bed
-            slack = X > -33.0f ? 0.0f : 4.0f;
-        } else {
-            height = -6.0f * std::min(1.0f, (X - 32.0f) / 14.0f);  // the east slope, 6 m down
+    glm::vec2 LandSiteDirection(int k) {
+        // cos and sin of k x 15 degrees, as literals (no libm function decides a site).
+        static constexpr float kTable[kSiteDirections][2] = {
+            {1.0f, 0.0f}, {0.96592583f, 0.25881905f}, {0.8660254f, 0.5f}, {0.70710678f, 0.70710678f}, {0.5f, 0.8660254f},
+            {0.25881905f, 0.96592583f}, {0.0f, 1.0f}, {-0.25881905f, 0.96592583f}, {-0.5f, 0.8660254f}, {-0.70710678f, 0.70710678f},
+            {-0.8660254f, 0.5f}, {-0.96592583f, 0.25881905f}, {-1.0f, 0.0f}, {-0.96592583f, -0.25881905f}, {-0.8660254f, -0.5f},
+            {-0.70710678f, -0.70710678f}, {-0.5f, -0.8660254f}, {-0.25881905f, -0.96592583f}, {0.0f, -1.0f}, {0.25881905f, -0.96592583f},
+            {0.5f, -0.8660254f}, {0.70710678f, -0.70710678f}, {0.8660254f, -0.5f}, {0.96592583f, -0.25881905f}};
+        const int i = ((k % kSiteDirections) + kSiteDirections) % kSiteDirections;
+        return glm::vec2(kTable[i][0], kTable[i][1]);
+    }
+
+    glm::vec2 LandSiteGateAxis(const LandSite& site) {
+        const glm::vec2 gd = LandSiteDirection(site.gate);
+        return std::abs(gd.x) >= std::abs(gd.y) ? glm::vec2(gd.x > 0.0f ? 1.0f : -1.0f, 0.0f) : glm::vec2(0.0f, gd.y > 0.0f ? 1.0f : -1.0f);
+    }
+
+    bool LandSiteOutsideCurtain(const LandSite& site, float mx, float mz, float& off) {
+        const auto cross = [](glm::vec2 x, glm::vec2 y) { return x.x * y.y - x.y * y.x; };
+        const glm::vec2 keep(site.x, site.z);
+        const glm::vec2 v = glm::vec2(mx, mz) - keep;
+        const float len = std::sqrt(v.x * v.x + v.y * v.y);
+        if (len < 1.0e-3f) return false;
+        const glm::vec2 u = v / len;
+        for (int k = -2; k <= 1; ++k) {
+            const int i0 = ((site.gate + k) % kSiteDirections + kSiteDirections) % kSiteDirections, i1 = (i0 + 1) % kSiteDirections;
+            const glm::vec2 a = LandSiteDirection(i0) * site.curtain[size_t(i0)], b = LandSiteDirection(i1) * site.curtain[size_t(i1)];
+            if (cross(a, v) < 0.0f || cross(v, b) < 0.0f) continue;
+            const glm::vec2 ab = b - a;
+            const float den = cross(u, ab);
+            if (std::abs(den) < 1.0e-6f) continue;
+            const float s = std::clamp(-cross(u, a) / den, 0.0f, 1.0f);
+            const glm::vec2 q = a + ab * s;
+            off = len - std::sqrt(q.x * q.x + q.y * q.y);
+            return true;
         }
-        if (out > 0.0f) surface = LandSurface::Natural;
+        return false;
+    }
+
+    float LandSiteBridgeSpan(const LandSite& site) {
+        const glm::vec2 gate = glm::vec2(site.x, site.z) + LandSiteDirection(site.gate) * site.curtain[size_t(site.gate)];
+        const glm::vec2 axis = LandSiteGateAxis(site);
+        for (float t = 3.0f; t <= 30.0f; t += 0.5f) {
+            float off = 0.0f;
+            const glm::vec2 p = gate + axis * t;
+            if (LandSiteOutsideCurtain(site, p.x, p.y, off) && off > 10.0f) return t + 1.0f;
+        }
+        return 14.0f;
+    }
+
+    int LandSiteNearestDirection(float dx, float dz) {
+        int best = 0;
+        float bestDot = -1.0e30f;
+        for (int k = 0; k < kSiteDirections; ++k) {
+            const glm::vec2 d = LandSiteDirection(k);
+            const float dot = d.x * dx + d.y * dz;
+            if (dot > bestDot) {
+                bestDot = dot;
+                best = k;
+            }
+        }
+        return best;
     }
 
     void BakeLandStarter(const LandSource& source, const LandSettings& st, LandMap& m) {

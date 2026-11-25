@@ -266,6 +266,14 @@ export namespace vortex::sim {
     /// gatehouse with a portcullis and its lever, a keep and a sally port with doors, a frame for a log trap, crates and
     /// barrels to carry. Mechanisms: 0 keep door, 1 sally door, 2 portcullis, 3 lever (runs 2).
     RegionTemplate PlaygroundCastleTemplate(voxel::World& world, const voxel::WorldMaterials& m, const glm::ivec3& plazaAnchor);
+    /**
+     * @brief Hollowkeep's greybox on the baked map's site (land.md "Hollowkeep's greybox"): boxes on the natural slope.
+     * The curtain and inner walls follow the site's contour polygons, each run's wall walk set by its highest ground;
+     * towers, the gatehouse (squared to the gate's direction, with the portcullis and its lever) and the keep on its pad.
+     * Every structure reaches 1.5 m below its own ground: nothing raises the terrain. Not sited without a site.
+     */
+    RegionTemplate HollowkeepTemplate(const voxel::LandMap& map, const voxel::LandGeneratorSettings& land);
+
     /// @brief Creates a template's mechanisms in order and links them; empty (logged) if the authoring rule fails.
     std::vector<scene::Entity> CreateTemplateMechanisms(Simulation& simulation, const RegionTemplate& t);
     /// @brief The authoring rule: every lever's use box is at least kUseReach + 0.5 m from its target's outer face.

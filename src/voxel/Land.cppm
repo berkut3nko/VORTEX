@@ -2,6 +2,7 @@ module;
 
 #include <glm/glm.hpp>
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -63,9 +64,9 @@ export namespace vortex::voxel {
      * on purpose (the test prints the new value); kLandGoldenHash mixes them into the session's build hash, so builds
      * that bake or sample differently refuse each other.
      */
-    inline constexpr uint64_t kLandBakeGoldenHash = 0x61fc51804ff5f1feull;
-    inline constexpr uint64_t kLandStarterGoldenHash = 0x542be84666ab3296ull;
-    inline constexpr uint64_t kLandSamplingGoldenHash = 0x649a2b8e858af21cull;
+    inline constexpr uint64_t kLandBakeGoldenHash = 0x90a1458c7d9c497eull;
+    inline constexpr uint64_t kLandStarterGoldenHash = 0x3518dcab484973e2ull;
+    inline constexpr uint64_t kLandSamplingGoldenHash = 0x18cd7b8bdfbc904cull;
     inline constexpr uint64_t kLandGoldenHash = kLandBakeGoldenHash ^ (kLandStarterGoldenHash * 3) ^ (kLandSamplingGoldenHash * 5);
 
     /// @brief A 64-bit hash of the map's inputs: the sizes, the scale, every pixel of the height, biome and region
@@ -107,7 +108,8 @@ export namespace vortex::voxel {
         // L6-L8: the starter region in detail.
         bool starterDetail = true;
         float fineMargin = 160.0f;          ///< metres of fine grid around the starter region's box
-        float roadMaxGrade = 0.15f;         ///< steeper road steps are refused (switchbacks appear instead)
+        float roadMaxGrade = 0.16f;         ///< a road bed's steepest step (about 1:6); steeper ground costs much more
+        float trailMaxGrade = 0.35f;        ///< a trail's (a footpath to the cave and the landmark): rough steps
 
         // Strata: rock hardness by height bands, tilted by slow noise.
         float strataBand = 5.0f;
@@ -157,14 +159,41 @@ export namespace vortex::voxel {
         bool Empty() const { return width == 0; }
     };
 
-    /// @brief Hollowkeep's site (land.md "The starter region"): the castle draft's landform, its neck towards the west.
+    /// Directions around a site: every 15 degrees, k = 0 along +x, turning towards +z (LandSiteDirection).
+    inline constexpr int kSiteDirections = 24;
+
+    /**
+     * @brief Hollowkeep's site (land.md "The starter region"): a natural spur or knoll, its relief kept. The keep stands
+     * on the high point; the curtain wall follows the contour about 7 m below it and the inner wall the contour about 3 m
+     * below (radii per direction, smoothed); the gate and the dug ditch face the neck (the highest ground around).
+     */
     struct LandSite {
         bool placed = false;
-        float x = 0.0f, z = 0.0f;           ///< map metres of the draft's origin (the middle of the castle)
-        int rotation = 0;                   ///< where the draft's north (its neck) faces: 0 west, 1 north, 2 east, 3 south
-        float fieldHeight = 0.0f;           ///< the approach field and the outer ward (the draft's 0 m)
-        float searchCost = 0.0f;            ///< mean squared metres the land had to move (lower fits better)
+        float x = 0.0f, z = 0.0f;           ///< map metres of the keep's middle (the site's high point)
+        float keepGround = 0.0f;            ///< the keep pad's level
+        float gateGround = 0.0f;            ///< the gatehouse pad's level (the bridge's deck, the castle road's end)
+        int gate = 0;                       ///< the direction (0..23) of the gate, the neck and the approach
+        std::array<float, kSiteDirections> curtain{};   ///< the curtain wall's radius (metres) per direction
+        std::array<float, kSiteDirections> inner{};     ///< the inner wall's radius (metres) per direction
+        float searchCost = 0.0f;            ///< the search's score (lower is better)
     };
+
+    /// @brief The unit vector (x, z) of site direction k (0..23), from a fixed table: no libm function.
+    glm::vec2 LandSiteDirection(int k);
+
+    /// @brief The site direction (0..23) nearest to (dx, dz).
+    int LandSiteNearestDirection(float dx, float dz);
+
+    /// @brief The gate's axis squared to x or z (the gatehouse, its passage and the bridge are axis-aligned).
+    glm::vec2 LandSiteGateAxis(const LandSite& site);
+
+    /// @brief How far (map metres) the point lies outside the curtain along the ray from the keep, in the 4 sectors
+    /// around the gate (the ditch's sectors); false outside them.
+    bool LandSiteOutsideCurtain(const LandSite& site, float mx, float mz, float& off);
+
+    /// @brief The castle's bridge (land.md "Hollowkeep's greybox"): metres along the gate's axis from the gate's curtain
+    /// point to 1 m past the ditch (the first point more than 10 m outside the curtain), 14 m if none.
+    float LandSiteBridgeSpan(const LandSite& site);
 
     /// @brief A road (land.md L8): fine-grid points from one point of interest to another, and its bed's heights.
     struct LandRoad {
@@ -172,7 +201,9 @@ export namespace vortex::voxel {
         std::vector<float> x, z, bed;       ///< map metres, one per metre of road
         float length = 0.0f;
         float maxGrade = 0.0f;              ///< of the bed
-        uint32_t fordCells = 0;
+        uint32_t fordCells = 0;             ///< a trail's points in a river (a ford)
+        uint32_t bridgeCells = 0;           ///< a road's points over a river (a timber bridge at the bed's height)
+        bool trail = false;                 ///< a footpath: narrower, up to LandSettings::trailMaxGrade
     };
 
     /// @brief A cave (land.md L7): a tunnel from its mouth into the hill, ending in a chamber.
@@ -266,13 +297,6 @@ export namespace vortex::voxel {
     /// @brief The fine grid's height correction at map metres (bilinear; 0 outside the fine grid).
     float LandFineDelta(const LandMap& map, float mx, float mz);
 
-    /**
-     * @brief The castle draft's landform at draft metres (X east, Z south; the castle's middle at 0): the height above the
-     * approach field and the weight (1 in the core, fading to 0 over 30 m outside it). The land is set between
-     * `height - slack` and `height`: the approach field, the castle's footprint and the east slope exactly (slack 0);
-     * the ravines below the west and south cliffs cut down to it, and filled up to at most 4 m below it.
-     */
-    void LandSiteTemplate(float X, float Z, float& height, float& weight, LandSurface& surface, float& slack);
 
     /// @brief How the map becomes voxels (land.md "From the map to voxels", [land-3]).
     struct LandGeneratorSettings {

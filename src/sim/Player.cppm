@@ -127,9 +127,10 @@ export namespace vortex::sim {
      * @brief The revision of the movement rule (StepPlayer and PlayAreaOf). Bump it whenever the
      * same inputs on the same world give another result: it is part of net::BuildHash, so a client
      * and a server of different revisions refuse each other ("another build") instead of
-     * correcting each other. 1: the play area (WP1, 2026-11-19).
+     * correcting each other. 1: the play area (WP1, 2026-11-19). 2: foliage (leaves, needles, reeds,
+     * ferns, flowers) has no terrain collision: players walk through plants (land.md "Nature", 2026-11-25).
      */
-    inline constexpr uint32_t kPlayerRuleRevision = 1;
+    inline constexpr uint32_t kPlayerRuleRevision = 2;
 
     /// @brief What one StepPlayer did.
     struct PlayerStepResult {
