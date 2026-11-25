@@ -77,7 +77,8 @@ Paths are relative to `engine/`. Code is cited by file and symbol; search for th
   server timeline (`ParseTimeline`, `LatencyFromTimeline`). `vortex_server`'s in-process bots, `vortex_bot` and the
   game's `Session.cpp` share it.
 - `src/net/Wire.cppm`, `internal/Wire.cpp` - `ByteWriter` / `ByteReader`, mask runs, `EventKind`, `EntityKind`,
-  `Event` = `variant<WorldOp, EntitySpawn, EntityDespawn, EntityRest, ObjectModel, EntityWake>` ([net-6]:
+  `Event` = `variant<WorldOp, EntitySpawn, EntityDespawn, EntityRest, ObjectModel, EntityWake, MechanismMove,
+  EntityHold, EntityRelease>` ([net-6]; the last three [mech-1]:
   `ObjectSpawn`, model runs `WriteVolumeRuns` / `ReadVolumeRuns`, `VolumeHash`), `WriteEvent` / `ReadEvent`,
   `WriteRegion` / `ReadRegion`, `QuantizeVelocity`.
 - `src/net/Entities.cppm`, `internal/Entities.cpp` - `EntityInfo`, `CompareEntities`, `EntityListHash`: the entity
@@ -172,21 +173,22 @@ Wire values (CLAUDE.md lists the names; the numbers are here, `WireTests.cpp` an
 them). Change any byte of a message or an event -> bump `kProtocolVersion`. Retired values are never reused.
 - **Event kinds** (`EventKind`, the first byte of an event): 1-6 = `sim::WorldOpKind` (1 `CarveSphere`, 2
   `FillSphere`, 3 `SwapSphere`, 4 `FillBox`, 5 `Detach`, 6 `ClearMask`), 32 `EntitySpawn`, 33 `EntityDespawn`, 34
-  `EntityRest`, 35 `ObjectModel`, 36 `EntityWake` [net-6]. A new `WorldOpKind` takes the next free value (7 today),
-  a new event the next free one after 36.
+  `EntityRest`, 35 `ObjectModel`, 36 `EntityWake` [net-6]; 37 `MechanismMove`, 41 `EntityHold`, 42 `EntityRelease`
+  [mech-1] (38-40 stay free for [mag-2]'s planned `ZoneStart`, `ZoneCancel`, `CastFx`). A new `WorldOpKind` takes the
+  next free value (7 today), a new event the next free one after 42 (`RopeCut` with the session part of [mech-2]).
 - **This list is the registry** (magic.md amendment 4, 2026-11-21): every new `WorldOpKind`, event kind, message type,
   refusal, rejection, template, generator and `PlayerButton` value takes the **next free value when it lands** and is
   added here in the same commit. Numbers written in a design (spread.md, shred.md Part 3, mechanisms.md, magic.md) are
   provisional until then. On the ROADMAP order of 2026-11-21 that gives magic's `MapShape` 7, `MapMask` 8,
-  `CarveCapsule` 9, `ZoneStart` 37, `ZoneCancel` 38, `CastFx` 39, then mechanisms' `MechanismMove` 40 and `RopeCut` 41,
-  then spread's `SpreadStep` 10 (its `IgniteSphere` / `DouseSphere` become `MapShape` maps). **One exception**,
+  `CarveCapsule` 9, `ZoneStart` 38, `ZoneCancel` 39, `CastFx` 40 (`MechanismMove` 37, `EntityHold` 41 and
+  `EntityRelease` 42 landed with [mech-1]; `RopeCut` takes the next free value after 42 with [mech-2]), then spread's `SpreadStep` 10 (its `IgniteSphere` / `DouseSphere` become `MapShape` maps). **One exception**,
   reserved now: `PlayerButton_Spell = 32`, so mechanisms' `PlayerButton_Use = 16` keeps its value whichever lands
   first (unless M2a builds a generic action-slot bit that carries the spell edge).
 - **Message types** (`MessageType`): 1 `Hello`, 2 `Welcome`, 3 `Refuse`, 4 `EventBatch`, (5 retired: `ServerStatus`),
   6 `Inputs`, 7 `Snapshot`; [net-7a] chunk sync 8 `WindowUpdate`, 9 `WindowAck`, 10 `ChunkData`, 11 `ChunkRequest`,
   12 `ModelRequest`, 13 `BaselineEntity`, 14 `BaselineEnd`, 15 `BaselineNear`; [net-7b] checks and terrain mode 16
   `TerrainAck`, 17 `HashCheck`, 18 `EntityCheck`, 19 `EntityListRequest`, 20 `EntityList`; [wp-7] the fight 21
-  `Roster`, 22 `RoundUpdate`, 23 `KillNotice` (events channel, taken on receipt, not by opSeq). Protocol 11.
+  `Roster`, 22 `RoundUpdate`, 23 `KillNotice` (events channel, taken on receipt, not by opSeq). Protocol 12 ([mech-1]).
 - **The fight** [wp-7] (fight.md "Wire"): `CastRejection` 4 `NoCharge`, 5 `Dead`; `sim::DamageCause` 1 `Blast`, 2
   `Fall`, 3 `Lava`, 4 `Void`, 5 `Crush` (reserved for [si-2]); `sim::GameMode` 0 `Sandbox`, 1 `Deathmatch`, 2
   `Felling`; `sim::RoundPhase` 0 `Warmup`, 1 `Countdown`, 2 `Live`, 3 `Ended`; `sim::RoundEnd` 0 `None`, 1 `Score`, 2
@@ -203,9 +205,27 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
   the box when the window enters whole (`WindowEntersWhole`: the first update, a reset, a new size) or when the rows differ, in
   (y, z, x) order; else the whole columns outside the previous box (rows fixed), in (z, x, y) order. Server
   (`TerrainAck`) and client (`ChunkSync`) walk the same cells in the same order.
-- Also wire format: `WindowUpdate::kTerrainMode` (2) and `kReset`, `EntityKind` (1 `Light`, 2 `Object`),
+- **Mechanisms and holding** [mech-1] (mechanisms.md "Replication", "One use key: E"), protocol 12: `EntityKind` 3
+  `Mechanism` (the object's bytes, then a 63 B desc, a 24 B state and 11 B per segment, 1-8 segments);
+  `PlayerButton` 16 `Use`; `sim::UseResult` 0 `None`, 1 `Stale`, 2 `NoTarget`, 3 `Locked`, 4 `Busy`, 5 `Broken`, 6
+  `NotUsable`; `MechanismKind` 1 `Door`, 2 `Portcullis`, 3 `Lever` (4-6 reserved for [mech-3]); `MechanismFlag` 1
+  `Locked`, 2 `Jammed`, 4 `Freed`, 8 `Broken`; desc flags 1 `OneWay`, 2 `Usable`, 4 `Locked`, 8 `Warded`;
+  `ObjectSpawn` flag 2 `kObjectHeld` (+7 B); `sim::HoldEnd` 1 `Drop`, 2 `Throw`, 3 `HolderDead`, 4 `HolderGone`, 5
+  `Damaged`, 6 `Pinned`. The owner block gains `lastUseTick` and `useResult` (`kSnapshotOwnerBytes` 44), the remote
+  record `holdPitch` (`kSnapshotPlayerBytes` 18). Event sizes: `MechanismMove` 16 B, `EntityHold` 12 B,
+  `EntityRelease` 44 B. `ServerStats::eventsByKind` has 48 entries (kinds up to 42).
+- **The server's half** [mech-1] (`ServerMechanisms.cpp`): the session key `mechanisms = 1` with the playground
+  template builds the mechanism yard at the start (its operations through `EmitOp`, then one `EntitySpawn` of kind
+  `Mechanism` per mechanism, resting). A Use edge is judged from the player's state at the input's tick (older than
+  `kUseStaleTicks`: `Stale`); the segment starts at now + the lead (the largest RTT + margin + 2 ticks of the joined
+  players, 4-20). A mechanism's model is never let go `ToRubble`; at the entity budget's floor a cast at one is
+  dropped. Holding: `EntityHold` is the body's wake; a held body has no rest, wake or sample. The throw (Cast while
+  holding) runs no cast; a release the player did not ask for (pinned, damaged) opens an echo window that consumes
+  the edges its client made before it saw it. The checks mix `MechanismTerm` / `HeldTerm` into the model hash. The
+  exit lines `Mechanisms: server:` and `Hold: server:` count them. The client does not apply these events yet.
+- Also wire format: `WindowUpdate::kTerrainMode` (2) and `kReset`, `EntityKind` (1 `Light`, 2 `Object`, 3 `Mechanism`),
   `scene::DespawnReason` (1 `Destroyed`, 2 `ToRubble`, 3 `Broken`), `PlayerButton` (1 `Jump`, 2 `Run`, 4 `Cast`, 8
-  `Crate`), `RegionGenerator` (0 `Terrain`, 1 `Flat`), `RegionTemplateId` (0 `Empty`, 1 `Playground`),
+  `Crate`, 16 `Use`), `RegionGenerator` (0 `Terrain`, 1 `Flat`), `RegionTemplateId` (0 `Empty`, 1 `Playground`),
   `RefuseReason` (1 `Protocol`, 2 `Build`, 3 `Token`, 4 `Full`, 5 `Malformed`; 6 retired), `CastRejection` (0-5).
 
 Ordering, the base rule and sync

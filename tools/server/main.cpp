@@ -943,6 +943,17 @@ int main(int argc, char** argv) {
                   st.cratesRefused, st.castsAtBodies, static_cast<double>(st.entityEventBytes) / 1024.0, st.maxSnapshotBytes,
                   st.maxSnapshotBodies, st.bodySamples, st.bodiesLeftOut);
     }
+    if (st.mechanisms > 0 || st.pickups > 0 || st.uses > 0) {
+        Log::Info("Mechanisms: server: {} mechanisms, uses {} (refused {}), lead min {} max {}, moves {}, crushed {}, models over budget {}, "
+                  "hits skipped {}",
+                  st.mechanisms, st.uses, st.usesRefused, st.useLeadMin, st.useLeadMax, st.mechanismMoves, st.mechanismCrushed,
+                  st.mechanismModelsOverBudget, st.mechanismHitsSkipped);
+        const uint32_t autoDrops = st.releases[3] + st.releases[4] + st.releases[5] + st.releases[6];
+        Log::Info("Hold: server: {} pickups, {} drops, {} throws, {} auto-drops (dead {}, gone {}, damaged {}, pinned {}), refused {}, echo "
+                  "edges {}",
+                  st.pickups, st.drops, st.throws, autoDrops, st.releases[3], st.releases[4], st.releases[5], st.releases[6], st.holdsRefused,
+                  st.echoEdges);
+    }
     Log::Info("Checks: server: {} hash checks ({} recent, {} modified, {} pristine entries), {} repairs requested / {} sent; {} entity "
               "checks, {} list requests ({} merged, {} lists delayed), {} lists / {:.1f} KiB; checks {:.2f} ms max per peer and tick, {:.1f} "
               "ms in all",
@@ -979,7 +990,8 @@ int main(int argc, char** argv) {
         std::string kinds;
         static constexpr std::pair<int, const char*> kKinds[] = {{1, "CarveSphere"}, {2, "FillSphere"}, {3, "SwapSphere"}, {4, "FillBox"},
                                                                  {5, "Detach"},    {6, "ClearMask"},    {32, "EntitySpawn"}, {33, "EntityDespawn"},
-                                                                 {34, "EntityRest"}, {35, "ObjectModel"}, {36, "EntityWake"}};
+                                                                 {34, "EntityRest"}, {35, "ObjectModel"}, {36, "EntityWake"},
+                                                                 {37, "MechanismMove"}, {41, "EntityHold"}, {42, "EntityRelease"}};
         for (const auto& [k, name] : kKinds) {
             if (st.eventsByKind[k] == 0) continue;
             kinds += std::format("{}{} {} / {:.1f} B avg / {} B max", kinds.empty() ? "" : ", ", name, st.eventsByKind[k],

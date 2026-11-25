@@ -30,7 +30,9 @@ export namespace vortex::net {
     /// of stage 7b (a TerrainAck codes the entering cells only, in ForEachEnteringChunk order).
     /// 11: [wp-7] (fight: Welcome fight fields, owner block +7, remote record +1, Roster 21, RoundUpdate 22,
     /// KillNotice 23, CastRejection NoCharge 4 / Dead 5).
-    inline constexpr uint16_t kProtocolVersion = 11;
+    /// 12: [mech-1] (EntityKind::Mechanism, MechanismMove 37, the owner block's lastUseTick / useResult, PlayerButton_Use
+    /// 16; EntityHold 41, EntityRelease 42, kObjectHeld, the remote record's holdPitch).
+    inline constexpr uint16_t kProtocolVersion = 12;
 
     /// @brief First byte of every message. Wire format.
     enum class MessageType : uint8_t {
@@ -163,6 +165,8 @@ export namespace vortex::net {
         /// [wp-7] bits 0-6 health (at most 127), bit 7 dead. A sandbox session sends 100.
         uint8_t fight = 100;
         static constexpr uint8_t kDeadBit = 0x80;
+        /// [mech-1] sim::HoldPitch of its last input (-64..64): other clients pose what it holds.
+        int8_t holdPitch = 0;
         friend bool operator==(const RemotePlayer&, const RemotePlayer&) = default;
     };
 
@@ -198,8 +202,8 @@ export namespace vortex::net {
     /// Header (type, tick, lastOpSeq, ackInputTick, marginTick, inputMargin, owner flag, player
     /// count, body count), owner state, one other player and one body, in bytes.
     inline constexpr size_t kSnapshotHeaderBytes = 22;
-    inline constexpr size_t kSnapshotOwnerBytes = 39;
-    inline constexpr size_t kSnapshotPlayerBytes = 17;
+    inline constexpr size_t kSnapshotOwnerBytes = 44;
+    inline constexpr size_t kSnapshotPlayerBytes = 18;
     inline constexpr size_t kSnapshotBodyBytes = 31;
     /// A snapshot is at most this large (networking.md "Entity replication": 1200 B hold about 36
     /// bodies after the players); bodies that do not fit wait for a later one (priority).
@@ -242,12 +246,20 @@ export namespace vortex::net {
             static constexpr uint8_t kDead = 1, kProtected = 2, kSpectator = 4;
             friend bool operator==(const Fight&, const Fight&) = default;
         } fight;
+        /// [mech-1] The input tick of the newest Use edge the server took from this player (0 = none) and its result.
+        uint32_t lastUseTick = 0;
+        sim::UseResult useResult = sim::UseResult::None;
         std::vector<RemotePlayer> others;
         /// Awake replicated bodies, by the server's priority for this client (stage 6). At most 255.
         std::vector<BodySample> bodies;
     };
 
     using OwnerFight = Snapshot::Fight;
+
+    /// @brief [mech-1] A mechanism's term of the entity checks: its newest segment, its flags and its model offset.
+    uint64_t MechanismTerm(const scene::MechanismSegment& newest, uint8_t flags, const glm::ivec3& modelOffset);
+    /// @brief [mech-1] A held body's term of the entity checks: who holds it, its relative yaw and since when.
+    uint64_t HeldTerm(uint8_t holder, uint16_t relYaw, uint32_t since);
 
     // --- the fight ([wp-7], docs/design/fight.md "Wire") -------------------------------------------
 

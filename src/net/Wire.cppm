@@ -91,11 +91,16 @@ export namespace vortex::net {
         EntityRest = 34,    ///< A replicated object came to rest: its pose (stage 6).
         ObjectModel = 35,   ///< A replicated object's model changed (Scene::Damage; stage 6).
         EntityWake = 36,    ///< A replicated object at rest started to move (review of stage 6).
+        MechanismMove = 37, ///< [mech-1] a mechanism took a new segment (a use, a link, a jam, a release).
+        // 38-40 are planned for [mag-2] (ZoneStart, ZoneCancel, CastFx).
+        EntityHold = 41,    ///< [mech-1] a player picked a replicated body up.
+        EntityRelease = 42, ///< [mech-1] a held body was let go: its pose and velocity.
     };
     /// @brief What an EntitySpawn creates. Wire format.
     enum class EntityKind : uint8_t {
         Light = 1,
         Object = 2,         ///< A voxel object with a body: a crate, a piece (netId 0: client rubble).
+        Mechanism = 3,      ///< [mech-1] an object that is a mechanism: the object's bytes, then its desc and track.
     };
 
     /// @brief Most voxels of one object model a decoder accepts per axis (as masks).
@@ -111,8 +116,25 @@ export namespace vortex::net {
         uint8_t motion = 2;                  ///< physics::MotionType of the server body
         uint8_t flags = 0;                   ///< kObjectResting: it rests already (no EntityRest follows until it moved)
         voxel::VoxelVolume volume;
+        /// [mech-1] kObjectHeld: a player holds it (7 B after the runs; never together with kObjectResting).
+        uint8_t holder = 0;
+        uint16_t relYaw = 0;
+        uint32_t holdSince = 0;
     };
     inline constexpr uint8_t kObjectResting = 1;
+    inline constexpr uint8_t kObjectHeld = 2;
+
+    /// @brief [mech-1] What a client needs to pose a mechanism itself: its desc, spawn and segment ring (oldest first,
+    /// 1..8). Desc 63 B, state 24 B, then 11 B per segment, after the object's bytes.
+    struct MechanismState {
+        scene::MechanismDesc desc;
+        glm::ivec3 spawnVoxel{0};
+        uint8_t quarterTurns = 0;
+        glm::ivec3 modelOffset{0};
+        uint32_t linkedNetId = 0;
+        std::vector<scene::MechanismSegment> segments;
+        friend bool operator==(const MechanismState&, const MechanismState&) = default;
+    };
 
     /// @brief `EntitySpawn`: a template light (stage 3), or an object (stage 6; `netId` 0 = a
     /// fragment every client makes into its own rubble). Not hashed; a client keeps NetId -> entity.
@@ -121,6 +143,7 @@ export namespace vortex::net {
         EntityKind kind = EntityKind::Light;
         sim::TemplateLight light;
         ObjectSpawn object;
+        MechanismState mechanism;            ///< kind == Mechanism ([mech-1])
         friend bool operator==(const EntitySpawn& a, const EntitySpawn& b);
     };
 
@@ -163,8 +186,40 @@ export namespace vortex::net {
         friend bool operator==(const ObjectModel& a, const ObjectModel& b);
     };
 
+    /// @brief `MechanismMove{netId, segment}` ([mech-1], 16 B): the mechanism's newest segment.
+    struct MechanismMove {
+        uint32_t netId = 0;
+        scene::MechanismSegment segment;
+        friend bool operator==(const MechanismMove&, const MechanismMove&) = default;
+    };
+
+    /// @brief `EntityHold{netId, holder, relYaw, tick}` ([mech-1], 12 B): a player picked the body up at `tick`.
+    struct EntityHold {
+        uint32_t netId = 0;
+        uint8_t holder = 0;
+        uint16_t relYaw = 0;
+        uint32_t tick = 0;
+        friend bool operator==(const EntityHold&, const EntityHold&) = default;
+    };
+
+    /// @brief `EntityRelease{netId, tick, reason, pose, velocity}` ([mech-1], 44 B): the hold ended (sim::HoldEnd); the
+    /// velocity travels as 3 x int16 in 1/256 m/s.
+    struct EntityRelease {
+        uint32_t netId = 0;
+        uint32_t tick = 0;
+        uint8_t reason = 0;
+        glm::vec3 position{0.0f};
+        glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        glm::vec3 velocity{0.0f};
+        friend bool operator==(const EntityRelease&, const EntityRelease&) = default;
+    };
+
     /// @brief One event of the opSeq stream: a world operation or an entity event.
-    using Event = std::variant<sim::WorldOp, EntitySpawn, EntityDespawn, EntityRest, ObjectModel, EntityWake>;
+    using Event = std::variant<sim::WorldOp, EntitySpawn, EntityDespawn, EntityRest, ObjectModel, EntityWake, MechanismMove, EntityHold,
+                               EntityRelease>;
+
+    /// @brief The event of a sim::HoldChange for the body `netId`: EntityHold or EntityRelease ([mech-1]).
+    Event HoldEvent(const sim::HoldChange& change, uint32_t netId);
 
     /// @brief A volume's ids as (run length, id) pairs in VoxelVolume::Index order after its size
     /// (3 x u16); self-delimiting.

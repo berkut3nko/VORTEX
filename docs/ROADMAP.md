@@ -177,8 +177,9 @@ In this order:
    cards 1-7: the timetable, posing and the crush rule; use targets, levers and holding; the damage rule; E, Q and the
    use prompt in the offline game; the yard in the default game (`--no-mechanisms`, `--mechanism-script`,
    `--mechanism-blast`, `--hold-script`). Tests and `tools/verify.sh quick` pass on the Windows PC; the owner
-   checked doors and the lever in a window (2026-11-24). Cards 8-11 (protocol 12, the server and client paths) are not
-   built.
+   checked doors and the lever in a window (2026-11-24). Card 8 (protocol 12: the wire values) and card 9 (the server: the yard with
+   `mechanisms = 1`, E use, the lead, the throw and the auto-drops, held bodies in the checks) are built and tested headless;
+   cards 10-11 (the client and session play) are not built.
 3. **[mag-1] Siege core in sim, headless only.** The spell system's first four spells, Siege Cannon, Barricade Wave,
    Shockwave and Updraft (breach, cover, knock off, climb), with only what they use: the Pierce operator, the Burst
    strip, Plume's single column, `CarveCapsule` / `MapMask` / `MapShape` as sim ops, knit iron that blasts chip, with
@@ -281,7 +282,7 @@ never been measured.
 
 ## State
 
-Tests: **910** in ctest: 902 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
+Tests: **922** in ctest: 914 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
 game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts), `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
 `Tools.DocCheck`, `Tools.DocCheckSelftest`, `Tools.SessionCheckVerdict` and `Tools.VerifyAssertions` (WP2's checks
 and their self-tests), `Tools.RendezvousWorker` (the rendezvous Worker under `node --test`, registered when `node` is

@@ -143,7 +143,7 @@ Protocol 11, the only bump in WP4-WP8 (`net::kProtocolVersion`; the values in no
 | What | Bytes |
 |---|---|
 | `Welcome` after the probes | `mode u8` (<= 2), `maxHealth u8` (>= 1), `maxCharges u8`, `chargeTicks u16`, `respawnTicks u16`: +7 B |
-| Owner block after `castRejected` | `health, charges, chargeTicks, flags, respawnTicks, lifeSeq, hits`, u8 each: +7 B (`kSnapshotOwnerBytes` 39). Ticks left clamped to 255; flags `kDead` 1, `kProtected` 2, `kSpectator` 4 (more refused) |
+| Owner block after `castRejected` | `health, charges, chargeTicks, flags, respawnTicks, lifeSeq, hits`, u8 each: +7 B (`kSnapshotOwnerBytes` 39; 44 since [mech-1] adds `lastUseTick`, `useResult` after them). Ticks left clamped to 255; flags `kDead` 1, `kProtected` 2, `kSpectator` 4 (more refused) |
 | Remote record after `flags` | `fight u8`: bits 0-6 health (at most 127), bit 7 dead (`kSnapshotPlayerBytes` 17) |
 | `Roster` (21) | `type, count u8` (<= 64), per player `slot u8, team u8` (<= 2), `kills u16, deaths u16`: 2 + 6 B each; duplicate slots refused; at most one per tick (sent at the end of `StepFight` when a kill, join, leave or the round start changed it) |
 | `RoundUpdate` (22) | `type, mode, phase, phaseEndTick u32, score1 u16, score2 u16, scoreLimit u16, winner u8` (0, 1, 2, 255), `end u8` (<= 4), `overtime u8` (<= 1): 16 B |

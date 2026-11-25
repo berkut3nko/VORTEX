@@ -147,6 +147,8 @@ namespace vortex::net {
                 ok = Number(value, config.chunkCapacity);
             } else if (key == "pack_hidden") {
                 ok = Bool(value, config.packHidden);
+            } else if (key == "mechanisms") {
+                ok = Bool(value, config.mechanisms);
             } else if (key == "port") {
                 ok = Number(value, config.port);
             } else if (key == "mode") {
@@ -289,6 +291,7 @@ namespace vortex::net {
         s += std::format("max_clients = {}\n", c.maxClients);
         s += std::format("chunk_capacity = {}\n", c.chunkCapacity);
         s += std::format("pack_hidden = {}\n", c.packHidden ? 1 : 0);
+        if (c.mechanisms) s += "mechanisms = 1\n";
         s += std::format("port = {}\n", c.port);
         // [wp-7] The fight keys, for a fight mode only (a sandbox session is SandboxRules()).
         const sim::FightRules& f = c.fight;

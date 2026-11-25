@@ -99,6 +99,7 @@ namespace vortex::net {
         if (why == sim::ActionRefusal::Outside) ++stats.castsRejected;
         if (why == sim::ActionRefusal::None) {
             q.sphere = aim.sphere;
+            q.body = aim.atBody ? aim.body : scene::kNoEntity;
             return true;
         }
         if (Peer* p = PeerOfSlot(q.player); p != nullptr && p->player->lastCastTick == q.request.inputTick)
@@ -133,6 +134,10 @@ namespace vortex::net {
         aim.hit = true;
         aim.sphere = q.sphere;
         aim.power = q.power;
+        if (q.body != scene::kNoEntity && simulation->Scene().IsValid(q.body)) {
+            aim.atBody = true;
+            aim.body = q.body;
+        }
         // [wp-7] Blast damage while a fight's round is Live (fight.md "Damage"); the views are taken now.
         const bool hurts = Fighting() && round.phase == sim::RoundPhase::Live && q.request.player != 0;
         const std::vector<sim::PlayerView> views = hurts ? PlayerViews() : std::vector<sim::PlayerView>{};
@@ -158,8 +163,12 @@ namespace vortex::net {
             EmitOp(applied.op, applied.result);
             ++rec.opCount;
         }
+        // [mech-1] The releases it made come before its object events (a client never re-makes a held copy).
+        if (!failed) EmitHoldChanges(r.holdChanges);
         // The objects it changed or made, and every despawn it caused (stage 6).
         EmitObjectEvents(r);
+        // [mech-1] Then its mechanism changes (a Freed move after its model).
+        if (!failed) EmitMechanismChanges(r.mechanismChanges);
         // Then its damage, in the outcome's order (fight.md "Damage": the one entry, DealDamage).
         if (!failed)
             for (const sim::DamageEvent& d : outcome.damage) DealDamage(d);
@@ -227,6 +236,11 @@ namespace vortex::net {
             // A player's ray is cast now, when the cast runs, on the world as the casts before it
             // left it; one that casts nothing costs nothing and the next cast is looked at.
             if (q.ray && !ResolveRay(q)) continue;
+            // [mech-1] At the entity budget's floor a cast at a mechanism is dropped (its model would have to go).
+            if (q.body != scene::kNoEntity && simulation->Scene().TryGet<scene::Mechanism>(q.body) && entityCredit <= -8 * entityBurst) {
+                ++stats.mechanismHitsSkipped;
+                continue;
+            }
             // No new server body while the entity budget is spent: its pieces are client rubble.
             simulation->Replication().refuseNewPieces = entityCredit <= 0;
             RunCast(q, overdue && (castCredit <= 0 || eventCredit <= 0));

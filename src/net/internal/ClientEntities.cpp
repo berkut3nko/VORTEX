@@ -99,6 +99,11 @@ namespace vortex::net {
         const bool live = settings.presentation && seq > welcome.joinOpSeq;
         scene::Scene& scene = simulation->Scene();
         physics::PhysicsWorld& physics = simulation->Physics();
+        // Mechanism moves and holds are not applied by this client: its copies stay where their spawn, rest and
+        // samples put them.
+        if (std::holds_alternative<MechanismMove>(event) || std::holds_alternative<EntityHold>(event) ||
+            std::holds_alternative<EntityRelease>(event))
+            return;
         if (const EntitySpawn* spawn = std::get_if<EntitySpawn>(&event)) {
             if (spawn->kind == EntityKind::Light) {
                 if (!entities.contains(spawn->netId)) {

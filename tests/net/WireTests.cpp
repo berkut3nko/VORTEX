@@ -712,7 +712,7 @@ TEST(Wire, CheckAndTerrainMessagesRoundTripAtTheirSizes) {
         longer.push_back(0);
         return !net::Decode(shorter, decoded) && !net::Decode(longer, decoded);
     };
-    EXPECT_EQ(net::kProtocolVersion, 11u);
+    EXPECT_EQ(net::kProtocolVersion, 12u);   // [mech-1]
 
     // [wp-7] The fight's messages round-trip and refuse a byte too few or too many (FightWire.* for the values).
     {

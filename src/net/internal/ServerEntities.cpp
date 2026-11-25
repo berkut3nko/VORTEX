@@ -71,6 +71,15 @@ namespace vortex::net {
         out.motion = static_cast<uint8_t>(body->motion);
         out.flags = sim::IsAwake(physics, body->body) ? 0 : kObjectResting;
         out.volume = voxels->model->Volume();
+        if (const scene::Held* h = scene.TryGet<scene::Held>(entity)) {
+            // [mech-1] Held: its holder's, never resting.
+            out.flags = kObjectHeld;
+            out.holder = h->holder;
+            out.relYaw = h->relYaw;
+            out.holdSince = h->sinceTick;
+            out.linearVelocity = glm::vec3(0.0f);
+            out.angularVelocity = glm::vec3(0.0f);
+        }
         return true;
     }
 
@@ -98,8 +107,11 @@ namespace vortex::net {
             if (failed || !e.model) continue;
             if (e.kind == sim::ObjectEvent::Kind::Model) {
                 // Over the entity byte budget the survivor is let go as client rubble (6 bytes)
-                // instead of resending its whole model (review of stage 6).
-                if (entityCredit <= 0 && simulation->Scene().IsValid(e.entity)) {
+                // instead of resending its whole model (review of stage 6). Never a mechanism ([mech-1]): a gate
+                // that went to rubble would leave every client without it.
+                const bool mechanism = simulation->Scene().IsValid(e.entity) && simulation->Scene().TryGet<scene::Mechanism>(e.entity);
+                if (mechanism && entityCredit <= 0) ++stats.mechanismModelsOverBudget;
+                if (!mechanism && entityCredit <= 0 && simulation->Scene().IsValid(e.entity)) {
                     sim::Despawn(*simulation, e.entity, scene::DespawnReason::ToRubble);
                     ++stats.modelsToRubble;
                     continue;
@@ -107,7 +119,7 @@ namespace vortex::net {
                 ObjectModel m;
                 m.netId = e.netId;
                 m.offset = e.offset;
-                m.motion = static_cast<uint8_t>(e.motion);
+                m.motion = static_cast<uint8_t>(mechanism ? physics::MotionType::Kinematic : e.motion);
                 m.volume = e.model->Volume();
                 Emit(m);
                 ++stats.objectModels;
@@ -153,7 +165,10 @@ namespace vortex::net {
             if (p.player)
                 if (const physics::BodyId g = physics.GetCharacterState(p.player->character).groundBody; g.IsValid()) grounds.push_back(g);
         uint32_t awake = 0;
+        const scene::Scene& scene = simulation->Scene();
         for (const auto [entity, id, body] : simulation->Scene().Registry().view<const scene::NetId, const scene::RigidBody>().each()) {
+            // [mech-1] Mechanisms move by their segments, held bodies with their holder: no rest, no wake.
+            if (scene.TryGet<scene::Mechanism>(entity) || scene.TryGet<scene::Held>(entity)) continue;
             const bool moving = sim::IsAwake(physics, body.body);
             BodyTrack& t = tracks[id.value];
             awake += moving ? 1u : 0u;
@@ -250,7 +265,8 @@ namespace vortex::net {
         const physics::PhysicsWorld& physics = simulation->Physics();
         for (const auto [entity, id, body] : simulation->Scene().Registry().view<const scene::NetId, const scene::RigidBody>().each()) {
             const auto it = tracks.find(id.value);
-            if (it == tracks.end() || it->second.resting) continue;
+            if (it == tracks.end() || it->second.resting || it->second.held) continue;
+            if (simulation->Scene().TryGet<scene::Mechanism>(entity)) continue;
             const physics::BodyState state = physics.GetState(body.body);
             BodySample b;
             b.netId = id.value;

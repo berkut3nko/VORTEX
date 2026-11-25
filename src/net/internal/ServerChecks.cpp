@@ -66,7 +66,7 @@ namespace vortex::net {
                 cached.model = voxels.model;
                 cached.hash = VolumeHash(voxels.model->Volume());
             }
-            entityList.push_back({id.value, cached.hash});
+            entityList.push_back({id.value, CheckModelHash(entity, cached.hash)});
             seen.emplace(id.value, std::move(cached));
         }
         modelHashes = std::move(seen);      // gone objects are forgotten

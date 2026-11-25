@@ -194,6 +194,8 @@ namespace vortex::net {
         stats.damageTotal += static_cast<uint32_t>(r.dealt);
         if (!r.killed) return;
         ++stats.deaths;
+        // [mech-1] What it held falls before the death's effects (HolderDead).
+        if (victim->player->held != scene::kNoEntity) ReleaseHeld(*victim, sim::HoldEnd::HolderDead, victim->player->last.yaw, victim->player->last.pitch);
         // The dead stand still where they died (not stepped until the respawn: fight.md "Rules").
         Player& pl = *victim->player;
         pl.state.velocity = glm::vec3(0.0f);

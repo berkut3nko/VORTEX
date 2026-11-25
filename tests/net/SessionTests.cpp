@@ -183,6 +183,7 @@ TEST(SessionFile, RoundTripsAndNamesItsErrors) {
     config.region.heightRange = {-48.0f, 128.0f};
     config.maxClients = 10;
     config.packHidden = false;
+    config.mechanisms = true;
     const std::string text = net::FormatSession(config);
     net::SessionConfig back;
     std::string error;
@@ -193,6 +194,7 @@ TEST(SessionFile, RoundTripsAndNamesItsErrors) {
     EXPECT_TRUE(a == b);
     EXPECT_EQ(back.maxClients, 10u);
     EXPECT_FALSE(back.packHidden);
+    EXPECT_TRUE(back.mechanisms);
 
     EXPECT_FALSE(net::ParseSession("seed = 1\n", back, error));
     EXPECT_NE(error.find("token"), std::string::npos);

@@ -165,6 +165,8 @@ namespace vortex::net {
             w.U8(static_cast<uint8_t>(m.castRejected));
             const Snapshot::Fight& f = m.fight;
             for (const uint8_t b : {f.health, f.charges, f.chargeTicks, f.flags, f.respawnTicks, f.lifeSeq, f.hits}) w.U8(b);
+            w.U32(m.lastUseTick);
+            w.U8(static_cast<uint8_t>(m.useResult));
         }
         w.U8(static_cast<uint8_t>(std::min<size_t>(m.others.size(), 255)));
         for (size_t i = 0; i < std::min<size_t>(m.others.size(), 255); ++i) {
@@ -176,6 +178,7 @@ namespace vortex::net {
             w.U16(p.yaw);
             w.U8(p.flags);
             w.U8(p.fight);
+            w.U8(static_cast<uint8_t>(p.holdPitch));
         }
         const size_t bodies = std::min<size_t>(m.bodies.size(), 255);
         w.U8(static_cast<uint8_t>(bodies));
@@ -193,6 +196,22 @@ namespace vortex::net {
             w.U8(b.flags);
         }
         return w.Take();
+    }
+
+    uint64_t MechanismTerm(const scene::MechanismSegment& newest, uint8_t flags, const glm::ivec3& modelOffset) {
+        uint64_t h = voxel::HashMix64(0x4D454348u, newest.startTick);
+        h = voxel::HashMix64(h, static_cast<uint64_t>(static_cast<uint16_t>(newest.startPos)) |
+                                    static_cast<uint64_t>(static_cast<uint16_t>(newest.targetPos)) << 16 |
+                                    static_cast<uint64_t>(newest.durationTicks) << 32 | static_cast<uint64_t>(newest.flags) << 48);
+        h = voxel::HashMix64(h, flags);
+        h = voxel::HashMix64(h, static_cast<uint64_t>(static_cast<uint32_t>(modelOffset.x)) |
+                                    static_cast<uint64_t>(static_cast<uint32_t>(modelOffset.y)) << 32);
+        return voxel::HashMix64(h, static_cast<uint32_t>(modelOffset.z));
+    }
+
+    uint64_t HeldTerm(uint8_t holder, uint16_t relYaw, uint32_t since) {
+        const uint64_t h = voxel::HashMix64(0x484F4C44u, static_cast<uint64_t>(holder) | static_cast<uint64_t>(relYaw) << 8);
+        return voxel::HashMix64(h, since);
     }
 
     std::vector<uint8_t> EncodeBatch(uint32_t firstOpSeq, uint32_t tick, uint32_t count, std::span<const uint8_t> eventBytes) {
@@ -320,6 +339,8 @@ namespace vortex::net {
         out.lastCastTick = 0;
         out.castRejected = CastRejection::None;
         out.fight = Snapshot::Fight{};
+        out.lastUseTick = 0;
+        out.useResult = sim::UseResult::None;
         if (out.hasOwner) {
             sim::PlayerState& o = out.owner;
             for (float* f : {&o.position.x, &o.position.y, &o.position.z, &o.velocity.x, &o.velocity.y, &o.velocity.z}) *f = in.F32();
@@ -333,6 +354,10 @@ namespace vortex::net {
             Snapshot::Fight& f = out.fight;
             for (uint8_t* b : {&f.health, &f.charges, &f.chargeTicks, &f.flags, &f.respawnTicks, &f.lifeSeq, &f.hits}) *b = in.U8();
             if (in.Failed() || f.flags > 7) return false;
+            out.lastUseTick = in.U32();
+            const uint8_t use = in.U8();
+            if (in.Failed() || use > sim::kMaxUseResult) return false;
+            out.useResult = static_cast<sim::UseResult>(use);
             if (!Finite(o.position) || !Finite(o.velocity)) return false;
         }
         const uint32_t count = in.U8();
@@ -347,7 +372,8 @@ namespace vortex::net {
             p.yaw = in.U16();
             p.flags = in.U8();
             p.fight = in.U8();
-            if (!Finite(p.position)) return false;
+            p.holdPitch = static_cast<int8_t>(in.U8());
+            if (!Finite(p.position) || p.holdPitch < -64 || p.holdPitch > 64) return false;
             out.others.push_back(p);
         }
         const uint32_t bodies = in.U8();

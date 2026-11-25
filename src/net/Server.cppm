@@ -316,6 +316,16 @@ export namespace vortex::net {
         /// was spent (no ObjectModel sent).
         uint32_t modelsToRubble = 0;
         uint32_t crates = 0;              ///< crates from players and SpawnCrate
+        // [mech-1] Mechanisms and holding (the `Mechanisms: server:` and `Hold: server:` lines).
+        uint32_t mechanisms = 0;          ///< mechanisms built at the start
+        uint32_t uses = 0, usesRefused = 0;   ///< Use edges at a mechanism or nothing; those answered other than None
+        uint32_t useLeadMin = 0, useLeadMax = 0;
+        uint32_t mechanismMoves = 0;      ///< MechanismMove events
+        uint32_t mechanismCrushed = 0;    ///< bodies a closing mechanism crushed
+        uint32_t mechanismModelsOverBudget = 0;   ///< mechanism models sent while the entity budget was spent
+        uint32_t mechanismHitsSkipped = 0;        ///< casts at a mechanism dropped at the entity budget's floor
+        uint32_t pickups = 0, drops = 0, throws = 0, holdsRefused = 0, echoEdges = 0;
+        std::array<uint32_t, 7> releases{};   ///< EntityRelease by sim::HoldEnd (index 1..6)
         uint32_t cratesRefused = 0;       ///< crate edges in the cooldown or at the awake cap, or a crate that would leave the play bounds
         uint64_t bodySamples = 0;         ///< bodies sent in snapshots
         uint64_t bodiesLeftOut = 0;       ///< awake bodies a snapshot had no room for (summed over snapshots)
@@ -335,9 +345,9 @@ export namespace vortex::net {
         std::array<uint32_t, 65> snapshotHistogram{};
         std::array<uint32_t, 101> castCostHistogram{};
         /// Event bytes by kind (index = MessageType value of the event: 1-6 WorldOpKind, 32-36 entity events).
-        std::array<uint64_t, 40> eventBytesByKind{};
-        std::array<uint32_t, 40> eventsByKind{};
-        std::array<uint32_t, 40> maxEventBytesByKind{};
+        std::array<uint64_t, 48> eventBytesByKind{};
+        std::array<uint32_t, 48> eventsByKind{};
+        std::array<uint32_t, 48> maxEventBytesByKind{};
         size_t maxBulkInFlight = 0;       ///< the most bulk bytes in flight to one peer at a tick's end
 
         /// @brief The value under which `fraction` of a histogram's samples lie (upper bucket bound

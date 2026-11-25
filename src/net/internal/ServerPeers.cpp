@@ -41,6 +41,7 @@ namespace vortex::net {
 
     void Server::Impl::DropPlayer(Peer& p) {
         if (!p.player) return;
+        ReleaseGone(p);   // [mech-1] what it held falls where it is (HolderGone)
         // Its crates go with it (review of stage 6: a reconnect loop left 8 bodies per connection).
         const std::deque<uint32_t> crates = p.player->crates;
         for (const uint32_t netId : crates)
@@ -114,8 +115,12 @@ namespace vortex::net {
                     if ((in.buttons & sim::PlayerButton_Cast) != 0) RefuseDeadCast(p, t);
                 } else {
                     const uint8_t pressed = sim::PressButtons(pl.state, in.buttons);
+                    // [mech-1] A throw (or an auto-drop's echo) replaces the late cast and its use.
+                    const bool consumed = !dead && HoldEdges(p, in, pressed);
                     // [wp-7] A dead player's late edges do nothing but refuse its cast (fight.md "Rules").
-                    if ((pressed & sim::PlayerButton_Cast) != 0 && !RefuseDeadCast(p, in.tick)) LateCast(p, in, now);
+                    if (!consumed && (pressed & sim::PlayerButton_Cast) != 0 && !RefuseDeadCast(p, in.tick)) LateCast(p, in, now);
+                    // [mech-1] A late use is judged from the state of its own tick.
+                    if (!consumed && (pressed & sim::PlayerButton_Use) != 0 && !dead) PlayerUse(p, in, pl.StateAt(in.tick), now);
                     if ((pressed & sim::PlayerButton_Crate) != 0 && !dead) PlayerCrate(p, in, pl.state);
                     // A jump edge is not spent here without a jump: the next step makes it.
                     if ((pressed & sim::PlayerButton_Jump) != 0 && !pl.lateJump && !dead) {
@@ -155,6 +160,7 @@ namespace vortex::net {
     void Server::Impl::StepPlayers() {
         const uint32_t now = Tick();
         const float dt = simulation->FixedTimeStep();
+        ClearLostHolds();
         for (auto& [id, peer] : PlayersBySlot()) {
             Player& pl = *peer->player;
             sim::PlayerInput input;
@@ -190,6 +196,11 @@ namespace vortex::net {
             const sim::PlayerState before = pl.state;
             // The colliders this step can touch hold every edit made so far (never a worker's timing).
             tickFlushCooks += simulation->Terrain().FlushBox(sim::PlayerReach(pl.state.position, settings.player));
+            // [mech-1] Mechanisms take their pose at this tick before the player meets them, as on its client.
+            if (!mechanisms.empty()) {
+                sim::PoseMechanisms(*simulation, now, sim::PlayerReach(pl.state.position, settings.player));
+                sim::PushOutOfMechanisms(*simulation, now, pl.state, pl.character, settings.player);
+            }
             const uint8_t levels = input.buttons;
             const bool lateJump = pl.lateJump;
             if (lateJump) {
@@ -204,8 +215,19 @@ namespace vortex::net {
             stats.heldTicks += r.held ? 1u : 0u;
             EnvironmentDamage(peer->slot, before, pl.state);   // [wp-7] falls, lava, the void (Live only)
             pl.Store(now);
-            if (r.cast) CaptureCast(*peer, input, pl.state, false);
-            else if ((r.pressed & sim::PlayerButton_Cast) != 0) RejectCast(*peer, now);
+            // [mech-1] The replicated body it stands on (a body stood on recently is not a pick-up).
+            if (const physics::BodyId g = simulation->Physics().GetCharacterState(pl.character).groundBody; g.IsValid()) {
+                const scene::Entity e = simulation->Scene().EntityFromUserData(simulation->Physics().GetUserData(g));
+                if (NetIdOf(e) != 0) {
+                    pl.groundEntity = e;
+                    pl.groundTick = now;
+                }
+            }
+            // [mech-1] The throw (and an auto-drop's echo) comes first and consumes the cast and the use.
+            const bool consumed = HoldEdges(*peer, input, r.pressed);
+            if (!consumed && r.cast) CaptureCast(*peer, input, pl.state, false);
+            else if (!consumed && (r.pressed & sim::PlayerButton_Cast) != 0) RejectCast(*peer, now);
+            if (!consumed && (r.pressed & sim::PlayerButton_Use) != 0) PlayerUse(*peer, input, &pl.state, now);
             if ((r.pressed & sim::PlayerButton_Crate) != 0) PlayerCrate(*peer, input, pl.state);
         }
     }
@@ -224,11 +246,13 @@ namespace vortex::net {
             snap.owner = peer->player->state;
             snap.lastCastTick = peer->player->lastCastTick;
             snap.castRejected = peer->player->castRejected;
+            snap.lastUseTick = peer->player->lastUseTick;
+            snap.useResult = peer->player->useResult;
             snap.fight = OwnerFightOf(peer->slot);
             for (const auto& [otherId, other] : players) {
                 if (otherId == id) continue;
                 snap.others.push_back({other->slot, other->player->state.position, other->player->last.yaw, other->player->state.flags,
-                                       RemoteFightOf(other->slot)});
+                                       RemoteFightOf(other->slot), sim::HoldPitch(other->player->last.pitch)});
             }
             // Bodies by priority: what was left out longest, nearest first, as many as fit.
             const size_t fixed = kSnapshotHeaderBytes + kSnapshotOwnerBytes + snap.others.size() * kSnapshotPlayerBytes;
@@ -390,6 +414,8 @@ namespace vortex::net {
         if (entity == scene::kNoEntity) return false;
         out.spawn.kind = EntityKind::Object;
         if (!DescribeObject(entity, out.spawn.object)) return false;
+        if (MakeMechanismState(entity, steppedTick, out.spawn.mechanism)) out.spawn.kind = EntityKind::Mechanism;
+        if (out.spawn.object.flags & kObjectHeld) return true;   // [mech-1] its pose now, never resting
         const auto t = tracks.find(netId);
         const bool resting = t != tracks.end() && t->second.resting;
         if (resting) {

@@ -93,6 +93,21 @@ namespace vortex::net {
             bool anyCrate = false;
             uint32_t lastCrateTick = 0;
             std::deque<uint32_t> crates;
+            /// [mech-1] The owner block's use result: the newest Use edge's input tick and its fate.
+            uint32_t lastUseTick = 0;
+            sim::UseResult useResult = sim::UseResult::None;
+            /// [mech-1] Holding (mechanisms.md "One use key: E"): the held body (its scene::Held component is the
+            /// truth), the busy rule's last change, the echo window after an auto-drop (0: none) and the
+            /// replicated body it stood on last.
+            scene::Entity held = scene::kNoEntity;
+            uint32_t holdChangeTick = 0;
+            bool anyHoldChange = false;
+            uint32_t autoReleaseTick = 0;
+            uint32_t autoReleaseEcho = 0;
+            scene::Entity groundEntity = scene::kNoEntity;
+            uint32_t groundTick = 0;
+            /// An edge of an input made before its client saw the auto-drop: consumed, never acted on.
+            bool InEcho(uint32_t inputTick) const { return autoReleaseEcho != 0 && inputTick <= autoReleaseTick + autoReleaseEcho; }
 
             /// The state after `tick`, if it is still kept.
             const sim::PlayerState* StateAt(uint32_t tick) const {
@@ -205,6 +220,7 @@ namespace vortex::net {
             uint32_t restTick = 0;
             glm::vec3 restPosition{0.0f};
             glm::quat restRotation{1.0f, 0.0f, 0.0f, 0.0f};
+            bool held = false;            ///< [mech-1] held by a player: no rest, no wake, no sample
         };
 
         /// A cast waiting for the cast phase. A player's cast is a ray (captured at its input tick:
@@ -217,6 +233,7 @@ namespace vortex::net {
             uint8_t player = 0;           ///< CastRecord::player
             bool ray = false;
             sim::ActionRequest request;   ///< the captured action (ray casts; a server cast keeps the defaults)
+            scene::Entity body = scene::kNoEntity;   ///< the body the ray resolved on (a mechanism takes a MechanismBlast)
         };
 
         /// A terrain-mode peer's bulk goes nearest its eyes first: this far above the feet.
@@ -604,5 +621,37 @@ namespace vortex::net {
         uint8_t RemoteFightOf(uint8_t slot) const;
         void BuildFellingTowers();
         void CheckCrowns();
+
+        // --- mechanisms and holding ([mech-1], docs/design/mechanisms.md; ServerMechanisms.cpp) ---------------------
+        // Order per tick: StepPlayers (PoseMechanisms and PushOutOfMechanisms before each StepPlayer; after it the
+        // throw, then the Use edge), RunCasts (a blast's releases before its object events), StepHolds, StepMechanisms.
+        std::vector<scene::Entity> mechanisms;             // the yard's, in creation order
+        std::vector<glm::vec3> holdFeet;                   // HoldEnvFor()'s storage
+        uint32_t NetIdOf(scene::Entity entity) const;      // 0 without a NetId
+        void BuildYard();                                  // at Start, with SessionConfig::mechanisms and the playground
+        /// The mechanism's state with its ring's segments still running at `tick` (always the newest), oldest first.
+        bool MakeMechanismState(scene::Entity entity, uint32_t tick, MechanismState& out) const;
+        void EmitMechanismSpawn(uint32_t netId, scene::Entity entity);
+        void EmitMechanismChanges(std::span<const sim::MechanismChange> changes);
+        uint32_t LeadOf(PeerId id, const Player& pl) const;   // ceil(RTT / dt) + max(margin, 0) + 2, clamped
+        uint32_t UseLead();                                // the largest LeadOf over the joined players
+        /// A Use edge (`at`: the state after the input's tick; nullptr when it is no longer kept).
+        void PlayerUse(Peer& p, const sim::PlayerInput& in, const sim::PlayerState* at, uint32_t now);
+        /// The Cast edge while holding and the edges of the echo window (step order of mechanisms.md "Where it runs"):
+        /// true when the edges are consumed (no cast, no use).
+        bool HoldEdges(Peer& p, const sim::PlayerInput& in, uint8_t pressed);
+        sim::HoldEnv HoldEnvFor();
+        void EmitHold(const sim::HoldChange& c);
+        /// Ends `p`'s hold for `reason` at the hold pose of its state now (the holder's anchor fix-up).
+        void ReleaseHeld(Peer& p, sim::HoldEnd reason, uint16_t yaw, int16_t pitch);
+        /// Ends `p`'s hold where the body is now (HolderGone: no fix-up).
+        void ReleaseGone(Peer& p);
+        /// A release the player did not ask for: its echo window opens.
+        void AutoReleased(uint8_t slot);
+        void EmitHoldChanges(std::span<const sim::HoldChange> changes);
+        void ClearLostHolds();                             // a held entity gone or without scene::Held
+        void StepHolds();
+        /// The model term of the checks: VolumeHash, a mechanism's MechanismTerm or a held body's HeldTerm mixed in.
+        uint64_t CheckModelHash(scene::Entity entity, uint64_t volumeHash) const;
     };
 }

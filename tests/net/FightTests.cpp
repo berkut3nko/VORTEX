@@ -130,18 +130,18 @@ TEST(FightWire, MessagesRoundTripAndRefuseBadValues) {
     }
     EXPECT_STREQ(net::ToString(net::CastRejection::NoCharge), "no charge");
     EXPECT_STREQ(net::ToString(net::CastRejection::Dead), "dead");
-    EXPECT_EQ(net::kProtocolVersion, 11);
+    EXPECT_EQ(net::kProtocolVersion, 12);   // [mech-1]
 }
 
 TEST(FightWire, SizesAreAsDesigned) {
     net::Snapshot none, owner;
     owner.hasOwner = true;
-    EXPECT_EQ(net::Encode(owner).size() - net::Encode(none).size(), 39u);
-    EXPECT_EQ(net::kSnapshotOwnerBytes, 39u);
+    EXPECT_EQ(net::Encode(owner).size() - net::Encode(none).size(), 44u);   // [mech-1]: + lastUseTick, useResult
+    EXPECT_EQ(net::kSnapshotOwnerBytes, 44u);
     net::Snapshot one = owner;
     one.others.push_back({});
-    EXPECT_EQ(net::Encode(one).size() - net::Encode(owner).size(), 17u);
-    EXPECT_EQ(net::kSnapshotPlayerBytes, 17u);
+    EXPECT_EQ(net::Encode(one).size() - net::Encode(owner).size(), 18u);    // [mech-1]: + holdPitch
+    EXPECT_EQ(net::kSnapshotPlayerBytes, 18u);
     // The Welcome's last 7 bytes are its fight fields: without them it does not decode.
     net::Welcome w;
     w.region.terrain.voxelSize = 0.125f;

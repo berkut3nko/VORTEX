@@ -207,8 +207,15 @@ namespace vortex::net {
         if (a.kind == EntityKind::Light) return a.light == b.light;
         const ObjectSpawn& x = a.object;
         const ObjectSpawn& y = b.object;
+        const bool held = (x.flags & kObjectHeld) == 0 || (x.holder == y.holder && x.relYaw == y.relYaw && x.holdSince == y.holdSince);
         return x.position == y.position && x.rotation == y.rotation && x.linearVelocity == y.linearVelocity &&
-               x.angularVelocity == y.angularVelocity && x.motion == y.motion && x.flags == y.flags && SameVolume(x.volume, y.volume);
+               x.angularVelocity == y.angularVelocity && x.motion == y.motion && x.flags == y.flags && SameVolume(x.volume, y.volume) &&
+               held && (a.kind != EntityKind::Mechanism || a.mechanism == b.mechanism);
+    }
+
+    Event HoldEvent(const sim::HoldChange& change, uint32_t netId) {
+        if (change.hold) return EntityHold{netId, change.holder, change.relYaw, change.tick};
+        return EntityRelease{netId, change.tick, change.reason, change.position, change.rotation, QuantizeVelocity(change.velocity)};
     }
 
     bool operator==(const ObjectModel& a, const ObjectModel& b) {
@@ -339,6 +346,91 @@ namespace vortex::net {
         bool Finite(const glm::vec3& v) { return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z); }
         bool Finite(const glm::quat& q) { return std::isfinite(q.x) && std::isfinite(q.y) && std::isfinite(q.z) && std::isfinite(q.w); }
 
+        void WriteBox(ByteWriter& out, const scene::MechanismBox& b) {
+            for (int a = 0; a < 3; ++a) out.U8(static_cast<uint8_t>(b.min[a]));
+            for (int a = 0; a < 3; ++a) out.U8(static_cast<uint8_t>(b.max[a]));
+        }
+        scene::MechanismBox ReadBox(ByteReader& in) {
+            scene::MechanismBox b;
+            for (int a = 0; a < 3; ++a) b.min[a] = in.U8();
+            for (int a = 0; a < 3; ++a) b.max[a] = in.U8();
+            return b;
+        }
+        void WriteSegment(ByteWriter& out, const scene::MechanismSegment& s) {
+            out.U32(s.startTick);
+            out.I16(s.startPos);
+            out.I16(s.targetPos);
+            out.U16(s.durationTicks);
+            out.U8(s.flags);
+        }
+        scene::MechanismSegment ReadSegment(ByteReader& in) {
+            scene::MechanismSegment s;
+            s.startTick = in.U32();
+            s.startPos = in.I16();
+            s.targetPos = in.I16();
+            s.durationTicks = in.U16();
+            s.flags = in.U8();
+            return s;
+        }
+
+        /// The 63 B desc and the 24 B state of a mechanism spawn, then its segments ([mech-1] card 8).
+        void WriteMechanism(ByteWriter& out, const MechanismState& m) {
+            const scene::MechanismDesc& d = m.desc;
+            out.U8(static_cast<uint8_t>(d.kind));
+            out.U8(d.flags);
+            for (int a = 0; a < 3; ++a) out.I16(static_cast<int16_t>(d.pivotQ[a]));
+            out.U8(d.axis);
+            out.I16(d.minPos);
+            out.I16(d.maxPos);
+            out.U16(d.openTicks);
+            out.U16(d.closeTicks);
+            out.U16(d.autoReturnTicks);
+            WriteBox(out, d.useBox);
+            WriteBox(out, d.blockBox);
+            WriteBox(out, d.hingeBox);
+            out.U8(d.pushAxis);
+            out.U8(d.anchorCount);
+            for (const glm::ivec3& anchor : d.anchors)
+                for (int a = 0; a < 3; ++a) out.I32(anchor[a]);
+            out.U8(static_cast<uint8_t>(m.segments.size()));
+            for (int a = 0; a < 3; ++a) out.I16(static_cast<int16_t>(m.modelOffset[a]));
+            out.U32(m.linkedNetId);
+            for (int a = 0; a < 3; ++a) out.I32(m.spawnVoxel[a]);
+            out.U8(m.quarterTurns);
+            for (const scene::MechanismSegment& s : m.segments) WriteSegment(out, s);
+        }
+
+        bool ReadMechanism(ByteReader& in, const glm::ivec3& modelSize, MechanismState& m) {
+            scene::MechanismDesc& d = m.desc;
+            const uint8_t kind = in.U8();
+            d.flags = in.U8();
+            for (int a = 0; a < 3; ++a) d.pivotQ[a] = in.I16();
+            d.axis = in.U8();
+            d.minPos = in.I16();
+            d.maxPos = in.I16();
+            d.openTicks = in.U16();
+            d.closeTicks = in.U16();
+            d.autoReturnTicks = in.U16();
+            d.useBox = ReadBox(in);
+            d.blockBox = ReadBox(in);
+            d.hingeBox = ReadBox(in);
+            d.pushAxis = in.U8();
+            d.anchorCount = in.U8();
+            for (glm::ivec3& anchor : d.anchors)
+                for (int a = 0; a < 3; ++a) anchor[a] = in.I32();
+            const uint8_t count = in.U8();
+            for (int a = 0; a < 3; ++a) m.modelOffset[a] = in.I16();
+            m.linkedNetId = in.U32();
+            for (int a = 0; a < 3; ++a) m.spawnVoxel[a] = in.I32();
+            m.quarterTurns = in.U8();
+            if (in.Failed() || kind < 1 || kind > 3 || count == 0 || count > scene::kMechanismSegments || m.quarterTurns > 3) return false;
+            d.kind = static_cast<scene::MechanismKind>(kind);
+            if (!sim::ValidateMechanismDesc(d, modelSize)) return false;
+            m.segments.clear();
+            for (uint8_t i = 0; i < count; ++i) m.segments.push_back(ReadSegment(in));
+            return !in.Failed();
+        }
+
         struct EventWriter {
             ByteWriter& out;
             void operator()(const sim::WorldOp& op) const { WriteOp(out, op); }
@@ -365,6 +457,34 @@ namespace vortex::net {
                 out.U8(o.motion);
                 out.U8(o.flags);
                 WriteVolumeRuns(out, o.volume);
+                if ((o.flags & kObjectHeld) != 0) {
+                    out.U8(o.holder);
+                    out.U16(o.relYaw);
+                    out.U32(o.holdSince);
+                }
+                if (spawn.kind == EntityKind::Mechanism) WriteMechanism(out, spawn.mechanism);
+            }
+            void operator()(const MechanismMove& m) const {
+                out.U8(static_cast<uint8_t>(EventKind::MechanismMove));
+                out.U32(m.netId);
+                WriteSegment(out, m.segment);
+            }
+            void operator()(const EntityHold& h) const {
+                out.U8(static_cast<uint8_t>(EventKind::EntityHold));
+                out.U32(h.netId);
+                out.U8(h.holder);
+                out.U16(h.relYaw);
+                out.U32(h.tick);
+            }
+            void operator()(const EntityRelease& r) const {
+                out.U8(static_cast<uint8_t>(EventKind::EntityRelease));
+                out.U32(r.netId);
+                out.U32(r.tick);
+                out.U8(r.reason);
+                WriteVec3(out, r.position);
+                WriteQuat(out, r.rotation);
+                const glm::vec3 v = QuantizeVelocity(r.velocity) * kVelocityQuanta;
+                for (int a = 0; a < 3; ++a) out.I16(static_cast<int16_t>(std::lround(v[a])));
             }
             void operator()(const EntityDespawn& d) const {
                 out.U8(static_cast<uint8_t>(EventKind::EntityDespawn));
@@ -422,8 +542,8 @@ namespace vortex::net {
                     spawn.light.intensity = in.F32();
                     spawn.light.radius = in.F32();
                     if (in.Failed()) return false;
-                } else if (entity == static_cast<uint8_t>(EntityKind::Object)) {
-                    spawn.kind = EntityKind::Object;
+                } else if (entity == static_cast<uint8_t>(EntityKind::Object) || entity == static_cast<uint8_t>(EntityKind::Mechanism)) {
+                    spawn.kind = static_cast<EntityKind>(entity);
                     ObjectSpawn& o = spawn.object;
                     o.position = ReadVec3(in);
                     o.rotation = ReadQuat(in);
@@ -435,6 +555,15 @@ namespace vortex::net {
                         !Finite(o.angularVelocity))
                         return false;
                     if (!ReadVolumeRuns(in, o.volume, maskVoxelBudget)) return false;
+                    if ((o.flags & ~(kObjectResting | kObjectHeld)) != 0) return false;
+                    if ((o.flags & kObjectHeld) != 0) {
+                        if ((o.flags & kObjectResting) != 0) return false;   // a held body is never resting
+                        o.holder = in.U8();
+                        o.relYaw = in.U16();
+                        o.holdSince = in.U32();
+                        if (in.Failed()) return false;
+                    }
+                    if (spawn.kind == EntityKind::Mechanism && !ReadMechanism(in, o.volume.Size(), spawn.mechanism)) return false;
                 } else {
                     return false;
                 }
@@ -466,6 +595,36 @@ namespace vortex::net {
                 k.tick = in.U32();
                 if (in.Failed()) return false;
                 event = k;
+                return true;
+            }
+            case EventKind::MechanismMove: {
+                MechanismMove m;
+                m.netId = in.U32();
+                m.segment = ReadSegment(in);
+                if (in.Failed()) return false;
+                event = m;
+                return true;
+            }
+            case EventKind::EntityHold: {
+                EntityHold h;
+                h.netId = in.U32();
+                h.holder = in.U8();
+                h.relYaw = in.U16();
+                h.tick = in.U32();
+                if (in.Failed()) return false;
+                event = h;
+                return true;
+            }
+            case EventKind::EntityRelease: {
+                EntityRelease r;
+                r.netId = in.U32();
+                r.tick = in.U32();
+                r.reason = in.U8();
+                r.position = ReadVec3(in);
+                r.rotation = ReadQuat(in);
+                for (int a = 0; a < 3; ++a) r.velocity[a] = static_cast<float>(in.I16()) / kVelocityQuanta;
+                if (in.Failed() || r.reason == 0 || r.reason > sim::kMaxHoldEnd || !Finite(r.position) || !Finite(r.rotation)) return false;
+                event = r;
                 return true;
             }
             case EventKind::ObjectModel: {

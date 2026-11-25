@@ -414,6 +414,9 @@ namespace vortex::net {
         // The template's objects (the crates) are replicated server bodies (stage 6).
         for (const scene::Entity entity : sim::CreateTemplateObjects(*s.simulation, s.tmpl))
             if (entity != scene::kNoEntity) s.EmitObjectSpawn(sim::Replicate(*s.simulation, entity, false), entity);
+        // [mech-1] The mechanism yard (session key `mechanisms`).
+        s.BuildYard();
+        if (s.failed) return false;
         s.probes = ProbeChunks(s.region, *generator);
         // Stage 8: the spawn's colliders, built once now and kept (ColliderFocus): a join never cooks them.
         {
@@ -451,6 +454,14 @@ namespace vortex::net {
         s.RunCasts();
         s.StepFight();
         const uint32_t tick = s.Tick();
+        // [mech-1] Held bodies follow their holders, then the mechanisms' motion of this physics step (crushed bodies
+        // are despawned by DrainDespawns below).
+        s.StepHolds();
+        if (!s.mechanisms.empty()) {
+            const sim::MechanismStepResult moved = sim::StepMechanisms(*s.simulation, tick, true);
+            s.stats.mechanismCrushed += moved.crushed;
+            s.EmitMechanismChanges(moved.changes);
+        }
         s.simulation->StepPhysics();
         s.steppedTick = tick;
         s.simulation->UpdateLifetimes(s.simulation->FixedTimeStep());
@@ -581,7 +592,7 @@ namespace vortex::net {
             e.position = state.position;
             e.rotation = state.rotation;
             const auto it = s.tracks.find(id.value);
-            e.resting = it != s.tracks.end() && it->second.resting;
+            e.resting = it != s.tracks.end() && it->second.resting && !it->second.held;
             out.push_back(e);
         }
         std::sort(out.begin(), out.end(), [](const EntityInfo& a, const EntityInfo& b) { return a.netId < b.netId; });
@@ -590,7 +601,7 @@ namespace vortex::net {
 
     size_t Server::AwakeBodies() const {
         size_t n = 0;
-        for (const auto& [id, t] : m_Impl->tracks) n += t.resting ? 0u : 1u;
+        for (const auto& [id, t] : m_Impl->tracks) n += t.resting || t.held ? 0u : 1u;
         return n;
     }
 

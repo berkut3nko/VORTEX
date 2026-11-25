@@ -32,6 +32,9 @@ export namespace vortex::net {
         /// before the process runs out of memory.
         uint32_t chunkCapacity = 0;
         bool packHidden = true;           ///< `pack_hidden`: buried chunks keep only their RLE bytes (memory only).
+        /// `mechanisms`: with the playground template, the mechanism yard (a door, a gate and its lever) is built at the
+        /// start and replicated ([mech-1], docs/design/mechanisms.md "Replication").
+        bool mechanisms = false;
         uint16_t port = 0;                ///< `port`: UDP port (stage 5; unused on a loopback).
         /// [wp-7] The fight (docs/design/fight.md "Rules"): `mode`, `team_spawn_1`, `team_spawn_2`, `score_limit`,
         /// `round_seconds`, `respawn_ticks`, `charge_ticks`, `max_charges`, `min_players`, `countdown_ticks`,
