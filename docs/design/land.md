@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| Status | `[land-1]` built: the world map comes from the owner's drawn image through `tools/worldmap/worldmap.py` (the game's [world-map.md](../../../docs/world/world-map.md)). `[land-2]` built: `voxel::BakeLand` (`vortex.voxel:land`) erodes the coarse grid and finds its lakes and rivers; `vortex_land` bakes the drawn map and writes the review pictures ("The bake as built"). No chunk is generated from the map yet. |
+| Status | `[land-1]` built: the world map comes from the owner's drawn image through `tools/worldmap/worldmap.py` (the game's [world-map.md](../../../docs/world/world-map.md)). `[land-2]` built: `voxel::BakeLand` (`vortex.voxel:land`) erodes the coarse grid and finds its lakes and rivers; `vortex_land` bakes the drawn map and writes the review pictures ("The bake as built"). `[land-3]` built: `voxel::CreateLandGenerator` makes the chunks from the baked map; the offline game walks the island with `--land` ("From the map to voxels"). Sessions do not use the map yet (`[land-5]`). |
 | Decided | The owner, 2026-11-25 (answers to the research notes' questions, [map-and-castle-research.md](../../../docs/world/map-and-castle-research.md) section 6): see "The owner's answers". Us (this design, 2026-11-25): "Decision" items 1-9, the starter site in "The starter region". |
-| Next | The owner's review of the baked pictures, then `[land-3]` (voxels from the map, offline). |
+| Next | The owner walks the island (`--land`, owner check 26), then `[land-4]` (the starter region in detail). |
 | Open | "Open questions (with the answer we recommend)". |
 | Marks | (e) is an estimate; every stage names the measurement that confirms or kills it. Code claims were read at engine `6fdd9e5` (`voxel/Generator.cppm` `TerrainSettings`, `TerrainHeight`; the build ceiling and the full-height window). |
 
@@ -49,10 +49,13 @@ their borders, readable as a map image. We take no coastline, region shape, name
 2. **The map comes first, the voxels follow.** Every chunk is generated from the `WorldMap` by a pure function of the
    chunk coordinate, as today (worldgen.md "Decision" 1): base height from the map, detail noise, strata materials,
    then worldgen's structures. A global process (erosion, flow, lakes, roads) runs only in the bake.
-3. **The server bakes; clients receive the map.** Erosion runs once, on the server, and the baked fields travel to
-   every client in the plan (worldgen.md "Decision" 2). Clients never run the bake, so its code can change between
-   builds without a desync; only the sampling and the stamper must be bit-identical (pinned by golden tests, as
-   `TerrainHeight` is today).
+3. **The map is deterministic everywhere; the server bakes, clients receive the map.** The owner's rule (2026-11-25):
+   the same map files give the same world on every machine. The bake and the sampling use only `+ - * /`, `sqrt`,
+   `floor` and comparisons on floats (IEEE 754 rounds them exactly; the build has `-ffp-contract=off`) and integer
+   hashes; no libm function (`pow`, `log`, `exp`, `sin` ...) decides a value, and both run on one thread in a fixed
+   order. Golden hashes pin both on every platform: `Land.BakeGoldenHash` (the bake) and `LandSampling.GoldenHash`
+   (heights, water and voxels). In a session the server still bakes once and the baked fields travel to every
+   client in the plan (worldgen.md "Decision" 2), so a client never pays for the bake.
 4. **Two levels of detail by region.** The **starter region** gets the full pipeline: a fine bake (1 m cells), strata
    cliffs, scree, trees, ground cover, the castle site, the village, the cave, the roads. **Every other region is bold**:
    the coarse bake (4 m cells), its biome's ground materials and a sparse set of large features (forest masses, rock
@@ -132,8 +135,9 @@ drawn map (5 m pixels) gives 800 x 598 cells. Every knob is a `LandSettings` fie
 8. **Rivers:** the flow is routed again; a river starts where the drainage area reaches 0.06 km^2 and runs down its
    receivers to the sea, a lake or another river. Its level, from the mouth upstream, is the bank less 0.3 m rounded
    down to 0.5 m and never below the water it drains into, so the levels form flat reaches with steps. The bed is cut
-   0.5-2 m below the level (deeper with more flow), 3 cells wide where the area is 4 times the threshold; a dry bank
-   lower than the water is raised to 0.2 m above it.
+   0.5-2 m below the level (deeper with more flow), 3 cells wide where the area is 4 times the threshold; a diagonal
+   step also cuts one side cell, so the channel is connected through cell edges; a dry bank lower than the water is
+   raised to 0.2 m above it.
 
 `voxel::CheckLand` holds the rules: the sea did not move; dry land is above the sea; each lake has one level over a
 bed below it; a river's bed is below its level; its level never rises downstream; and every river reaches the sea
@@ -146,7 +150,11 @@ fails or `--twice` finds two hashes), and writes `land_height.png` and `land_wat
 tool's height encoding; water 0 = none), `land_flow.png`, and the review pictures `land_relief.png` (shaded relief
 with the sea, lakes and rivers) and `land_change.png` (red cut, green laid down, full colour at 5 m).
 
-**The first map (map id `5556ecd6b3b7d86d`, 2026-11-25, m):** baked in 3.0 s (stream power 2.5 s); erosion cut
+**Determinism:** the stream power's `A^0.5` is a `sqrt`, and a river's depth grows by 0.5 m per doubling of its flow
+by halving in a loop (no `log2`). `Land.BakeGoldenHash` pins the bake of the test island.
+
+**The first map (map id `5556ecd6b3b7d86d`, 2026-11-25, m):** baked in 2.6-3.0 s (stream power 2.2-2.5 s), `Land: hash
+e94ffdb8eb6e3288`; erosion cut
 2.8 million m^3 and laid down 0.9 million m^3 (the rest reached the sea), deepest cut 8.1 m; 1673 outlet cells cut,
 26 puddles filled. Three lakes: the drawn northern lake at 3.88 m (0.036 km^2, 6.6 m deep; its outlet is a gorge to
 the north coast), the drawn desert lake at 2.97 m, and a mountain tarn at 35.2 m. 14 rivers, 2.8 km, 194 reaches, 7
@@ -223,13 +231,41 @@ by hand.
 
 ## From the map to voxels
 
-- The chunk generator (worldgen.md's `RegionGenerator::Structured`, or a new `Land` generator below it) samples the
-  baked fields: bicubic height from the fine grid in the starter region and the coarse grid elsewhere, plus small
-  detail noise; strata bands set the rock material by height and hardness (research notes 4.4); the biome sets the
-  ground materials; water fills to its level.
-- The sampling uses only operations whose results are pinned by golden tests on every platform, as `TerrainHeight`
-  is today; its golden hash joins `buildHash`.
-- The plan's fields are in the `RegionPlan`; the client gets them before chunk sync (worldgen.md "Decision" 2).
+Built in `[land-3]` for the coarse grid: `voxel::CreateLandGenerator(map, LandGeneratorSettings)`
+(`engine/src/voxel/internal/LandGenerator.cpp`), an `IWorldGenerator`. `CenteredLandOrigin` puts the map's centre at
+the world origin; outside the map the border cells (the sea) continue.
+
+- **Height** (`voxel::LandHeight`): Catmull-Rom over the 4 x 4 nearest cells, clamped to the 4 nearest cells' range
+  (no overshoot at a coast or a bank), plus detail noise (two octaves of integer-hash value noise, 9 m and 3.5 m)
+  with an amplitude per biome (grassland 0.35 m, forest 0.5, desert 0.7, rocky isle 1.0, mountain 1.6), blended
+  bilinearly; a cell on or next to water has none, so banks and shores keep their baked height.
+- **Water** (`voxel::LandWaterLevel`): the highest level of the 4 nearest cells that hold water; water voxels fill
+  from the ground up to it. Sand covers the ground under water and within 1.25 m of a column whose water stands
+  above its ground.
+- **Materials:** the biome of the nearest cell to a point moved by up to 7 m of noise (borders wander). Grass and
+  forest: grass, 2 m of dirt, stone; desert: 3 m of sand, stone on slopes over 0.8; mountain: dry grass below 45 m
+  on gentle slopes, stone above, snow over 92 m; rocky isle: stone. Any slope over 1.15, and a hard-strata cell's
+  slope over 0.6, is stone; dark stone from 12 m down. The materials are the engine's default palette (the material
+  table and its hash do not change).
+- **Trees** on a jittered 5 m grid with a chance per biome (forest 0.55, dark forest 0.7, grassland and mountain
+  0.05, desert 0); none in water, under 1.2 m, on steep ground or on mountains over 50 m.
+- **No caves** yet (the cave is a point of interest of `[land-4]`). `ClassifyColumn` agrees with the voxel loop
+  (`LandSampling.ClassifiedRowsAgreeWithTheVoxelLoop`).
+- **Spawn** (`voxel::LandSpawn`): the dry cell nearest the starter region's middle whose 3 x 3 cells differ by at
+  most 0.5 m and with no water within 3 cells.
+
+**The game:** `Shredborne --land [DIR]` (offline only; default `assets/world`) bakes the map at start (about 3 s),
+logs `Land: DIR baked in T s, hash H: ...; spawn at (x, z) m in region R`, generates the world from it and starts
+the player at the spawn (`Land: player at ...`), with no plaza. On the first map the spawn is (854, -414) m in the
+starter grassland. A headless run of 400 frames fills the window in 0.2 s (14 891 chunks, 7186 dense, in 1.07 s of
+generation) and exits 0 (m).
+
+**Cost (m, `vortex_land --chunk-cost`, one thread):** 50 us per chunk over 32 x 32 columns around the spawn (6224
+chunks), against 205-226 us for the built-in terrain generator (11 322 chunks): inside the budget "no slower than
+today's generator".
+
+Still to come: the fine grid of the starter region and its strata cliffs (`[land-4]`); the map in a session, with
+the sampling's golden hash in `buildHash` and the fields in the `RegionPlan` (`[land-5]`).
 
 ## Budgets (e)
 
@@ -237,7 +273,7 @@ by hand.
 |---|---|---|
 | Bake on the server at start | under 30 s for the island and the starter region | `[land-2]`: the island's coarse grid 3.0 s (m); the starter region's fine grid comes in `[land-4]` |
 | Map transfer to a joiner | under 1 MB compressed | `[land-4]` |
-| Chunk generation from the map | no slower than today's generator per chunk | `[land-3]` |
+| Chunk generation from the map | no slower than today's generator per chunk | `[land-3]`: 50 us against 205-226 us (m) |
 | Map image | 2048 x 1365 pixels, under 1 s to render | `[land-1]` |
 
 ## Stages
@@ -246,7 +282,7 @@ by hand.
 |---|---|---|
 | `[land-1]` | The world map from the owner's drawn image (a tool): biomes, regions, raw heights, review pictures, the map id. **Built** (world-map.md) | the same source gives the same map id on two Python builds (done: `5556ecd6b3b7d86d`); the owner reviews the pictures |
 | `[land-2]` | Erosion and water: L3, L4 on the coarse grid; lakes and rivers on the image. **Built** ("The bake as built") | the bake time (done: 3.0 s); lakes have one level each and every river reaches the sea or a lake (done: `voxel::CheckLand`, `Land.*`); the owner reviews the pictures |
-| `[land-3]` | Voxels from the map, offline: the coarse grid everywhere, biome materials, water at its levels; walking the island in the offline game | chunk generation cost; golden hash of the sampling; the owner walks it |
+| `[land-3]` | Voxels from the map, offline: the coarse grid everywhere, biome materials, water at its levels; walking the island in the offline game. **Built** ("From the map to voxels") | chunk generation cost (done: 50 us per chunk, the built-in terrain 205-226 us); golden hash of the sampling (done: `LandSampling.GoldenHash`); the owner walks it (owner check 26) |
 | `[land-4]` | The starter region: the fine grid, strata cliffs, Hollowkeep's site template, points of interest, roads (L6-L8) | the castle draft's heights hold on the site; roads reach every point; the owner walks it |
 | `[land-5]` | In a session: the map baked at server start and sent in the plan; clients generate from it | transfer size; hashes equal across clients; a restart with the same seed gives the same world |
 

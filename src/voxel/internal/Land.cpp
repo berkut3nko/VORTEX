@@ -15,7 +15,9 @@ module;
 module vortex.voxel;
 
 // The world map bake (engine/docs/design/land.md): erosion (L3) and water at fixed levels (L4) on the coarse grid.
-// Only the server runs it (land.md "Decision" 3), so it may use floats and libm: one build gives one result.
+// The same map files must bake to the same world on every machine (the map is the seed): the bake runs on one thread
+// in a fixed order and uses only +, -, *, /, sqrt, floor and comparisons on floats, which IEEE 754 rounds exactly.
+// No libm function (pow, log, exp, sin ...) may decide a baked value. Land.BakeGoldenHash pins the result.
 
 namespace vortex::voxel {
 
@@ -285,7 +287,7 @@ namespace vortex::voxel {
                 for (uint32_t c : r.order) {
                     const uint32_t rc = r.receiver[c];
                     if (rc == c || IsDrawnWater(m.biomes[c]) || h[c] <= h[rc]) continue;
-                    const float f = st.streamK * Erodibility(m.hardness[c]) * std::pow(area[c], st.streamM) /
+                    const float f = st.streamK * Erodibility(m.hardness[c]) * std::sqrt(area[c]) /
                                     StepLength(m, c, rc);
                     h[c] = std::max((h[c] + f * h[rc]) / (1.0f + f), floorH[c]);
                 }
@@ -480,7 +482,13 @@ namespace vortex::voxel {
                 level[c] = r.receiver[c] == c ? bank : std::max(waterAt(r.receiver[c]), bank);
             }
             auto depthOf = [&](uint32_t c) {
-                return std::clamp(0.5f + 0.5f * std::log2(m.flow[c] / st.riverArea), 0.5f, 2.0f);
+                // 0.5 m at the threshold, 0.5 m more per doubling of the flow (linear inside a doubling), at most 2 m.
+                float ratio = m.flow[c] / st.riverArea, octaves = 0.0f;
+                while (ratio >= 2.0f && octaves < 3.0f) {
+                    ratio *= 0.5f;
+                    octaves += 1.0f;
+                }
+                return std::clamp(0.5f + 0.5f * (octaves + (ratio - 1.0f)), 0.5f, 2.0f);
             };
             std::vector<uint32_t> riverOf(n, UINT32_MAX);
             for (uint32_t head = 0; head < n; ++head) {
@@ -545,6 +553,23 @@ namespace vortex::voxel {
                     }
                 }
             }
+            // A diagonal step meets its next cell only at a corner: cut one side cell too, so the channel is one
+            // connected stretch of water and not a chain of squares touching at their corners.
+            for (const LandRiver& river : m.rivers) {
+                for (size_t k = 0; k < river.cells.size(); ++k) {
+                    const uint32_t c = river.cells[k];
+                    const uint32_t next = k + 1 < river.cells.size() ? river.cells[k + 1] : river.endCell;
+                    const uint32_t w = uint32_t(m.width);
+                    if (next % w == c % w || next / w == c / w) continue;
+                    const uint32_t side = (c / w) * w + next % w;
+                    if (m.waterKind[side] == WaterKind::Sea || m.waterKind[side] == WaterKind::Lake) continue;
+                    m.heights[side] = std::min(m.heights[side], level[c] - depthOf(c));
+                    if (m.waterKind[side] == WaterKind::None) {
+                        m.waterKind[side] = WaterKind::River;
+                        m.water[side] = level[c];
+                    }
+                }
+            }
             for (const LandRiver& river : m.rivers) {
                 for (uint32_t c : river.cells) {
                     m.waterKind[c] = WaterKind::River;
@@ -560,6 +585,7 @@ namespace vortex::voxel {
         LandMap m;
         auto t = Clock::now();
         Resample(source, settings, m);
+        m.starterRegion = source.starterRegion;
         Hardness(settings, m);
         m.heights = m.rawHeights;
         const std::vector<float> floorH = ErosionFloor(settings, m);

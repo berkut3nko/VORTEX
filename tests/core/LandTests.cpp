@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -69,6 +70,15 @@ namespace {
         static const LandMap map = BakeLand(TestIsland(), TestSettings());
         return map;
     }
+}
+
+// The map is the seed: the same files must bake to the same world on every machine. The bake uses no libm function
+// (land.md "The bake as built"), so this value is the same on every platform; a change to the bake changes it on
+// purpose, and the new value is printed.
+TEST(Land, BakeGoldenHash) {
+    const uint64_t hash = LandHash(Baked());
+    std::printf("Land bake golden hash: 0x%016llxull\n", static_cast<unsigned long long>(hash));
+    EXPECT_EQ(hash, 0x3517e12f6bf759cbull);
 }
 
 TEST(Land, TheSameSourceBakesTheSameMapTwice) {

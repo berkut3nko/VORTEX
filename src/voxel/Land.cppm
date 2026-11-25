@@ -1,11 +1,18 @@
 module;
 
+#include <glm/glm.hpp>
+
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
 export module vortex.voxel:land;
+
+import :chunk;
+import :generator;
+import :material;
 
 export namespace vortex::voxel {
 
@@ -34,6 +41,7 @@ export namespace vortex::voxel {
         std::vector<float> heights;     ///< metres; the sea is at 0 m
         std::vector<uint8_t> biomes;    ///< LandBiome values
         std::vector<uint8_t> regions;   ///< 0 = water
+        int starterRegion = 0;          ///< world.json "starter_region" (0 = none)
     };
 
     /**
@@ -43,10 +51,9 @@ export namespace vortex::voxel {
     struct LandSettings {
         float cellSize = 4.0f;              ///< the coarse grid: one cell per chunk column
 
-        // L3a: stream power (valleys), implicit, n = 1.
+        // L3a: stream power (valleys), implicit, n = 1, drainage-area exponent m = 0.5 (a sqrt: no libm pow).
         int streamIterations = 40;
         float streamK = 2.0e-4f;            ///< K * dt for erodibility 1, per iteration
-        float streamM = 0.5f;               ///< drainage-area exponent
         float maxStreamCut = 12.0f;         ///< no cell is cut deeper than this below its raw height
         float lakeRimCut = 0.5f;            ///< ... nor a cell next to a drawn lake (keeps its rim)
 
@@ -119,6 +126,7 @@ export namespace vortex::voxel {
         std::vector<uint16_t> lakeOf;       ///< 0 = none, else index into lakes + 1
         std::vector<LandLake> lakes;
         std::vector<LandRiver> rivers;
+        int starterRegion = 0;              ///< the source's, copied
         uint32_t breachedCells = 0;
         uint32_t puddlesFilled = 0;
         uint32_t banksRaised = 0;
@@ -130,7 +138,8 @@ export namespace vortex::voxel {
     /// @brief Reads `height.png` (16-bit), `biome_ids.png`, `region_ids.png` and the scale from `world.json`.
     bool LoadLandSource(const std::filesystem::path& dir, LandSource& out, std::string& error);
 
-    /// @brief Bakes the coarse world map (L3 erosion, L4 water) from the drawn map. Deterministic for one build.
+    /// @brief Bakes the coarse world map (L3 erosion, L4 water) from the drawn map. Bit for bit the same on every
+    /// machine for the same source and settings (no libm function decides a value; Land.BakeGoldenHash).
     LandMap BakeLand(const LandSource& source, const LandSettings& settings = {});
 
     /// @brief Hash of everything baked (not the timings).
@@ -149,4 +158,41 @@ export namespace vortex::voxel {
      * (shaded relief with water), `land_change.png` (red cut, green raised; full colour at 5 m).
      */
     bool WriteLandFiles(const LandMap& map, const std::filesystem::path& dir, std::string& error);
+
+    /// @brief How the map becomes voxels (land.md "From the map to voxels", [land-3]).
+    struct LandGeneratorSettings {
+        float voxelSize = kDefaultVoxelSize;
+        WorldMaterials materials;
+        /// World metres of the map's corner (cell 0, 0). The default puts the map's centre at the world origin
+        /// (CenteredLandOrigin).
+        glm::vec2 origin{0.0f};
+        uint32_t seed = 1;
+        bool trees = true;
+        /// As TerrainSettings::skipClassifiedRows: false (tests only) runs the voxel loop for every row.
+        bool skipClassifiedRows = true;
+    };
+
+    /// @brief The origin that puts the map's centre at the world origin.
+    glm::vec2 CenteredLandOrigin(const LandMap& map);
+
+    /**
+     * @brief The chunk generator of the baked map: ground height, biome materials, water at its fixed levels and
+     * trees. A pure function of (map, settings, chunk coordinate); its height and water are pinned bit for bit by
+     * `LandSampling.GoldenHash`.
+     */
+    std::shared_ptr<IWorldGenerator> CreateLandGenerator(std::shared_ptr<const LandMap> map,
+                                                         const LandGeneratorSettings& settings);
+
+    /// @brief Ground height in metres at a world position (no trees): the float the generator turns into voxels.
+    float LandHeight(const LandMap& map, const LandGeneratorSettings& settings, float x, float z);
+
+    /// @brief Water level in metres at a world position, or kNoLandWater where the ground is dry.
+    float LandWaterLevel(const LandMap& map, const LandGeneratorSettings& settings, float x, float z);
+    inline constexpr float kNoLandWater = -1.0e9f;
+
+    /**
+     * @brief A dry, fairly level spot (world metres x, z) near the middle of a region, away from water; the map's
+     * starter region when `region` is 0. Without level ground there: the region's least steep dry cell.
+     */
+    glm::vec2 LandSpawn(const LandMap& map, const LandGeneratorSettings& settings, int region = 0);
 }

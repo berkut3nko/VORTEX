@@ -1,22 +1,29 @@
 // vortex_land: bakes the world map from the drawn map's files (engine/docs/design/land.md, [land-2]).
 //
-//   vortex_land --map DIR [--out DIR] [--twice]
+//   vortex_land --map DIR [--out DIR] [--twice] [--chunk-cost]
 //   vortex_land --version
 //
 // --map is the folder the game's tools/worldmap/worldmap.py writes (height.png, biome_ids.png, region_ids.png,
 // world.json). The baked fields and the review pictures go to --out (default build/land): land_height.png,
 // land_water.png, land_flow.png, land_relief.png, land_change.png (voxel::WriteLandFiles). --twice bakes a second
-// time and compares the hashes.
+// time and compares the hashes. --chunk-cost times the land generator ([land-3]) over 32 x 32 chunk columns around
+// the spawn against the built-in terrain generator over as many columns around its origin, on one thread:
+// `Land: spawn at ...; chunk generation ...`.
 //
 // Log lines: `Land: baked W x H cells of S m in T s (...)`, `Land: N lake(s): ...`, `Land: N river(s), ...`,
 // `Land: hash H`, then `Land: checks pass` or `Land: check failed: ...`.
 // Exit code 0 when the checks pass, 1 on a missing or bad input, 2 on a bad command line, 3 when a check fails.
 
+#include <glm/glm.hpp>
+
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <format>
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -36,7 +43,7 @@ int main(int argc, char** argv) {
     Log::Info("Build: {}", DescribeBuild());
     const std::optional<std::string> mapDir = args.Get("--map");
     if (!mapDir) {
-        std::fprintf(stderr, "usage: vortex_land --map DIR [--out DIR] [--twice]\n");
+        std::fprintf(stderr, "usage: vortex_land --map DIR [--out DIR] [--twice] [--chunk-cost]\n");
         return 2;
     }
     const std::filesystem::path out = args.GetString("--out", "build/land");
@@ -111,6 +118,43 @@ int main(int argc, char** argv) {
         return 1;
     }
     Log::Info("Land: wrote {}", out.string());
+
+    if (args.Has("--chunk-cost")) {
+        MaterialLibrary library;
+        const WorldMaterials ids = RegisterDefaultWorldMaterials(library);
+        const auto shared = std::make_shared<const LandMap>(map);
+        LandGeneratorSettings landSettings;
+        landSettings.materials = ids;
+        landSettings.origin = CenteredLandOrigin(*shared);
+        const glm::vec2 spawn = LandSpawn(*shared, landSettings);
+        const float chunkMetres = float(kChunkSize) * landSettings.voxelSize;
+        const glm::ivec2 centre(int(std::floor(spawn.x / chunkMetres)), int(std::floor(spawn.y / chunkMetres)));
+        TerrainSettings terrainSettings;
+        terrainSettings.materials = ids;
+        // Every chunk of the band of 32 x 32 columns: microseconds per chunk the voxel loop ran for.
+        auto measure = [](const IWorldGenerator& generator, glm::ivec2 middle, uint64_t& chunks) {
+            auto chunk = std::make_unique<Chunk>();
+            chunks = 0;
+            const auto start = std::chrono::steady_clock::now();
+            for (int cz = middle.y - 16; cz < middle.y + 16; ++cz)
+                for (int cx = middle.x - 16; cx < middle.x + 16; ++cx) {
+                    const ColumnClass column = generator.ClassifyColumn(cx, cz);
+                    for (int row = column.solidBelow; row < column.emptyFrom; ++row) {
+                        *chunk = Chunk{};
+                        generator.Generate(glm::ivec3(cx, row, cz), *chunk);
+                        ++chunks;
+                    }
+                }
+            const double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
+            return us / double(std::max<uint64_t>(1, chunks));
+        };
+        uint64_t landChunks = 0, terrainChunks = 0;
+        const double landUs = measure(*CreateLandGenerator(shared, landSettings), centre, landChunks);
+        const double terrainUs = measure(*CreateTerrainGenerator(terrainSettings), glm::ivec2(0), terrainChunks);
+        Log::Info("Land: spawn at ({:.1f}, {:.1f}) m; chunk generation {:.0f} us per chunk ({} chunks in 32 x 32 columns); "
+                  "built-in terrain {:.0f} us per chunk ({} chunks)",
+                  spawn.x, spawn.y, landUs, landChunks, terrainUs, terrainChunks);
+    }
 
     const std::string broken = CheckLand(map);
     if (!broken.empty()) {

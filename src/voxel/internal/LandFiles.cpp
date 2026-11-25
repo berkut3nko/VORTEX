@@ -170,6 +170,8 @@ namespace vortex::voxel {
             error = (dir / "world.json").string() + ": bad metres_per_px";
             return false;
         }
+        const size_t starter = text.find("\"starter_region\"");
+        if (starter != std::string::npos) out.starterRegion = std::atoi(text.c_str() + text.find(':', starter) + 1);
         out.width = w;
         out.height = h;
         out.heights.resize(heights.size());
