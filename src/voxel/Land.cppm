@@ -58,6 +58,21 @@ export namespace vortex::voxel {
     };
 
     /**
+     * @brief The golden hashes of the land code (land.md "Decision" 3): what Land.BakeGoldenHash,
+     * LandStarter.GoldenHash and LandSampling.GoldenHash must produce. A change to the bake or the sampling changes one
+     * on purpose (the test prints the new value); kLandGoldenHash mixes them into the session's build hash, so builds
+     * that bake or sample differently refuse each other.
+     */
+    inline constexpr uint64_t kLandBakeGoldenHash = 0x61fc51804ff5f1feull;
+    inline constexpr uint64_t kLandStarterGoldenHash = 0x542be84666ab3296ull;
+    inline constexpr uint64_t kLandSamplingGoldenHash = 0x649a2b8e858af21cull;
+    inline constexpr uint64_t kLandGoldenHash = kLandBakeGoldenHash ^ (kLandStarterGoldenHash * 3) ^ (kLandSamplingGoldenHash * 5);
+
+    /// @brief A 64-bit hash of the map's inputs: the sizes, the scale, every pixel of the height, biome and region
+    /// fields, the starter region and the owner's points. Two sides with the same files have the same value.
+    uint64_t LandSourceHash(const LandSource& source);
+
+    /**
      * @brief The knobs of the bake (engine/docs/design/land.md "The bake, step by step"). Units are metres and
      * square metres; the defaults are tuned on the first drawn map.
      */
@@ -189,6 +204,7 @@ export namespace vortex::voxel {
         std::vector<LandLake> lakes;
         std::vector<LandRiver> rivers;
         int starterRegion = 0;              ///< the source's, copied
+        uint64_t sourceHash = 0;            ///< LandSourceHash of the source it was baked from (not in LandHash)
         LandFine fine;                      ///< the starter region in detail (L6)
         LandSite site;
         std::vector<LandPoint> points;      ///< L7

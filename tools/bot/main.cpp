@@ -7,7 +7,7 @@
 //              [--broken-chunk X,Y,Z] [--broken-generator]
 //              [--loss P] [--delay-ms D] [--jitter-ms J] [--outage-ms A,B]
 //              [--down-bytes-per-second R] [--up-bytes-per-second R] [--relay-seed S]
-//              [--timeline FILE] [--memory] [--test-undeclared-broken-chunk X,Y,Z] [--test-skip-drain]
+//              [--timeline FILE] [--memory] [--test-undeclared-broken-chunk X,Y,Z] [--test-skip-drain] [--land DIR]
 //   vortex_bot --version       (prints the build and exits)
 //
 // The port must be given (review of stage 8: no default, so a bot never joins the game's default port
@@ -153,6 +153,18 @@ int main(int argc, char** argv) {
         return 2;
     }
     bs.client.windowChunks = window;
+    // --land DIR: the world map this bot bakes from its own files, for a land session (land.md "Decision" 3).
+    if (const std::optional<std::string> landDir = args.Get("--land")) {
+        voxel::LandSource source;
+        std::string landError;
+        if (!voxel::LoadLandSource(*landDir, source, landError)) {
+            Log::Error("Land: {}", landError);
+            return 1;
+        }
+        const auto land = std::make_shared<const voxel::LandMap>(voxel::BakeLand(source));
+        Log::Info("Land: {} baked in {:.2f} s, hash {:016x}", *landDir, land->seconds.total, voxel::LandHash(*land));
+        bs.client.landMap = [land] { return land; };
+    }
     bs.jobThreads = static_cast<unsigned>(Number(args, "--threads", 2));
     bs.stand = args.Has("--stand");
     bs.pilot.jumps = !args.Has("--no-jumps");

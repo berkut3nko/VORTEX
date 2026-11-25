@@ -49,7 +49,8 @@ namespace vortex::sim {
     bool RegionDesc::operator==(const RegionDesc& o) const {
         return templateId == o.templateId && seed == o.seed && playMinChunk == o.playMinChunk && playMaxChunk == o.playMaxChunk &&
                SameBits(heightRange.x, o.heightRange.x) && SameBits(heightRange.y, o.heightRange.y) && generator == o.generator &&
-               flatGroundVoxels == o.flatGroundVoxels && SameTerrain(terrain, o.terrain);
+               flatGroundVoxels == o.flatGroundVoxels && landHash == o.landHash && landSourceHash == o.landSourceHash &&
+               SameTerrain(terrain, o.terrain);
     }
 
     bool IsValid(const RegionDesc& region, std::string* why) {
@@ -60,7 +61,9 @@ namespace vortex::sim {
         if (!voxel::IsValid(region.terrain)) return fail("terrain settings out of range");
         if (region.templateId != RegionTemplateId::Empty && region.templateId != RegionTemplateId::Playground)
             return fail("unknown template");
-        if (region.generator != RegionGenerator::Terrain && region.generator != RegionGenerator::Flat) return fail("unknown generator");
+        if (region.generator != RegionGenerator::Terrain && region.generator != RegionGenerator::Flat &&
+            region.generator != RegionGenerator::Land)
+            return fail("unknown generator");
         const glm::ivec2 size = region.playMaxChunk - region.playMinChunk;
         if (size.x <= 0 || size.y <= 0) return fail("empty play bounds");
         if (size.x > kMaxRegionChunks || size.y > kMaxRegionChunks) return fail("play bounds too large");
@@ -145,8 +148,46 @@ namespace vortex::sim {
         return (glm::dvec3(voxel) + glm::dvec3(0.5)) * static_cast<double>(region.terrain.voxelSize);
     }
 
+    voxel::LandGeneratorSettings RegionLandSettings(const RegionDesc& region, const voxel::LandMap& map, const voxel::WorldMaterials& ids) {
+        voxel::LandGeneratorSettings s;
+        s.voxelSize = region.terrain.voxelSize;
+        s.materials = ids;
+        s.origin = voxel::CenteredLandOrigin(map);
+        return s;
+    }
+
+    void SetRegionLand(RegionDesc& region, std::shared_ptr<const voxel::LandMap> map) {
+        region.generator = RegionGenerator::Land;
+        region.landHash = map ? voxel::LandHash(*map) : 0;
+        region.landSourceHash = map ? map->sourceHash : 0;
+        region.land = std::move(map);
+    }
+
+    bool CheckRegionLand(RegionDesc& region, std::shared_ptr<const voxel::LandMap> map, std::string& why) {
+        if (!map) {
+            why = "the server's region is the world map, and this client has no map to bake";
+            return false;
+        }
+        const uint64_t baked = voxel::LandHash(*map);
+        if (baked != region.landHash) {
+            why = map->sourceHash != region.landSourceHash
+                      ? std::format("this client's map files differ from the server's (map files {:016x}, the server's {:016x})",
+                                    map->sourceHash, region.landSourceHash)
+                      : std::format("the same map files bake to another map here (baked {:016x}, the server's {:016x}): another "
+                                    "build of the bake",
+                                    baked, region.landHash);
+            return false;
+        }
+        region.land = std::move(map);
+        return true;
+    }
+
     std::shared_ptr<voxel::IWorldGenerator> MakeRegionGenerator(const RegionDesc& region, const voxel::WorldMaterials& ids) {
         if (region.generator == RegionGenerator::Flat) return voxel::CreateFlatGenerator(region.flatGroundVoxels, ids.grass, ids.stone);
+        if (region.generator == RegionGenerator::Land) {
+            if (!region.land) return nullptr;
+            return voxel::CreateLandGenerator(region.land, RegionLandSettings(region, *region.land, ids));
+        }
         voxel::TerrainSettings settings = region.terrain;
         settings.materials = ids;
         return voxel::CreateTerrainGenerator(settings);

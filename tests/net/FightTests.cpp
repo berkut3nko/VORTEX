@@ -130,7 +130,7 @@ TEST(FightWire, MessagesRoundTripAndRefuseBadValues) {
     }
     EXPECT_STREQ(net::ToString(net::CastRejection::NoCharge), "no charge");
     EXPECT_STREQ(net::ToString(net::CastRejection::Dead), "dead");
-    EXPECT_EQ(net::kProtocolVersion, 12);   // [mech-1]
+    EXPECT_EQ(net::kProtocolVersion, 13);   // [land-5]
 }
 
 TEST(FightWire, SizesAreAsDesigned) {

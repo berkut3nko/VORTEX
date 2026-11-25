@@ -78,7 +78,7 @@ namespace {
 TEST(Land, BakeGoldenHash) {
     const uint64_t hash = LandHash(Baked());
     std::printf("Land bake golden hash: 0x%016llxull\n", static_cast<unsigned long long>(hash));
-    EXPECT_EQ(hash, 0x61fc51804ff5f1feull);
+    EXPECT_EQ(hash, kLandBakeGoldenHash);
 }
 
 TEST(Land, TheSameSourceBakesTheSameMapTwice) {

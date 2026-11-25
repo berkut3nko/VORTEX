@@ -442,6 +442,9 @@ int main(int argc, char** argv) {
         bs.client.token = session.token;
         bs.client.presentation = i == 0;   // the first client also makes particles and rubble, as a game would
         bs.client.windowChunks = clientWindow;
+        // A land region: the bots share the server's baked map (one process; the same files bake to the same map
+        // in every process, which vortex_bot and the game check by baking their own).
+        if (const std::shared_ptr<const voxel::LandMap> land = session.region.land) bs.client.landMap = [land] { return land; };
         bs.pilot = pilotSettings;
         bs.walkAcross = i == 0 && walkAcross;
         bs.stand = stand;

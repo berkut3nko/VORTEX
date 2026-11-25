@@ -107,7 +107,7 @@ TEST(LandSampling, GoldenHash) {
             if (c.kind == ChunkKind::Dense) h = Mix(h, ChunkHash(*chunk));
         }
     std::printf("LandSampling golden hash: 0x%016llxull\n", static_cast<unsigned long long>(h));
-    EXPECT_EQ(h, 0x649a2b8e858af21cull);
+    EXPECT_EQ(h, kLandSamplingGoldenHash);
 }
 
 TEST(LandSampling, ClassifiedRowsAgreeWithTheVoxelLoop) {

@@ -331,12 +331,25 @@ TEST(SessionFile, BuildHashSeesThePlayerRuleRevision) {
     voxel::MaterialLibrary materials;
     voxel::RegisterDefaultWorldMaterials(materials);
     const uint64_t table = voxel::MaterialTableHash(materials);
-    EXPECT_EQ(net::BuildHash(materials), net::BuildHashOf(net::kProtocolVersion, voxel::kGeneratorGoldenHash, table, sim::kPlayerRuleRevision));
+    EXPECT_EQ(net::BuildHash(materials),
+              net::BuildHashOf(net::kProtocolVersion, voxel::kGeneratorGoldenHash, table, sim::kPlayerRuleRevision, voxel::kLandGoldenHash));
     EXPECT_GE(sim::kPlayerRuleRevision, 1u);
-    const uint64_t before = net::BuildHashOf(net::kProtocolVersion, voxel::kGeneratorGoldenHash, table, 0);
+    const uint64_t before = net::BuildHashOf(net::kProtocolVersion, voxel::kGeneratorGoldenHash, table, 0, voxel::kLandGoldenHash);
     EXPECT_NE(net::BuildHash(materials), before);
     EXPECT_NE(net::BuildHashOf(net::kProtocolVersion, voxel::kGeneratorGoldenHash, table, 2),
               net::BuildHashOf(net::kProtocolVersion, voxel::kGeneratorGoldenHash, table, 1));
+}
+
+// land.md [land-5]: the land code's golden hashes are part of the build hash, so builds that bake or sample the world
+// map differently refuse each other at the Hello ("another build") before any map is compared.
+TEST(SessionFile, BuildHashSeesTheLandGoldenHash) {
+    voxel::MaterialLibrary materials;
+    voxel::RegisterDefaultWorldMaterials(materials);
+    const uint64_t table = voxel::MaterialTableHash(materials);
+    const uint64_t r = sim::kPlayerRuleRevision;
+    EXPECT_NE(net::BuildHash(materials), net::BuildHashOf(net::kProtocolVersion, voxel::kGeneratorGoldenHash, table, r));
+    EXPECT_NE(net::BuildHashOf(net::kProtocolVersion, voxel::kGeneratorGoldenHash, table, r, voxel::kLandGoldenHash ^ 1),
+              net::BuildHash(materials));
 }
 
 TEST(SessionFile, ProbeChunksFindAGeneratorThatDiffers) {
@@ -1711,4 +1724,108 @@ TEST(Session, ServerHashesAreCachedByChunkRevision) {
     EXPECT_LT(recomputed, computed / 4);                      // the drill site's chunks, not the window
     const net::SyncBox box = net::RegionSyncBox(s.server.Region());
     EXPECT_EQ(s.server.Hash(box).hash, voxel::WorldHash(s.server.Simulation().World(), box.min, box.Max()).hash);
+}
+
+// land.md [land-5] "Decision" 3: no map travels. The server's Welcome carries its baked map's hash; a client that
+// baked the same map from the same files joins, one with other files (or none) fails with the reason.
+namespace {
+    /// A small round island (40 x 40 pixels of 5 m), no starter region: a quick bake.
+    voxel::LandSource SmallIsland(float bump = 0.0f) {
+        voxel::LandSource s;
+        s.width = s.height = 40;
+        s.metresPerPixel = 5.0f;
+        s.heights.resize(1600);
+        s.biomes.resize(1600);
+        s.regions.resize(1600);
+        for (int z = 0; z < 40; ++z)
+            for (int x = 0; x < 40; ++x) {
+                const size_t i = size_t(z) * 40 + size_t(x);
+                const float d2 = float((x - 20) * (x - 20) + (z - 20) * (z - 20));
+                const bool land = d2 < 256.0f;
+                s.heights[i] = land ? 1.0f + (256.0f - d2) * 0.05f : -6.0f;
+                s.biomes[i] = uint8_t(land ? voxel::LandBiome::Grassland : voxel::LandBiome::Sea);
+                s.regions[i] = land ? 1 : 0;
+            }
+        s.heights[20 * 40 + 20] += bump;   // another file: one pixel moved
+        return s;
+    }
+
+    std::shared_ptr<const voxel::LandMap> Bake(const voxel::LandSource& s, int streamIterations = 40) {
+        voxel::LandSettings st;
+        st.streamIterations = streamIterations;
+        return std::make_shared<const voxel::LandMap>(voxel::BakeLand(s, st));
+    }
+
+    sim::RegionDesc LandRegion(std::shared_ptr<const voxel::LandMap> map) {
+        sim::RegionDesc r = DrillRegion();
+        r.heightRange = {-16.0f, 48.0f};
+        sim::SetRegionLand(r, std::move(map));
+        return r;
+    }
+}
+
+TEST(LandSession, AClientWithTheSameMapJoinsAndBuildsTheServersWorld) {
+    const auto map = Bake(SmallIsland());
+    Session s(Settings(LandRegion(map)));
+    ASSERT_TRUE(s.started);
+    s.autoAttach = false;
+    net::ClientSettings cs;
+    const auto own = Bake(SmallIsland());          // the client's own bake of the same files
+    cs.landMap = [own] { return own; };
+    Session::Bot& bot = s.AddClient(cs);
+    for (int i = 0; i < 5 && bot.client->State() != net::ClientState::Welcomed; ++i) s.Tick();
+    ASSERT_EQ(bot.client->State(), net::ClientState::Welcomed);
+    EXPECT_EQ(bot.client->Region().generator, sim::RegionGenerator::Land);
+    EXPECT_EQ(bot.client->Region().landHash, voxel::LandHash(*map));
+    EXPECT_EQ(bot.client->Stats().probeMismatches, 0u);
+    sim::Simulation world(bot.client->MakeSimulationConfig(bot.base));
+    ASSERT_TRUE(world.Initialize(bot.client->MakeGenerator()));
+    ASSERT_TRUE(bot.client->Attach(world));
+    EXPECT_EQ(bot.client->Hash().hash, s.server.Hash().hash);
+}
+
+TEST(LandSession, AClientWithOtherMapFilesOrNoneFails) {
+    Session s(Settings(LandRegion(Bake(SmallIsland()))));
+    ASSERT_TRUE(s.started);
+    s.autoAttach = false;
+    net::ClientSettings other;
+    const auto moved = Bake(SmallIsland(3.0f));
+    other.landMap = [moved] { return moved; };
+    Session::Bot& a = s.AddClient(other);
+    Session::Bot& b = s.AddClient();               // no map at all
+    for (int i = 0; i < 5; ++i) s.Tick();
+    EXPECT_EQ(a.client->State(), net::ClientState::Failed);
+    EXPECT_EQ(b.client->State(), net::ClientState::Failed);
+}
+
+TEST(LandSession, TheReasonNamesTheFilesOrTheBake) {
+    sim::RegionDesc region = LandRegion(Bake(SmallIsland()));
+    std::string why;
+    sim::RegionDesc a = region;
+    EXPECT_FALSE(sim::CheckRegionLand(a, Bake(SmallIsland(3.0f)), why));
+    EXPECT_NE(why.find("map files differ"), std::string::npos) << why;
+    // The same files baked by other code (here: other bake settings): the files agree, the bake does not.
+    sim::RegionDesc b = region;
+    EXPECT_FALSE(sim::CheckRegionLand(b, Bake(SmallIsland(), 10), why));
+    EXPECT_NE(why.find("another build of the bake"), std::string::npos) << why;
+    sim::RegionDesc c = region;
+    EXPECT_TRUE(sim::CheckRegionLand(c, Bake(SmallIsland()), why));
+    EXPECT_NE(c.land, nullptr);
+}
+
+TEST(LandSession, TheLandHashesTravelInTheWelcomeAndTheSessionFile) {
+    const sim::RegionDesc region = LandRegion(Bake(SmallIsland()));
+    net::SessionConfig config;
+    config.token = TestToken();
+    config.region = region;
+    config.landMap = "assets/world";
+    net::SessionConfig back;
+    std::string error;
+    ASSERT_TRUE(net::ParseSession(net::FormatSession(config), back, error)) << error;
+    EXPECT_EQ(back.region.generator, sim::RegionGenerator::Land);
+    EXPECT_EQ(back.landMap, "assets/world");
+    // The hashes are the bake's, not the file's: a parsed session has none until it is baked.
+    EXPECT_EQ(back.region.landHash, 0u);
+    EXPECT_NE(region.landHash, 0u);
+    EXPECT_NE(region.landSourceHash, 0u);
 }

@@ -25,6 +25,10 @@ export namespace vortex::net {
     struct SessionConfig {
         Token token{};                    ///< `token`: 32 hex digits, compared in plain text.
         sim::RegionDesc region;           ///< `template`, `seed`, `play_min`, `play_max`, `height`, `voxel_size`, `generator`, `flat_ground`, `terrain_seed`
+        /// `land_map`: with `generator = land`, the folder of the drawn world map (the game's assets/world: height.png,
+        /// biome_ids.png, region_ids.png, world.json, points.json), relative to the working directory. LoadSessionFile
+        /// bakes it and attaches the map to `region` (sim::SetRegionLand).
+        std::string landMap;
         uint32_t maxClients = 16;         ///< `max_clients`
         /// `chunk_capacity`: store slots of the server's world. 0 = sim::RegionChunkCapacity: every
         /// cell of the window (the store allocates a chunk only when a slot is used), capped at 2 GiB
@@ -47,6 +51,10 @@ export namespace vortex::net {
     /// names the line); the region is validated with sim::IsValid.
     bool ParseSession(std::string_view text, SessionConfig& out, std::string& error);
     bool LoadSessionFile(const std::filesystem::path& path, SessionConfig& out, std::string& error);
+
+    /// @brief With `generator = land`: bakes the map in `config.landMap` and attaches it (sim::SetRegionLand);
+    /// LoadSessionFile calls it. True with nothing to do for other generators.
+    bool BakeSessionLand(SessionConfig& config, std::string& error);
     /// @brief A session file that ParseSession reads back to `config` (floats written exactly).
     std::string FormatSession(const SessionConfig& config);
     /// @brief 32 hex digits -> 16 bytes.
@@ -58,14 +66,16 @@ export namespace vortex::net {
      * generator the build was made with), voxel::MaterialTableHash(materials) (what carves,
      * island searches and the load check read; shred.md R6) and sim::kPlayerRuleRevision (the
      * movement rule: a client and a server that would move a player differently refuse each
-     * other instead of correcting each other). Two builds that may share a session have equal
-     * values. = BuildHashOf(kProtocolVersion, kGeneratorGoldenHash, MaterialTableHash(materials),
-     * kPlayerRuleRevision).
+     * other instead of correcting each other) and voxel::kLandGoldenHash (the world map's bake and
+     * sampling: land.md "Decision" 3). Two builds that may share a session have equal values.
+     * = BuildHashOf(kProtocolVersion, kGeneratorGoldenHash, MaterialTableHash(materials),
+     * kPlayerRuleRevision, kLandGoldenHash).
      */
     uint64_t BuildHash(const voxel::MaterialLibrary& materials);
     /// @brief The hash BuildHash mixes; a player rule revision of 0 (builds before it existed)
-    /// mixes nothing.
-    uint64_t BuildHashOf(uint32_t protocol, uint64_t generatorGolden, uint64_t materialTable, uint32_t playerRule);
+    /// and a land golden hash of 0 (builds before the world map) mix nothing.
+    uint64_t BuildHashOf(uint32_t protocol, uint64_t generatorGolden, uint64_t materialTable, uint32_t playerRule,
+                         uint64_t landGolden = 0);
 
     /// Probe chunks per session (networking.md "Region start-up": 64).
     inline constexpr uint32_t kProbeChunks = 64;

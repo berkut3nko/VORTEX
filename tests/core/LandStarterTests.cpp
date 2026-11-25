@@ -82,7 +82,7 @@ namespace {
 TEST(LandStarter, GoldenHash) {
     const uint64_t hash = LandHash(Baked());
     std::printf("LandStarter golden hash: 0x%016llxull\n", static_cast<unsigned long long>(hash));
-    EXPECT_EQ(hash, 0x542be84666ab3296ull);
+    EXPECT_EQ(hash, kLandStarterGoldenHash);
 }
 
 TEST(LandStarter, TheSiteKeepsTheCastleDraftsHeights) {

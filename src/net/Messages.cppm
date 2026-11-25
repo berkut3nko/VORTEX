@@ -32,7 +32,8 @@ export namespace vortex::net {
     /// KillNotice 23, CastRejection NoCharge 4 / Dead 5).
     /// 12: [mech-1] (EntityKind::Mechanism, MechanismMove 37, the owner block's lastUseTick / useResult, PlayerButton_Use
     /// 16; EntityHold 41, EntityRelease 42, kObjectHeld, the remote record's holdPitch).
-    inline constexpr uint16_t kProtocolVersion = 12;
+    /// 13: [land-5] (RegionGenerator::Land 2; the region's landHash and landSourceHash in Welcome).
+    inline constexpr uint16_t kProtocolVersion = 13;
 
     /// @brief First byte of every message. Wire format.
     enum class MessageType : uint8_t {

@@ -138,9 +138,13 @@ namespace vortex::net {
             } else if (key == "generator") {
                 if (value == "terrain") r.generator = sim::RegionGenerator::Terrain;
                 else if (value == "flat") r.generator = sim::RegionGenerator::Flat;
+                else if (value == "land") r.generator = sim::RegionGenerator::Land;
                 else ok = false;
             } else if (key == "flat_ground") {
                 ok = Number(value, r.flatGroundVoxels);
+            } else if (key == "land_map") {
+                config.landMap = std::string(value);
+                ok = !config.landMap.empty();
             } else if (key == "max_clients") {
                 ok = Number(value, config.maxClients) && config.maxClients >= 1 && config.maxClients <= 255;
             } else if (key == "chunk_capacity") {
@@ -272,6 +276,30 @@ namespace vortex::net {
             error = path.string() + ": " + error;
             return false;
         }
+        if (!BakeSessionLand(out, error)) {
+            error = path.string() + ": " + error;
+            return false;
+        }
+        return true;
+    }
+
+    bool BakeSessionLand(SessionConfig& config, std::string& error) {
+        if (config.region.generator != sim::RegionGenerator::Land) return true;
+        if (config.landMap.empty()) {
+            error = "generator = land needs land_map (the world map's folder)";
+            return false;
+        }
+        voxel::LandSource source;
+        if (!voxel::LoadLandSource(config.landMap, source, error)) return false;
+        auto map = std::make_shared<const voxel::LandMap>(voxel::BakeLand(source));
+        if (const std::string broken = voxel::CheckLand(*map); !broken.empty()) {
+            error = "the world map breaks a rule: " + broken;
+            return false;
+        }
+        sim::SetRegionLand(config.region, std::move(map));
+        const voxel::LandMap& m = *config.region.land;
+        Log::Info("Land: {} baked in {:.2f} s, hash {:016x}, files {:016x}", config.landMap, m.seconds.total, config.region.landHash,
+                  config.region.landSourceHash);
         return true;
     }
 
@@ -286,7 +314,10 @@ namespace vortex::net {
         s += std::format("play_max = {} {}\n", r.playMaxChunk.x, r.playMaxChunk.y);
         s += std::format("height = {} {}\n", r.heightRange.x, r.heightRange.y);
         s += std::format("voxel_size = {}\n", r.terrain.voxelSize);
-        s += std::format("generator = {}\n", r.generator == sim::RegionGenerator::Flat ? "flat" : "terrain");
+        s += std::format("generator = {}\n", r.generator == sim::RegionGenerator::Flat   ? "flat"
+                                             : r.generator == sim::RegionGenerator::Land ? "land"
+                                                                                         : "terrain");
+        if (!c.landMap.empty()) s += std::format("land_map = {}\n", c.landMap);
         s += std::format("flat_ground = {}\n", r.flatGroundVoxels);
         s += std::format("max_clients = {}\n", c.maxClients);
         s += std::format("chunk_capacity = {}\n", c.chunkCapacity);
@@ -313,17 +344,19 @@ namespace vortex::net {
         return s;
     }
 
-    uint64_t BuildHashOf(uint32_t protocol, uint64_t generatorGolden, uint64_t materialTable, uint32_t playerRule) {
+    uint64_t BuildHashOf(uint32_t protocol, uint64_t generatorGolden, uint64_t materialTable, uint32_t playerRule, uint64_t landGolden) {
         uint64_t h = voxel::HashMix64(0x56425549ull, protocol);   // "VBUI"
         h = voxel::HashMix64(h, generatorGolden);
         h = voxel::HashMix64(h, materialTable);
         // Revision 0 mixes nothing, so the hash of a build before the revision existed is unchanged
-        // only for that build; every revision from 1 on gives another hash.
-        return playerRule == 0 ? h : voxel::HashMix64(h, playerRule);
+        // only for that build; every revision from 1 on gives another hash. The land golden hash alike.
+        if (playerRule != 0) h = voxel::HashMix64(h, playerRule);
+        return landGolden == 0 ? h : voxel::HashMix64(h, landGolden);
     }
 
     uint64_t BuildHash(const voxel::MaterialLibrary& materials) {
-        return BuildHashOf(kProtocolVersion, voxel::kGeneratorGoldenHash, voxel::MaterialTableHash(materials), sim::kPlayerRuleRevision);
+        return BuildHashOf(kProtocolVersion, voxel::kGeneratorGoldenHash, voxel::MaterialTableHash(materials), sim::kPlayerRuleRevision,
+                           voxel::kLandGoldenHash);
     }
 
     namespace {

@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| Status | `[land-1]` built: the world map comes from the owner's drawn image through `tools/worldmap/worldmap.py` (the game's [world-map.md](../../../docs/world/world-map.md)). `[land-2]` built: `voxel::BakeLand` (`vortex.voxel:land`) erodes the coarse grid and finds its lakes and rivers; `vortex_land` bakes the drawn map and writes the review pictures ("The bake as built"). `[land-3]` built: `voxel::CreateLandGenerator` makes the chunks from the baked map; the offline game walks the island with `--land` ("From the map to voxels"). `[land-4]` built: `voxel::BakeLandStarter` bakes the starter region's fine grid, Hollowkeep's site, the points of interest, the cave and the roads ("The starter region as built"). Sessions do not use the map yet (`[land-5]`). |
+| Status | `[land-1]` built: the world map comes from the owner's drawn image through `tools/worldmap/worldmap.py` (the game's [world-map.md](../../../docs/world/world-map.md)). `[land-2]` built: `voxel::BakeLand` (`vortex.voxel:land`) erodes the coarse grid and finds its lakes and rivers; `vortex_land` bakes the drawn map and writes the review pictures ("The bake as built"). `[land-3]` built: `voxel::CreateLandGenerator` makes the chunks from the baked map; the offline game walks the island with `--land` ("From the map to voxels"). `[land-4]` built: `voxel::BakeLandStarter` bakes the starter region's fine grid, Hollowkeep's site, the points of interest, the cave and the roads ("The starter region as built"). `[land-5]` built: a session plays on the map (`generator = land`); each side bakes its own copy and the client compares the baked map's hash ("The map in a session"). |
 | Decided | The owner, 2026-11-25 (answers to the research notes' questions, [map-and-castle-research.md](../../../docs/world/map-and-castle-research.md) section 6): see "The owner's answers". Us (this design, 2026-11-25): "Decision" items 1-9, the starter site in "The starter region". |
-| Next | The owner walks the island and the starter region (`--land`, owner checks 26 and 27) and reviews `land_starter.png`; then `[land-5]` (the map in a session). |
+| Next | The owner walks the island and the starter region (owner checks 26 and 27), plays the land session on two machines (owner check 28) and measures the bake on the UHD 620 laptop. Every stage of this design is built; what follows is worldgen's structures on the map (worldgen.md). |
 | Open | "Open questions (with the answer we recommend)". |
 | Marks | (e) is an estimate; every stage names the measurement that confirms or kills it. Code claims were read at engine `6fdd9e5` (`voxel/Generator.cppm` `TerrainSettings`, `TerrainHeight`; the build ceiling and the full-height window). |
 
@@ -254,8 +254,8 @@ coarse bake (`LandStarter.GoldenHash` pins it).
 (`{"kind": "village", "x": 2428.5, "z": 784.5}`, map metres from the map's corner). Copied into the map folder
 (`assets/world/points.json`) and edited, each kind it names is placed there instead of scored (crossings are
 ignored: the roads find them); a castle from the file takes the rotation whose neck faces the highest ground.
-`LandStarter.PointsJsonPlacesPointsAndReadsBack`. The map id (world-map.md) does not cover points.json yet:
-`[land-5]` adds it; the baked map hash already does (Decision 3).
+`LandStarter.PointsJsonPlacesPointsAndReadsBack`. The map id (world-map.md) and the baked map hash both cover
+points.json (Decision 3).
 
 **The first map (2026-11-25, m):** the starter bake takes 0.2-0.5 s. The site stands at (2356.5, 964.5) map m,
 neck to the west, field 17.0 m, at the ridge's southern foot above the grassland's south-west corner (fit
@@ -321,15 +321,41 @@ generation) and exits 0 (m).
 chunks), against 205-226 us for the built-in terrain generator (11 322 chunks): inside the budget "no slower than
 today's generator".
 
-Still to come: the map in a session (`[land-5]`): each side bakes it and the join compares the baked map hash
-(Decision 3); the golden hashes of the bake and the sampling join `buildHash`.
+### The map in a session (`[land-5]`)
+
+- **The region:** `sim::RegionGenerator::Land` (2, protocol 13). `RegionDesc` carries the server's `landHash`
+  (`voxel::LandHash` of its bake) and `landSourceHash` (`voxel::LandSourceHash`: every pixel of the map files, the
+  starter region and the owner's points) in `Welcome`, and holds this process's own baked map in `land` (never on
+  the wire). `sim::MakeRegionGenerator` makes `voxel::CreateLandGenerator(land)` with the map's centre at the world
+  origin (`sim::RegionLandSettings`).
+- **The server:** a session file with `generator = land` and `land_map = DIR` (relative to the working directory);
+  `net::LoadSessionFile` bakes it (`net::BakeSessionLand`, `voxel::CheckLand` must pass) and attaches it
+  (`sim::SetRegionLand`), logging `Land: DIR baked in T s, hash H, files F`. `engine/tools/server/sessions/land.session`:
+  256 m around the village, the castle's site and the cave (chunks 160..224 x -110..-46), run from the game's root.
+- **A client:** `ClientSettings::landMap` gives its own baked map. At the Welcome of a land region the client
+  compares (`sim::CheckRegionLand`): equal baked hashes attach its map and it plays on; otherwise it fails with the
+  reason - its map files differ (the source hashes differ), the same files bake to another map (another build of the
+  bake), or it has no map. The game bakes `--land DIR` (default `assets/world`) in the background from the start of
+  a `--connect` / `--join` run, so the Welcome waits only for what is left of it; it then exits 1 with `Session:
+  HOST answered, and this client could not take its session`. `vortex_bot --land DIR` bakes before it connects;
+  vortex_server's own bots share the server's map.
+- **Builds:** `voxel::kLandGoldenHash` (the three golden hashes) is part of `buildHash`: builds that bake or sample
+  differently refuse each other at the Hello (`Build`), before any map is compared.
+- **Measured (2026-11-25, m):** `vortex_server --session=engine/tools/server/sessions/land.session --drill=60
+  --clients=2`: the bake 2.9 s, the region loaded in 4.0 s (9096 dense / 7904 packed chunks, 9.6 MiB RLE); both
+  bots 0 probe mismatches, `hashes equal`, entities agree (the full-window bots took 62-64 s to load, against
+  105-114 s on arena250 with the same options). Over UDP (G15's way, port 27016): a headless game client baked its
+  own map in 3.0 s while it connected and its world hash equalled the server's over its box; a client with an edited
+  points.json (`--land` on a copy) failed with "this client's map files differ from the server's" and exit 1.
+  `LandSession.*` (same map joins and hashes equal; other files or none fail; the reason names the files or the
+  bake; the session file round-trips).
 
 ## Budgets (e)
 
 | Item | Target | Measured in |
 |---|---|---|
 | Bake at start (server and each client) | under 30 s for the island and the starter region | `[land-2]`: the island's coarse grid 3.0 s (m); `[land-4]`: the starter region 0.2-0.5 s more (m) |
-| Bake on the owner's UHD 620 laptop (a client's join) | under 10 s (e) | `[land-5]` |
+| Bake on the owner's UHD 620 laptop (a client's join) | under 10 s (e) | the owner (check 28); here 2.9-3.2 s (m) |
 | Chunk generation from the map | no slower than today's generator per chunk | `[land-3]`: 50 us against 205-226 us (m) |
 | Map image | 2048 x 1365 pixels, under 1 s to render | `[land-1]` |
 
@@ -341,7 +367,7 @@ Still to come: the map in a session (`[land-5]`): each side bakes it and the joi
 | `[land-2]` | Erosion and water: L3, L4 on the coarse grid; lakes and rivers on the image. **Built** ("The bake as built") | the bake time (done: 3.0 s); lakes have one level each and every river reaches the sea or a lake (done: `voxel::CheckLand`, `Land.*`); the owner reviews the pictures |
 | `[land-3]` | Voxels from the map, offline: the coarse grid everywhere, biome materials, water at its levels; walking the island in the offline game. **Built** ("From the map to voxels") | chunk generation cost (done: 50 us per chunk, the built-in terrain 205-226 us); golden hash of the sampling (done: `LandSampling.GoldenHash`); the owner walks it (owner check 26) |
 | `[land-4]` | The starter region: the fine grid, strata cliffs, Hollowkeep's site template, points of interest, roads (L6-L8). **Built** ("The starter region as built") | the castle draft's heights hold on the site (done: `LandStarter.TheSiteKeepsTheCastleDraftsHeights`); roads reach every point (done: `LandStarter.EveryRoadReachesItsPointWithinTheGrade`); the owner walks it (owner check 27) |
-| `[land-5]` | In a session: the server and each client bake the map from their own files; the join compares the baked map hash (and names the map id that differs); clients generate from their own bake; the bake's and the sampling's golden hashes join `buildHash`; the map id covers points.json | a client with an edited map file is refused with the reason; world hashes equal across clients over the island; the bake time on the UHD 620 laptop; a restart with the same files gives the same world |
+| `[land-5]` | In a session: the server and each client bake the map from their own files; the join compares the baked map hash (and names what differs); clients generate from their own bake; the bake's and the sampling's golden hashes join `buildHash`; the map id covers points.json. **Built** ("The map in a session") | a client with an edited map file is refused with the reason (done: UDP run and `LandSession.AClientWithOtherMapFilesOrNoneFails`); world hashes equal across clients (done: the drill, `hashes equal`); the bake time on the UHD 620 laptop (the owner, check 28); a restart with the same files gives the same world (the golden hashes) |
 
 The order relative to the ROADMAP (`[wg-W1]`, `[mag-1]`, the demo work) is the owner's call; `[land-1]` is a tool and
 touches no runtime code.

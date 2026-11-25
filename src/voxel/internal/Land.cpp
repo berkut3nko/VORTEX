@@ -586,6 +586,7 @@ namespace vortex::voxel {
         auto t = Clock::now();
         Resample(source, settings, m);
         m.starterRegion = source.starterRegion;
+        m.sourceHash = LandSourceHash(source);
         Hardness(settings, m);
         m.heights = m.rawHeights;
         const std::vector<float> floorH = ErosionFloor(settings, m);
@@ -612,6 +613,21 @@ namespace vortex::voxel {
         m.seconds.starter = Since(t);
         m.seconds.total = Since(start);
         return m;
+    }
+
+    uint64_t LandSourceHash(const LandSource& s) {
+        uint64_t h = Mix(0x4c414e44534f5552ull ^ (uint64_t(uint32_t(s.width)) << 32 | uint32_t(s.height)));   // "LANDSOUR"
+        auto put = [&](uint64_t v) { h = Mix(h ^ v) + 0x9e3779b97f4a7c15ull; };
+        put(std::bit_cast<uint32_t>(s.metresPerPixel) ^ uint64_t(uint32_t(s.starterRegion)) << 32);
+        for (size_t i = 0; i < s.heights.size(); ++i) {
+            const uint64_t b = i < s.biomes.size() ? s.biomes[i] : 0, r = i < s.regions.size() ? s.regions[i] : 0;
+            put(std::bit_cast<uint32_t>(s.heights[i]) ^ b << 32 ^ r << 40);
+        }
+        for (const LandPoint& p : s.points) {
+            put(std::bit_cast<uint32_t>(p.x) ^ uint64_t(std::bit_cast<uint32_t>(p.z)) << 32);
+            put(uint64_t(p.kind));
+        }
+        return h;
     }
 
     uint64_t LandHash(const LandMap& m) {

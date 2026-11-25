@@ -74,6 +74,11 @@ namespace vortex::net {
             glm::length(w.gravity) > 1000.0f)
             return Fail("the server's gravity is invalid");
         if (!SameWorldMaterials(w.region.terrain.materials, ids)) return Fail("the server's material ids differ from this build's");
+        // The world map: no map travels; this client bakes its own and compares (land.md "Decision" 3).
+        if (w.region.generator == sim::RegionGenerator::Land) {
+            std::shared_ptr<const voxel::LandMap> own = settings.landMap ? settings.landMap() : nullptr;
+            if (!sim::CheckRegionLand(w.region, std::move(own), why)) return Fail(why);
+        }
         // Probe coordinates are network input too: a generator only ever runs inside the window.
         if (w.probes.size() > kProbeChunks) return Fail("malformed Welcome: too many probe chunks");
         const glm::ivec3 min = sim::RegionWindowMinChunk(w.region), size = sim::RegionWindowSize(w.region);

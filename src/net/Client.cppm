@@ -91,6 +91,10 @@ export namespace vortex::net {
         /// Wraps the region's generator (MakeGenerator, and the probe hashes at the Welcome): tests and
         /// vortex_server's broken bots (--bot-broken-chunk) give a client another generator. Empty = none.
         std::function<std::shared_ptr<voxel::IWorldGenerator>(std::shared_ptr<voxel::IWorldGenerator>)> wrapGenerator;
+        /// The world map this client bakes from its own files (land.md "Decision" 3): called once, when a Welcome
+        /// names a land region; it may wait for a bake started earlier. The client compares its baked map hash with
+        /// the server's (sim::CheckRegionLand) and fails with the reason when they differ. Unset: a land region fails.
+        std::function<std::shared_ptr<const voxel::LandMap>()> landMap;
         /// Tests: a live entity event (EntitySpawn of a NetId, EntityDespawn, EntityRest, ObjectModel,
         /// EntityWake) for which this returns true is dropped as if it never came (an EntityCheck
         /// mismatch to repair). Empty = none.

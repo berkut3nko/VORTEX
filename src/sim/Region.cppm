@@ -22,6 +22,7 @@ export namespace vortex::sim {
     enum class RegionGenerator : uint8_t {
         Terrain = 0,   ///< voxel::CreateTerrainGenerator(RegionDesc::terrain)
         Flat = 1,      ///< voxel::CreateFlatGenerator(flatGroundVoxels, grass, stone): tests and drills
+        Land = 2,      ///< voxel::CreateLandGenerator(RegionDesc::land): the baked world map (land.md [land-5])
     };
 
     /// @brief Region templates a server knows. Values are wire format (never renumber).
@@ -49,6 +50,14 @@ export namespace vortex::sim {
         glm::vec2 heightRange{-48.0f, 128.0f};
         RegionGenerator generator = RegionGenerator::Terrain;
         int32_t flatGroundVoxels = 0;          ///< Flat: voxels y < this are ground.
+        /// Land (land.md "Decision" 3): the server's baked map (voxel::LandHash) and its inputs
+        /// (voxel::LandSourceHash). No map travels: each side bakes its own and a client compares
+        /// (CheckRegionLand).
+        uint64_t landHash = 0;
+        uint64_t landSourceHash = 0;
+        /// Land: this process's own baked map (never on the wire): the server's from its session file
+        /// (SetRegionLand), a client's attached after CheckRegionLand. Not compared by operator==.
+        std::shared_ptr<const voxel::LandMap> land;
         /// The terrain (and the session's voxel size). `materials` are the default world
         /// material ids; Flat uses `materials.grass` / `materials.stone`.
         voxel::TerrainSettings terrain;
@@ -98,8 +107,23 @@ export namespace vortex::sim {
     /// @brief A point whose window (World::LoadBlocking / Update) is RegionWindowMinChunk: the
     /// middle of the chunk the window centres on, at the middle of the height range.
     glm::dvec3 RegionWindowFocus(const RegionDesc& region);
-    /// @brief The region's generator. `ids` = the default world materials of this process.
+    /// @brief The region's generator. `ids` = the default world materials of this process. A Land region
+    /// needs its `land` map attached (nullptr without it).
     std::shared_ptr<voxel::IWorldGenerator> MakeRegionGenerator(const RegionDesc& region, const voxel::WorldMaterials& ids);
+
+    /// @brief The land generator's settings for a region: its voxel size, `ids`, the map's centre at the
+    /// world origin.
+    voxel::LandGeneratorSettings RegionLandSettings(const RegionDesc& region, const voxel::LandMap& map, const voxel::WorldMaterials& ids);
+
+    /// @brief A server's land region: attaches `map` and sets the hashes the Welcome carries.
+    void SetRegionLand(RegionDesc& region, std::shared_ptr<const voxel::LandMap> map);
+
+    /**
+     * @brief A client's check of a Welcome's land region against its own baked map: equal baked map hashes
+     * attach `map` and return true. Otherwise `why` says what differs: the map files (the source hashes
+     * differ) or only the bake (the same files baked by different code).
+     */
+    bool CheckRegionLand(RegionDesc& region, std::shared_ptr<const voxel::LandMap> map, std::string& why);
     /// @brief The blast centre (floor(centre / 16)) lies inside the play bounds and the world's rows.
     bool InPlayBounds(const RegionDesc& region, const voxel::World& world, const voxel::SphereQ& sphere);
     /**

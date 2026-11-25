@@ -235,7 +235,8 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
   server (a confirmed hold only).
 - Also wire format: `WindowUpdate::kTerrainMode` (2) and `kReset`, `EntityKind` (1 `Light`, 2 `Object`, 3 `Mechanism`),
   `scene::DespawnReason` (1 `Destroyed`, 2 `ToRubble`, 3 `Broken`), `PlayerButton` (1 `Jump`, 2 `Run`, 4 `Cast`, 8
-  `Crate`, 16 `Use`), `RegionGenerator` (0 `Terrain`, 1 `Flat`), `RegionTemplateId` (0 `Empty`, 1 `Playground`),
+  `Crate`, 16 `Use`), `RegionGenerator` (0 `Terrain`, 1 `Flat`, 2 `Land` since protocol 13: the region then carries
+  `landHash` and `landSourceHash`, 8 bytes each, after `flatGroundVoxels`), `RegionTemplateId` (0 `Empty`, 1 `Playground`),
   `RefuseReason` (1 `Protocol`, 2 `Build`, 3 `Token`, 4 `Full`, 5 `Malformed`; 6 retired), `CastRejection` (0-5).
 
 Ordering, the base rule and sync

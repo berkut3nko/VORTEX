@@ -1287,8 +1287,10 @@ the tests. The wire values (message types, event kinds, refusals, enums) and
   bot and a headless game client, and compares their hashes and objects at exit.
 * **Agreement.** `net::RegionHash` is `voxel::WorldHash` over the region window; probe chunks in `Welcome` compare
   the generators; `buildHash` covers the protocol version, the generator's golden values
-  (`voxel::kGeneratorGoldenHash`), the material table (`voxel::MaterialTableHash`) and the movement rule's revision
-  (`sim::kPlayerRuleRevision`), so another build is refused. Which build a process is (both commits, build type,
+  (`voxel::kGeneratorGoldenHash`), the material table (`voxel::MaterialTableHash`), the movement rule's revision
+  (`sim::kPlayerRuleRevision`) and the world map's bake and sampling (`voxel::kLandGoldenHash`, land.md "Decision" 3),
+  so another build is refused. A land region's map is never sent: each side bakes its own and the client compares the
+  baked map's hash with the Welcome's (`sim::CheckRegionLand`). Which build a process is (both commits, build type,
   compiler, CPU flags) is its `Build:` line (`vortex::DescribeBuild`, `--version`); it is not part of `buildHash`.
 
 ## 8. Editor

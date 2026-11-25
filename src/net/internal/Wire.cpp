@@ -672,6 +672,8 @@ namespace vortex::net {
         out.F32(region.heightRange.y);
         out.U8(static_cast<uint8_t>(region.generator));
         out.I32(region.flatGroundVoxels);
+        out.U64(region.landHash);
+        out.U64(region.landSourceHash);
         const voxel::TerrainSettings& t = region.terrain;
         out.U32(t.seed);
         out.F32(t.voxelSize);
@@ -699,6 +701,8 @@ namespace vortex::net {
         region.heightRange.y = in.F32();
         region.generator = static_cast<sim::RegionGenerator>(in.U8());
         region.flatGroundVoxels = in.I32();
+        region.landHash = in.U64();
+        region.landSourceHash = in.U64();
         voxel::TerrainSettings& t = region.terrain;
         t.seed = in.U32();
         t.voxelSize = in.F32();
