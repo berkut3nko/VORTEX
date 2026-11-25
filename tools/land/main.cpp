@@ -154,7 +154,7 @@ int main(int argc, char** argv) {
         const auto shared = std::make_shared<const LandMap>(map);
         LandGeneratorSettings landSettings;
         landSettings.materials = ids;
-        landSettings.origin = CenteredLandOrigin(*shared);
+        landSettings.origin = LandWorldOrigin(*shared);
         const glm::vec2 spawn = LandSpawn(*shared, landSettings);
         const float chunkMetres = float(kChunkSize) * landSettings.voxelSize;
         const glm::ivec2 centre(int(std::floor(spawn.x / chunkMetres)), int(std::floor(spawn.y / chunkMetres)));

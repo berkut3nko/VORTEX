@@ -152,7 +152,7 @@ namespace vortex::sim {
         voxel::LandGeneratorSettings s;
         s.voxelSize = region.terrain.voxelSize;
         s.materials = ids;
-        s.origin = voxel::CenteredLandOrigin(map);
+        s.origin = voxel::LandWorldOrigin(map);
         return s;
     }
 

@@ -1,5 +1,5 @@
 # The starter region of the owner's drawn world map (docs/design/land.md [land-5]): 256 m (64 x 64 chunks of 4 m at
-# 0.125 m) around the village, Hollowkeep's site and the cave, -48..128 m. The map is not sent: the server bakes it from
+# 0.125 m) around the village (the world origin), Hollowkeep's site and the cave, -48..128 m. The map is not sent: the server bakes it from
 # land_map (relative to the working directory: run from the game's root), and every client bakes its own copy and
 # compares the baked map's hash at the Welcome.
 #   vortex_server --session=engine/tools/server/sessions/land.session --drill=60 --clients=2
@@ -7,8 +7,8 @@
 token = 7a3f19c2e4b80d5661a2c3e4f5061728
 template = empty
 seed = 1337
-play_min = 160 -110
-play_max = 224 -46
+play_min = -47 -7
+play_max = 17 57
 height = -48 128
 voxel_size = 0.125
 generator = land

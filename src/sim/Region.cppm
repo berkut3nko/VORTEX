@@ -111,8 +111,8 @@ export namespace vortex::sim {
     /// needs its `land` map attached (nullptr without it).
     std::shared_ptr<voxel::IWorldGenerator> MakeRegionGenerator(const RegionDesc& region, const voxel::WorldMaterials& ids);
 
-    /// @brief The land generator's settings for a region: its voxel size, `ids`, the map's centre at the
-    /// world origin.
+    /// @brief The land generator's settings for a region: its voxel size, `ids`, the starter village at the
+    /// world origin (voxel::LandWorldOrigin).
     voxel::LandGeneratorSettings RegionLandSettings(const RegionDesc& region, const voxel::LandMap& map, const voxel::WorldMaterials& ids);
 
     /// @brief A server's land region: attaches `map` and sets the hashes the Welcome carries.

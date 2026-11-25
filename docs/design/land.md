@@ -311,10 +311,12 @@ the world origin; outside the map the border cells (the sea) continue.
 - **Spawn** (`voxel::LandSpawn`): the dry cell nearest the starter region's middle whose 3 x 3 cells differ by at
   most 0.5 m and with no water within 3 cells.
 
-**The game:** `Shredborne --land [DIR]` (offline only; default `assets/world`) bakes the map at start (about 3 s),
-logs `Land: DIR baked in T s, hash H: ...; spawn at (x, z) m in region R`, generates the world from it and starts
-the player at the spawn (`Land: player at ...`), with no plaza. On the first map the spawn is (854, -414) m in the
-starter grassland. A headless run of 400 frames fills the window in 0.2 s (14 891 chunks, 7186 dense, in 1.07 s of
+**The game:** the world map is the offline game's terrain (2026-11-25; `--terrain classic` keeps the old noise
+terrain). It bakes `assets/world` at start (about 3 s), logs `Land: DIR baked in T s, hash H: ...; spawn at (x, z) m in
+region R`, and generates the world from it with the starter village at the world origin (`voxel::LandWorldOrigin`;
+sessions use the same origin, `sim::RegionLandSettings`). The sandbox (plaza, yard, playground castle) is built
+beside the village, so every offline gate (G3-G10, G21) runs on the island; `--land [DIR]` leaves the sandbox out and
+starts the player in the village (`Land: player at ...`). A headless run of 400 frames fills the window in 0.2 s (14 891 chunks, 7186 dense, in 1.07 s of
 generation) and exits 0 (m).
 
 **Cost (m, `vortex_land --chunk-cost`, one thread):** 50 us per chunk over 32 x 32 columns around the spawn (6224

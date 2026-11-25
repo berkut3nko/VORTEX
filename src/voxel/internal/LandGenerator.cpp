@@ -534,6 +534,12 @@ namespace vortex::voxel {
         return glm::vec2(-0.5f * float(map.width) * map.cellSize, -0.5f * float(map.height) * map.cellSize);
     }
 
+    glm::vec2 LandWorldOrigin(const LandMap& map) {
+        for (const LandPoint& p : map.points)
+            if (p.kind == LandPointKind::Village) return glm::vec2(-p.x, -p.z);
+        return CenteredLandOrigin(map);
+    }
+
     std::shared_ptr<IWorldGenerator> CreateLandGenerator(std::shared_ptr<const LandMap> map, const LandGeneratorSettings& settings) {
         return std::make_shared<LandGenerator>(std::move(map), settings);
     }

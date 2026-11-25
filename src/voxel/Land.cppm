@@ -290,6 +290,10 @@ export namespace vortex::voxel {
     /// @brief The origin that puts the map's centre at the world origin.
     glm::vec2 CenteredLandOrigin(const LandMap& map);
 
+    /// @brief The origin the game and sessions use (land.md "From the map to voxels"): the starter region's village at
+    /// the world origin when the bake placed one, else the map's centre (CenteredLandOrigin).
+    glm::vec2 LandWorldOrigin(const LandMap& map);
+
     /**
      * @brief The chunk generator of the baked map: ground height, biome materials, water at its fixed levels and
      * trees. A pure function of (map, settings, chunk coordinate); its height and water are pinned bit for bit by
