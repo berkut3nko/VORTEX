@@ -607,6 +607,9 @@ namespace vortex::voxel {
         t = Clock::now();
         Rivers(settings, m);
         m.seconds.rivers = Since(t);
+        t = Clock::now();
+        if (settings.starterDetail) BakeLandStarter(source, settings, m);
+        m.seconds.starter = Since(t);
         m.seconds.total = Since(start);
         return m;
     }
@@ -623,6 +626,29 @@ namespace vortex::voxel {
         for (const LandRiver& river : m.rivers) {
             put(river.cells.size() ^ uint64_t(river.end) << 40);
             for (uint32_t c : river.cells) put(c);
+        }
+        const LandFine& f = m.fine;
+        put(uint64_t(uint32_t(f.x0)) << 32 | uint32_t(f.z0));
+        put(uint64_t(uint32_t(f.width)) << 32 | uint32_t(f.height));
+        for (size_t i = 0; i < f.delta.size(); ++i) {
+            put(std::bit_cast<uint32_t>(f.delta[i]) ^ uint64_t(f.surface[i]) << 32 ^ uint64_t(f.detail[i]) << 40);
+        }
+        put(std::bit_cast<uint32_t>(m.site.x) ^ uint64_t(std::bit_cast<uint32_t>(m.site.z)) << 32);
+        put(std::bit_cast<uint32_t>(m.site.fieldHeight) ^ uint64_t(m.site.placed) << 32);
+        for (const LandPoint& p : m.points) {
+            put(std::bit_cast<uint32_t>(p.x) ^ uint64_t(std::bit_cast<uint32_t>(p.z)) << 32);
+            put(uint64_t(p.kind));
+        }
+        for (const LandRoad& road : m.roads) {
+            put(uint64_t(road.from) << 8 | road.to);
+            for (size_t i = 0; i < road.x.size(); ++i) {
+                put(std::bit_cast<uint32_t>(road.x[i]) ^ uint64_t(std::bit_cast<uint32_t>(road.z[i])) << 32);
+                put(std::bit_cast<uint32_t>(road.bed[i]));
+            }
+        }
+        for (int k = 0; k < 2; ++k) {
+            put(std::bit_cast<uint32_t>(m.cave.x[k]) ^ uint64_t(std::bit_cast<uint32_t>(m.cave.z[k])) << 32);
+            put(std::bit_cast<uint32_t>(m.cave.y[k]) ^ uint64_t(m.cave.placed) << 32);
         }
         return h;
     }

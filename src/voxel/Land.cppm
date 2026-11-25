@@ -33,6 +33,17 @@ export namespace vortex::voxel {
     /// @brief Where a river's last cell drains: the sea (or the map border), a lake, or another river.
     enum class RiverEnd : uint8_t { Sea, Lake, River };
 
+    /// @brief Kinds of points of interest (land.md "Points of interest and roads"). Values are file names' order.
+    enum class LandPointKind : uint8_t { Castle = 0, Village = 1, Landing = 2, Cave = 3, Landmark = 4, Crossing = 5 };
+
+    /// @brief A point of interest in map metres (from the map's corner: x east, z south).
+    struct LandPoint {
+        LandPointKind kind = LandPointKind::Village;
+        float x = 0.0f;
+        float z = 0.0f;
+        bool fromFile = false;          ///< placed by the owner's points.json, not scored
+    };
+
     /// @brief The drawn map's fields as the world map tool writes them: one value per pixel, row by row.
     struct LandSource {
         int width = 0;
@@ -42,6 +53,8 @@ export namespace vortex::voxel {
         std::vector<uint8_t> biomes;    ///< LandBiome values
         std::vector<uint8_t> regions;   ///< 0 = water
         int starterRegion = 0;          ///< world.json "starter_region" (0 = none)
+        /// The owner's points.json, when the map folder has one: each kind it names replaces the scored point.
+        std::vector<LandPoint> points;
     };
 
     /**
@@ -76,6 +89,11 @@ export namespace vortex::voxel {
         float riverFreeboard = 0.3f;        ///< water level below the bank
         float reachStep = 0.5f;             ///< river levels are multiples of this
 
+        // L6-L8: the starter region in detail.
+        bool starterDetail = true;
+        float fineMargin = 160.0f;          ///< metres of fine grid around the starter region's box
+        float roadMaxGrade = 0.15f;         ///< steeper road steps are refused (switchbacks appear instead)
+
         // Strata: rock hardness by height bands, tilted by slow noise.
         float strataBand = 5.0f;
         uint64_t seed = 0x4c414e44ull;       ///< "LAND": only the strata and the droplets use it
@@ -103,7 +121,51 @@ export namespace vortex::voxel {
     };
 
     struct LandTimings {
-        double resample = 0, streamPower = 0, thermal = 0, droplets = 0, water = 0, rivers = 0, total = 0;
+        double resample = 0, streamPower = 0, thermal = 0, droplets = 0, water = 0, rivers = 0, starter = 0, total = 0;
+    };
+
+    /// @brief Surface kinds of the fine grid (what the generator puts on top instead of the biome's cover).
+    enum class LandSurface : uint8_t { Natural = 0, Road = 1, Site = 2, StreamBed = 3 };
+
+    /**
+     * @brief The starter region's fine grid (land.md L6): 1 m cells whose height is the coarse height plus `delta`.
+     * Cell (i, j) covers map metres [x0 + i, x0 + i + 1) x [z0 + j, z0 + j + 1); `delta` is 0 on the outer ring, so the
+     * fine grid joins the coarse land with no seam.
+     */
+    struct LandFine {
+        int x0 = 0, z0 = 0;                 ///< map metres of the grid's corner
+        int width = 0, height = 0;          ///< cells (metres)
+        std::vector<float> delta;
+        std::vector<LandSurface> surface;
+        std::vector<uint8_t> detail;        ///< 0-255: how much of the biome's detail noise stays (roads and the site: 0)
+        uint32_t Index(int i, int j) const { return uint32_t(j) * uint32_t(width) + uint32_t(i); }
+        bool Empty() const { return width == 0; }
+    };
+
+    /// @brief Hollowkeep's site (land.md "The starter region"): the castle draft's landform, its neck towards the west.
+    struct LandSite {
+        bool placed = false;
+        float x = 0.0f, z = 0.0f;           ///< map metres of the draft's origin (the middle of the castle)
+        int rotation = 0;                   ///< where the draft's north (its neck) faces: 0 west, 1 north, 2 east, 3 south
+        float fieldHeight = 0.0f;           ///< the approach field and the outer ward (the draft's 0 m)
+        float searchCost = 0.0f;            ///< mean squared metres the land had to move (lower fits better)
+    };
+
+    /// @brief A road (land.md L8): fine-grid points from one point of interest to another, and its bed's heights.
+    struct LandRoad {
+        uint8_t from = 0, to = 0;           ///< indexes into LandMap::points
+        std::vector<float> x, z, bed;       ///< map metres, one per metre of road
+        float length = 0.0f;
+        float maxGrade = 0.0f;              ///< of the bed
+        uint32_t fordCells = 0;
+    };
+
+    /// @brief A cave (land.md L7): a tunnel from its mouth into the hill, ending in a chamber.
+    struct LandCave {
+        bool placed = false;
+        float x[2] = {}, y[2] = {}, z[2] = {};   ///< the tunnel's axis from the mouth to the chamber, map metres
+        float radius = 2.2f;
+        float chamberRadius = 5.0f;
     };
 
     /**
@@ -127,6 +189,11 @@ export namespace vortex::voxel {
         std::vector<LandLake> lakes;
         std::vector<LandRiver> rivers;
         int starterRegion = 0;              ///< the source's, copied
+        LandFine fine;                      ///< the starter region in detail (L6)
+        LandSite site;
+        std::vector<LandPoint> points;      ///< L7
+        std::vector<LandRoad> roads;        ///< L8
+        LandCave cave;
         uint32_t breachedCells = 0;
         uint32_t puddlesFilled = 0;
         uint32_t banksRaised = 0;
@@ -135,12 +202,20 @@ export namespace vortex::voxel {
         uint32_t Index(int x, int z) const { return uint32_t(z) * uint32_t(width) + uint32_t(x); }
     };
 
-    /// @brief Reads `height.png` (16-bit), `biome_ids.png`, `region_ids.png` and the scale from `world.json`.
+    /// @brief Reads `height.png` (16-bit), `biome_ids.png`, `region_ids.png`, the scale from `world.json` and, when the
+    /// folder has one, the owner's `points.json` (see WriteLandPoints).
     bool LoadLandSource(const std::filesystem::path& dir, LandSource& out, std::string& error);
 
     /// @brief Bakes the coarse world map (L3 erosion, L4 water) from the drawn map. Bit for bit the same on every
     /// machine for the same source and settings (no libm function decides a value; Land.BakeGoldenHash).
     LandMap BakeLand(const LandSource& source, const LandSettings& settings = {});
+
+    /**
+     * @brief Bakes the starter region in detail (L6-L8) onto a coarse map: the fine grid with strata cliffs,
+     * Hollowkeep's site, the points of interest (the source's points.json first), the cave and the roads. BakeLand calls
+     * it when LandSettings::starterDetail is set.
+     */
+    void BakeLandStarter(const LandSource& source, const LandSettings& settings, LandMap& map);
 
     /// @brief Hash of everything baked (not the timings).
     uint64_t LandHash(const LandMap& map);
@@ -158,6 +233,30 @@ export namespace vortex::voxel {
      * (shaded relief with water), `land_change.png` (red cut, green raised; full colour at 5 m).
      */
     bool WriteLandFiles(const LandMap& map, const std::filesystem::path& dir, std::string& error);
+
+    /**
+     * @brief Writes `points.json`: the map's points of interest in map metres, one object per point
+     * (`{"kind": "village", "x": 2450.0, "z": 760.0}`). Copied into the map folder and edited, it places those kinds
+     * (the castle: the middle of Hollowkeep's site); crossings are found by the roads and ignored when read.
+     */
+    bool WriteLandPoints(const LandMap& map, const std::filesystem::path& path, std::string& error);
+
+    /// @brief The name of a point kind in points.json ("castle", "village", "landing", "cave", "landmark", "crossing").
+    const char* LandPointName(LandPointKind kind);
+
+    /// @brief The baked coarse height in metres at map metres (Catmull-Rom over the cells, clamped to the 4 nearest).
+    float LandCoarseHeight(const LandMap& map, float mx, float mz);
+
+    /// @brief The fine grid's height correction at map metres (bilinear; 0 outside the fine grid).
+    float LandFineDelta(const LandMap& map, float mx, float mz);
+
+    /**
+     * @brief The castle draft's landform at draft metres (X east, Z south; the castle's middle at 0): the height above the
+     * approach field and the weight (1 in the core, fading to 0 over 30 m outside it). The land is set between
+     * `height - slack` and `height`: the approach field, the castle's footprint and the east slope exactly (slack 0);
+     * the ravines below the west and south cliffs cut down to it, and filled up to at most 4 m below it.
+     */
+    void LandSiteTemplate(float X, float Z, float& height, float& weight, LandSurface& surface, float& slack);
 
     /// @brief How the map becomes voxels (land.md "From the map to voxels", [land-3]).
     struct LandGeneratorSettings {
@@ -191,8 +290,8 @@ export namespace vortex::voxel {
     inline constexpr float kNoLandWater = -1.0e9f;
 
     /**
-     * @brief A dry, fairly level spot (world metres x, z) near the middle of a region, away from water; the map's
-     * starter region when `region` is 0. Without level ground there: the region's least steep dry cell.
+     * @brief A dry, fairly level spot (world metres x, z) near the middle of a region, away from water; with `region` 0
+     * the starter region's village when the bake placed one, else the starter region. Without level ground there: the region's least steep dry cell.
      */
     glm::vec2 LandSpawn(const LandMap& map, const LandGeneratorSettings& settings, int region = 0);
 }

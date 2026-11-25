@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| Status | `[land-1]` built: the world map comes from the owner's drawn image through `tools/worldmap/worldmap.py` (the game's [world-map.md](../../../docs/world/world-map.md)). `[land-2]` built: `voxel::BakeLand` (`vortex.voxel:land`) erodes the coarse grid and finds its lakes and rivers; `vortex_land` bakes the drawn map and writes the review pictures ("The bake as built"). `[land-3]` built: `voxel::CreateLandGenerator` makes the chunks from the baked map; the offline game walks the island with `--land` ("From the map to voxels"). Sessions do not use the map yet (`[land-5]`). |
+| Status | `[land-1]` built: the world map comes from the owner's drawn image through `tools/worldmap/worldmap.py` (the game's [world-map.md](../../../docs/world/world-map.md)). `[land-2]` built: `voxel::BakeLand` (`vortex.voxel:land`) erodes the coarse grid and finds its lakes and rivers; `vortex_land` bakes the drawn map and writes the review pictures ("The bake as built"). `[land-3]` built: `voxel::CreateLandGenerator` makes the chunks from the baked map; the offline game walks the island with `--land` ("From the map to voxels"). `[land-4]` built: `voxel::BakeLandStarter` bakes the starter region's fine grid, Hollowkeep's site, the points of interest, the cave and the roads ("The starter region as built"). Sessions do not use the map yet (`[land-5]`). |
 | Decided | The owner, 2026-11-25 (answers to the research notes' questions, [map-and-castle-research.md](../../../docs/world/map-and-castle-research.md) section 6): see "The owner's answers". Us (this design, 2026-11-25): "Decision" items 1-9, the starter site in "The starter region". |
-| Next | The owner walks the island (`--land`, owner check 26), then `[land-4]` (the starter region in detail). |
+| Next | The owner walks the island and the starter region (`--land`, owner checks 26 and 27) and reviews `land_starter.png`; then `[land-5]` (the map in a session). |
 | Open | "Open questions (with the answer we recommend)". |
 | Marks | (e) is an estimate; every stage names the measurement that confirms or kills it. Code claims were read at engine `6fdd9e5` (`voxel/Generator.cppm` `TerrainSettings`, `TerrainHeight`; the build ceiling and the full-height window). |
 
@@ -203,18 +203,63 @@ mountain ridge (region 6) and ends above the starter grassland. Why this site:
 - The ridge gives the spur its height with no cut terrain: the castle sees over the whole grassland to the sea.
 - Later regions add other site types (ria, island, river crossing, hillside) with their own templates.
 
-`[land-4]` measures where the ridge's east face is high and steep enough (the draft needs about 12 m above the
-ravines) and places the spur there; if no place is high enough, the template raises the spur.
+### The starter region as built (`[land-4]`)
 
-**The site template.** A hand-designed landform at the draft's sizes: the spur with its rock step, the neck and the
-approach field on the ridge side, the two cliffs, the dry ravines, the slope down to the grassland. L6 blends it into the fine grid
-(the skirt formula), and the erosion pass runs after the blend with the template's rock marked hard, so the
-surroundings are eroded naturally and the castle's ground stays as designed.
+`voxel::BakeLandStarter` (`engine/src/voxel/internal/LandStarter.cpp`; `BakeLand` calls it when
+`LandSettings::starterDetail` is set) runs after the rivers, on one thread, with the same determinism rules as the
+coarse bake (`LandStarter.GoldenHash` pins it).
 
-**The rest of the starter region.** The village stands in the grassland below the spur's tip, on the road from the
-coast at the south end (a landing) that climbs the ridge to the approach field. The forest covers the eastern edge
-(region 4); the cave opens in the forest or in the ridge's face (roadmap-and-launch.md 4.2). Roads come from L8, not
-by hand.
+1. **The fine grid (L6):** 1 m cells over the starter region's box and 160 m around it (on the first map 672 x 900
+   m). Its base is the coarse height (`voxel::LandCoarseHeight`); it stores only a correction `delta`, faded to 0 over
+   its outer 16 m, so it meets the coarse land with no seam. Per cell it also holds a surface kind (natural, road,
+   site) and how much of the biome's detail noise stays (none on roads and the site).
+2. **Strata cliffs:** where the coarse cell is hard (hardness 9 or more, dry) and the slope is over 0.4, 4 m bands
+   become benches and cliffs (60 % of each band's height rises gently, the last 40 % steeply), fully over a slope of
+   0.8.
+3. **Hollowkeep's site:** the castle draft's landform (`voxel::LandSiteTemplate`, in draft metres): the approach
+   field (0 m, 96 m wide, 40 m deep north of the castle), the outer ward (0 m) and the inner ward on its rock step
+   (+5 m) set exactly; the east slope 6 m down over 14 m set exactly; the west and south cliffs to the ravines
+   (-11 m and -12 m), whose floors are cut down to the draft and filled up to at most 4 m below it. The core
+   (X +-48 m, Z -80..56 m) has weight 1; a 30 m skirt fades it out, round at the corners; outside the castle's
+   footprint the edges wander by up to 4 m of integer-hash noise (less near the footprint, which stays a rectangle
+   for the walls). The search tries every 8 m of the fine grid and 4 rotations: the middle on mountain ground
+   (any ground outside the starter region if no mountain spot fits), the tip within 150 m of the starter region,
+   the neck's natural ground at least 5 m above the tip's (the neck faces the ridge), the field 8-45 m above the
+   starter region's mean and at most 85 m (the keep's roof stays under the build ceiling); the best least-squares
+   fit of the exact parts wins (ties: rotation, row, column).
+4. **Points of interest (L7):** village (level dry ground of the starter region, 120-400 m from the approach field,
+   near fresh water); landing (dry starter ground at the sea, nearest the village); cave (a slope of 0.5-1.4 outside
+   the starter region, 120-450 m from the village, with rock over a 26 m tunnel falling 2 m and a 5 m chamber; harder
+   ground first); landmark (the highest dry ground of the fine grid); crossings where a road meets a river.
+5. **The cave:** a tunnel of radius 2.2 m uphill into the slope from its mouth, a chamber of radius 5 m at its end,
+   both with flat floors; the generator carves it and lowers the column classes it crosses.
+6. **Roads (L8):** A\* on the fine grid from the village to the approach field, the landing and the cave. A step costs
+   its length times 1 + 30 grade^2 up to the grade limit (0.15) and 60 more per unit of grade above it, so switchbacks
+   win where the slope allows them; sea, lakes and the castle's footprint are closed; a river step costs 6 m more
+   (a ford). The line is smoothed over 7 cells. The bed is the mean of the ground's upper and lower grade envelopes
+   (fords 0.3 m under the river's water), averaged over up to 9 m, then held to 0.15 per metre by a forward pass:
+   every step of every road is at most 0.15 (`LandStarter.EveryRoadReachesItsPointWithinTheGrade`). It is stamped
+   1.6 m either side as dirt, with 2.4 m shoulders.
+
+**The owner's points (`points.json`):** `vortex_land` writes the bake's points to `build/land/points.json`
+(`{"kind": "village", "x": 2428.5, "z": 784.5}`, map metres from the map's corner). Copied into the map folder
+(`assets/world/points.json`) and edited, each kind it names is placed there instead of scored (crossings are
+ignored: the roads find them); a castle from the file takes the rotation whose neck faces the highest ground.
+`LandStarter.PointsJsonPlacesPointsAndReadsBack`. The map id (world-map.md) does not cover points.json yet:
+`[land-5]` adds it.
+
+**The first map (2026-11-25, m):** the starter bake takes 0.2-0.5 s. The site stands at (2356.5, 964.5) map m,
+neck to the west, field 17.0 m, at the ridge's southern foot above the grassland's south-west corner (fit
+125.9 m^2: the ridge face near the grassland is steep, so the site moves much land; the owner can place it with
+points.json). Village (2428, 784), landing (2518, 1098), cave mouth (2308, 784) at 57.6 m, landmark (2210, 836).
+Roads: to the castle 265 m, to the landing 364 m with a ford of 6 cells, to the cave 322 m; each at most 0.150.
+The player starts in the village (`voxel::LandSpawn`). The review picture is `build/land/land_starter.png`
+(relief, water, roads in brown, the site's ground lighter, points as squares).
+
+Known limits of this first pass: the site's cliffs are straight planes of stone; near the field's corners the
+edge noise leaves thin rock fins; the castle stands on a block 10-15 m above low ground at this site; no fine
+erosion pass yet; the village, landing and landmark are points only (their structures come with worldgen.md's
+stages).
 
 ## Points of interest and roads
 
@@ -249,8 +294,11 @@ the world origin; outside the map the border cells (the sea) continue.
   table and its hash do not change).
 - **Trees** on a jittered 5 m grid with a chance per biome (forest 0.55, dark forest 0.7, grassland and mountain
   0.05, desert 0); none in water, under 1.2 m, on steep ground or on mountains over 50 m.
-- **No caves** yet (the cave is a point of interest of `[land-4]`). `ClassifyColumn` agrees with the voxel loop
-  (`LandSampling.ClassifiedRowsAgreeWithTheVoxelLoop`).
+- **The fine grid** (`[land-4]`): inside it the height is the coarse height plus the bilinear `delta`, the detail
+  noise is scaled by the cell's `detail`, and its surface kind replaces the biome's cover: road (dirt), site (grass;
+  stone where steep). The cave is carved from its tunnel and chamber, and the columns it crosses classify down to
+  its floor. `ClassifyColumn` agrees with the voxel loop (`LandSampling.ClassifiedRowsAgreeWithTheVoxelLoop`,
+  `LandStarter.ColumnClassesAgreeAroundTheCaveAndTheSite`).
 - **Spawn** (`voxel::LandSpawn`): the dry cell nearest the starter region's middle whose 3 x 3 cells differ by at
   most 0.5 m and with no water within 3 cells.
 
@@ -264,14 +312,14 @@ generation) and exits 0 (m).
 chunks), against 205-226 us for the built-in terrain generator (11 322 chunks): inside the budget "no slower than
 today's generator".
 
-Still to come: the fine grid of the starter region and its strata cliffs (`[land-4]`); the map in a session, with
-the sampling's golden hash in `buildHash` and the fields in the `RegionPlan` (`[land-5]`).
+Still to come: the map in a session, with the sampling's golden hash in `buildHash` and the fields in the
+`RegionPlan` (`[land-5]`).
 
 ## Budgets (e)
 
 | Item | Target | Measured in |
 |---|---|---|
-| Bake on the server at start | under 30 s for the island and the starter region | `[land-2]`: the island's coarse grid 3.0 s (m); the starter region's fine grid comes in `[land-4]` |
+| Bake on the server at start | under 30 s for the island and the starter region | `[land-2]`: the island's coarse grid 3.0 s (m); `[land-4]`: the starter region 0.2-0.5 s more (m) |
 | Map transfer to a joiner | under 1 MB compressed | `[land-4]` |
 | Chunk generation from the map | no slower than today's generator per chunk | `[land-3]`: 50 us against 205-226 us (m) |
 | Map image | 2048 x 1365 pixels, under 1 s to render | `[land-1]` |
@@ -283,7 +331,7 @@ the sampling's golden hash in `buildHash` and the fields in the `RegionPlan` (`[
 | `[land-1]` | The world map from the owner's drawn image (a tool): biomes, regions, raw heights, review pictures, the map id. **Built** (world-map.md) | the same source gives the same map id on two Python builds (done: `5556ecd6b3b7d86d`); the owner reviews the pictures |
 | `[land-2]` | Erosion and water: L3, L4 on the coarse grid; lakes and rivers on the image. **Built** ("The bake as built") | the bake time (done: 3.0 s); lakes have one level each and every river reaches the sea or a lake (done: `voxel::CheckLand`, `Land.*`); the owner reviews the pictures |
 | `[land-3]` | Voxels from the map, offline: the coarse grid everywhere, biome materials, water at its levels; walking the island in the offline game. **Built** ("From the map to voxels") | chunk generation cost (done: 50 us per chunk, the built-in terrain 205-226 us); golden hash of the sampling (done: `LandSampling.GoldenHash`); the owner walks it (owner check 26) |
-| `[land-4]` | The starter region: the fine grid, strata cliffs, Hollowkeep's site template, points of interest, roads (L6-L8) | the castle draft's heights hold on the site; roads reach every point; the owner walks it |
+| `[land-4]` | The starter region: the fine grid, strata cliffs, Hollowkeep's site template, points of interest, roads (L6-L8). **Built** ("The starter region as built") | the castle draft's heights hold on the site (done: `LandStarter.TheSiteKeepsTheCastleDraftsHeights`); roads reach every point (done: `LandStarter.EveryRoadReachesItsPointWithinTheGrade`); the owner walks it (owner check 27) |
 | `[land-5]` | In a session: the map baked at server start and sent in the plan; clients generate from it | transfer size; hashes equal across clients; a restart with the same seed gives the same world |
 
 The order relative to the ROADMAP (`[wg-W1]`, `[mag-1]`, the demo work) is the owner's call; `[land-1]` is a tool and

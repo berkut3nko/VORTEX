@@ -117,6 +117,35 @@ int main(int argc, char** argv) {
         Log::Error("Land: {}", error);
         return 1;
     }
+    if (!map.fine.Empty()) {
+        const LandFine& f = map.fine;
+        Log::Info("Land: starter region {}: fine grid {} x {} m at ({}, {}) in {:.2f} s", map.starterRegion, f.width, f.height, f.x0, f.z0,
+                  t.starter);
+        if (map.site.placed) {
+            static const char* const kNeck[4] = {"west", "north", "east", "south"};
+            Log::Info("Land: site at ({:.1f}, {:.1f}) m, neck to the {}, field {:.1f} m, fit {:.1f} m^2", map.site.x, map.site.z,
+                      kNeck[map.site.rotation & 3], map.site.fieldHeight, map.site.searchCost);
+        } else {
+            Log::Warn("Land: no site found for Hollowkeep");
+        }
+        std::string points;
+        for (const LandPoint& p : map.points) {
+            points += std::format("{}{} ({:.0f}, {:.0f}){}", points.empty() ? "" : ", ", LandPointName(p.kind), p.x, p.z, p.fromFile ? " from the file" : "");
+        }
+        Log::Info("Land: {} point(s): {}", map.points.size(), points);
+        for (const LandRoad& road : map.roads) {
+            Log::Info("Land: road {} -> {}: {:.0f} m, max grade {:.3f}, {} ford cell(s)", LandPointName(map.points[road.from].kind),
+                      LandPointName(map.points[road.to].kind), road.length, road.maxGrade, road.fordCells);
+        }
+        if (map.cave.placed) {
+            Log::Info("Land: cave from ({:.1f}, {:.1f}, {:.1f}) to ({:.1f}, {:.1f}, {:.1f}) m", map.cave.x[0], map.cave.y[0], map.cave.z[0],
+                      map.cave.x[1], map.cave.y[1], map.cave.z[1]);
+        }
+        if (!WriteLandPoints(map, out / "points.json", error)) {
+            Log::Error("Land: {}", error);
+            return 1;
+        }
+    }
     Log::Info("Land: wrote {}", out.string());
 
     if (args.Has("--chunk-cost")) {

@@ -6,6 +6,7 @@ module;
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -147,6 +148,70 @@ namespace vortex::voxel {
         }
     }
 
+    namespace {
+        /// The starter region's fine grid at 1 m: shaded relief, water, roads in brown, the site's ground lighter, and the
+        /// points of interest as squares (castle red, village yellow, landing white, cave black, landmark violet,
+        /// crossing cyan).
+        bool WriteStarterPicture(const LandMap& m, const std::filesystem::path& path, std::string& error) {
+            const LandFine& f = m.fine;
+            const int w = f.width, h = f.height;
+            std::vector<float> height(size_t(w) * size_t(h));
+            for (int j = 0; j < h; ++j)
+                for (int i = 0; i < w; ++i) {
+                    const float mx = float(f.x0 + i) + 0.5f, mz = float(f.z0 + j) + 0.5f;
+                    height[f.Index(i, j)] = LandCoarseHeight(m, mx, mz) + f.delta[f.Index(i, j)];
+                }
+            std::vector<uint8_t> rgb;
+            rgb.reserve(height.size() * 3);
+            for (int j = 0; j < h; ++j)
+                for (int i = 0; i < w; ++i) {
+                    const uint32_t k = f.Index(i, j);
+                    const float mx = float(f.x0 + i) + 0.5f, mz = float(f.z0 + j) + 0.5f;
+                    const int cx = std::clamp(int(mx / m.cellSize), 0, m.width - 1), cz = std::clamp(int(mz / m.cellSize), 0, m.height - 1);
+                    const uint32_t cell = m.Index(cx, cz);
+                    const float gx = (height[f.Index(std::min(w - 1, i + 1), j)] - height[f.Index(std::max(0, i - 1), j)]) * 0.5f;
+                    const float gz = (height[f.Index(i, std::min(h - 1, j + 1))] - height[f.Index(i, std::max(0, j - 1))]) * 0.5f;
+                    const float len = std::sqrt(gx * gx + 1.0f + gz * gz);
+                    const float shade = std::clamp((gx * 0.577f + 0.577f + gz * 0.577f) / len * 1.25f, 0.2f, 1.3f);
+                    std::array<float, 3> c = BiomeColour(m.biomes[cell]);
+                    if (f.surface[k] == LandSurface::Site) c = {0.70f, 0.78f, 0.52f};
+                    if (f.surface[k] == LandSurface::StreamBed) c = {0.78f, 0.74f, 0.60f};
+                    if (f.surface[k] == LandSurface::Road) c = {0.55f, 0.40f, 0.25f};
+                    for (float& v : c) v *= shade;
+                    if (std::fmod(height[k], 5.0f) < 0.25f && height[k] > 0.0f) {
+                        for (float& v : c) v *= 0.8f;
+                    }
+                    if (m.waterKind[cell] != WaterKind::None && height[k] < m.water[cell]) {
+                        c = m.waterKind[cell] == WaterKind::Sea ? std::array<float, 3>{0.18f, 0.32f, 0.55f}
+                                                                 : std::array<float, 3>{0.25f, 0.56f, 0.88f};
+                        if (f.surface[k] == LandSurface::Road) c = {0.45f, 0.55f, 0.65f};
+                    }
+                    for (float v : c) rgb.push_back(uint8_t(std::clamp(v, 0.0f, 1.0f) * 255.0f));
+                }
+            for (const LandPoint& p : m.points) {
+                std::array<uint8_t, 3> c{255, 255, 255};
+                switch (p.kind) {
+                case LandPointKind::Castle: c = {220, 30, 30}; break;
+                case LandPointKind::Village: c = {250, 220, 40}; break;
+                case LandPointKind::Landing: c = {255, 255, 255}; break;
+                case LandPointKind::Cave: c = {10, 10, 10}; break;
+                case LandPointKind::Landmark: c = {170, 60, 220}; break;
+                case LandPointKind::Crossing: c = {40, 230, 230}; break;
+                }
+                const int pi = int(p.x) - f.x0, pj = int(p.z) - f.z0;
+                for (int dj = -5; dj <= 5; ++dj)
+                    for (int di = -5; di <= 5; ++di) {
+                        const int i = pi + di, j = pj + dj;
+                        if (i < 0 || j < 0 || i >= w || j >= h) continue;
+                        const size_t at = size_t(f.Index(i, j)) * 3;
+                        const bool rim = std::abs(di) == 5 || std::abs(dj) == 5;
+                        for (int ch = 0; ch < 3; ++ch) rgb[at + size_t(ch)] = rim ? 0 : c[size_t(ch)];
+                    }
+            }
+            return WritePng(path, w, h, 2, 8, rgb, error);
+        }
+    }
+
     bool LoadLandSource(const std::filesystem::path& dir, LandSource& out, std::string& error) {
         int w = 0, h = 0, w2 = 0, h2 = 0, w3 = 0, h3 = 0;
         std::vector<uint16_t> heights, biomes, regions;
@@ -178,6 +243,73 @@ namespace vortex::voxel {
         for (size_t i = 0; i < heights.size(); ++i) out.heights[i] = float(heights[i]) / kStepsPerMetre - kHeightOffset;
         out.biomes.assign(biomes.begin(), biomes.end());
         out.regions.assign(regions.begin(), regions.end());
+        out.points.clear();
+        std::error_code ec;
+        if (std::filesystem::exists(dir / "points.json", ec)) {
+            // {"points": [{"kind": "village", "x": 2450.0, "z": 760.0}, ...]}: each object's kind, then its x and z.
+            std::ifstream file(dir / "points.json");
+            const std::string points((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            auto number = [&](size_t from, size_t to, const char* name, float& value) {
+                const size_t at = points.find(name, from);
+                if (at == std::string::npos || at >= to) return false;
+                value = std::strtof(points.c_str() + points.find(':', at) + 1, nullptr);
+                return true;
+            };
+            for (size_t at = points.find("\"kind\""); at != std::string::npos;) {
+                const size_t next = points.find("\"kind\"", at + 6);
+                const size_t end = next == std::string::npos ? points.size() : next;
+                const size_t open = points.find('"', points.find(':', at) + 1);
+                const size_t close = points.find('"', open + 1);
+                const std::string name = points.substr(open + 1, close - open - 1);
+                LandPoint p;
+                p.fromFile = true;
+                bool known = false;
+                for (uint8_t k = 0; k <= uint8_t(LandPointKind::Crossing); ++k) {
+                    if (name == LandPointName(LandPointKind(k))) {
+                        p.kind = LandPointKind(k);
+                        known = true;
+                    }
+                }
+                if (!known || !number(at, end, "\"x\"", p.x) || !number(at, end, "\"z\"", p.z)) {
+                    error = (dir / "points.json").string() + ": a point needs a known kind, x and z ('" + name + "')";
+                    return false;
+                }
+                if (p.kind != LandPointKind::Crossing) out.points.push_back(p);
+                at = next;
+            }
+        }
+        return true;
+    }
+
+    const char* LandPointName(LandPointKind kind) {
+        switch (kind) {
+        case LandPointKind::Castle: return "castle";
+        case LandPointKind::Village: return "village";
+        case LandPointKind::Landing: return "landing";
+        case LandPointKind::Cave: return "cave";
+        case LandPointKind::Landmark: return "landmark";
+        case LandPointKind::Crossing: return "crossing";
+        }
+        return "?";
+    }
+
+    bool WriteLandPoints(const LandMap& m, const std::filesystem::path& path, std::string& error) {
+        std::error_code ec;
+        if (path.has_parent_path()) std::filesystem::create_directories(path.parent_path(), ec);
+        std::ofstream out(path);
+        out << "{\n \"format\": 1,\n \"points\": [\n";
+        for (size_t k = 0; k < m.points.size(); ++k) {
+            const LandPoint& p = m.points[k];
+            char line[160];
+            std::snprintf(line, sizeof line, "  {\"kind\": \"%s\", \"x\": %.1f, \"z\": %.1f}%s\n", LandPointName(p.kind), double(p.x),
+                          double(p.z), k + 1 < m.points.size() ? "," : "");
+            out << line;
+        }
+        out << " ]\n}\n";
+        if (!out) {
+            error = path.string() + ": cannot write";
+            return false;
+        }
         return true;
     }
 
@@ -234,10 +366,13 @@ namespace vortex::voxel {
                 change.push_back(grey);
             }
         }
-        return WritePng(dir / "land_height.png", w, h, 0, 16, height16, error) &&
-               WritePng(dir / "land_water.png", w, h, 0, 16, water16, error) &&
-               WritePng(dir / "land_flow.png", w, h, 0, 8, flow8, error) &&
-               WritePng(dir / "land_relief.png", w, h, 2, 8, relief, error) &&
-               WritePng(dir / "land_change.png", w, h, 2, 8, change, error);
+        if (!(WritePng(dir / "land_height.png", w, h, 0, 16, height16, error) &&
+              WritePng(dir / "land_water.png", w, h, 0, 16, water16, error) &&
+              WritePng(dir / "land_flow.png", w, h, 0, 8, flow8, error) &&
+              WritePng(dir / "land_relief.png", w, h, 2, 8, relief, error) &&
+              WritePng(dir / "land_change.png", w, h, 2, 8, change, error))) {
+            return false;
+        }
+        return m.fine.Empty() || WriteStarterPicture(m, dir / "land_starter.png", error);
     }
 }
