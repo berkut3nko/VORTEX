@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| Status | Designed, nothing built or measured. |
+| Status | `[land-1]` built: the world map comes from the owner's drawn image through `tools/worldmap/worldmap.py` (the game's [world-map.md](../../../docs/world/world-map.md)); the rest is designed, nothing in the engine reads the map yet. |
 | Decided | The owner, 2026-11-25 (answers to the research notes' questions, [map-and-castle-research.md](../../../docs/world/map-and-castle-research.md) section 6): see "The owner's answers". Us (this design, 2026-11-25): "Decision" items 1-9, the starter site in "The starter region". |
-| Next | The owner's review, then `[land-1]` (the world map as 2D fields and as an image, offline tool). |
+| Next | The owner's review of the first map (world-map.md), then `[land-2]`. |
 | Open | "Open questions (with the answer we recommend)". |
 | Marks | (e) is an estimate; every stage names the measurement that confirms or kills it. Code claims were read at engine `6fdd9e5` (`voxel/Generator.cppm` `TerrainSettings`, `TerrainHeight`; the build ceiling and the full-height window). |
 
@@ -26,6 +26,10 @@ minimap; it draws the image this design makes.
 6. **Biomes:** no border inside the starter region; the other regions are bold biomes, the starter region is detailed.
 7. **Roads:** static, baked by procedural generation at each server restart, from the points of interest and the
    terrain.
+8. **The map (later the same day):** any map generator may help, but we draw our own: use only the owner's example
+   image (no other tool, no shared licence), make a height map and a biome map from it, split it into regions, and
+   start in the region of the simplest biome. The height map, the biome map and the points of interest stay editable,
+   and a hash checks that the server and the client have the same map: the map is the seed.
 
 The two reference pictures the owner gave (a strategy game's region map with relief and pastel region colours, and a
 hand-drawn fantasy map) set the **kind** of output: a whole island with coasts, mountain chains, lakes, regions and
@@ -34,10 +38,13 @@ their borders, readable as a map image. We take no coastline, region shape, name
 
 ## Decision
 
-1. **One world map, baked at server start.** At start the server turns `(seed, world recipe)` into a **`WorldMap`**:
-   coarse 2D fields over the whole island (height, water level, region id, biome, rock hardness, flow) plus the
-   points of interest and the road network. Nothing in it is simulated again during the session. A restart bakes it
-   again; with the same seed and the same build the result is the same.
+1. **One world map, from the drawn map, baked at server start.** The island's coarse fields come from the owner's
+   drawn map through `tools/worldmap/worldmap.py` (world-map.md): `height.png`, `biome_ids.png`, `region_ids.png` and
+   `world.json`, editable files under version control. At start the server turns them into the **`WorldMap`**:
+   erosion, water levels, rock hardness, flow, the points of interest and the road network. Nothing in it is simulated
+   again during the session. A restart bakes it again; the same map files and the same build give the same result.
+   The **map id** (world-map.md: a hash of the files' decoded pixels) identifies the map: a client with another map id
+   is refused, as one with another build hash is today.
 2. **The map comes first, the voxels follow.** Every chunk is generated from the `WorldMap` by a pure function of the
    chunk coordinate, as today (worldgen.md "Decision" 1): base height from the map, detail noise, strata materials,
    then worldgen's structures. A global process (erosion, flow, lakes, roads) runs only in the bake.
@@ -53,21 +60,18 @@ their borders, readable as a map image. We take no coastline, region shape, name
    filling the depressions of the baked height (a priority-flood fill). Rivers are chains of flat reaches with a fixed
    level each; between two reaches a waterfall or a rapid is a look (an effect and a stepped bed), never a flow.
    Nothing moves water.
-6. **Regions and biomes come from the map.** The island is split into named regions (the setting's six: section
-   4.2 of setting.md) along watersheds, ridges and rivers where they exist, else along Voronoi edges; each region has one
-   biome chosen by its climate (temperature from latitude and height, moisture from the prevailing wind and the
-   distance to the sea), with the setting's assignment as the target. Borders between regions are blended over a
-   band (e) of 30-60 m.
+6. **Regions and biomes come from the drawn map.** The biome of every place is the colour the owner drew
+   (world-map.md); a region is a connected area of one biome. The setting's six named regions (setting.md 4.2) group
+   these biome regions (open question 2). Borders between biomes are blended over a band (e) of 30-60 m in the voxels.
 7. **Points of interest are scored, not dropped.** Each kind of point (castle site, village, cave, crossing,
    landmark) has a score over the baked fields; the bake takes the best candidates per region with spacing rules
    (research notes 4.5). The starter region's castle site is designed (see "The starter region"), not searched.
 8. **Roads are the cheapest paths between points of interest.** A\* over the coarse grid with costs from slope,
    water, cliffs and existing roads; switchbacks appear where a slope is too steep; a crossing is a bridge or a ford
    at the narrowest place of a river reach. Roads are baked at each restart with the map.
-9. **The map is also an image.** The bake renders the `WorldMap` as a map image (relief shading, water, region
-   colours and borders, roads, points of interest): the owner reviews seeds as images before any voxel exists, and
-   [map.md](map.md)'s full map uses the same image. A painted image can also be an **input** (a land mask, a mountain
-   mask, region colours) that guides the generator (open question 1).
+9. **The map is also an image.** The tool writes review pictures (biomes, shaded relief, regions), and later bakes
+   add roads and points of interest to them: the owner reviews a map as pictures before any voxel exists, and
+   [map.md](map.md)'s full map can use the same picture.
 
 ## The world map
 
@@ -92,12 +96,9 @@ grid adds height and hardness for the starter region (about 1 MB raw, e).
 
 | Step | What it does | Input | Output |
 |---|---|---|---|
-| L0 | Land mask: an island or an archipelago from low-frequency noise with a radial falloff, or from an input image | seed, recipe (or image) | land / sea |
-| L1 | Large relief: separate fields for continentalness (height above the sea), ruggedness and ridges (research notes 4.1), with mountain chains as painted or noise ridge lines | land mask | raw height |
-| L2 | Climate: temperature from latitude and height, moisture from a prevailing wind across the island (rain on the windward side of mountains, a rain shadow behind them) | raw height | temperature, moisture |
+| L0-L1 | Land, biomes, regions and the raw height from the drawn map (`[land-1]`, built: world-map.md) | the map files | land / sea, biomes, regions, raw height |
 | L3 | Erosion (option C): stream power on the coarse grid (valleys and ranges), then droplet erosion (gullies and fans), with rock hardness from L1's strata so hard layers stay as cliffs | raw height, hardness | eroded height, flow |
 | L4 | Water: fill depressions (priority-flood) to get lakes with fixed levels; rivers where flow passes a threshold, cut as flat reaches with steps; the sea at 0 m | eroded height, flow | water levels, river lines |
-| L5 | Regions: six regions along watersheds, ridges and rivers; each gets its biome from its mean climate, close to the setting's assignment | height, rivers, climate | region ids, biomes |
 | L6 | Starter region detail: the fine grid (1 m) from the coarse one, strata, a fine erosion pass, and the starter site template blended in (see below) | coarse fields, template | fine height, hardness |
 | L7 | Points of interest: scored candidates per region (castle site, village, cave, crossing, landmark), with spacing | all fields | points |
 | L8 | Roads: A\* between points, slope and water costs, switchbacks, bridges and fords | points, height, water | road lines |
@@ -120,22 +121,26 @@ Every step is deterministic for a seed and a build. L3 and L6's erosion are the 
 
 ## Regions and biomes
 
-- The six regions of setting.md 4.2 (Tamberlough, Kelmeri Terraces, Tolvenn Basin, Ushmara, Calvessa Coast, Brodvel
-  Fens) and their climates set the targets: the bake places each where its climate fits (the wet highland on the
-  windward mountains, the badlands in a rain shadow, the fens at a river delta, the coast on a dry shore).
-- The setting's "broken ring around an inland sea" is a recipe option: a large central lake or inner sea with the
-  regions around it (open question 2).
+- The biomes are the drawn map's (world-map.md). The six regions of setting.md 4.2 (Tamberlough, Kelmeri Terraces,
+  Tolvenn Basin, Ushmara, Calvessa Coast, Brodvel Fens) are named groups of its biome regions (open question 2): for
+  example the southern desert fits Ushmara, the forested north-west highland Tamberlough.
+- The drawn map has an inland lake in the north and a sea inlet with islands in the east, not the setting's ring
+  around an inland sea; the setting's text can follow the map (the owner's call).
 - A **bold region** is generated from the coarse grid with its biome's ground materials (grass, dirt, sand, red earth,
   snow), its rock colour, and large features only: forest masses as tree clusters, outcrops, lakes, rivers. It has no
   structures until worldgen's stages reach it.
-- The **starter region** is Tamberlough (setting.md 5.1): wet fir highland with gorges.
+- The **starter region** is the largest region of the simplest biome on the drawn map: region 8, the grassland in
+  the north-east, about 350 x 580 m, between the eastern mountain ridge and the eastern forest, its south end on the
+  sea (world-map.md). Which setting region it belongs to is the owner's call (open question 2).
 
 ## The starter region
 
 The starter region holds the demo: the village, the forest, the cave and Hollowkeep (castle-layout-draft.md).
 
-**Hollowkeep's site (our choice):** a rock spur inside a loop of a **drowned river gorge** (a ria: an incised river
-valley whose lower course lies at sea level). Why this site:
+**Hollowkeep's site (our choice, before the drawn map):** a rock spur inside a loop of a **drowned river gorge** (a
+ria: an incised river valley whose lower course lies at sea level). On the drawn map the starter grassland meets the
+sea at its south end (about 215 m of coast) and has the eastern ridge on its west: `[land-4]` places the site either
+at that south end as a ria, or on a spur of the ridge over the grassland (open question 6). Why the ria:
 - It is the strongest real castle site with water: water on 2-3 sides, cliffs, one neck to the approach field (research
   notes 2.1, 4.3 "Incised meanders").
 - A ria's water is the sea's, so its level is the fixed sea level: realistic with no flow at all.
@@ -190,7 +195,7 @@ the cave opens in the forest (roadmap-and-launch.md 4.2). Roads come from L8, no
 
 | ID | Stage | Acceptance |
 |---|---|---|
-| `[land-1]` | The world map as 2D fields and as an image, offline (a tool): L0-L2, L5 without rivers, L9 | 10 seeds rendered as images for the owner's review; the same seed gives the same image bit for bit |
+| `[land-1]` | The world map from the owner's drawn image (a tool): biomes, regions, raw heights, review pictures, the map id. **Built** (world-map.md) | the same source gives the same map id on two Python builds (done: `5556ecd6b3b7d86d`); the owner reviews the pictures |
 | `[land-2]` | Erosion and water: L3, L4 on the coarse grid; lakes and rivers on the image | the bake time; lakes have one level each; every river reaches the sea or a lake; images reviewed |
 | `[land-3]` | Voxels from the map, offline: the coarse grid everywhere, biome materials, water at its levels; walking the island in the offline game | chunk generation cost; golden hash of the sampling; the owner walks it |
 | `[land-4]` | The starter region: the fine grid, strata cliffs, Hollowkeep's site template, points of interest, roads (L6-L8) | the castle draft's heights hold on the site; roads reach every point; the owner walks it |
@@ -210,18 +215,20 @@ touches no runtime code.
 
 ## Open questions (with the answer we recommend)
 
-1. **"A generated image of a mythical RPG map":** is the image our generator's output (Decision 9: we render the map
-   and the terrain follows the same fields), or an input the owner makes elsewhere (a painted or AI-made picture whose
-   colours mean land, mountains, water and regions)? We recommend: our own generator first (`[land-1]`), and an
-   input path for a painted mask (land, mountains, regions by colour) in the same stage, so both work.
-2. **Island shape:** one island, an archipelago, or the setting's ring of regions around an inland sea? We recommend
-   one main island with a large inland sea or lake and a few small islands, which fits the setting.
+1. **The image:** answered (owner's answer 8): the owner's drawn map is the input; `[land-1]` turns it into fields.
+2. **Setting regions:** the drawn map has 41 biome regions; how do the setting's six named regions (setting.md 4.2) map
+   onto it, and is the starter grassland part of Tamberlough? We recommend: group the biome regions into six named
+   regions by hand in a small table in world.json (an editable file), and treat the starter grassland as the edge of
+   Tamberlough where its highland meets the coast.
 3. **A new world per restart?** The same seed gives the same world; does a restart keep the seed, or does a reset
    (setting.md section 2) pick a new one? We recommend: the seed is in the server config; a reset changes it.
 4. **Island size:** about 3 x 2 km (e). Larger means longer walks between regions and a larger map transfer. We
    recommend starting at this size and measuring.
 5. **Bold regions' content:** walkable land with biome materials, forests and rock only (Decision 4). Enough until
    worldgen reaches them? We recommend yes.
+6. **Hollowkeep's site on the drawn map:** a ria at the grassland's south end (water on 2-3 sides, the castle draft as
+   it is), or a spur of the eastern ridge over the grassland (no water, the neck towards the ridge)? We recommend the
+   ria, if the coast there is wide enough for the site template (`[land-4]` checks it).
 
 ## Sources
 
