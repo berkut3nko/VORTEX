@@ -37,6 +37,7 @@ Rules every document follows:
 | [design/mechanisms.md](design/mechanisms.md) | decision + plan (use key, doors, gates, held objects, ropes) | designed | code read on 2026-11-17 (committed as `e21a84d`) | 126 |
 | [design/spread.md](design/spread.md) | decision + plan (lockstep fire and liquid, no randomness) | designed | code read at `e21a84d` | 73 |
 | [design/worldgen.md](design/worldgen.md) | decision + plan (regions built from structures) | designed | code read on 2026-11-17 (committed as `c970f16`) | 74 |
+| [design/land.md](design/land.md) | decision + plan (the island world from a baked map: relief, erosion, fixed-level water, regions and biomes, the starter region and Hollowkeep's site, points of interest, roads) | designed | code read at `6fdd9e5` | 17 |
 | [design/rendezvous.md](design/rendezvous.md) | decision + plan (internet sessions without a public IP: STUN, UDP hole punching, Cloudflare D1) | designed | code read at `a23af7a` (committed as `84ac7e7`) | 36 |
 | [design/magic.md](design/magic.md) | decision + plan (spells: four forms x four elements, the 16 siege spells, conjured matter, zones) | designed | code read at `58f2650` | 145 |
 | [design/rules.md](design/rules.md) | decision + current spec (the rules seam `vortex.sim:rules`, the net split) | built | `ed409ee` + [wp-6] | 12 |
@@ -164,6 +165,7 @@ Also: [owner-questions-2026-11-11.md](history/view-distance/owner-questions-2026
 | `[mech-1]`..`[mech-5]` | Door and gate; ropes; siege kit; placement; later (after M2) | [mechanisms.md](design/mechanisms.md#stages) | [design-review-2026-11-17.md](history/mechanisms/design-review-2026-11-17.md) |
 | `[spread-S1]`..`[spread-S6]` | Fire offline; fire in a session; collapse from fire; liquid; presentation; tuning | [spread.md](design/spread.md), "Stages" | [proposal-scores-2026-11-17.md](history/spread/proposal-scores-2026-11-17.md), [design-review-2026-11-17.md](history/spread/design-review-2026-11-17.md) |
 | `[wg-W1]`..`[wg-W6]` | Stamped village offline; in a session; forts and fights; materials, history, second kit; zones; reach | [worldgen.md](design/worldgen.md#staged-delivery) | [how-it-was-chosen-2026-11-17.md](history/worldgen/how-it-was-chosen-2026-11-17.md) |
+| `[land-1]`..`[land-5]` | The world map as fields and an image (tool); erosion and water; voxels from the map offline; the starter region (site, points of interest, roads); in a session | [land.md](design/land.md#stages) | - |
 | `[mag-1]`..`[mag-7]` | Siege core in sim (Siege Cannon, Barricade Wave, Shockwave, Updraft); first playable (the one protocol bump); Frost and the Shatter combo; Flow, climbing and the rest of Metal; Thermal; presentation and tuning; Crushing Weight (after [si-2]) | [magic.md](design/magic.md#stages) | [owner-concept-2026-11-21.md](history/magic/owner-concept-2026-11-21.md), [proposal-scores-2026-11-21.md](history/magic/proposal-scores-2026-11-21.md), [design-review-2026-11-21.md](history/magic/design-review-2026-11-21.md) |
 
 ### Work packages ([ROADMAP.md](ROADMAP.md#now) "Now" / "Next")
