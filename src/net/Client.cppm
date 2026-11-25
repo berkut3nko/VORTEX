@@ -14,6 +14,7 @@ module;
 export module vortex.net:client;
 
 import vortex.voxel;
+import vortex.physics;
 import vortex.scene;
 import vortex.sim;
 import :transport;
@@ -148,6 +149,16 @@ export namespace vortex::net {
         uint32_t fragments = 0;           ///< netId 0 spawns (client rubble when presenting)
         uint32_t toRubble = 0;            ///< copies kept as local rubble (EntityDespawn{ToRubble}, presenting)
         uint32_t ignoredEntityEvents = 0; ///< events for unknown or tombstoned NetIds (ignored)
+        // [mech-1] Mechanisms and holding.
+        uint32_t mechanismMoves = 0;      ///< MechanismMove events applied
+        uint32_t mechanismLateEvents = 0; ///< ... that came after their segment's start (the lead was short)
+        uint32_t mechanismCorrections = 0;   ///< corrections where a mechanism's travel meets the player's reach
+        uint32_t mechanismsRepaired = 0;  ///< mechanism copies the entity list found different (asked for again)
+        uint32_t holdsRepaired = 0;       ///< held copies the entity list found different (asked for again)
+        uint32_t pickupsPredicted = 0, dropsPredicted = 0;
+        uint32_t holdsConfirmed = 0;      ///< the own EntityHold events
+        uint32_t holdReleases = 0;        ///< the own EntityRelease events
+        uint32_t holdRefused = 0;         ///< predicted pick-ups the server did not make (undone)
         uint64_t bodySamples = 0;         ///< snapshot samples taken
         uint64_t bodySamplesIgnored = 0;  ///< ... ignored: no copy, or not newer than its rest or newest sample, or dropped waiting
         uint32_t heldUnderPlayer = 0;     ///< ticks a moving copy stayed solid because the own player stands on it
@@ -423,6 +434,27 @@ export namespace vortex::net {
         bool IsCopy(scene::Entity entity) const;
         /// @brief The snapshot samples of the copies (largest sample gap per body: RemoteBodies::MaxGap).
         const RemoteBodies& Bodies() const;
+        /// @brief [mech-1] The own held object's NetId (the server's or a predicted pick-up); 0 none.
+        uint32_t HeldNetId() const;
+        /// @brief [mech-1] A pick-up or a drop waits for the server's answer.
+        bool HoldPending() const;
+        /// @brief [mech-1] The own held object is pinned (the HUD's amber prompt).
+        bool HeldPinned() const;
+        /// @brief [mech-1] "Occupied", "Dropped - blocked", "Dropped - hit" for about 1 s; empty otherwise.
+        const std::string& HoldNotice() const;
+        struct UseStatus {
+            uint32_t tick = 0;
+            sim::UseResult result = sim::UseResult::None;
+        };
+        /// @brief [mech-1] The newest snapshot's owner block: the last Use edge's input tick and the server's answer.
+        UseStatus LastUse() const;
+        /// @brief The copy of a replicated server object (kNoEntity without one).
+        scene::Entity CopyOf(uint32_t netId) const;
+        /// @brief [mech-1] The use target rules of this client for sim::FindUseTarget (the game's prompt): a copy is
+        /// holdable when its server body is Dynamic and nobody holds it.
+        sim::UseTargetHooks UseHooks() const;
+        /// @brief The own predicted player's character (its ground body: what the own feet stand on).
+        physics::CharacterId Character() const;
         /// @brief The applied live operations (after JoinOpSeq) since the last call, one BlastResult per
         /// cast (a carve and the Detach / ClearMask after it; `deferred` when there is no carve).
         /// Empty without `presentation`; the join log is never presented.

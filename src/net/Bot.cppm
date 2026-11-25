@@ -6,6 +6,7 @@ module;
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -114,6 +115,14 @@ export namespace vortex::net {
         const std::string& LongestStillContext() const { return m_Still.longestContext; }
         /// @brief The same 2 s into its longest confined stretch (BotPilot::LongestConfined, within 4 m).
         const std::string& LongestConfinedContext() const { return m_Confined.longestContext; }
+        /// @brief [mech-1] Errands: Use presses at mechanisms, the answers other than None seen, pick-up presses, drops,
+        /// throws, and errands given up (the spot not reached in 6 s).
+        uint32_t UsePresses() const { return m_UsePresses; }
+        uint32_t UsesRefused() const { return m_UsesRefused; }
+        uint32_t PickupPresses() const { return m_PickupPresses; }
+        uint32_t Drops() const { return m_Drops; }
+        uint32_t Throws() const { return m_Throws; }
+        uint32_t ErrandsGivenUp() const { return m_ErrandsGivenUp; }
 
     private:
         /// What was at the capsule some way into a stretch, kept for the longest (NoteStretch).
@@ -122,6 +131,10 @@ export namespace vortex::net {
             uint32_t start = 0, longestStart = 0;   ///< their BotPilot::StillStretch::startTick
         };
         void BuildAndAttach(const std::function<void()>& whileLoading);
+        /// [mech-1] The errand's controls for this tick, or none (the pilot drives).
+        std::optional<sim::PlayerInput> ErrandControls();
+        bool StartUseErrand();
+        bool StartHoldErrand();
         void NoteStill();
         void NoteStretch(StretchNote& note, const BotPilot::StillStretch& now, const BotPilot::StillStretch& longest, double contextSeconds,
                          double logSeconds, const char* what);
@@ -145,6 +158,19 @@ export namespace vortex::net {
         bool m_Counting = false;
         double m_PlayingSince = -1.0;
         std::vector<std::pair<uint32_t, double>> m_Applied;
+        struct Errand {
+            enum class Kind : uint8_t { None, Use, Hold } kind = Kind::None;
+            enum class Phase : uint8_t { Walk, Press, Carry, Drop } phase = Phase::Walk;
+            uint32_t netId = 0;
+            glm::vec3 spot{0.0f};          ///< feet, where it presses
+            glm::dvec3 lookAt{0.0};        ///< the use box centre (a mechanism)
+            glm::vec2 carryTo{0.0f};       ///< x / z it carries the crate to
+            uint32_t ticks = 0;            ///< in this phase
+        };
+        Errand m_Errand;
+        uint32_t m_ErrandClock = 0, m_UseTurn = 0, m_HoldTurn = 0;
+        uint32_t m_NoSpot = 0, m_UsePresses = 0, m_UsesRefused = 0, m_PickupPresses = 0, m_Drops = 0, m_Throws = 0, m_ErrandsGivenUp = 0;
+        Client::UseStatus m_SeenUse;
     };
 
     /**

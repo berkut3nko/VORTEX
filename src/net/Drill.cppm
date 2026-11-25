@@ -89,6 +89,11 @@ export namespace vortex::net {
         bool casts = false;          ///< a cast every `castEveryTicks`, at the ground ahead
         uint32_t castEveryTicks = 90;
         uint32_t crateEveryTicks = 0;  ///< a crate (PlayerButton_Crate) every this many ticks; 0 = none (stage 6)
+        /// [mech-1] Errands (net::Bot; `--bot-use`, `--bot-hold`): every this many ticks the bot walks to a mechanism
+        /// (the door, then the lever, by turns) and presses Use at it, or walks to the nearest crate, picks it up,
+        /// carries it 5 m towards the middle of the region and drops it (every third time it throws it). 0 = none.
+        uint32_t useEveryTicks = 0;
+        uint32_t holdEveryTicks = 0;
         float castPitch = -0.45f;    ///< radians: where it looks while casting (down, ahead)
         float edgeMargin = 2.0f;     ///< metres inside the play bounds it turns back towards the middle
         /// Waypoint mode (stage 7a M-b: `vortex_server --walk-across`): when not empty the pilot runs

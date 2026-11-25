@@ -335,7 +335,21 @@ namespace vortex::net {
             if (--s.blendLeft == 0) s.offset = glm::vec3(0.0f);
         }
         if (s.state == ClientState::Playing && s.simulation) s.MoveCopies();
-        if (!s.predicting || s.state != ClientState::Playing || !s.simulation) return {};
+        // [mech-1] The mechanisms' motion of the coming physics step (no crush, no anchors on a client); held copies
+        // posed from their holders first.
+        const auto stepMechanisms = [&s](const sim::PlayerInput& input) {
+            if (s.state != ClientState::Playing || !s.simulation) return;
+            s.PoseHeld(input);
+            sim::StepMechanisms(*s.simulation, s.predicting ? s.nextTick - 1 : s.PoseTick(), false);
+        };
+        if (!s.predicting || s.state != ClientState::Playing || !s.simulation) {
+            stepMechanisms(controls);
+            return {};
+        }
+        constexpr uint8_t kHoldButtons = sim::PlayerButton_Use | sim::PlayerButton_Cast;
+        const uint8_t holdLevels = static_cast<uint8_t>(controls.buttons & kHoldButtons);
+        const uint8_t holdPresses = static_cast<uint8_t>(holdLevels & ~s.lastControls);
+        s.lastControls = holdLevels;
         sim::PlayerStepResult r;
         s.syncHeld = !s.ReachCurrent();
         if (s.fight.dead || s.respawnPending) {
@@ -362,12 +376,25 @@ namespace vortex::net {
                 for (uint32_t k = s.lastTaken + 1; k < s.nextTick; ++k) {
                     HistoryEntry& e = s.history[k % kHistoryTicks];
                     if (!e.valid || e.tick != k) continue;
-                    s.FreshColliders();
+                    s.PrepareStep(k);
                     sim::StepPlayer(s.simulation->Physics(), s.simulation->Terrain(), s.character, s.player, e.input, s.welcome.player, s.playArea, s.Dt());
                     e.state = s.player;
                 }
             }
-            r = s.PredictTick(controls);
+            // [mech-1] While a pick-up is pending, Use and Cast are latched (sent once it is confirmed, dropped if it
+            // is refused); a confirmed pick-up's latched presses go with the next input.
+            sim::PlayerInput input = controls;
+            if (s.holdPending && !s.holdPending->drop) {
+                s.latchedEdges = static_cast<uint8_t>(s.latchedEdges | holdPresses);
+                input.buttons = static_cast<uint8_t>(input.buttons & ~kHoldButtons);
+            } else if (s.latchedOut != 0) {
+                input.buttons = static_cast<uint8_t>(input.buttons | s.latchedOut);
+                s.latchedOut = 0;
+            }
+            const bool holding = s.heldNetId != 0 || s.holdPending.has_value();
+            r = s.PredictTick(input);
+            s.PredictHold(r, s.history[(s.nextTick - 1) % kHistoryTicks].input);
+            if (holding || s.holdPending) r.cast = false;    // a throw or a latched press casts nothing
         }
         ++s.prediction.ticks;
         s.prediction.heldTicks += r.held ? 1u : 0u;
@@ -377,6 +404,7 @@ namespace vortex::net {
             s.sinceSend = 0;
             s.SendInputs();
         }
+        stepMechanisms(s.history[(s.nextTick - 1) % kHistoryTicks].input);
         return r;
     }
 
@@ -657,6 +685,17 @@ namespace vortex::net {
     }
 
     const RemoteBodies& Client::Bodies() const { return m_Impl->bodies; }
+    uint32_t Client::HeldNetId() const { return m_Impl->heldNetId; }
+    bool Client::HoldPending() const { return m_Impl->holdPending.has_value(); }
+    bool Client::HeldPinned() const { return m_Impl->heldPinned; }
+    const std::string& Client::HoldNotice() const { return m_Impl->holdNotice; }
+    Client::UseStatus Client::LastUse() const { return {m_Impl->lastUseTick, m_Impl->lastUseResult}; }
+    sim::UseTargetHooks Client::UseHooks() const { return m_Impl->MakeUseHooks(); }
+    physics::CharacterId Client::Character() const { return m_Impl->character; }
+    scene::Entity Client::CopyOf(uint32_t netId) const {
+        const auto it = m_Impl->copies.find(netId);
+        return it != m_Impl->copies.end() ? it->second.entity : scene::kNoEntity;
+    }
 
     std::vector<sim::BlastResult> Client::TakePresentations() {
         std::vector<sim::BlastResult> out = std::move(m_Impl->presentations);

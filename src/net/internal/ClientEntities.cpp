@@ -65,7 +65,7 @@ namespace vortex::net {
     }
 
     bool Client::Impl::MakeCopy(uint32_t netId, std::shared_ptr<voxel::VoxelModel> model, const glm::vec3& position, const glm::quat& rotation,
-                  bool resting, uint32_t base) {
+                  bool resting, uint32_t base, uint8_t motion) {
         if (copies.contains(netId) || tombstones.contains(netId)) {
             ++stats.ignoredEntityEvents;
             return false;
@@ -80,7 +80,13 @@ namespace vortex::net {
             return false;
         }
         simulation->Physics().SetLayer(BodyOf(entity), resting ? physics::Layer::Dynamic : physics::Layer::Rubble);
-        copies[netId] = {entity, resting, hash, base};
+        Copy c;
+        c.entity = entity;
+        c.resting = resting;
+        c.modelHash = hash;
+        c.base = base;
+        c.motion = motion;
+        copies[netId] = c;
         ++stats.copiesMade;
         return true;
     }
@@ -99,11 +105,6 @@ namespace vortex::net {
         const bool live = settings.presentation && seq > welcome.joinOpSeq;
         scene::Scene& scene = simulation->Scene();
         physics::PhysicsWorld& physics = simulation->Physics();
-        // Mechanism moves and holds are not applied by this client: its copies stay where their spawn, rest and
-        // samples put them.
-        if (std::holds_alternative<MechanismMove>(event) || std::holds_alternative<EntityHold>(event) ||
-            std::holds_alternative<EntityRelease>(event))
-            return;
         if (const EntitySpawn* spawn = std::get_if<EntitySpawn>(&event)) {
             if (spawn->kind == EntityKind::Light) {
                 if (!entities.contains(spawn->netId)) {
@@ -121,15 +122,15 @@ namespace vortex::net {
                 if (live) MakeRubble(std::move(model), o.position, o.rotation, o.linearVelocity, o.angularVelocity);
                 return;
             }
-            MakeCopy(spawn->netId, std::move(model), o.position, o.rotation, (o.flags & kObjectResting) != 0, seq);
+            if (!MakeCopy(spawn->netId, std::move(model), o.position, o.rotation, (o.flags & kObjectResting) != 0, seq, o.motion)) return;
+            if (spawn->kind == EntityKind::Mechanism) InstallMechanism(spawn->netId, spawn->mechanism);
+            if ((o.flags & kObjectHeld) != 0) ApplyHold(spawn->netId, o.holder, o.relYaw, o.holdSince);
             return;
         }
         // Rest, wake and model of a NetId: dropped when its copy is already as of this event (the
         // baseline or a model answer was encoded after it), held while its copy may still come.
         if (!std::holds_alternative<EntityDespawn>(event)) {
-            const uint32_t netId = std::holds_alternative<EntityRest>(event)   ? std::get<EntityRest>(event).netId
-                                   : std::holds_alternative<EntityWake>(event) ? std::get<EntityWake>(event).netId
-                                                                                : std::get<ObjectModel>(event).netId;
+            const uint32_t netId = EntityEventNetId(event);
             const auto copy = copies.find(netId);
             if (copy != copies.end() && seq <= copy->second.base) {
                 ++stats.staleEntityEvents;
@@ -156,8 +157,13 @@ namespace vortex::net {
                 return;
             }
             const scene::Entity entity = it->second.entity;
+            const bool wasMechanism = it->second.mechanism;
             copies.erase(it);
             ++stats.despawns;
+            pendingReleases.erase(d->netId);
+            if (heldNetId == d->netId) heldNetId = 0;
+            if (holdPending && holdPending->netId == d->netId) holdPending.reset();
+            if (wasMechanism) RelinkMechanisms();
             if (d->reason == scene::DespawnReason::Broken && live && castShown) {
                 // Broken by a blast: what the blast took of it bursts (its fragments, the rest,
                 // came as netId-0 spawns), as Scene::Damage shows offline.
@@ -187,6 +193,10 @@ namespace vortex::net {
                 ++stats.ignoredEntityEvents;
                 return;
             }
+            if (it->second.held || it->second.mechanism) {
+                ++stats.ignoredEntityEvents;
+                return;
+            }
             if (!rests) {
                 // A sample newer than the rest was taken already (it cannot be, as samples wait for
                 // their snapshot's events; kept as a guard): the copy keeps moving.
@@ -208,6 +218,10 @@ namespace vortex::net {
                 ++stats.ignoredEntityEvents;
                 return;
             }
+            if (it->second.held || it->second.mechanism) {
+                ++stats.ignoredEntityEvents;
+                return;
+            }
             // Moving from here on: not solid for a predicted player (unless it carries this
             // one), still where it rested until its samples come (RemoteBodies keeps the rest's
             // tick, so older samples stay refused).
@@ -219,6 +233,51 @@ namespace vortex::net {
             ++stats.wakes;
             return;
         }
+        if (const MechanismMove* mv = std::get_if<MechanismMove>(&event)) {
+            const auto it = copies.find(mv->netId);
+            scene::Mechanism* mech = it != copies.end() && it->second.mechanism ? scene.TryGet<scene::Mechanism>(it->second.entity) : nullptr;
+            if (!mech) {
+                ++stats.ignoredEntityEvents;
+                return;
+            }
+            Copy& c = it->second;
+            stats.mechanismLateEvents += predicting && nextTick > mv->segment.startTick ? 1u : 0u;
+            sim::PushSegment(mech->track, mv->segment);
+            ++stats.mechanismMoves;
+            if (live && (mv->segment.flags & scene::MechanismFlag_Freed) == 0) ShowLeadCue(c);
+            if ((mv->segment.flags & scene::MechanismFlag_Freed) != 0) {
+                // Off its hinge: an ordinary moving copy from here on (the server's wake, samples and rest drive it).
+                scene.Registry().remove<scene::Mechanism>(c.entity);
+                c.mechanism = false;
+                c.resting = false;
+                c.motion = static_cast<uint8_t>(physics::MotionType::Dynamic);
+                const physics::BodyId body = BodyOf(c.entity);
+                physics.SetVelocity(body, glm::vec3(0.0f), glm::vec3(0.0f));
+                physics.SetLayer(body, physics::Layer::Rubble);
+                RelinkMechanisms();
+            }
+            return;
+        }
+        if (const EntityHold* h = std::get_if<EntityHold>(&event)) {
+            if (!copies.contains(h->netId)) {
+                ++stats.ignoredEntityEvents;
+                return;
+            }
+            ApplyHold(h->netId, h->holder, h->relYaw, h->tick);
+            return;
+        }
+        if (const EntityRelease* r = std::get_if<EntityRelease>(&event)) {
+            const auto it = copies.find(r->netId);
+            if (it == copies.end()) {
+                ++stats.ignoredEntityEvents;
+                return;
+            }
+            // Another holder's release waits until that holder is drawn at its tick (no jump on screen).
+            const bool other = it->second.held && it->second.holder != welcome.slot && heldNetId != r->netId;
+            if (other) pendingReleases[r->netId] = {*r, 0};
+            else ApplyRelease(*r);
+            return;
+        }
         const ObjectModel& m = std::get<ObjectModel>(event);
         const auto it = copies.find(m.netId);
         if (it == copies.end()) {
@@ -228,6 +287,9 @@ namespace vortex::net {
         // The survivor of a damage: a new model whose origin moved by `offset` voxels of the old
         // one (in its frame). A new copy there; its samples move with it.
         const Copy old = it->second;
+        std::optional<scene::Mechanism> mechanism;
+        if (old.mechanism)
+            if (const scene::Mechanism* mm = scene.TryGet<scene::Mechanism>(old.entity)) mechanism = *mm;
         copies.erase(it);
         const scene::Transform* transform = scene.TryGet<scene::Transform>(old.entity);
         const glm::vec3 shift = glm::vec3(m.offset) * simulation->World().VoxelSize();
@@ -247,8 +309,19 @@ namespace vortex::net {
         // The server's survivor is a new body, awake (Scene::Damage), unless it is static: a
         // resting copy is re-made moving, and the server's EntityWake / EntityRest follow.
         const bool staticModel = m.motion == static_cast<uint8_t>(physics::MotionType::Static);
-        MakeCopy(m.netId, std::make_shared<voxel::VoxelModel>(m.volume, voxel::kWorldPalette, "object"), position, rotation,
-                 staticModel && old.resting, seq);
+        const bool made = MakeCopy(m.netId, std::make_shared<voxel::VoxelModel>(m.volume, voxel::kWorldPalette, "object"), position, rotation,
+                                   staticModel && old.resting, seq, m.motion);
+        if (made && mechanism) {
+            // [mech-1] A dented mechanism keeps its state; its model origin moved by the offset.
+            Copy& c = copies[m.netId];
+            mechanism->modelOffset += m.offset;
+            if (scene::RigidBody* rigid = scene.TryGet<scene::RigidBody>(c.entity)) rigid->motion = physics::MotionType::Kinematic;
+            scene.Registry().emplace_or_replace<scene::Mechanism>(c.entity, *mechanism);
+            c.mechanism = true;
+            c.resting = true;
+            RelinkMechanisms();
+            PoseMechanismCopy(c, PoseTick());
+        }
         ++stats.models;
     }
 
@@ -298,7 +371,8 @@ namespace vortex::net {
     void Client::Impl::TakeBodySamples(uint32_t tick, const std::vector<BodySample>& samples) {
         for (const BodySample& b : samples) {
             const auto it = copies.find(b.netId);
-            if (it == copies.end() || it->second.resting || !bodies.Add(b.netId, tick, BodyPose{b.position, b.rotation, b.velocity})) {
+            if (it == copies.end() || it->second.resting || it->second.held || it->second.mechanism ||
+                !bodies.Add(b.netId, tick, BodyPose{b.position, b.rotation, b.velocity})) {
                 ++stats.bodySamplesIgnored;
                 continue;
             }
@@ -340,7 +414,7 @@ namespace vortex::net {
             it = copies.erase(it);
         }
         for (const auto& [netId, c] : copies) {
-            if (c.resting) continue;
+            if (c.resting || c.held || c.mechanism) continue;
             const physics::BodyId body = BodyOf(c.entity);
             // Solid only while it carries the own player (MovingLayer; the server's rule).
             const physics::Layer layer = ground.IsValid() && ground == body ? physics::Layer::Dynamic : physics::Layer::Rubble;
@@ -378,8 +452,12 @@ namespace vortex::net {
         const ObjectSpawn& o = b.spawn.object;
         const bool resting = b.restTick != BaselineEntity::kAwake;
         if (!MakeCopy(netId, std::make_shared<voxel::VoxelModel>(o.volume, voxel::kWorldPalette, "object"), o.position, o.rotation, resting,
-                      b.asOfOpSeq)) {
+                      b.asOfOpSeq, o.motion)) {
             ++stats.baselineDiscarded;
+        } else if (b.spawn.kind == EntityKind::Mechanism) {
+            InstallMechanism(netId, b.spawn.mechanism);
+        } else if ((o.flags & kObjectHeld) != 0) {
+            ApplyHold(netId, o.holder, o.relYaw, o.holdSince);
         } else if (resting) {
             bodies.Rest(netId, b.restTick);      // samples of its rest's tick or older stay refused
         } else {

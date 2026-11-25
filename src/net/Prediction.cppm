@@ -150,6 +150,7 @@ export namespace vortex::net {
         uint16_t yaw = 0;
         uint8_t flags = 0;
         uint8_t fight = 100;              ///< [wp-7] RemotePlayer::fight
+        int8_t holdPitch = 0;             ///< [mech-1] RemotePlayer::holdPitch
     };
 
     /// @brief Another player as this client draws it: interpolated in the past.
@@ -162,6 +163,10 @@ export namespace vortex::net {
         /// the sample on its side of the change is drawn whole.
         uint8_t fight = 100;
         bool Dead() const { return (fight & 0x80) != 0; }
+        /// [mech-1] sim::HoldPitch of its look, from the nearer sample (never blended).
+        int8_t holdPitch = 0;
+        /// The server tick it is drawn at (the interpolation's time).
+        double drawnTick = 0.0;
     };
 
     /**
@@ -221,6 +226,12 @@ export namespace vortex::net {
         /// @brief The body came to rest at `tick`: samples of `tick` or older dropped and refused from
         /// now on. True when the body rests (no newer sample is kept).
         bool Rest(uint32_t netId, uint32_t tick);
+        /// @brief [mech-1] A hold or a release at `tick`: every buffered sample dropped and samples of `tick` or older
+        /// refused from now on, without marking the body rested (Rest's twin). A release passes its pose as the sample
+        /// of `tick`: the copy is interpolated from where it was let go into the server's samples.
+        void Restart(uint32_t netId, uint32_t tick, const BodyPose* seed = nullptr);
+        /// @brief The interpolation delay of `netId` in ticks (what Sample subtracts from the server time).
+        double Delay(uint32_t netId) const;
         /// @brief Forgets a body (despawned).
         void Remove(uint32_t netId);
         /// @brief Re-bases every sample of a body whose model origin moved by `localOffset` metres in
@@ -247,6 +258,8 @@ export namespace vortex::net {
             double interval = 2.0;
             bool rested = false;          ///< an EntityRest came (restTick is valid)
             uint32_t restTick = 0;
+            bool anyFloor = false;        ///< a Restart came (floorTick is valid)
+            uint32_t floorTick = 0;
             uint32_t maxGap = 0;
             uint32_t received = 0;
         };

@@ -104,7 +104,7 @@ namespace vortex::net {
         for (const auto& [netId, copy] : copies) {
             ++c.count;
             c.idXor ^= netId;
-            c.modelXor ^= EntityModelTerm(netId, copy.modelHash);
+            c.modelXor ^= EntityModelTerm(netId, CheckHash(copy));
         }
         if (withAsked)
             for (const uint32_t netId : asked)
@@ -212,7 +212,11 @@ namespace vortex::net {
         }
         for (const EntityListEntry& e : list.entries) {
             if (const auto it = copies.find(e.netId); it != copies.end()) {
-                if (it->second.base > list.asOfOpSeq || it->second.modelHash == e.modelHash) continue;
+                if (it->second.base > list.asOfOpSeq || CheckHash(it->second) == e.modelHash) continue;
+                stats.mechanismsRepaired += it->second.mechanism ? 1u : 0u;
+                stats.holdsRepaired += it->second.held ? 1u : 0u;
+                if (heldNetId == e.netId) heldNetId = 0;
+                if (holdPending && holdPending->netId == e.netId) holdPending.reset();
                 RemoveCopy(e.netId);
                 AskModel(e.netId);
                 ++stats.copiesReplaced;

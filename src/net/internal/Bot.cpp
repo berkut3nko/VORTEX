@@ -14,6 +14,7 @@ module;
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -22,6 +23,7 @@ module vortex.net;
 
 import vortex.core;
 import vortex.voxel;
+import vortex.scene;
 import vortex.sim;
 
 namespace vortex::net {
@@ -203,7 +205,13 @@ namespace vortex::net {
                 const FightView& f = c.Fight();
                 m_Pilot->SetCanCast((f.charges > 0 || f.maxCharges == 0) && c.Player().cooldownTicks == 0);
             }
-            const sim::PlayerInput controls = act && !dead ? m_Pilot->Next(c.Player()) : sim::PlayerInput{};
+            // [mech-1] An errand (a use, a pick-up and carry) drives instead of the pilot while it runs.
+            std::optional<sim::PlayerInput> errand = act && !dead ? ErrandControls() : std::nullopt;
+            const sim::PlayerInput controls = errand ? *errand : act && !dead ? m_Pilot->Next(c.Player()) : sim::PlayerInput{};
+            if (const Client::UseStatus u = c.LastUse(); u.tick != m_SeenUse.tick || u.result != m_SeenUse.result) {
+                m_UsesRefused += u.result != sim::UseResult::None && u.tick != m_SeenUse.tick ? 1u : 0u;
+                m_SeenUse = u;
+            }
             if (act && m_Settings.walkAcross && m_Simulation) NoteStill();
             const sim::PlayerStepResult r = c.RunTick(controls);
             m_Casts += r.cast ? 1u : 0u;
@@ -215,6 +223,200 @@ namespace vortex::net {
                 for (const sim::BlastResult& blast : c.TakePresentations()) sim::PresentBlast(*m_Simulation, blast);
         }
         m_Link.Flush();
+    }
+
+    namespace {
+        /// The look from `feet`'s eye at `target`.
+        void LookFrom(const glm::vec3& feet, float eyeHeight, const glm::dvec3& target, sim::PlayerInput& in) {
+            const glm::dvec3 d = target - (glm::dvec3(feet) + glm::dvec3(0.0, static_cast<double>(eyeHeight), 0.0));
+            const double len = glm::length(d);
+            if (len <= 1.0e-6) return;
+            in.yaw = sim::QuantizeYaw(static_cast<float>(std::atan2(-d.x, -d.z)));
+            in.pitch = sim::QuantizePitch(static_cast<float>(std::asin(std::clamp(d.y / len, -1.0, 1.0))));
+        }
+        /// Walking towards (x, z): facing it, forward.
+        sim::PlayerInput WalkTo(const glm::vec3& feet, const glm::vec2& to) {
+            sim::PlayerInput in;
+            const glm::vec2 d = to - glm::vec2(feet.x, feet.z);
+            in.yaw = sim::QuantizeYaw(std::atan2(-d.x, -d.y));
+            in.moveZ = 127;
+            return in;
+        }
+        glm::dvec3 BodyCentreOf(const sim::Simulation& simulation, scene::Entity e) {
+            const scene::Transform* t = simulation.Scene().TryGet<scene::Transform>(e);
+            const scene::VoxelBody* v = simulation.Scene().TryGet<scene::VoxelBody>(e);
+            if (!t || !v || !v->model) return glm::dvec3(0.0);
+            const glm::vec3 size = glm::vec3(v->model->Volume().Size()) * simulation.World().VoxelSize();
+            return glm::dvec3(t->current.position + t->current.rotation * (0.5f * size));
+        }
+    }
+
+    bool Bot::StartUseErrand() {
+        Client& c = *m_Client;
+        sim::Simulation& simulation = *m_Simulation;
+        const scene::MechanismKind want = m_UseTurn++ % 2 == 0 ? scene::MechanismKind::Door : scene::MechanismKind::Lever;
+        scene::Entity target = scene::kNoEntity;
+        for (const auto [e, m] : simulation.Scene().Registry().view<const scene::Mechanism>().each())
+            if (m.desc.kind == want && (target == scene::kNoEntity || e < target)) target = e;
+        if (target == scene::kNoEntity) {
+            if (m_NoSpot++ < 3) {
+                std::string kinds;
+                for (const auto [e, m] : simulation.Scene().Registry().view<const scene::Mechanism>().each())
+                    kinds += std::format(" {}", static_cast<int>(m.desc.kind));
+                Log::Info("Bot {}: no mechanism of kind {} (kinds here:{})", m_Settings.id, static_cast<int>(want), kinds);
+            }
+            return false;
+        }
+        const scene::Mechanism& m = *simulation.Scene().TryGet<scene::Mechanism>(target);
+        const float vs = simulation.World().VoxelSize();
+        const uint32_t tick = c.PredictTick();
+        const sim::MechanismPose pose = sim::PoseAt(m, sim::PositionAt(m, tick), vs);
+        const glm::vec3 local = (glm::vec3(m.desc.useBox.min + m.desc.useBox.max) * 0.5f - glm::vec3(m.modelOffset)) * vs;
+        const glm::dvec3 centre = pose.position + glm::dvec3(pose.rotation * local);
+        const voxel::World& world = simulation.World();
+        const float eye = c.Tuning().eyeHeight;
+        // A spot 1.4 m from the use box on the ground whose look picks the target, +z side first (towards the plaza).
+        for (const double r : {1.4, 1.8, 1.1})
+            for (int k = 0; k < 16; ++k) {
+                const double a = 1.5707963267948966 + 6.283185307179586 * ((k % 2 == 0 ? 1 : -1) * ((k + 1) / 2)) / 16.0;
+                const glm::dvec3 at = centre + glm::dvec3(std::cos(a) * r, 0.0, std::sin(a) * r);
+                const voxel::WorldRayHit ground = world.Raycast(glm::dvec3(at.x, centre.y + 1.0, at.z), glm::vec3(0.0f, -1.0f, 0.0f), 6.0f);
+                if (!ground.hit) continue;
+                const glm::vec3 feet(static_cast<float>(at.x), static_cast<float>(ground.position.y) + 0.02f, static_cast<float>(at.z));
+                bool clear = true;
+                for (float y = 0.2f; y < 1.8f && clear; y += 0.2f)
+                    clear = world.GetVoxel(world.WorldToVoxel(glm::dvec3(feet) + glm::dvec3(0.0, y, 0.0))) == 0;
+                if (!clear) continue;
+                sim::PlayerInput look;
+                LookFrom(feet, eye, centre, look);
+                sim::UseTarget t;
+                const glm::dvec3 eyeAt = glm::dvec3(feet) + glm::dvec3(0.0, static_cast<double>(eye), 0.0);
+                if (!sim::FindUseTarget(simulation, eyeAt, sim::LookDirection(look.yaw, look.pitch), tick, t) || t.entity != target) continue;
+                m_Errand = Errand{};
+                m_Errand.kind = Errand::Kind::Use;
+                m_Errand.spot = feet;
+                m_Errand.lookAt = centre;
+                Log::Info("Bot {}: to the {} at ({:.1f}, {:.1f}) from ({:.1f}, {:.1f})", m_Settings.id,
+                          want == scene::MechanismKind::Door ? "door" : "lever", feet.x, feet.z, c.Player().position.x, c.Player().position.z);
+                return true;
+            }
+        if (m_NoSpot++ < 3)
+            Log::Info("Bot {}: no spot to use the {} from (use box at {:.1f}, {:.1f}, {:.1f})", m_Settings.id,
+                      want == scene::MechanismKind::Door ? "door" : "lever", centre.x, centre.y, centre.z);
+        return false;
+    }
+
+    bool Bot::StartHoldErrand() {
+        Client& c = *m_Client;
+        sim::Simulation& simulation = *m_Simulation;
+        const sim::UseTargetHooks hooks = c.UseHooks();
+        const glm::vec3 feet = c.Player().position;
+        uint32_t best = 0;
+        float bestDistance = 30.0f;
+        for (const EntityInfo& e : c.Entities()) {
+            const scene::Entity copy = c.CopyOf(e.netId);
+            if (copy == scene::kNoEntity || !hooks.holdable(copy)) continue;
+            const float d = glm::distance(glm::vec3(BodyCentreOf(simulation, copy)), feet);
+            if (d < bestDistance) {
+                bestDistance = d;
+                best = e.netId;
+            }
+        }
+        if (best == 0) return false;
+        const glm::dvec3 centre = BodyCentreOf(simulation, c.CopyOf(best));
+        glm::vec2 away(feet.x - static_cast<float>(centre.x), feet.z - static_cast<float>(centre.z));
+        away = glm::length(away) > 1.0e-3f ? glm::normalize(away) : glm::vec2(0.0f, 1.0f);
+        m_Errand = Errand{};
+        m_Errand.kind = Errand::Kind::Hold;
+        m_Errand.netId = best;
+        m_Errand.spot = glm::vec3(static_cast<float>(centre.x) + away.x * 1.2f, feet.y, static_cast<float>(centre.z) + away.y * 1.2f);
+        // 5 m towards the middle of the region (the plaza), from the spot.
+        const sim::RegionDesc& r = c.Region();
+        const float chunk = static_cast<float>(voxel::kChunkSize) * r.terrain.voxelSize;
+        const glm::vec2 middle = (glm::vec2(r.playMinChunk) + glm::vec2(r.playMaxChunk)) * 0.5f * chunk;
+        glm::vec2 towards = middle - glm::vec2(m_Errand.spot.x, m_Errand.spot.z);
+        towards = glm::length(towards) > 1.0f ? glm::normalize(towards) : glm::vec2(0.0f, 1.0f);
+        m_Errand.carryTo = glm::vec2(m_Errand.spot.x, m_Errand.spot.z) + towards * 5.0f;
+        return true;
+    }
+
+    std::optional<sim::PlayerInput> Bot::ErrandControls() {
+        const PilotSettings& p = m_Settings.pilot;
+        if ((p.useEveryTicks == 0 && p.holdEveryTicks == 0) || !m_Simulation) return std::nullopt;
+        Client& c = *m_Client;
+        ++m_ErrandClock;
+        if (m_Errand.kind == Errand::Kind::None) {
+            if (c.HeldNetId() != 0 || c.HoldPending()) return std::nullopt;
+            if (p.useEveryTicks > 0 && m_ErrandClock % p.useEveryTicks == 0) StartUseErrand();
+            else if (p.holdEveryTicks > 0 && m_ErrandClock % p.holdEveryTicks == 0) StartHoldErrand();
+            if (m_Errand.kind == Errand::Kind::None) return std::nullopt;
+        }
+        Errand& e = m_Errand;
+        ++e.ticks;
+        const glm::vec3 feet = c.Player().position;
+        const float eye = c.Tuning().eyeHeight;
+        const auto next = [&e](Errand::Phase phase) {
+            e.phase = phase;
+            e.ticks = 0;
+        };
+        switch (e.phase) {
+            case Errand::Phase::Walk: {
+                if (glm::distance(glm::vec2(feet.x, feet.z), glm::vec2(e.spot.x, e.spot.z)) < 0.35f) {
+                    next(Errand::Phase::Press);
+                    sim::PlayerInput still;
+                    LookFrom(feet, eye, e.lookAt, still);
+                    return still;
+                }
+                if (e.ticks > 360) {
+                    ++m_ErrandsGivenUp;
+                    e = Errand{};
+                    return std::nullopt;
+                }
+                return WalkTo(feet, glm::vec2(e.spot.x, e.spot.z));
+            }
+            case Errand::Phase::Press: {
+                sim::PlayerInput in;
+                if (e.kind == Errand::Kind::Hold) {
+                    const scene::Entity copy = c.CopyOf(e.netId);
+                    if (copy == scene::kNoEntity) {
+                        e = Errand{};
+                        return std::nullopt;
+                    }
+                    e.lookAt = BodyCentreOf(*m_Simulation, copy);
+                }
+                LookFrom(feet, eye, e.lookAt, in);
+                if (e.ticks < 4) return in;           // turn first
+                in.buttons = sim::PlayerButton_Use;
+                if (e.kind == Errand::Kind::Use) {
+                    ++m_UsePresses;
+                    e = Errand{};
+                } else {
+                    ++m_PickupPresses;
+                    next(Errand::Phase::Carry);
+                }
+                return in;
+            }
+            case Errand::Phase::Carry: {
+                if (e.ticks > 20 && c.HeldNetId() == 0 && !c.HoldPending()) {
+                    e = Errand{};                       // the pick-up was refused or the hold ended
+                    return std::nullopt;
+                }
+                if (glm::distance(glm::vec2(feet.x, feet.z), e.carryTo) < 0.5f || e.ticks > 240) next(Errand::Phase::Drop);
+                return WalkTo(feet, e.carryTo);
+            }
+            case Errand::Phase::Drop: {
+                sim::PlayerInput in;
+                in.yaw = WalkTo(feet, e.carryTo).yaw;
+                if (e.ticks < 3) return in;           // stop first
+                const bool throwIt = ++m_HoldTurn % 3 == 0;
+                in.buttons = throwIt ? sim::PlayerButton_Cast : sim::PlayerButton_Use;
+                m_Throws += throwIt ? 1u : 0u;
+                m_Drops += throwIt ? 0u : 1u;
+                e = Errand{};
+                return in;
+            }
+        }
+        return std::nullopt;
     }
 
     double Bot::PassOnClock(const std::function<double()>& clock, bool acting, const std::function<void()>& whileLoading) {

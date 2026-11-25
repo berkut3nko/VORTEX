@@ -138,7 +138,7 @@ namespace vortex::net {
                 const double gap = static_cast<double>(tick - t.samples.back().tick);
                 t.interval += (std::min(gap, 60.0) - t.interval) / 8.0;
             }
-            t.samples.push_back({tick, p.position, p.yaw, p.flags, p.fight});
+            t.samples.push_back({tick, p.position, p.yaw, p.flags, p.fight, p.holdPitch});
             while (t.samples.size() > kSamples) t.samples.pop_front();
         }
     }
@@ -151,6 +151,7 @@ namespace vortex::net {
             const double at = serverTick - delay;
             RemotePlayerView v;
             v.slot = slot;
+            v.drawnTick = at;
             const RemoteSample& first = t.samples.front();
             const RemoteSample& last = t.samples.back();
             if (at <= static_cast<double>(first.tick)) {
@@ -158,12 +159,14 @@ namespace vortex::net {
                 v.yaw = first.yaw;
                 v.flags = first.flags;
                 v.fight = first.fight;
+                v.holdPitch = first.holdPitch;
             } else if (at >= static_cast<double>(last.tick)) {
                 // Extrapolate along the last motion for up to one update interval, then hold.
                 v.position = last.position;
                 v.yaw = last.yaw;
                 v.flags = last.flags;
                 v.fight = last.fight;
+                v.holdPitch = last.holdPitch;
                 if (t.samples.size() >= 2 && ((t.samples[t.samples.size() - 2].fight ^ last.fight) & 0x80) == 0) {
                     const RemoteSample& prev = t.samples[t.samples.size() - 2];
                     const double span = static_cast<double>(last.tick - prev.tick);
@@ -182,6 +185,7 @@ namespace vortex::net {
                     v.yaw = f < 0.5f ? a.yaw : b.yaw;
                     v.flags = f < 0.5f ? a.flags : b.flags;
                     v.fight = f < 0.5f ? a.fight : b.fight;
+                    v.holdPitch = f < 0.5f ? a.holdPitch : b.holdPitch;
                     break;
                 }
             }
@@ -193,6 +197,7 @@ namespace vortex::net {
     bool RemoteBodies::Add(uint32_t netId, uint32_t tick, const BodyPose& pose) {
         Track& t = m_Tracks[netId];
         if (t.rested && tick <= t.restTick) return false;
+        if (t.anyFloor && tick <= t.floorTick) return false;
         if (!t.samples.empty()) {
             const uint32_t newest = t.samples.back().tick;
             if (tick <= newest) return false;
@@ -220,6 +225,20 @@ namespace vortex::net {
         t.rested = true;
         t.restTick = std::max(t.restTick, tick);
         return t.samples.empty();
+    }
+
+    double RemoteBodies::Delay(uint32_t netId) const {
+        const auto it = m_Tracks.find(netId);
+        const double interval = it != m_Tracks.end() ? it->second.interval : 2.0;
+        return std::clamp(2.0 * interval, kMinDelayTicks, kMaxDelayTicks);
+    }
+
+    void RemoteBodies::Restart(uint32_t netId, uint32_t tick, const BodyPose* seed) {
+        Track& t = m_Tracks[netId];
+        t.samples.clear();
+        t.floorTick = std::max(t.floorTick, tick);
+        t.anyFloor = true;
+        if (seed) t.samples.push_back({tick, *seed});
     }
 
     uint32_t RemoteBodies::Received(uint32_t netId) const {

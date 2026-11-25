@@ -75,7 +75,7 @@ namespace vortex::net {
 
     sim::PlayerStepResult Client::Impl::PredictTick(sim::PlayerInput input) {
         input.tick = nextTick;
-        FreshColliders();
+        PrepareStep(nextTick);
         const sim::PlayerStepResult r = sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, input,
                                                         welcome.player, playArea, Dt());
         history[nextTick % kHistoryTicks] = {true, nextTick, input, player};
@@ -191,7 +191,7 @@ namespace vortex::net {
                 for (uint32_t k = t + 1; k < nextTick; ++k) {
                     HistoryEntry& e = history[k % kHistoryTicks];
                     if (!e.valid || e.tick != k) continue;
-                    FreshColliders();
+                    PrepareStep(k);
                     sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, e.input, welcome.player, playArea, Dt());
                     e.state = player;
                 }
@@ -246,6 +246,16 @@ namespace vortex::net {
             return;
         }
         ++prediction.corrections;
+        {
+            // [mech-1] A correction where a mechanism can be: the event came after its segment's start (late).
+            const math::AABB reach = sim::PlayerReach(snap.owner.position, welcome.player);
+            for (const auto& [netId, c] : copies)
+                if (c.mechanism)
+                    if (const scene::Mechanism* m = simulation->Scene().TryGet<scene::Mechanism>(c.entity); m && m->swept.Overlaps(reach)) {
+                        ++stats.mechanismCorrections;
+                        break;
+                    }
+        }
         LogCorrection(snap, h.state, error);
         const glm::vec3 before = player.position;
         Restore(snap.owner);
@@ -254,7 +264,7 @@ namespace vortex::net {
         uint32_t replayed = 0;
         for (uint32_t k = t + 1; k < nextTick; ++k) {
             HistoryEntry& e = history[k % kHistoryTicks];
-            FreshColliders();
+            PrepareStep(k);
             sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, e.input, welcome.player, playArea, Dt());
             e.state = player;
             ++replayed;
@@ -328,6 +338,8 @@ namespace vortex::net {
             lastCast = {snap.lastCastTick, snap.castRejected};
         }
         OnOwnerFight(snap);
+        lastUseTick = snap.lastUseTick;
+        lastUseResult = snap.useResult;
         // Both are ticks of inputs this client made: never at or past the tick it predicts next
         // (a forged one would stop its sends or blind its clock for good).
         if (predicting && snap.ackInputTick < nextTick) ackTick = std::max(ackTick, snap.ackInputTick);
@@ -393,7 +405,10 @@ namespace vortex::net {
                 stats.joinStartTicks = std::max(1u, newestSnapshot - welcome.tick);
                 stats.joinStartSeconds = SinceWelcome();
             }
-            else Reconcile(w.snap);
+            else {
+                Reconcile(w.snap);
+                ResolveHold(w.snap);
+            }
         }
         // Before the prediction starts a joiner waits for its log as long as it takes.
         while (predicting && !waiting.empty() && waiting.front().age >= settings.eventWaitTicks) {

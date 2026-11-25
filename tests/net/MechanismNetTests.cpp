@@ -820,3 +820,549 @@ TEST(Hold, AutoDropEchoIsConsumed) {
     EXPECT_EQ(y.server.Stats().castsQueued, before.castsQueued + 1);
     EXPECT_EQ(y.server.Stats().echoEdges, before.echoEdges + 2);
 }
+
+// --- the client: mechanism copies, prediction at mechanisms, holding ([mech-1] card 10) ------------------------
+
+namespace {
+    /// A server and predicting bots (net::Client) on impaired loopbacks, one manual clock (EntityTests' Arena with the
+    /// yard's settings): a pass is one tick of server time; each client runs the ticks its own clock gives it.
+    struct YardArena {
+        struct Bot {
+            net::LoopbackTransport loop;
+            std::unique_ptr<net::ImpairedTransport> link;
+            std::unique_ptr<net::Client> client;
+            std::unique_ptr<sim::Simulation> simulation;
+            sim::PlayerInput look;             ///< what the bot sends every tick (buttons: levels)
+            uint8_t pressOnce = 0;             ///< buttons held for the next tick only
+            net::PeerId peer = 0;
+        };
+
+        double clock = 0.0;
+        double dt = 1.0 / 60.0;
+        net::Impairment impairment;
+        net::LoopbackTransport serverLoop;
+        net::ImpairedTransport serverLink;
+        net::Server server;
+        bool started = false;
+        std::vector<std::unique_ptr<Bot>> bots;
+
+        explicit YardArena(net::ServerSettings settings, net::Impairment im = {})
+            : impairment(std::move(im)), serverLink(serverLoop, this->impairment, 31, [this] { return clock; }),
+              server(std::move(settings), serverLink) {
+            started = server.Start();
+            dt = started ? static_cast<double>(server.Simulation().FixedTimeStep()) : 1.0 / 60.0;
+        }
+
+        Bot& AddBot(std::function<bool(uint32_t, const net::Event&)> drop = {}) {
+            auto bot = std::make_unique<Bot>();
+            bot->link = std::make_unique<net::ImpairedTransport>(bot->loop, impairment, 700 + bots.size(), [this] { return clock; });
+            net::ClientSettings cs;
+            cs.token = YardToken();
+            cs.testDropEntityEvent = std::move(drop);
+            bot->client = std::make_unique<net::Client>(cs, *bot->link);
+            bot->peer = net::LoopbackTransport::Connect(serverLoop, bot->loop);
+            bots.push_back(std::move(bot));
+            return *bots.back();
+        }
+
+        void ClientPass(Bot& bot) {
+            if (bot.client->State() == net::ClientState::Welcomed && !bot.simulation) {
+                sim::SimulationConfig base;
+                base.jobThreads = 2;
+                base.chunkCapacity = 4096;
+                base.maxParticles = 0;
+                base.physics.threads = 1;
+                base.physics.maxBodies = 2048;
+                base.physics.maxBodyPairs = 4096;
+                base.physics.maxContactConstraints = 4096;
+                bot.simulation = std::make_unique<sim::Simulation>(bot.client->MakeSimulationConfig(base));
+                ASSERT_TRUE(bot.simulation->Initialize(bot.client->MakeGenerator()));
+                ASSERT_TRUE(bot.client->Attach(*bot.simulation));
+            }
+            const uint32_t n = bot.client->TicksDue(dt);
+            for (uint32_t i = 0; i < n; ++i) {
+                sim::PlayerInput in{};
+                if (bot.client->Predicting()) {
+                    in = bot.look;
+                    in.buttons = static_cast<uint8_t>(in.buttons | bot.pressOnce);
+                    bot.pressOnce = 0;
+                }
+                bot.client->RunTick(in);
+                if (bot.simulation && bot.simulation->Terrain().Stats().pending != 0) bot.simulation->Jobs().WaitIdle();
+            }
+        }
+
+        void Pass() {
+            clock += dt;
+            server.Advance(dt);
+            if (server.Simulation().Terrain().Stats().pending != 0) server.Simulation().Jobs().WaitIdle();
+            for (const std::unique_ptr<Bot>& bot : bots) ClientPass(*bot);
+        }
+
+        void Passes(int count) {
+            for (int i = 0; i < count; ++i) Pass();
+        }
+
+        bool Join(int maxPasses = 1200) {
+            for (int i = 0; i < maxPasses; ++i) {
+                bool all = true;
+                for (const std::unique_ptr<Bot>& bot : bots) all = all && bot->client->Predicting() && bot->client->Synced();
+                if (all) return true;
+                Pass();
+            }
+            return false;
+        }
+
+        /// Teleports the bot's player to `feet` and waits until its prediction took the server's state and settled.
+        void Place(Bot& bot, const glm::vec3& feet) {
+            bot.look.moveX = bot.look.moveZ = 0;
+            ASSERT_TRUE(server.TeleportPlayer(bot.client->Slot(), feet));
+            Passes(90);
+        }
+
+        glm::vec3 Feet(const Bot& bot) { return server.GetPlayer(bot.client->Slot())->position; }
+    };
+
+    sim::RegionDesc ArenaYardRegion(bool yard) {
+        sim::RegionDesc r = YardRegion(yard ? sim::RegionTemplateId::Playground : sim::RegionTemplateId::Empty);
+        if (!yard) {
+            r.playMinChunk = {-4, -4};
+            r.playMaxChunk = {4, 4};
+        }
+        return r;
+    }
+
+    net::ServerSettings ArenaYardSettings(bool yard) {
+        net::ServerSettings s = YardSettings(yard);
+        s.session.region = ArenaYardRegion(yard);
+        return s;
+    }
+
+    net::Impairment DelayEachWay(double seconds) {
+        net::Impairment im;
+        im.delaySeconds = seconds;
+        return im;
+    }
+
+    /// A spot on the ground where the eye's look at `target` picks `entity` on the server's world now (no player
+    /// there yet: a pure ray test), or nullopt.
+    std::optional<glm::vec3> UseSpot(sim::Simulation& simulation, scene::Entity entity, const glm::dvec3& target) {
+        voxel::World& world = simulation.World();
+        for (const double r : {1.4, 1.8, 1.1})
+            for (int k = 0; k < 16; ++k) {
+                const double a = 6.283185307179586 * k / 16.0;
+                const glm::dvec3 at = target + glm::dvec3(std::cos(a) * r, 0.0, std::sin(a) * r);
+                const voxel::WorldRayHit ground = world.Raycast(glm::dvec3(at.x, target.y + 1.0, at.z), glm::vec3(0.0f, -1.0f, 0.0f), 6.0f);
+                if (!ground.hit) continue;
+                const glm::vec3 feet(static_cast<float>(at.x), static_cast<float>(ground.voxel.y + 1) * world.VoxelSize() + 0.02f,
+                                     static_cast<float>(at.z));
+                // The capsule's column is air.
+                bool clear = true;
+                for (float y = 0.2f; y < 1.8f && clear; y += 0.2f)
+                    clear = world.GetVoxel(world.WorldToVoxel(glm::dvec3(feet) + glm::dvec3(0.0, y, 0.0))) == 0;
+                if (!clear) continue;
+                const sim::PlayerInput look = LookAt(feet, target);
+                const glm::dvec3 eye = glm::dvec3(feet) + glm::dvec3(0.0, static_cast<double>(EyeHeight()), 0.0);
+                sim::UseTarget t;
+                if (sim::FindUseTarget(simulation, eye, sim::LookDirection(look.yaw, look.pitch), simulation.Tick(), t) && t.entity == entity)
+                    return feet;
+            }
+        return std::nullopt;
+    }
+
+    /// The bot stands at the door's use spot and looks at its use box. False when there is no spot.
+    bool AtTheDoor(YardArena& a, YardArena::Bot& bot, scene::Entity door) {
+        const glm::dvec3 target = UseBoxCentre(a.server.Simulation(), door);
+        const std::optional<glm::vec3> spot = UseSpot(a.server.Simulation(), door, target);
+        if (!spot) return false;
+        a.Place(bot, *spot);
+        bot.look = LookAt(a.Feet(bot), target);
+        a.Passes(10);
+        return true;
+    }
+
+    /// A crate at rest on the flat ground with its centre at (x, z).
+    uint32_t ArenaCrate(YardArena& a, double x, double z) {
+        const double half = 0.375;
+        const uint32_t netId = a.server.SpawnCrate(glm::dvec3(x - half, static_cast<double>(kYardGround) * kYardVoxel + 0.05, z - half));
+        for (int i = 0; i < 600 && a.server.AwakeBodies() != 0; ++i) a.Pass();
+        a.Passes(30);
+        return netId;
+    }
+
+    float Ground() { return static_cast<float>(kYardGround) * kYardVoxel + 0.02f; }
+
+    /// The bot's copy of `netId` (kNoEntity without one).
+    scene::Entity CopyOn(YardArena::Bot& bot, uint32_t netId) { return bot.client->CopyOf(netId); }
+}
+
+TEST(Mechanisms, LateJoinerDerivesTheSamePosition) {
+    YardArena a(ArenaYardSettings(true));
+    ASSERT_TRUE(a.started);
+    YardArena::Bot& user = a.AddBot();
+    ASSERT_TRUE(a.Join());
+    const scene::Entity door = FindMechanism(a.server.Simulation(), scene::MechanismKind::Door);
+    ASSERT_NE(door, scene::kNoEntity);
+    const uint32_t doorId = NetIdOfEntity(a.server.Simulation(), door);
+    ASSERT_TRUE(AtTheDoor(a, user, door));
+    // An open, then a close that reverses it mid-swing: two segments.
+    user.pressOnce = sim::PlayerButton_Use;
+    a.Passes(16);
+    user.pressOnce = sim::PlayerButton_Use;
+    a.Passes(2);
+    YardArena::Bot& late = a.AddBot();
+    ASSERT_TRUE(a.Join());
+    const scene::Mechanism* s = a.server.Simulation().Scene().TryGet<scene::Mechanism>(door);
+    ASSERT_NE(s, nullptr);
+    EXPECT_GE(s->track.count, 3u) << "the rest, the open and the close";
+    for (YardArena::Bot* bot : {&user, &late}) {
+        const scene::Entity copy = CopyOn(*bot, doorId);
+        ASSERT_NE(copy, scene::kNoEntity);
+        const scene::Mechanism* c = bot->simulation->Scene().TryGet<scene::Mechanism>(copy);
+        ASSERT_NE(c, nullptr);
+        EXPECT_EQ(c->track.Newest(), s->track.Newest());
+        const uint32_t now = a.server.TickNumber();
+        for (uint32_t t = now; t < now + 60; ++t) EXPECT_EQ(sim::PositionAt(*c, t), sim::PositionAt(*s, t)) << "tick " << t;
+    }
+    EXPECT_GE(user.client->Stats().mechanismMoves, 2u);
+}
+
+TEST(Mechanisms, NoCorrectionWalkingThroughAnOpeningGate) {
+    YardArena a(ArenaYardSettings(true), DelayEachWay(0.05));   // 100 ms round trip
+    ASSERT_TRUE(a.started);
+    YardArena::Bot& user = a.AddBot();
+    ASSERT_TRUE(a.Join());
+    const scene::Entity door = FindMechanism(a.server.Simulation(), scene::MechanismKind::Door);
+    ASSERT_NE(door, scene::kNoEntity);
+    ASSERT_TRUE(AtTheDoor(a, user, door));
+    a.Passes(60);
+    const uint64_t before = user.client->Prediction().corrections;
+    // Use the door and walk into it while it opens.
+    user.pressOnce = sim::PlayerButton_Use;
+    a.Passes(2);
+    user.look.pitch = 0;
+    user.look.moveZ = 127;
+    a.Passes(150);
+    EXPECT_EQ(user.client->Prediction().corrections, before);
+    EXPECT_EQ(user.client->Stats().mechanismLateEvents, 0u);
+    EXPECT_EQ(user.client->LastUse().result, sim::UseResult::None);
+    EXPECT_GE(user.client->Stats().mechanismMoves, 1u);
+}
+
+TEST(Mechanisms, CorrectionOnlyWhenTheEventIsLate) {
+    YardArena a(ArenaYardSettings(true), DelayEachWay(0.2));    // 400 ms: the lead is clamped at 20 ticks
+    ASSERT_TRUE(a.started);
+    YardArena::Bot& user = a.AddBot();
+    YardArena::Bot& away = a.AddBot();
+    ASSERT_TRUE(a.Join(2400));
+    const scene::Entity door = FindMechanism(a.server.Simulation(), scene::MechanismKind::Door);
+    ASSERT_NE(door, scene::kNoEntity);
+    a.Place(away, glm::vec3(10.0f, Ground(), 10.0f));
+    ASSERT_TRUE(AtTheDoor(a, user, door));
+    a.Passes(90);
+    const uint64_t awayBefore = away.client->Prediction().corrections;
+    user.pressOnce = sim::PlayerButton_Use;
+    a.Passes(2);
+    user.look.pitch = 0;
+    user.look.moveZ = 127;
+    a.Passes(150);
+    EXPECT_GE(user.client->Stats().mechanismLateEvents, 1u) << "a 400 ms round trip is longer than the lead";
+    EXPECT_EQ(away.client->Prediction().corrections, awayBefore);
+}
+
+TEST(Mechanisms, EntityCheckCoversTheSegment) {
+    YardArena a(ArenaYardSettings(true));
+    ASSERT_TRUE(a.started);
+    YardArena::Bot& user = a.AddBot();
+    bool dropped = false;
+    YardArena::Bot& faulty = a.AddBot([&dropped](uint32_t, const net::Event& e) {
+        if (dropped || !std::holds_alternative<net::MechanismMove>(e)) return false;
+        dropped = true;
+        return true;
+    });
+    ASSERT_TRUE(a.Join());
+    const scene::Entity door = FindMechanism(a.server.Simulation(), scene::MechanismKind::Door);
+    ASSERT_NE(door, scene::kNoEntity);
+    const uint32_t doorId = NetIdOfEntity(a.server.Simulation(), door);
+    ASSERT_TRUE(AtTheDoor(a, user, door));
+    user.pressOnce = sim::PlayerButton_Use;
+    for (int i = 0; i < 1200 && faulty.client->Stats().mechanismsRepaired == 0; ++i) a.Pass();
+    EXPECT_TRUE(dropped);
+    EXPECT_GE(faulty.client->Stats().entityMismatches, 1u);
+    EXPECT_EQ(faulty.client->Stats().mechanismsRepaired, 1u);
+    a.Passes(120);
+    const scene::Entity copy = CopyOn(faulty, doorId);
+    ASSERT_NE(copy, scene::kNoEntity);
+    const scene::Mechanism* c = faulty.simulation->Scene().TryGet<scene::Mechanism>(copy);
+    const scene::Mechanism* s = a.server.Simulation().Scene().TryGet<scene::Mechanism>(door);
+    ASSERT_NE(c, nullptr);
+    ASSERT_NE(s, nullptr);
+    EXPECT_EQ(c->track.Newest(), s->track.Newest()) << "the repaired copy has the server's segment";
+}
+
+TEST(Hold, PredictedPickupIsConfirmed) {
+    YardArena a(ArenaYardSettings(false), DelayEachWay(0.05));
+    ASSERT_TRUE(a.started);
+    YardArena::Bot& bot = a.AddBot();
+    ASSERT_TRUE(a.Join());
+    a.Place(bot, glm::vec3(0.0f, Ground(), 0.0f));
+    const uint32_t crate = ArenaCrate(a, 0.0, -2.0);
+    ASSERT_NE(crate, 0u);
+    const scene::Entity copy = CopyOn(bot, crate);
+    ASSERT_NE(copy, scene::kNoEntity);
+    bot.look = LookAt(a.Feet(bot), BodyCentre(*bot.simulation, copy));
+    a.Passes(10);
+    const uint64_t corrections = bot.client->Prediction().corrections;
+    // The Use press: held on the client from its own tick, before the server answered.
+    bot.pressOnce = sim::PlayerButton_Use;
+    a.Pass();
+    EXPECT_EQ(bot.client->HeldNetId(), crate);
+    EXPECT_TRUE(bot.client->HoldPending());
+    EXPECT_NE(bot.simulation->Scene().TryGet<scene::Held>(copy), nullptr);
+    for (int i = 0; i < 60 && bot.client->HoldPending(); ++i) a.Pass();
+    EXPECT_FALSE(bot.client->HoldPending());
+    EXPECT_EQ(bot.client->HeldNetId(), crate);
+    EXPECT_EQ(bot.client->Stats().holdsConfirmed, 1u);
+    EXPECT_EQ(bot.client->Stats().holdRefused, 0u);
+    // Walking with it: no correction, the copy stays kinematic.
+    bot.look.moveX = 90;
+    for (int i = 0; i < 120; ++i) {
+        a.Pass();
+        const scene::RigidBody* rigid = bot.simulation->Scene().TryGet<scene::RigidBody>(copy);
+        ASSERT_NE(rigid, nullptr);
+        EXPECT_EQ(rigid->motion, physics::MotionType::Kinematic);
+    }
+    EXPECT_EQ(bot.client->Prediction().corrections, corrections);
+    // The drop: the copy hangs until the release, then follows the server's samples (none of the release tick or older).
+    bot.look.moveX = 0;
+    a.Passes(10);
+    bot.pressOnce = sim::PlayerButton_Use;
+    for (int i = 0; i < 60 && bot.client->HeldNetId() != 0; ++i) a.Pass();
+    EXPECT_EQ(bot.client->HeldNetId(), 0u);
+    EXPECT_EQ(bot.simulation->Scene().TryGet<scene::Held>(copy), nullptr);
+    EXPECT_EQ(bot.client->Stats().holdReleases, 1u);
+    a.Passes(6);
+    uint32_t oldest = 0;
+    net::BodyPose pose;
+    // The oldest kept sample is the release pose at the release tick (the seed) or a newer server sample, never older.
+    if (bot.client->Bodies().Oldest(crate, oldest, pose)) EXPECT_GE(oldest, bot.client->LastUse().tick);
+    const scene::RigidBody* rigid = bot.simulation->Scene().TryGet<scene::RigidBody>(copy);
+    ASSERT_NE(rigid, nullptr);
+    EXPECT_EQ(rigid->motion, physics::MotionType::Kinematic);
+}
+
+TEST(Hold, RefusedPickupIsUndone) {
+    YardArena a(ArenaYardSettings(false), DelayEachWay(0.05));
+    ASSERT_TRUE(a.started);
+    YardArena::Bot& stander = a.AddBot();
+    YardArena::Bot& grabber = a.AddBot();
+    ASSERT_TRUE(a.Join());
+    a.Place(grabber, glm::vec3(0.0f, Ground(), 0.0f));
+    a.Place(stander, glm::vec3(4.0f, Ground(), 0.0f));
+    const uint32_t crate = ArenaCrate(a, 0.0, -2.0);
+    ASSERT_NE(crate, 0u);
+    // The stander on the crate: the server refuses the grab (Busy); the grabber's client cannot know.
+    a.Place(stander, glm::vec3(0.0f, Ground() + 0.8f, -2.0f));
+    const scene::Entity copy = CopyOn(grabber, crate);
+    ASSERT_NE(copy, scene::kNoEntity);
+    const glm::vec3 restAt = grabber.simulation->Scene().TryGet<scene::Transform>(copy)->current.position;
+    grabber.look = LookAt(a.Feet(grabber), BodyCentre(*grabber.simulation, copy));
+    a.Passes(10);
+    const uint32_t castsBefore = a.server.Stats().castsQueued;
+    grabber.pressOnce = sim::PlayerButton_Use;
+    a.Pass();
+    ASSERT_TRUE(grabber.client->HoldPending()) << "the client predicted the pick-up";
+    // A Cast press made and released while it is pending: latched, never sent (the grab failed).
+    grabber.pressOnce = sim::PlayerButton_Cast;
+    a.Pass();
+    for (int i = 0; i < 60 && grabber.client->HoldPending(); ++i) a.Pass();
+    a.Passes(20);
+    EXPECT_FALSE(grabber.client->HoldPending());
+    EXPECT_EQ(grabber.client->HeldNetId(), 0u);
+    EXPECT_EQ(grabber.client->Stats().holdRefused, 1u);
+    EXPECT_EQ(grabber.client->LastUse().result, sim::UseResult::Busy);
+    EXPECT_EQ(grabber.simulation->Scene().TryGet<scene::Held>(copy), nullptr);
+    EXPECT_LT(glm::distance(grabber.simulation->Scene().TryGet<scene::Transform>(copy)->current.position, restAt), 1.0e-4f);
+    EXPECT_EQ(a.server.Stats().castsQueued, castsBefore) << "the latched press never reached the server";
+}
+
+TEST(Hold, RemoteHolderPosesTheObject) {
+    YardArena a(ArenaYardSettings(false), DelayEachWay(0.03));
+    ASSERT_TRUE(a.started);
+    YardArena::Bot& holder = a.AddBot();
+    YardArena::Bot& watcher = a.AddBot();
+    ASSERT_TRUE(a.Join());
+    a.Place(holder, glm::vec3(0.0f, Ground(), 0.0f));
+    a.Place(watcher, glm::vec3(6.0f, Ground(), 3.0f));
+    const uint32_t crate = ArenaCrate(a, 0.0, -2.0);
+    const scene::Entity mine = CopyOn(holder, crate);
+    ASSERT_NE(mine, scene::kNoEntity);
+    holder.look = LookAt(a.Feet(holder), BodyCentre(*holder.simulation, mine));
+    a.Passes(10);
+    holder.pressOnce = sim::PlayerButton_Use;
+    a.Pass();
+    for (int i = 0; i < 60 && holder.client->HoldPending(); ++i) a.Pass();
+    ASSERT_EQ(holder.client->HeldNetId(), crate);
+    a.Passes(20);
+    const scene::Entity seen = CopyOn(watcher, crate);
+    ASSERT_NE(seen, scene::kNoEntity);
+    ASSERT_NE(watcher.simulation->Scene().TryGet<scene::Held>(seen), nullptr);
+    // Walking at full speed: the watcher's copy follows the holder as the watcher draws it.
+    holder.look.moveX = 127;
+    const sim::HoldEnv env{watcher.client->Tuning(), sim::PlayAreaOf(a.server.Region(), watcher.client->Tuning()), {}};
+    // (Compared after each pass with the remote player as the watcher draws it then; at an exact sample boundary the
+    // view read here can be one tick of walking past the one the copy was posed from: one such pass is allowed.)
+    float worst = 0.0f;
+    int over = 0;
+    for (int i = 0; i < 60; ++i) {
+        a.Pass();
+        for (const net::RemotePlayerView& v : watcher.client->RemotePlayers()) {
+            if (v.slot != holder.client->Slot()) continue;
+            const sim::HeldPose p = sim::HeldPoseAt(*watcher.simulation, seen, v.position, v.yaw, v.holdPitch, env,
+                                                    watcher.client->PredictTick() - 1);
+            const float e = glm::distance(glm::vec3(p.pose.position), watcher.simulation->Scene().TryGet<scene::Transform>(seen)->current.position);
+            over += e >= 0.05f ? 1 : 0;
+            worst = std::max(worst, e);
+        }
+    }
+    EXPECT_LE(over, 1);
+    EXPECT_LT(worst, 0.07f);
+    // The drop while walking: the copy's motion changes by under 0.1 m in any tick when the release is applied (it
+    // moves on from the release pose into the server's samples).
+    holder.pressOnce = sim::PlayerButton_Use;
+    glm::vec3 last = watcher.simulation->Scene().TryGet<scene::Transform>(seen)->current.position;
+    glm::vec3 lastStep(0.0f);
+    bool anyStep = false;
+    float jump = 0.0f;
+    for (int i = 0; i < 60; ++i) {
+        a.Pass();
+        const glm::vec3 now = watcher.simulation->Scene().TryGet<scene::Transform>(seen)->current.position;
+        const glm::vec3 step = now - last;
+        if (anyStep) jump = std::max(jump, glm::distance(step, lastStep));
+        anyStep = true;
+        lastStep = step;
+        last = now;
+    }
+    std::printf("[ remote hold ] worst pose error %.4f m (%d passes at 5 cm or more), largest change of the motion in a tick %.3f m\n",
+                worst, over, jump);
+    EXPECT_EQ(watcher.simulation->Scene().TryGet<scene::Held>(seen), nullptr);
+    EXPECT_LT(jump, 0.1f);
+}
+
+TEST(Hold, LateJoinerSeesTheHold) {
+    YardArena a(ArenaYardSettings(false));
+    ASSERT_TRUE(a.started);
+    YardArena::Bot& holder = a.AddBot();
+    ASSERT_TRUE(a.Join());
+    a.Place(holder, glm::vec3(0.0f, Ground(), 0.0f));
+    const uint32_t crate = ArenaCrate(a, 0.0, -2.0);
+    const scene::Entity mine = CopyOn(holder, crate);
+    ASSERT_NE(mine, scene::kNoEntity);
+    holder.look = LookAt(a.Feet(holder), BodyCentre(*holder.simulation, mine));
+    a.Passes(10);
+    holder.pressOnce = sim::PlayerButton_Use;
+    a.Pass();
+    for (int i = 0; i < 60 && holder.client->HoldPending(); ++i) a.Pass();
+    ASSERT_EQ(holder.client->HeldNetId(), crate);
+    YardArena::Bot& late = a.AddBot();
+    ASSERT_TRUE(a.Join());
+    const scene::Entity seen = CopyOn(late, crate);
+    ASSERT_NE(seen, scene::kNoEntity);
+    const scene::Held* h = late.simulation->Scene().TryGet<scene::Held>(seen);
+    const scene::Held* s = a.server.Simulation().Scene().TryGet<scene::Held>(EntityOfNetId(a.server.Simulation(), crate));
+    ASSERT_NE(h, nullptr);
+    ASSERT_NE(s, nullptr);
+    EXPECT_EQ(h->holder, s->holder);
+    EXPECT_EQ(h->relYaw, s->relYaw);
+    for (const net::EntityInfo& e : late.client->Entities())
+        if (e.netId == crate) EXPECT_FALSE(e.resting);
+    holder.pressOnce = sim::PlayerButton_Use;
+    for (int i = 0; i < 600 && late.simulation->Scene().TryGet<scene::Held>(seen); ++i) a.Pass();
+    EXPECT_EQ(late.simulation->Scene().TryGet<scene::Held>(seen), nullptr);
+    bool rested = false;
+    for (int i = 0; i < 600 && !rested; ++i) {
+        a.Pass();
+        for (const net::EntityInfo& e : late.client->Entities()) rested = rested || (e.netId == crate && e.resting);
+    }
+    EXPECT_TRUE(rested) << "after the drop the copy follows the server's samples to its rest";
+}
+
+TEST(Hold, EntityCheckCoversTheHold) {
+    YardArena a(ArenaYardSettings(false));
+    ASSERT_TRUE(a.started);
+    YardArena::Bot& holder = a.AddBot();
+    bool dropped = false;
+    YardArena::Bot& faulty = a.AddBot([&dropped](uint32_t, const net::Event& e) {
+        if (dropped || !std::holds_alternative<net::EntityHold>(e)) return false;
+        dropped = true;
+        return true;
+    });
+    ASSERT_TRUE(a.Join());
+    a.Place(holder, glm::vec3(0.0f, Ground(), 0.0f));
+    a.Place(faulty, glm::vec3(6.0f, Ground(), 3.0f));
+    const uint32_t crate = ArenaCrate(a, 0.0, -2.0);
+    const scene::Entity mine = CopyOn(holder, crate);
+    ASSERT_NE(mine, scene::kNoEntity);
+    holder.look = LookAt(a.Feet(holder), BodyCentre(*holder.simulation, mine));
+    a.Passes(10);
+    holder.pressOnce = sim::PlayerButton_Use;
+    const auto heldThere = [&] {
+        const scene::Entity e = CopyOn(faulty, crate);
+        return e != scene::kNoEntity && faulty.simulation->Scene().TryGet<scene::Held>(e) != nullptr;
+    };
+    for (int i = 0; i < 1500 && !heldThere(); ++i) a.Pass();
+    EXPECT_TRUE(dropped);
+    const scene::Entity seen = CopyOn(faulty, crate);
+    ASSERT_NE(seen, scene::kNoEntity);
+    EXPECT_NE(faulty.simulation->Scene().TryGet<scene::Held>(seen), nullptr) << "the model answer re-made it held";
+    EXPECT_GE(faulty.client->Stats().entityMismatches, 1u);
+}
+
+TEST(Mechanisms, DentedDoorKeepsItsLayerOnEverySide) {
+    YardArena a(ArenaYardSettings(true));
+    ASSERT_TRUE(a.started);
+    YardArena::Bot& user = a.AddBot();
+    ASSERT_TRUE(a.Join());
+    sim::Simulation& server = a.server.Simulation();
+    const scene::Entity door = FindMechanism(server, scene::MechanismKind::Door);
+    ASSERT_NE(door, scene::kNoEntity);
+    const uint32_t doorId = NetIdOfEntity(server, door);
+    ASSERT_TRUE(AtTheDoor(a, user, door));
+    const float vs = server.World().VoxelSize();
+    const auto dent = [&](double radius, double up) {
+        const glm::dvec3 centre = BodyCentre(server, door) + glm::dvec3(0.0, up, 0.0);
+        ASSERT_TRUE(a.server.QueueCast(voxel::QuantizeSphere(centre / static_cast<double>(vs), radius / vs), voxel::QuantizePower(6.0f)));
+    };
+    const auto compare = [&](const char* when) {
+        const scene::Mechanism* s = server.Scene().TryGet<scene::Mechanism>(door);
+        const scene::Entity copy = CopyOn(user, doorId);
+        ASSERT_NE(s, nullptr) << when << ": the door was freed (the dent was too strong)";
+        ASSERT_NE(copy, scene::kNoEntity) << when;
+        const scene::Mechanism* c = user.simulation->Scene().TryGet<scene::Mechanism>(copy);
+        ASSERT_NE(c, nullptr) << when;
+        EXPECT_EQ(c->modelOffset, s->modelOffset) << when;
+        EXPECT_EQ(c->track.Newest(), s->track.Newest()) << when;
+        const uint32_t now = a.server.TickNumber();
+        for (uint32_t t = now; t < now + 120; ++t) {
+            EXPECT_EQ(sim::MechanismLayer(*c, t), sim::MechanismLayer(*s, t)) << when << " tick " << t;
+            EXPECT_EQ(sim::PositionAt(*c, t), sim::PositionAt(*s, t)) << when << " tick " << t;
+        }
+    };
+    const uint32_t modelsBefore = user.client->Stats().models;
+    // Mid-swing: the open is under way when the dent lands.
+    user.pressOnce = sim::PlayerButton_Use;
+    a.Passes(30);
+    dent(0.3, 0.0);
+    a.Passes(20);
+    compare("mid-swing");
+    std::printf("[ dent ] after 1: server models %u casts run %u, client models %u\n", a.server.Stats().objectModels,
+                a.server.Stats().castsRun, user.client->Stats().models);
+    // At rest.
+    a.Passes(120);
+    dent(0.3, 0.5);                                  // above the first dent
+    a.Passes(20);
+    compare("at rest");
+    std::printf("[ dent ] after 2: server models %u casts run %u, client models %u\n", a.server.Stats().objectModels,
+                a.server.Stats().castsRun, user.client->Stats().models);
+    EXPECT_GE(user.client->Stats().models, modelsBefore + 2) << "both dents reached the client as models";
+}

@@ -90,6 +90,17 @@ namespace vortex::net {
         inline constexpr size_t kMaxHeldPerId = 64;
         inline constexpr size_t kMaxHeldEvents = 4096;
 
+        /// The NetId of an entity event about one replicated body (not a spawn or a despawn).
+        inline uint32_t EntityEventNetId(const Event& event) {
+            if (const EntityRest* e = std::get_if<EntityRest>(&event)) return e->netId;
+            if (const EntityWake* e = std::get_if<EntityWake>(&event)) return e->netId;
+            if (const ObjectModel* e = std::get_if<ObjectModel>(&event)) return e->netId;
+            if (const MechanismMove* e = std::get_if<MechanismMove>(&event)) return e->netId;
+            if (const EntityHold* e = std::get_if<EntityHold>(&event)) return e->netId;
+            if (const EntityRelease* e = std::get_if<EntityRelease>(&event)) return e->netId;
+            return 0;
+        }
+
         struct HistoryEntry {
             bool valid = false;
             uint32_t tick = 0;
@@ -143,6 +154,13 @@ namespace vortex::net {
             bool resting = false;
             uint64_t modelHash = 0;
             uint32_t base = 0;            ///< the opSeq its state is as of (its spawn, Detach, model or baseline)
+            uint8_t motion = 2;           ///< [mech-1] the server body's physics::MotionType (only a Dynamic one is holdable)
+            bool mechanism = false;       ///< [mech-1] posed from its scene::Mechanism: never sampled, rested or woken
+            bool held = false;            ///< [mech-1] a hold is applied (the server's, or this client's predicted pick-up)
+            bool holdConfirmed = false;   ///< ... and it is the server's (EntityHold): the checks' HeldTerm
+            uint8_t holder = 0;
+            uint16_t relYaw = 0;
+            uint32_t holdSince = 0;
         };
         std::unordered_map<uint32_t, Copy> copies;               // NetId -> copy
         std::unordered_set<uint32_t> tombstones;                 // despawned NetIds (a later spawn of one is discarded)
@@ -309,7 +327,60 @@ namespace vortex::net {
         /// A kinematic copy of a server object: Layer::Dynamic at rest (players collide with it),
         /// Layer::Rubble while it moves (no predicted player does).
         bool MakeCopy(uint32_t netId, std::shared_ptr<voxel::VoxelModel> model, const glm::vec3& position, const glm::quat& rotation,
-                      bool resting, uint32_t base);
+                      bool resting, uint32_t base, uint8_t motion = 2);
+
+        // --- mechanisms and holding ([mech-1], docs/design/mechanisms.md "Replication", "Prediction and replication") ---
+        struct HoldPending {
+            uint32_t netId = 0;
+            uint32_t inputTick = 0;
+            bool drop = false;
+            glm::vec3 position{0.0f};     ///< a pick-up: the copy's pose before it (the undo)
+            glm::quat rotation{1.0f, 0.0f, 0.0f, 0.0f};
+        };
+        std::optional<HoldPending> holdPending;
+        uint32_t heldNetId = 0;           // the own held copy (confirmed or predicted); 0 none
+        uint8_t latchedEdges = 0;         // Use / Cast presses made while a pick-up is pending
+        uint8_t latchedOut = 0;           // ... sent with the next input once the pick-up is confirmed
+        uint8_t lastControls = 0;         // the controls' Use / Cast levels of the last step (presses while pending)
+        struct PendingRelease {
+            EntityRelease release;
+            uint32_t waited = 0;          ///< client ticks since it arrived
+        };
+        std::map<uint32_t, PendingRelease> pendingReleases;   // another holder's releases, waiting for the drawn holder
+        bool heldPinned = false;
+        std::string holdNotice;
+        uint32_t holdNoticeTicks = 0;
+        uint32_t lastUseTick = 0;
+        sim::UseResult lastUseResult = sim::UseResult::None;
+
+        /// The tick a mechanism is posed at outside a step: the predicted tick, else the newest server tick.
+        uint32_t PoseTick() const { return predicting ? nextTick : std::max(newestSnapshot, welcome.tick); }
+        /// The model term of the checks: VolumeHash, with a mechanism's MechanismTerm or a confirmed hold's HeldTerm.
+        uint64_t CheckHash(const Copy& c) const;
+        /// Makes the copy of `netId` (just made, kinematic) a mechanism with the server's state.
+        void InstallMechanism(uint32_t netId, const MechanismState& state);
+        /// Every mechanism copy's `linked` from its linkedNetId (a copy re-made by a model gets a new entity).
+        void RelinkMechanisms();
+        void PoseMechanismCopy(const Copy& c, uint32_t tick);
+        /// FlushBox, the mechanisms' pose at `tick` and the push-out: before every StepPlayer (the server's order).
+        void PrepareStep(uint32_t tick);
+        uint32_t NetIdOfEntity(scene::Entity entity) const;
+        /// The server's hold of a copy (EntityHold, or a spawn / baseline with kObjectHeld).
+        void ApplyHold(uint32_t netId, uint8_t holder, uint16_t relYaw, uint32_t tick);
+        /// An EntityRelease applied: the copy at the release pose, moving, waiting for samples after its tick.
+        void ApplyRelease(const EntityRelease& r);
+        /// The own predicted pick-up and drop for the newest tick (never in replays).
+        void PredictHold(const sim::PlayerStepResult& r, const sim::PlayerInput& input);
+        /// A pending pick-up the server answered without a hold: undone.
+        void ResolveHold(const Snapshot& snap);
+        void UndoPickup();
+        /// Held copies posed from their holders (own: the predicted player; others: as they are drawn); other
+        /// holders' releases applied once the drawn holder reached their tick.
+        void PoseHeld(const sim::PlayerInput& input);
+        /// The use target rules of this client: a copy is holdable when its server body is Dynamic and not held.
+        sim::UseTargetHooks MakeUseHooks() const;
+        /// A little dust where a mechanism starts to move (a live MechanismMove, presenting): the lead cue.
+        void ShowLeadCue(const Copy& c);
 
         /// Local rubble (presentation): an object fragment, or a copy the server let go of.
         void MakeRubble(std::shared_ptr<voxel::VoxelModel> model, const glm::vec3& position, const glm::quat& rotation,

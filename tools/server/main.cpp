@@ -4,7 +4,7 @@
 //                 [--seconds S] [--exit-when-empty] [--parent-pid PID] [--version]
 //                 [--ticks N] [--drill N] [--clients N] [--enet] [--join-step K]
 //                 [--loss P] [--delay-ms D] [--jitter-ms J] [--outage-ms A,B] [--threads T]
-//                 [--stand] [--no-jumps] [--bot-casts N] [--bot-crates N] [--realtime] [--hash-out <file>]
+//                 [--stand] [--no-jumps] [--bot-casts N] [--bot-crates N] [--bot-use P] [--bot-hold P] [--realtime] [--hash-out <file>]
 //                 [--drill-after N] [--drill-delay S] [--drill-sites K] [--drill-every T]
 //                 [--client-window N] [--walk-across] [--precasts N] [--memory] [--max-join-p99-ticks N]
 //                 [--bot-broken-chunk N[:X,Y,Z]] [--bot-broken-generator N] [--timeline FILE] [--broken-chunk-candidate]
@@ -195,6 +195,34 @@ namespace {
         const std::optional<std::string> v = args.Get(name);
         return v ? std::atof(v->c_str()) : fallback;
     }
+
+    /// [mech-1] Every server mechanism has a copy on the bot with the same newest segment and position now.
+    bool MechanismsAgree(net::Server& server, const net::Bot& bot) {
+        const sim::Simulation* b = bot.GetSimulation();
+        if (!b) return false;
+        const uint32_t t = server.TickNumber();
+        for (const auto [e, m, id] : server.Simulation().Scene().Registry().view<const scene::Mechanism, const scene::NetId>().each()) {
+            const scene::Entity copy = bot.GetClient().CopyOf(id.value);
+            const scene::Mechanism* c = copy != scene::kNoEntity ? b->Scene().TryGet<scene::Mechanism>(copy) : nullptr;
+            if (!c || c->track.count == 0 || m.track.count == 0) return false;
+            if (!(c->track.Newest() == m.track.Newest()) || sim::PositionAt(*c, t) != sim::PositionAt(m, t)) return false;
+        }
+        return true;
+    }
+
+    /// [mech-1] Every held server body is held on the bot by the same holder with the same relYaw, and nothing else is.
+    bool HoldsAgree(net::Server& server, const net::Bot& bot) {
+        const sim::Simulation* b = bot.GetSimulation();
+        if (!b) return false;
+        size_t held = 0;
+        for (const auto [e, h, id] : server.Simulation().Scene().Registry().view<const scene::Held, const scene::NetId>().each()) {
+            ++held;
+            const scene::Entity copy = bot.GetClient().CopyOf(id.value);
+            const scene::Held* c = copy != scene::kNoEntity ? b->Scene().TryGet<scene::Held>(copy) : nullptr;
+            if (!c || c->holder != h.holder || c->relYaw != h.relYaw) return false;
+        }
+        return b->Scene().Registry().view<const scene::Held>().size() == held;
+    }
 }
 
 int main(int argc, char** argv) {
@@ -215,7 +243,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "usage: vortex_server --session <file> [--listen [PORT]] [--bind ADDR] [--seconds S] [--exit-when-empty] "
                              "[--token HEX | --new-token] [--ticks N] [--drill N] [--clients N] [--enet] [--join-step K] [--loss P] "
                              "[--delay-ms D] [--jitter-ms J] "
-                             "[--outage-ms A,B] [--threads T] [--stand] [--no-jumps] [--bot-casts N] [--bot-crates N] [--realtime] "
+                             "[--outage-ms A,B] [--threads T] [--stand] [--no-jumps] [--bot-casts N] [--bot-crates N] [--bot-use P] [--bot-hold P] [--realtime] "
                              "[--hash-out <file>] [--drill-after N] [--drill-delay S] [--drill-sites K] [--drill-every T] "
                              "[--client-window N] [--walk-across] [--precasts N] [--memory] [--max-join-p99-ticks N] "
                              "[--bot-broken-chunk N[:X,Y,Z]] [--bot-broken-generator N] [--timeline FILE] [--broken-chunk-candidate] [--terrain-bulk-ceiling KIB] [--bulk-window-floor KIB] [--pacer-delivery-interval S] "
@@ -308,6 +336,9 @@ int main(int argc, char** argv) {
     pilotSettings.castEveryTicks = static_cast<uint32_t>(Number(args, "--bot-casts", 0));
     pilotSettings.casts = pilotSettings.castEveryTicks > 0;
     pilotSettings.crateEveryTicks = static_cast<uint32_t>(Number(args, "--bot-crates", 0));
+    // [mech-1] --bot-use P: a use at the yard's door, then its lever, every P ticks; --bot-hold P: a crate carried.
+    pilotSettings.useEveryTicks = static_cast<uint32_t>(Number(args, "--bot-use", 0));
+    pilotSettings.holdEveryTicks = static_cast<uint32_t>(Number(args, "--bot-hold", 0));
     // [wp-7] --fight: every in-process bot fights (fight.md "Bots"); --until-round-end: the run lasts until the round
     // ends (a winner or a draw), --ticks stays the cap; --require-winner: a draw fails the run.
     pilotSettings.fight = args.Has("--fight");
@@ -1021,6 +1052,21 @@ int main(int argc, char** argv) {
         ok = ok && agree;
         Log::Info("Entities: client {}: {} - {}", i, c.Describe(), agree ? "agree" : "DIFFERENT");
     }
+    // [mech-1] The mechanisms' positions and the holds, the same on every bot.
+    if (server.Stats().mechanisms > 0 || pilotSettings.useEveryTicks > 0 || pilotSettings.holdEveryTicks > 0)
+        for (size_t i = 0; i < bots.size(); ++i) {
+            if (!bots[i].bot || !bots[i].bot->GetSimulation()) continue;
+            const net::Bot& bot = *bots[i].bot;
+            const net::ClientStats& cs = bot.GetClient().Stats();
+            const bool mechanisms = MechanismsAgree(server, bot);
+            const bool holds = HoldsAgree(server, bot);
+            ok = ok && mechanisms && holds;
+            Log::Info("Mechanisms: bot {}: {} uses, {} refused, positions {}", i, bot.UsePresses(), bot.UsesRefused(),
+                      mechanisms ? "agree" : "DIFFERENT");
+            Log::Info("Mechanisms: bot {}: late events {}, corrections at mechanisms {}", i, cs.mechanismLateEvents, cs.mechanismCorrections);
+            Log::Info("Hold: bot {}: {} pickups, {} drops, {} throws, {} refused, positions {} ({} errands given up)", i, cs.holdsConfirmed,
+                      bot.Drops(), bot.Throws(), cs.holdRefused, holds ? "agree" : "DIFFERENT", bot.ErrandsGivenUp());
+        }
     // What every client that drained must have reached (tools/session-check.sh compares against it).
     Log::Info("Session: server ends at opSeq {}, tick {}, world hash {:016x} ({} chunks)", server.LastOpSeq(), server.TickNumber(), sh.hash,
               sh.solidChunks);

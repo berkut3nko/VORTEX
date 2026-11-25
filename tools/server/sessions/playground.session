@@ -14,3 +14,5 @@ terrain_seed = 1337
 max_clients = 16
 chunk_capacity = 0
 pack_hidden = 1
+# The mechanism yard south of the plaza (a door, a portcullis and its lever): replicated mechanisms ([mech-1]).
+mechanisms = 1

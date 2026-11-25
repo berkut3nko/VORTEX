@@ -179,7 +179,14 @@ In this order:
    `--mechanism-blast`, `--hold-script`). Tests and `tools/verify.sh quick` pass on the Windows PC; the owner
    checked doors and the lever in a window (2026-11-24). Card 8 (protocol 12: the wire values) and card 9 (the server: the yard with
    `mechanisms = 1`, E use, the lead, the throw and the auto-drops, held bodies in the checks) are built and tested headless;
-   cards 10-11 (the client and session play) are not built.
+   card 10 (the client: mechanism copies, prediction at mechanisms, predicted pick-up and drop, other holders' objects)
+   is built and tested headless; card 11 (the yard in `playground.session`, the bot errands `--bot-use` / `--bot-hold`, the
+   use prompt in the session game) is built. Measured on the drills (2 bots, 40 ms, 60 s): lead 10-11 ticks, 0 late events,
+   10-11 uses, 14-15 pick-ups, entities and positions agree, hashes equal; open: one correction of about 2 cm beside the
+   door it had just opened for one bot (lossless and lossy), 4-6 corrections of up to 7 cm for one carrying bot, 1-2
+   auto-drops (pinned) by carrying bots, and `tools/session-check.sh` fails with or without the yard (two bodies still
+   moving at its end, 1-5 m apart: the same at card 9's commit, so not caused by this stage). Not run: `verify.sh full
+   --ci`, the soak, the owner's windowed check 25.
 3. **[mag-1] Siege core in sim, headless only.** The spell system's first four spells, Siege Cannon, Barricade Wave,
    Shockwave and Updraft (breach, cover, knock off, climb), with only what they use: the Pierce operator, the Burst
    strip, Plume's single column, `CarveCapsule` / `MapMask` / `MapShape` as sim ops, knit iron that blasts chip, with
@@ -282,7 +289,7 @@ never been measured.
 
 ## State
 
-Tests: **922** in ctest: 914 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
+Tests: **932** in ctest: 924 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
 game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts), `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
 `Tools.DocCheck`, `Tools.DocCheckSelftest`, `Tools.SessionCheckVerdict` and `Tools.VerifyAssertions` (WP2's checks
 and their self-tests), `Tools.RendezvousWorker` (the rendezvous Worker under `node --test`, registered when `node` is

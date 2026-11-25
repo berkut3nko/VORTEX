@@ -222,7 +222,17 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
   dropped. Holding: `EntityHold` is the body's wake; a held body has no rest, wake or sample. The throw (Cast while
   holding) runs no cast; a release the player did not ask for (pinned, damaged) opens an echo window that consumes
   the edges its client made before it saw it. The checks mix `MechanismTerm` / `HeldTerm` into the model hash. The
-  exit lines `Mechanisms: server:` and `Hold: server:` count them. The client does not apply these events yet.
+  exit lines `Mechanisms: server:` and `Hold: server:` count them.
+- **The client's half** [mech-1] (`ClientMechanisms.cpp`): a mechanism is a copy with the `mechanism` flag and its
+  own `scene::Mechanism` (never sampled, rested or woken); `MechanismMove` pushes a segment (`Freed` makes it an
+  ordinary moving copy); every player step (predicted, replayed, resumed) is prepared by `PrepareStep` (FlushBox,
+  `PoseMechanisms` and the push-out at the step's tick) and every client tick runs `StepMechanisms` without
+  authority. Holding: the own pick-up and drop are predicted for the newest tick; Use and Cast presses made while a
+  pick-up is pending are latched (sent once it is confirmed, dropped if it is refused); a refused pick-up is undone
+  from the snapshot with its `lastUseTick`. Other players' held copies are posed from the holder as it is drawn; their
+  release waits until the copy's own interpolation time reaches the release tick, and seeds the interpolation with
+  the release pose (no jump when the samples come). The checks use the same `MechanismTerm` / `HeldTerm` as the
+  server (a confirmed hold only).
 - Also wire format: `WindowUpdate::kTerrainMode` (2) and `kReset`, `EntityKind` (1 `Light`, 2 `Object`, 3 `Mechanism`),
   `scene::DespawnReason` (1 `Destroyed`, 2 `ToRubble`, 3 `Broken`), `PlayerButton` (1 `Jump`, 2 `Run`, 4 `Cast`, 8
   `Crate`, 16 `Use`), `RegionGenerator` (0 `Terrain`, 1 `Flat`), `RegionTemplateId` (0 `Empty`, 1 `Playground`),
