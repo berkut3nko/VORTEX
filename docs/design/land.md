@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| Status | `[land-1]` built: the world map comes from the owner's drawn image through `tools/worldmap/worldmap.py` (the game's [world-map.md](../../../docs/world/world-map.md)); the rest is designed, nothing in the engine reads the map yet. |
+| Status | `[land-1]` built: the world map comes from the owner's drawn image through `tools/worldmap/worldmap.py` (the game's [world-map.md](../../../docs/world/world-map.md)). `[land-2]` built: `voxel::BakeLand` (`vortex.voxel:land`) erodes the coarse grid and finds its lakes and rivers; `vortex_land` bakes the drawn map and writes the review pictures ("The bake as built"). No chunk is generated from the map yet. |
 | Decided | The owner, 2026-11-25 (answers to the research notes' questions, [map-and-castle-research.md](../../../docs/world/map-and-castle-research.md) section 6): see "The owner's answers". Us (this design, 2026-11-25): "Decision" items 1-9, the starter site in "The starter region". |
-| Next | The owner's review of the first map (world-map.md), then `[land-2]`. |
+| Next | The owner's review of the baked pictures, then `[land-3]` (voxels from the map, offline). |
 | Open | "Open questions (with the answer we recommend)". |
 | Marks | (e) is an estimate; every stage names the measurement that confirms or kills it. Code claims were read at engine `6fdd9e5` (`voxel/Generator.cppm` `TerrainSettings`, `TerrainHeight`; the build ceiling and the full-height window). |
 
@@ -98,8 +98,8 @@ grid adds height and hardness for the starter region (about 1 MB raw, e).
 | Step | What it does | Input | Output |
 |---|---|---|---|
 | L0-L1 | Land, biomes, regions and the raw height from the drawn map (`[land-1]`, built: world-map.md) | the map files | land / sea, biomes, regions, raw height |
-| L3 | Erosion (option C): stream power on the coarse grid (valleys and ranges), then droplet erosion (gullies and fans), with rock hardness from L1's strata so hard layers stay as cliffs | raw height, hardness | eroded height, flow |
-| L4 | Water: fill depressions (priority-flood) to get lakes with fixed levels; rivers where flow passes a threshold, cut as flat reaches with steps; the sea at 0 m | eroded height, flow | water levels, river lines |
+| L3 | Erosion (option C): stream power on the coarse grid (valleys and ranges), slumping of slopes over the talus angle, then droplet erosion (gullies and fans), with rock hardness from strata bands so hard layers stay as cliffs (`[land-2]`, built) | raw height, hardness | eroded height |
+| L4 | Water: closed basins get an outlet (breaching), the rest of each basin is a lake at its spill height or a filled puddle; rivers where flow passes a threshold, as flat reaches with steps; the sea at 0 m (`[land-2]`, built) | eroded height | water levels, flow, river lines |
 | L6 | Starter region detail: the fine grid (1 m) from the coarse one, strata, a fine erosion pass, and the starter site template blended in (see below) | coarse fields, template | fine height, hardness |
 | L7 | Points of interest: scored candidates per region (castle site, village, cave, crossing, landmark), with spacing | all fields | points |
 | L8 | Roads: A\* between points, slope and water costs, switchbacks, bridges and fords | points, height, water | road lines |
@@ -107,6 +107,51 @@ grid adds height and hardness for the starter region (about 1 MB raw, e).
 
 Every step is deterministic for a seed and a build. L3 and L6's erosion are the costly ones: the bake budget is under
 30 s on the server at start (e), measured in `[land-2]`.
+
+## The bake as built (`[land-2]`)
+
+`voxel::BakeLand(LandSource, LandSettings)` (`engine/src/voxel/Land.cppm`) runs on the coarse grid of 4 m cells; the
+drawn map (5 m pixels) gives 800 x 598 cells. Every knob is a `LandSettings` field with the tuned default.
+
+1. **Resample** the drawn height (bilinear) and the biome and region ids (nearest). The coastline stays where the map
+   draws it: a sea cell is at -0.5 m or lower, a land cell at 0.3 m or higher, before and after every step.
+2. **Hardness** 0-15 per cell: a base per biome (desert 2, grassland 3, forest 4, mountain 8, rocky isle 10), plus 6
+   in hard strata bands (5 m bands tilted by slow noise; one band in three is hard) in the mountains and above 30 m.
+3. **Stream power** (40 rounds, implicit, n = 1): each round routes the flow by a priority-flood from the sea and the
+   map border, sums the drainage area, and lowers each cell towards its receiver by K A^0.5 / distance, K scaled by
+   1 / (1 + hardness / 2). No cell goes more than 12 m below its raw height, and a drawn lake's rim not more than 0.5 m.
+4. **Slopes:** 6 rounds of slumping where a slope is steeper than the talus (0.9 rise over run, hard rock 3.0).
+5. **Droplets:** one per land cell, 80 steps each (after Beyer 2015): they cut gullies and lay fans; the ground and
+   the droplets' sediment keep the same total, and a droplet that reaches water ends there.
+6. **Breaching:** every closed basin of the eroded height gets an outlet cut along its drainage path from its lowest
+   cell, at most 6 m deep (after Lindsay 2016). A basin with a drawn lake is cut down to the drawn level (its lowest
+   drawn bank less 0.5 m), however deep the outlet must be: the owner's lake keeps its drawn size, and its outlet
+   is a gorge.
+7. **Lakes:** a priority-flood fill of what is left; each basin is a lake at its spill height when the map draws a
+   lake in it or it covers at least 2000 m^2 and is 0.75 m deep, else a puddle that is filled.
+8. **Rivers:** the flow is routed again; a river starts where the drainage area reaches 0.06 km^2 and runs down its
+   receivers to the sea, a lake or another river. Its level, from the mouth upstream, is the bank less 0.3 m rounded
+   down to 0.5 m and never below the water it drains into, so the levels form flat reaches with steps. The bed is cut
+   0.5-2 m below the level (deeper with more flow), 3 cells wide where the area is 4 times the threshold; a dry bank
+   lower than the water is raised to 0.2 m above it.
+
+`voxel::CheckLand` holds the rules: the sea did not move; dry land is above the sea; each lake has one level over a
+bed below it; a river's bed is below its level; its level never rises downstream; and every river reaches the sea
+or a lake, through the rivers it joins (`Land.*` tests, each check with a planted fault). `voxel::LandHash` covers
+every baked field: two bakes of one source in one build are equal.
+
+**The tool:** `build/engine/tools/land/vortex_land --map assets/world --out build/land [--twice]` (run from the game's
+root) logs `Land: baked ...`, the lakes, the rivers, `Land: hash H` and `Land: checks pass` (exit 3 when a check
+fails or `--twice` finds two hashes), and writes `land_height.png` and `land_water.png` (16-bit, the world map
+tool's height encoding; water 0 = none), `land_flow.png`, and the review pictures `land_relief.png` (shaded relief
+with the sea, lakes and rivers) and `land_change.png` (red cut, green laid down, full colour at 5 m).
+
+**The first map (map id `5556ecd6b3b7d86d`, 2026-11-25, m):** baked in 3.0 s (stream power 2.5 s); erosion cut
+2.8 million m^3 and laid down 0.9 million m^3 (the rest reached the sea), deepest cut 8.1 m; 1673 outlet cells cut,
+26 puddles filled. Three lakes: the drawn northern lake at 3.88 m (0.036 km^2, 6.6 m deep; its outlet is a gorge to
+the north coast), the drawn desert lake at 2.97 m, and a mountain tarn at 35.2 m. 14 rivers, 2.8 km, 194 reaches, 7
+steps over 1 m (largest 5.0 m); 8 reach the sea, 4 a lake, 2 join another river. The starter grassland is a low
+plain of laid-down sediment with a stream down its middle to the south coast.
 
 ## Water at fixed levels
 
@@ -190,7 +235,7 @@ by hand.
 
 | Item | Target | Measured in |
 |---|---|---|
-| Bake on the server at start | under 30 s for the island and the starter region | `[land-2]` |
+| Bake on the server at start | under 30 s for the island and the starter region | `[land-2]`: the island's coarse grid 3.0 s (m); the starter region's fine grid comes in `[land-4]` |
 | Map transfer to a joiner | under 1 MB compressed | `[land-4]` |
 | Chunk generation from the map | no slower than today's generator per chunk | `[land-3]` |
 | Map image | 2048 x 1365 pixels, under 1 s to render | `[land-1]` |
@@ -200,7 +245,7 @@ by hand.
 | ID | Stage | Acceptance |
 |---|---|---|
 | `[land-1]` | The world map from the owner's drawn image (a tool): biomes, regions, raw heights, review pictures, the map id. **Built** (world-map.md) | the same source gives the same map id on two Python builds (done: `5556ecd6b3b7d86d`); the owner reviews the pictures |
-| `[land-2]` | Erosion and water: L3, L4 on the coarse grid; lakes and rivers on the image | the bake time; lakes have one level each; every river reaches the sea or a lake; images reviewed |
+| `[land-2]` | Erosion and water: L3, L4 on the coarse grid; lakes and rivers on the image. **Built** ("The bake as built") | the bake time (done: 3.0 s); lakes have one level each and every river reaches the sea or a lake (done: `voxel::CheckLand`, `Land.*`); the owner reviews the pictures |
 | `[land-3]` | Voxels from the map, offline: the coarse grid everywhere, biome materials, water at its levels; walking the island in the offline game | chunk generation cost; golden hash of the sampling; the owner walks it |
 | `[land-4]` | The starter region: the fine grid, strata cliffs, Hollowkeep's site template, points of interest, roads (L6-L8) | the castle draft's heights hold on the site; roads reach every point; the owner walks it |
 | `[land-5]` | In a session: the map baked at server start and sent in the plan; clients generate from it | transfer size; hashes equal across clients; a restart with the same seed gives the same world |
