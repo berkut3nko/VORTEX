@@ -30,6 +30,7 @@ minimap; it draws the image this design makes.
    image (no other tool, no shared licence), make a height map and a biome map from it, split it into regions, and
    start in the region of the simplest biome. The height map, the biome map and the points of interest stay editable,
    and a hash checks that the server and the client have the same map: the map is the seed.
+9. **Hollowkeep's site on the drawn map:** a spur of the eastern ridge over the starter grassland.
 
 The two reference pictures the owner gave (a strategy game's region map with relief and pastel region colours, and a
 hand-drawn fantasy map) set the **kind** of output: a whole island with coasts, mountain chains, lakes, regions and
@@ -137,27 +138,30 @@ Every step is deterministic for a seed and a build. L3 and L6's erosion are the 
 
 The starter region holds the demo: the village, the forest, the cave and Hollowkeep (castle-layout-draft.md).
 
-**Hollowkeep's site (our choice, before the drawn map):** a rock spur inside a loop of a **drowned river gorge** (a
-ria: an incised river valley whose lower course lies at sea level). On the drawn map the starter grassland meets the
-sea at its south end (about 215 m of coast) and has the eastern ridge on its west: `[land-4]` places the site either
-at that south end as a ria, or on a spur of the ridge over the grassland (open question 6). Why the ria:
-- It is the strongest real castle site with water: water on 2-3 sides, cliffs, one neck to the approach field (research
-  notes 2.1, 4.3 "Incised meanders").
-- A ria's water is the sea's, so its level is the fixed sea level: realistic with no flow at all.
-- It keeps the castle draft as it is: the west cliff (10-12 m) and the south cliff (12 m) stand above the gorge, the
-  north neck is the approach field with the ditch, the east side is the forest slope. The draft's dry stream bed
-  becomes a **gravel shelf** at the cliff foot, 10-15 m wide, then the water: routes R6 (drain culvert) and R7
-  (postern path) stay on dry ground and the 10 m rule above holds.
-- Later regions add other site types (ridge, island, river crossing, hillside) with their own templates.
+**Hollowkeep's site (the owner's answer 9):** a **ridge spur**: a rock tongue that runs east from the eastern
+mountain ridge (region 6) and ends above the starter grassland. Why this site:
+- It is a real castle type (a spur castle): steep ground on 3 sides, one neck to the higher ridge, cut by a ditch
+  (research notes 2.1).
+- It keeps the castle draft as it is, turned by 90 degrees: the draft's north neck faces west to the ridge, so the
+  approach field and the ditch lie on the ridge side. The two cliffs (10-12 m and 12 m) stand above dry ravines on
+  the spur's flanks. The draft's dry stream bed is the floor of one ravine: routes R6 (drain culvert) and R7
+  (postern path) stay on dry ground as drawn.
+- It needs no water: the site works with the fixed-level water rule and no rivers.
+- The ridge gives the spur its height with no cut terrain: the castle sees over the whole grassland to the sea.
+- Later regions add other site types (ria, island, river crossing, hillside) with their own templates.
+
+`[land-4]` measures where the ridge's east face is high and steep enough (the draft needs about 12 m above the
+ravines) and places the spur there; if no place is high enough, the template raises the spur.
 
 **The site template.** A hand-designed landform at the draft's sizes: the spur with its rock step, the neck and the
-approach field, the two cliffs, the gravel shelf, the ria loop, the forest slope. L6 blends it into the fine grid
+approach field on the ridge side, the two cliffs, the dry ravines, the slope down to the grassland. L6 blends it into the fine grid
 (the skirt formula), and the erosion pass runs after the blend with the template's rock marked hard, so the
 surroundings are eroded naturally and the castle's ground stays as designed.
 
-**The rest of the starter region.** The village stands at the head of the ria where the gorge opens into a valley
-(a crossing: research notes 2.2), on the road that climbs to the approach field. The forest covers the east slopes,
-the cave opens in the forest (roadmap-and-launch.md 4.2). Roads come from L8, not by hand.
+**The rest of the starter region.** The village stands in the grassland below the spur's tip, on the road from the
+coast at the south end (a landing) that climbs the ridge to the approach field. The forest covers the eastern edge
+(region 4); the cave opens in the forest or in the ridge's face (roadmap-and-launch.md 4.2). Roads come from L8, not
+by hand.
 
 ## Points of interest and roads
 
@@ -226,9 +230,7 @@ touches no runtime code.
    recommend starting at this size and measuring.
 5. **Bold regions' content:** walkable land with biome materials, forests and rock only (Decision 4). Enough until
    worldgen reaches them? We recommend yes.
-6. **Hollowkeep's site on the drawn map:** a ria at the grassland's south end (water on 2-3 sides, the castle draft as
-   it is), or a spur of the eastern ridge over the grassland (no water, the neck towards the ridge)? We recommend the
-   ria, if the coast there is wide enough for the site template (`[land-4]` checks it).
+6. **Hollowkeep's site on the drawn map:** answered (owner's answer 9): a spur of the eastern ridge.
 
 ## Sources
 
