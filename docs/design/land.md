@@ -30,7 +30,10 @@ minimap; it draws the image this design makes.
    image (no other tool, no shared licence), make a height map and a biome map from it, split it into regions, and
    start in the region of the simplest biome. The height map, the biome map and the points of interest stay editable,
    and a hash checks that the server and the client have the same map: the map is the seed.
-9. **Hollowkeep's site on the drawn map:** a spur of the eastern ridge over the starter grassland.
+9. **Hollowkeep's site on the drawn map:** a spur of the eastern ridge over the starter grassland. After `[land-4]`:
+   keep the site the bake chose for now (points.json can move it later).
+10. **No map transfer (2026-11-25):** every player has the same generation code and the same map files, and the bake
+    is deterministic, so nothing is sent: each side bakes its own map, and the join compares the baked map's hash.
 
 The two reference pictures the owner gave (a strategy game's region map with relief and pastel region colours, and a
 hand-drawn fantasy map) set the **kind** of output: a whole island with coasts, mountain chains, lakes, regions and
@@ -39,23 +42,29 @@ their borders, readable as a map image. We take no coastline, region shape, name
 
 ## Decision
 
-1. **One world map, from the drawn map, baked at server start.** The island's coarse fields come from the owner's
-   drawn map through `tools/worldmap/worldmap.py` (world-map.md): `height.png`, `biome_ids.png`, `region_ids.png` and
-   `world.json`, editable files under version control. At start the server turns them into the **`WorldMap`**:
-   erosion, water levels, rock hardness, flow, the points of interest and the road network. Nothing in it is simulated
-   again during the session. A restart bakes it again; the same map files and the same build give the same result.
-   The **map id** (world-map.md: a hash of the files' decoded pixels) identifies the map: a client with another map id
-   is refused, as one with another build hash is today.
+1. **One world map, from the drawn map, baked at start on every side.** The island's coarse fields come from the
+   owner's drawn map through `tools/worldmap/worldmap.py` (world-map.md): `height.png`, `biome_ids.png`,
+   `region_ids.png`, `world.json` and `points.json`, editable files under version control and shipped with the game.
+   At start the server, and every client before it joins, turns them into the **`WorldMap`**: erosion, water levels,
+   rock hardness, flow, the points of interest and the road network. Nothing in it is simulated again during the
+   session. A restart bakes it again; the same map files and the same build give the same result.
 2. **The map comes first, the voxels follow.** Every chunk is generated from the `WorldMap` by a pure function of the
    chunk coordinate, as today (worldgen.md "Decision" 1): base height from the map, detail noise, strata materials,
    then worldgen's structures. A global process (erosion, flow, lakes, roads) runs only in the bake.
-3. **The map is deterministic everywhere; the server bakes, clients receive the map.** The owner's rule (2026-11-25):
+3. **The map is deterministic everywhere; each side bakes it, and the join compares the result.** The owner's rule
+   (2026-11-25):
    the same map files give the same world on every machine. The bake and the sampling use only `+ - * /`, `sqrt`,
    `floor` and comparisons on floats (IEEE 754 rounds them exactly; the build has `-ffp-contract=off`) and integer
    hashes; no libm function (`pow`, `log`, `exp`, `sin` ...) decides a value, and both run on one thread in a fixed
    order. Golden hashes pin both on every platform: `Land.BakeGoldenHash` (the bake) and `LandSampling.GoldenHash`
-   (heights, water and voxels). In a session the server still bakes once and the baked fields travel to every
-   client in the plan (worldgen.md "Decision" 2), so a client never pays for the bake.
+   (heights, water and voxels), with `LandStarter.GoldenHash` for the starter region. So no map is sent (the owner's
+   answer 10): the server and every client bake their own copy of the map files, and the join compares the server's
+   **baked map hash** (`voxel::LandHash`, 8 bytes) with the client's. Equal: the client generates its chunks from its
+   own bake. Different (an edited file, another points.json, another build of the bake): the join is refused with the
+   reason, and the **map id** (world-map.md: the files' pixel hashes) tells which input differs. Comparing the result
+   and not only the inputs catches the code too. A client pays the bake once (about 3 s here, `[land-5]` measures the
+   UHD 620 laptop) and can bake while it connects; server terrain mode stays the fallback for single chunks, never
+   for the whole map.
 4. **Two levels of detail by region.** The **starter region** gets the full pipeline: a fine bake (1 m cells), strata
    cliffs, scree, trees, ground cover, the castle site, the village, the cave, the roads. **Every other region is bold**:
    the coarse bake (4 m cells), its biome's ground materials and a sparse set of large features (forest masses, rock
@@ -246,7 +255,7 @@ coarse bake (`LandStarter.GoldenHash` pins it).
 (`assets/world/points.json`) and edited, each kind it names is placed there instead of scored (crossings are
 ignored: the roads find them); a castle from the file takes the rotation whose neck faces the highest ground.
 `LandStarter.PointsJsonPlacesPointsAndReadsBack`. The map id (world-map.md) does not cover points.json yet:
-`[land-5]` adds it.
+`[land-5]` adds it; the baked map hash already does (Decision 3).
 
 **The first map (2026-11-25, m):** the starter bake takes 0.2-0.5 s. The site stands at (2356.5, 964.5) map m,
 neck to the west, field 17.0 m, at the ridge's southern foot above the grassland's south-west corner (fit
@@ -312,15 +321,15 @@ generation) and exits 0 (m).
 chunks), against 205-226 us for the built-in terrain generator (11 322 chunks): inside the budget "no slower than
 today's generator".
 
-Still to come: the map in a session, with the sampling's golden hash in `buildHash` and the fields in the
-`RegionPlan` (`[land-5]`).
+Still to come: the map in a session (`[land-5]`): each side bakes it and the join compares the baked map hash
+(Decision 3); the golden hashes of the bake and the sampling join `buildHash`.
 
 ## Budgets (e)
 
 | Item | Target | Measured in |
 |---|---|---|
-| Bake on the server at start | under 30 s for the island and the starter region | `[land-2]`: the island's coarse grid 3.0 s (m); `[land-4]`: the starter region 0.2-0.5 s more (m) |
-| Map transfer to a joiner | under 1 MB compressed | `[land-4]` |
+| Bake at start (server and each client) | under 30 s for the island and the starter region | `[land-2]`: the island's coarse grid 3.0 s (m); `[land-4]`: the starter region 0.2-0.5 s more (m) |
+| Bake on the owner's UHD 620 laptop (a client's join) | under 10 s (e) | `[land-5]` |
 | Chunk generation from the map | no slower than today's generator per chunk | `[land-3]`: 50 us against 205-226 us (m) |
 | Map image | 2048 x 1365 pixels, under 1 s to render | `[land-1]` |
 
@@ -332,15 +341,16 @@ Still to come: the map in a session, with the sampling's golden hash in `buildHa
 | `[land-2]` | Erosion and water: L3, L4 on the coarse grid; lakes and rivers on the image. **Built** ("The bake as built") | the bake time (done: 3.0 s); lakes have one level each and every river reaches the sea or a lake (done: `voxel::CheckLand`, `Land.*`); the owner reviews the pictures |
 | `[land-3]` | Voxels from the map, offline: the coarse grid everywhere, biome materials, water at its levels; walking the island in the offline game. **Built** ("From the map to voxels") | chunk generation cost (done: 50 us per chunk, the built-in terrain 205-226 us); golden hash of the sampling (done: `LandSampling.GoldenHash`); the owner walks it (owner check 26) |
 | `[land-4]` | The starter region: the fine grid, strata cliffs, Hollowkeep's site template, points of interest, roads (L6-L8). **Built** ("The starter region as built") | the castle draft's heights hold on the site (done: `LandStarter.TheSiteKeepsTheCastleDraftsHeights`); roads reach every point (done: `LandStarter.EveryRoadReachesItsPointWithinTheGrade`); the owner walks it (owner check 27) |
-| `[land-5]` | In a session: the map baked at server start and sent in the plan; clients generate from it | transfer size; hashes equal across clients; a restart with the same seed gives the same world |
+| `[land-5]` | In a session: the server and each client bake the map from their own files; the join compares the baked map hash (and names the map id that differs); clients generate from their own bake; the bake's and the sampling's golden hashes join `buildHash`; the map id covers points.json | a client with an edited map file is refused with the reason; world hashes equal across clients over the island; the bake time on the UHD 620 laptop; a restart with the same files gives the same world |
 
 The order relative to the ROADMAP (`[wg-W1]`, `[mag-1]`, the demo work) is the owner's call; `[land-1]` is a tool and
 touches no runtime code.
 
 ## Rejected alternatives
 
-- **Erosion on every client:** float simulations of this size are hard to keep bit-identical across builds and
-  platforms; the server bakes and sends (Decision 3).
+- **Sending the baked map to every client** (the plan before 2026-11-25): needed only while the bake could differ
+  between machines. With the bake deterministic and pinned by golden hashes, the files every player has already
+  hold the map; a hash at the join is enough (Decision 3, the owner's answer 10).
 - **Simulated water:** out of scope by the owner's answer 4.
 - **Searching the castle site in the starter region:** the hand-made castle would not fit a found site; the starter
   site is a template (Decision 7). Later regions use search.
@@ -355,7 +365,7 @@ touches no runtime code.
    Tamberlough where its highland meets the coast.
 3. **A new world per restart?** The same seed gives the same world; does a restart keep the seed, or does a reset
    (setting.md section 2) pick a new one? We recommend: the seed is in the server config; a reset changes it.
-4. **Island size:** about 3 x 2 km (e). Larger means longer walks between regions and a larger map transfer. We
+4. **Island size:** about 3 x 2 km (e). Larger means longer walks between regions and a longer bake at the join. We
    recommend starting at this size and measuring.
 5. **Bold regions' content:** walkable land with biome materials, forests and rock only (Decision 4). Enough until
    worldgen reaches them? We recommend yes.
