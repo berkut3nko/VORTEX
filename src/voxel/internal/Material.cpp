@@ -167,6 +167,11 @@ namespace vortex::voxel {
         ids.flowerViolet = add("flower_violet", Srgb(150, 92, 192),   0.90f,  100.0f,  0.1f, 0.12f, kSoft);
         ids.mushroom     = add("mushroom",     Srgb(204, 172, 140),   0.90f,  300.0f,  0.1f, 0.10f, kSoft);
         ids.barkPale     = add("bark_pale",    Srgb(214, 208, 194),   0.85f,  650.0f,  1.4f, 0.16f, MaterialFlag_Flammable);
+        // Castle masonry: granite resists the basic blast (power 6.0); ashlar breaks as stone; the core slumps.
+        ids.granite      = add("granite",      Srgb(78, 82, 92),      0.85f, 2700.0f,  7.5f, 0.12f);
+        ids.graniteQuoin = add("granite_quoin", Srgb(58, 61, 70),     0.85f, 2700.0f,  7.5f, 0.08f);
+        ids.ashlar       = add("ashlar",       Srgb(196, 186, 164),   0.85f, 2400.0f,  3.0f, 0.06f);
+        ids.rubbleCore   = add("rubble_core",  Srgb(120, 108, 92),    0.90f, 2000.0f,  2.0f, 0.22f);
 
         // Bond strengths, kg/m^2: compression / shear / tension (docs/design/shred.md Part 4b,
         // "Material strengths"). A free column of height h holds while density x h <= C, a
@@ -206,6 +211,10 @@ namespace vortex::voxel {
         strength(ids.gravel, 40000, 5000, 800);
         strength(ids.deadwood, 50000, 20000, 20000);
         strength(ids.barkPale, 80000, 30000, 30000);
+        strength(ids.granite, 200000, 80000, 25000);
+        strength(ids.graniteQuoin, 200000, 80000, 25000);
+        strength(ids.ashlar, 100000, 40000, 15000);
+        strength(ids.rubbleCore, 40000, 6000, 1500);
         for (const uint8_t soft : {ids.needles, ids.reed, ids.fern, ids.flowerYellow, ids.flowerViolet, ids.mushroom}) strength(soft, 10000, 5000, 5000);
         return ids;
     }

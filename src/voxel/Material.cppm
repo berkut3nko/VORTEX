@@ -117,6 +117,9 @@ export namespace vortex::voxel {
         uint8_t moss = 0, litter = 0, mud = 0, gravel = 0, deadwood = 0;
         uint8_t needles = 0, reed = 0, fern = 0, flowerYellow = 0, flowerViolet = 0, mushroom = 0;
         uint8_t barkPale = 0;   ///< a birch-like trunk
+        // Castle masonry (fortress.md "Material and structural integrity matrix"): Tier 1 granite, Tier 2 ashlar over a
+        // rubble core.
+        uint8_t granite = 0, graniteQuoin = 0, ashlar = 0, rubbleCore = 0;
     };
 
     /// @brief Fills the world palette with a starter set of natural and building materials.

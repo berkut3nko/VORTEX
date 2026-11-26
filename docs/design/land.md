@@ -304,8 +304,9 @@ stages).
 
 ### Hollowkeep's greybox
 
-`sim::HollowkeepTemplate(map, land settings)` (`engine/src/sim/internal/Hollowkeep.cpp`) builds the castle as boxes
-(the draft's section 9: greybox first), every box from 1.5 m below its own ground (`voxel::LandHeight`):
+Since `[fort-1]` the land generator stamps the castle (fortress.md "The skeleton as built"); the parts and sizes
+below are the greybox it grew from, kept by the stamped skeleton. The greybox built the castle as boxes (the draft's
+section 9: greybox first), every box from 1.5 m below its own ground (`voxel::LandHeight`):
 - the curtain (2.5 m thick) and the inner wall (2 m) along the site's polygons, one column every 0.5 m; each run's
   wall walk is its highest ground plus 8.8 m (8 m for the inner wall), so the walks step down the slope; a dark
   battered plinth to 1.2 m over the ground; a 1.2 m parapet with merlons every 2 m on the outer side;

@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| Status | Designed, nothing built. Today's castle is the greybox of land.md "Hollowkeep's greybox": boxes from `sim::HollowkeepTemplate` on the land map's natural site. |
+| Status | `[fort-1]` built: the land generator stamps Hollowkeep's skeleton from `voxel::PlanFort` ("The skeleton as built"). `[fort-2]`-`[fort-5]` designed. |
 | Decided | The owner, 2026-11-25: the brief in "The brief" (a detailed medieval fortress as a destructible siege and route-making playground); the answers in the castle draft's section 10 (no trapdoor mechanism, fire spread is in the demo, furniture, medieval construction scaffolding and interactable elements). Us (this design, 2026-11-25): "Decision" items 1-10. |
-| Next | The owner reviews this design ("Open questions"). Then `[fort-1]`. |
+| Next | The owner walks the stamped skeleton (owner check 29) and answers "Open questions". Then `[fort-2]`. |
 | Open | "Open questions (with the answer we recommend)". |
 | History | - |
 | Marks | (e) is an estimate. Every size is a design target until a stage measures it. 1 voxel = 0.125 m; "v" after a number is voxels. |
@@ -46,7 +46,8 @@ demo; add furniture, medieval construction scaffolding and interactable elements
 
 1. **The castle becomes stamped generator output** (worldgen.md Decision 1). A **fort plan** of integer records
    (shapes, primitives, roofs, module placements, markers) is made from the baked land map's `LandSite`. A **stamper**
-   writes the plan's voxels inside the land generator's `Generate(coord)`, after the terrain and before nature. So a
+   writes the plan's voxels inside the land generator's `Generate(coord)`, last, after the terrain and nature (so the
+   ditch and the walls replace the plants and rocks they cross). So a
    pristine castle costs 0 bytes at the join, packs and evicts like terrain, and its detail does not multiply
    `WorldOp`s (today 2 812 boxes in 1.7 s for the greybox; the detailed castle is est. 50-150 k boxes).
    `sim::HollowkeepTemplate` keeps only what is not voxels: mechanisms, movable objects, lights, the spawn.
@@ -330,6 +331,26 @@ order, so the stamp order is the record order (worldgen.md P13).
 | 5 Props and vignettes | room kits by building kind; weathering; the movable props, lights and mechanisms as template entities | stamped furniture, deco |
 | 6 Checks (planner only) | rating sums per bearing column (2x margin); route reachability on the intact and the worn plan; the designed necks' sizes; the dense-chunk estimate | - |
 
+## The skeleton as built
+
+`[fort-1]`, 2026-11-25. `voxel::PlanFort(map, land settings)` (`engine/src/voxel/internal/Fort.cpp`) turns the bake's
+`LandSite` into `FortRecord`s in stamp order; `voxel::StampFort` writes them into a chunk from the record and its
+column's ground only. The land generator plans once (`LandGeneratorSettings::fort`, on by default; the game's
+`--no-hollowkeep` clears it), raises each tile's column classes over the records that cross it (`voxel::FortRows`)
+and stamps last. `sim::HollowkeepTemplate` keeps the portcullis, its lever and the spawn.
+
+| Record | What it stamps |
+|---|---|
+| Trench | the ditch: air from its level floor (1:1 sides) to 14 m over the ground, 4-10 m outside the curtain in the 4 sectors at the gate |
+| Box | the bridge, its cutting and trestles, the gatehouse (a stepped granite batter, a granite base, a string course, ashlar above, a parapet with merlons, the passage, the upper room, the portcullis slot), the lever's post |
+| Wall | one per run of the curtain (2.5 m) and the inner wall (2 m): granite foundation and batter (1 in 3, to 2.5 m over the column's ground), ashlar faces 0.75 m, a rubble core, ashlar paving under the walk, granite string courses at the batter's top and the walk, buttresses every 6-8 m on runs over 10 m (1 m deep, stepping back 0.25 m every 2 m), a parapet with 2 m merlons |
+| Block | the D-shaped flank towers (7 m, every third direction), the 2 round-fronted gate towers (6 m) and the keep (16 m, 22 m high): granite batter to 3 m, an ashlar shell (the keep: granite to 8 m, 3 m thick, then 2 m), granite quoins at square corners, string courses at every floor, plank floors (towers every 3 m, the keep at 5, 11 and 17 m), the keep's bedrock keel, a door, a flat roof with a parapet and merlons; the keep's 4 corner turrets rise 2.5 m |
+
+Measured on the first map (`vortex_land --chunk-cost`, dev build, one thread): 117 records; the plan with the
+generator in 2 ms; chunks within 64 m of the keep cost 70 us against 67 us without the castle, and the castle adds
+780 chunks the voxel loop runs for (9 062 against 8 282). Tests: `Fort.*`, `Hollowkeep.*`. Not yet: roofs,
+openings, stairs, hoardings, the bailey (the later stages).
+
 ## Budgets
 
 | Item | Budget | How it is measured |
@@ -355,7 +376,7 @@ order, so the stamp order is the record order (worldgen.md P13).
 
 | ID | Stage | State | Commits (engine / game) | History |
 |---|---|---|---|---|
-| `[fort-1]` | Stamped skeleton: the fort plan and stamper in `vortex.voxel:fort`; the greybox moves out of `WorldOp`s; batters, faces and rubble cores, buttresses, quoins, string courses, parapets with merlons; D-shaped flank towers; materials granite, granite_quoin, ashlar, rubble_core. Acceptance: the plan's golden hash; column classes agree; 0 releases under duds; stamp cost measured; shots | Designed | - | - |
+| `[fort-1]` | Stamped skeleton: the fort plan and stamper in `vortex.voxel:fort`; the greybox moves out of `WorldOp`s; batters, faces and rubble cores, buttresses, quoins, string courses, parapets with merlons; D-shaped flank towers; materials granite, granite_quoin, ashlar, rubble_core. Acceptance: the plan's golden hash (done: `Fort.GoldenHash`); column classes agree (done: `Fort.ColumnClassesBoundTheStampedCastle`, `Fort.EveryRecordsBoundsHoldAllItWrites`); 0 releases under the basic blast (done: `Hollowkeep.TheBasicBlastBreachesTheCastleWithoutReleasingIt`; the 2x-load dud sweep waits for worldgen.md's test hook); stamp cost measured (done: "The skeleton as built"); shots | Built | - | - |
 | `[fort-2]` | Openings and interiors: arrow slits, doors, windows, murder holes, putlog holes; joists and floors; spiral stairs; vaults and undercrofts; the culvert and grate (L1); oak_iron. Acceptance: every tower and the keep are walkable inside (a bot walk); L1 is open after its grate breaks (a script); 0 releases | Designed | - | - |
 | `[fort-3]` | Roofs and crowns: conical, pyramidal, hipped and gabled roofs on trusses; dormers, chimneys, the bell turret; machicolations and hoardings; slate, roof_tile, thatch. Acceptance: C5 shells hold; the GPU cost at fixed cameras; 0 releases | Designed | - | - |
 | `[fort-4]` | The bailey: lean-tos (stables, forge, barracks, kitchen, granary, workshop), wattle_daub; the construction scaffolding kit at its 3-4 sites, walkways, crane; the set pieces as designed necks; M1 and H1. Acceptance: each set piece releases within limits and tips the planned way (scripts); reachability on the worn plan | Designed | - | - |

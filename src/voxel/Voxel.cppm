@@ -12,6 +12,7 @@ export import :trace;
 export import :generator;
 export import :region;
 export import :world;
+export import :fort;
 export import :hash;
 export import :land;
 export import :collider;

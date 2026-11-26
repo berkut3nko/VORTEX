@@ -188,6 +188,22 @@ int main(int argc, char** argv) {
         Log::Info("Land: spawn at ({:.1f}, {:.1f}) m; chunk generation {:.0f} us per chunk ({} chunks in 32 x 32 columns); "
                   "built-in terrain {:.0f} us per chunk ({} chunks)",
                   spawn.x, spawn.y, landUs, landChunks, terrainUs, terrainChunks);
+        if (shared->site.placed) {
+            // Around the keep, with and without Hollowkeep stamped (fortress.md "Budgets").
+            const glm::vec2 keep = landSettings.origin + glm::vec2(shared->site.x, shared->site.z);
+            const glm::ivec2 castle(int(std::floor(keep.x / chunkMetres)), int(std::floor(keep.y / chunkMetres)));
+            LandGeneratorSettings bare = landSettings;
+            bare.fort = false;
+            uint64_t fortChunks = 0, bareChunks = 0;
+            const auto planStart = std::chrono::steady_clock::now();
+            const auto fortGenerator = CreateLandGenerator(shared, landSettings);
+            const double planMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - planStart).count();
+            const double fortUs = measure(*fortGenerator, castle, fortChunks);
+            const double bareUs = measure(*CreateLandGenerator(shared, bare), castle, bareChunks);
+            Log::Info("Fort: {} records planned with the generator in {:.0f} ms; around the keep {:.0f} us per chunk ({} chunks), "
+                      "{:.0f} us without it ({} chunks)",
+                      PlanFort(*shared, landSettings).records.size(), planMs, fortUs, fortChunks, bareUs, bareChunks);
+        }
     }
 
     const std::string broken = CheckLand(map);

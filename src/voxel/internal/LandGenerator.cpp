@@ -245,6 +245,8 @@ namespace vortex::voxel {
             uint8_t shore[kChunkSize * kChunkSize] = {};   // within kShoreMetres of a wet column: sand
             LandSurface surface[kChunkSize * kChunkSize];   // the fine grid's surface kind
             bool cave = false;                              // the cave's box crosses this column
+            bool fort = false;                              // a fort record crosses this column
+            float fortLo = 0.0f, fortHi = 0.0f;             // the rows the fort writes here (voxels)
             uint8_t fresh[kChunkSize * kChunkSize] = {};    // water near this column is a river's or a lake's
             uint8_t sea[kChunkSize * kChunkSize] = {};      // SeaDistance in quarter metres (48: 12 m or more)
             float minHeight = 0.0f, maxHeight = 0.0f, maxWater = -1.0e30f;
@@ -270,6 +272,13 @@ namespace vortex::voxel {
                 }
                 m_Bounds.min += dlo;
                 m_Bounds.max += dhi;
+                if (settings.fort) {
+                    m_Fort = PlanFort(*m_Map, settings);
+                    for (const FortRecord& r : m_Fort.records) {
+                        m_Bounds.min = std::min(m_Bounds.min, float(r.min.y) * settings.voxelSize);
+                        m_Bounds.max = std::max(m_Bounds.max, float(r.max.y) * settings.voxelSize);
+                    }
+                }
                 // Cairns beside the roads (land.md "Nature", history): one 2.8 m to the side every 90 m of road, off the
                 // water.
                 for (const LandRoad& road : m_Map->roads) {
@@ -429,16 +438,33 @@ namespace vortex::voxel {
                 if (m_S.trees && float(y1) > tile->minHeight - 4.0f * m_Inv && float(y0) < tile->maxHeight + kMaxTreeHeight * m_Inv) {
                     PlaceNature(coord, *tile, chunk);
                 }
+                // Hollowkeep last, so its ditch and walls replace the plants and rocks they cross.
+                if (tile->fort) {
+                    float ground[kChunkSize * kChunkSize];
+                    for (int z = 0; z < kChunkSize; ++z)
+                        for (int x = 0; x < kChunkSize; ++x) ground[x + z * kChunkSize] = tile->At(x, z);
+                    StampFort(m_Fort, mat, vs, coord, ground, chunk);
+                }
                 return {ChunkKind::Dense, 0};
             }
 
         private:
+            /// True when (x, z) world metres lies within `margin` of a fort record's footprint.
+            bool NearFort(float x, float z, float margin) const {
+                if (!m_Fort.placed) return false;
+                const float vx = x * m_Inv, vz = z * m_Inv, mv = margin * m_Inv;
+                for (const FortRecord& r : m_Fort.records)
+                    if (vx >= float(r.min.x) - mv && vx < float(r.max.x) + mv && vz >= float(r.min.z) - mv && vz < float(r.max.z) + mv) return true;
+                return false;
+            }
+
             ColumnClass Classify(const LandTile& tile) const {
                 ColumnClass c;
                 c.known = true;
-                const float top = std::max(tile.maxHeight, tile.maxWater) + (m_S.trees ? kMaxTreeHeight * m_Inv : 0.0f) + 1.0f;
+                float top = std::max(tile.maxHeight, tile.maxWater) + (m_S.trees ? kMaxTreeHeight * m_Inv : 0.0f) + 1.0f;
+                if (tile.fort) top = std::max(top, tile.fortHi + 1.0f);
                 const auto isEmpty = [top](int row) { return float(row * kChunkSize) > top; };
-                const float bottom = tile.minHeight - kDarkStoneDepth * m_Inv - 2.0f;
+                const float bottom = std::min(tile.minHeight, tile.fort ? tile.fortLo : tile.minHeight) - kDarkStoneDepth * m_Inv - 2.0f;
                 const auto isSolid = [bottom](int row) { return float((row + 1) * kChunkSize) < bottom; };
                 int e = int(std::floor(top / kChunkSize));
                 while (isEmpty(e - 1)) --e;
@@ -449,7 +475,7 @@ namespace vortex::voxel {
                 while (!isSolid(b - 1)) --b;
                 c.solidBelow = b;
                 c.solidId = m_S.materials.stoneDark;
-                const int lowestSurfaceVoxel = int(std::floor(tile.minHeight)) - 1;
+                const int lowestSurfaceVoxel = int(std::floor(std::min(tile.minHeight, tile.fort ? tile.fortLo : tile.minHeight))) - 1;
                 c.surfaceFrom = std::max(c.solidBelow, FloorDiv(lowestSurfaceVoxel, kChunkSize) - 1);
                 if (tile.cave) {
                     // The cave goes below the soil layers, and the sky sees into it through its mouth.
@@ -498,6 +524,12 @@ namespace vortex::voxel {
                 tile->minHeight = mn;
                 tile->maxHeight = mx;
                 tile->maxWater = mw;
+                int fortLo = 0, fortHi = 0;
+                if (m_Fort.placed && FortRows(m_Fort, cx * kChunkSize, cz * kChunkSize, (cx + 1) * kChunkSize, (cz + 1) * kChunkSize, fortLo, fortHi)) {
+                    tile->fort = true;
+                    tile->fortLo = float(fortLo);
+                    tile->fortHi = float(fortHi);
+                }
                 std::scoped_lock lock(m_CacheMutex);
                 if (m_Cache.size() > 4096) m_Cache.clear();
                 auto [it, inserted] = m_Cache.emplace(key, std::move(tile));
@@ -706,7 +738,8 @@ namespace vortex::voxel {
                                 const float ax = tx + kAround[k % 8][0] * r, az = tz + kAround[k % 8][1] * r;
                                 clear = m_Sampler.Surface(ax, az) == LandSurface::Natural && m_Sampler.Water(ax, az) <= kNoLandWater;
                             }
-                            if (!clear) continue;
+                            // Nor inside or within 4 m of what Hollowkeep stamps (its canopy would hang over the cut).
+                            if (!clear || NearFort(tx, tz, 4.0f)) continue;
                             // The trunk's foot: the lowest ground under it, 0.3 m into it; the slope and its downhill side.
                             const float gc = m_Sampler.Height(tx, tz);
                             const float ge = m_Sampler.Height(tx + 0.5f, tz), gw = m_Sampler.Height(tx - 0.5f, tz);
@@ -1104,6 +1137,7 @@ namespace vortex::voxel {
             Sampler m_Sampler;
             float m_Inv;
             HeightBounds m_Bounds;
+            FortPlan m_Fort;
             glm::vec3 m_CaveA[2]{}, m_CaveMin{0.0f}, m_CaveMax{0.0f};
             std::vector<glm::vec3> m_Cairns;              // world metres, the ground under each
             struct BridgeDeck {
