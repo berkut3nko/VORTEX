@@ -203,6 +203,10 @@ int main(int argc, char** argv) {
             Log::Info("Fort: {} records planned with the generator in {:.0f} ms; around the keep {:.0f} us per chunk ({} chunks), "
                       "{:.0f} us without it ({} chunks)",
                       PlanFort(*shared, landSettings).records.size(), planMs, fortUs, fortChunks, bareUs, bareChunks);
+            const FortPlan fort = PlanFort(*shared, landSettings);
+            if (fort.culvert)
+                Log::Info("Fort: culvert grate at ({:.1f}, {:.1f}, {:.1f}) m, its stair out at ({:.1f}, {:.1f}) m; keep at ({:.1f}, {:.1f}) m",
+                          fort.culvertMouth.x, fort.culvertFloor, fort.culvertMouth.y, fort.culvertExit.x, fort.culvertExit.y, fort.keep.x, fort.keep.y);
         }
     }
 

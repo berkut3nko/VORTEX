@@ -112,7 +112,7 @@ TEST(Hollowkeep, TheBasicBlastBreachesTheCastleWithoutReleasingIt) {
             glm::vec2 n(d.y, -d.x);
             if (glm::dot(n, (r.a + r.b) * 0.5f - plan.keep) < 0.0f) n = -n;
             const glm::vec2 p = (r.a + r.b) * 0.5f + d * 1.5f + n * (r.half - 0.2f);
-            shots.push_back(glm::vec3(p.x, r.hi - 3.0f, p.y));
+            shots.push_back(glm::vec3(p.x, voxel::FortWalk(r, glm::length(r.b - r.a) * 0.5f + 1.5f) - 3.0f, p.y));
         }
     }
     for (const voxel::FortRecord& r : plan.records) {
@@ -153,5 +153,50 @@ TEST(Hollowkeep, TheBasicBlastBreachesTheCastleWithoutReleasingIt) {
         EXPECT_EQ(blast.search.neckFlowBudget, 0u);
         EXPECT_EQ(blast.search.neckExteriorBudget, 0u);
         EXPECT_FALSE(blast.search.neckDeferred);
+    }
+}
+
+TEST(Hollowkeep, ASiegeShotOpensTheCulvertGrate) {
+    // The low route (fortress.md L1): the basic blast (power 6.0) leaves the iron grate and its granite frame; a
+    // siege-strength shot (power 9.0, over iron's 8.0) opens the crawl behind it.
+    const Baked& b = Castle();
+    const auto map = std::make_shared<const voxel::LandMap>(b.map);
+    const voxel::FortPlan plan = voxel::PlanFort(b.map, b.land);
+    ASSERT_TRUE(plan.culvert);
+    const float vs = b.land.voxelSize;
+    const glm::vec3 grate(plan.culvertMouth.x, plan.culvertFloor + 0.5f, plan.culvertMouth.y);
+    const voxel::FortRecord* crawl = nullptr;
+    for (const voxel::FortRecord& r : plan.records)
+        if (r.shape == voxel::FortShape::Tunnel && crawl == nullptr) crawl = &r;
+    ASSERT_NE(crawl, nullptr);
+    // A bar of the grate, 0.1 m into the crawl from its mouth.
+    const glm::vec2 d = glm::normalize(crawl->b - crawl->a), n(-d.y, d.x);
+    const glm::vec2 barXZ = crawl->a + d * 0.1f + n * 0.0625f;
+    const glm::ivec3 bar(int(std::floor(barXZ.x / vs)), int(std::floor((crawl->lo + 0.5f) / vs)), int(std::floor(barXZ.y / vs)));
+    for (const float power : {6.0f, 9.0f}) {
+        sim::SimulationConfig config;
+        config.chunkCapacity = 1536;
+        config.maxParticles = 4096;
+        config.jobThreads = 3;
+        config.world.voxelSize = vs;
+        config.world.windowSize = glm::ivec3(8, 8, 8);
+        config.physics.maxBodies = 2048;
+        config.physics.maxBodyPairs = 4096;
+        config.physics.maxContactConstraints = 4096;
+        config.physics.threads = 1;
+        sim::Simulation simulation(config);
+        ASSERT_TRUE(simulation.Initialize(voxel::CreateLandGenerator(map, b.land)));
+        simulation.World().LoadBlocking(glm::dvec3(grate));
+        ASSERT_EQ(simulation.World().GetVoxel(bar), b.land.materials.iron);
+        // The shot lands just outside the grate, on the crawl's axis.
+        const glm::vec2 at = crawl->a - d * 0.3f;
+        const glm::vec3 shot(at.x, crawl->lo + 0.5f, at.y);
+        const voxel::SphereQ sphere{glm::ivec3(glm::floor(shot / vs * 16.0f)), uint16_t(std::lround(1.2f / vs * 16.0f))};
+        sim::Blast(simulation, sphere, voxel::QuantizePower(power));
+        if (power < 7.0f)
+            EXPECT_EQ(simulation.World().GetVoxel(bar), b.land.materials.iron) << "the basic blast leaves the grate";
+        else
+            EXPECT_EQ(simulation.World().GetVoxel(bar), 0) << "a siege shot opens it";
+        EXPECT_EQ(simulation.IslandSearchCheck().neckReleases, 0u);
     }
 }
