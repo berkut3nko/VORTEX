@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <memory>
+#include <vector>
 
 import vortex.voxel;
 
@@ -96,10 +97,10 @@ TEST(LandSampling, GoldenHash) {
             h = Mix(h, std::bit_cast<uint32_t>(LandHeight(*map, s, x, z)));
             h = Mix(h, std::bit_cast<uint32_t>(LandWaterLevel(*map, s, x, z)));
         }
-    // Every voxel of a few columns of chunks: the forest, the lake, the mountain, the desert and the shore.
+    // Every voxel of a few columns of chunks: the forest (with its trees), the lake, the mountain, the desert and the shore.
     const auto generator = CreateLandGenerator(map, s);
     auto chunk = std::make_unique<Chunk>();
-    for (const glm::ivec2 column : {glm::ivec2(-2, -1), glm::ivec2(-1, -1), glm::ivec2(2, -2), glm::ivec2(1, 2), glm::ivec2(-7, 0)})
+    for (const glm::ivec2 column : {glm::ivec2(-2, -1), glm::ivec2(-1, -1), glm::ivec2(2, -2), glm::ivec2(1, 2), glm::ivec2(-7, 0), glm::ivec2(-3, 0)})
         for (int row = -4; row <= 8; ++row) {
             *chunk = Chunk{};
             const ChunkContent c = generator->Generate(glm::ivec3(column.x, row, column.y), *chunk);
@@ -169,4 +170,70 @@ TEST(LandSampling, TheSpawnIsDryLevelGroundInTheStarterRegion) {
     ASSERT_TRUE(x >= 0 && z >= 0 && x < map->width && z < map->height);
     EXPECT_EQ(map->regions[map->Index(x, z)], uint8_t(LandBiome::Forest));
     EXPECT_EQ(LandWaterLevel(*map, s, p.x, p.y), kNoLandWater);
+}
+
+TEST(LandSampling, EveryTreeVoxelJoinsTheGroundByFaces) {
+    // A blast frees what no face path ties to the ground; a tree voxel that only touches its tree by an edge or a corner
+    // (a thin branch, a ragged leaf rim) would stay in the air when its tree falls. Every wood and foliage voxel of the
+    // trees in a block of the forest reaches the ground, or the block's edge, through faces.
+    const auto map = SampleMap();
+    const LandGeneratorSettings s = SampleSettings(*map);
+    const auto generator = CreateLandGenerator(map, s);
+    const WorldMaterials& m = s.materials;
+    constexpr int kCx0 = -7, kCz0 = -3, kRow0 = -1, kNx = 6, kNz = 6, kNy = 12;
+    constexpr int kX = kNx * kChunkSize, kY = kNy * kChunkSize, kZ = kNz * kChunkSize;
+    std::vector<uint8_t> ids(size_t(kX) * kY * kZ, 0);
+    const auto at = [&](int x, int y, int z) { return size_t(x) + size_t(kX) * (size_t(y) + size_t(kY) * size_t(z)); };
+    auto chunk = std::make_unique<Chunk>();
+    for (int cz = 0; cz < kNz; ++cz)
+        for (int row = 0; row < kNy; ++row)
+            for (int cx = 0; cx < kNx; ++cx) {
+                *chunk = Chunk{};
+                const ChunkContent c = generator->Generate(glm::ivec3(kCx0 + cx, kRow0 + row, kCz0 + cz), *chunk);
+                for (int z = 0; z < kChunkSize; ++z)
+                    for (int y = 0; y < kChunkSize; ++y)
+                        for (int x = 0; x < kChunkSize; ++x)
+                            ids[at(cx * kChunkSize + x, row * kChunkSize + y, cz * kChunkSize + z)] =
+                                c.kind == ChunkKind::Dense ? chunk->ids[Chunk::VoxelIndex(x, y, z)] : c.uniformId;
+            }
+    const auto tree = [&](uint8_t v) {
+        return v != 0 && (v == m.wood || v == m.barkPale || v == m.deadwood || v == m.leaves || v == m.leavesAutumn || v == m.needles);
+    };
+    // Seeds: every solid voxel that is not a tree's (the ground, rocks, ground plants) and every voxel on the block's edge.
+    std::vector<uint8_t> reached(ids.size(), 0);
+    std::vector<glm::ivec3> open;
+    size_t trees = 0;
+    for (int z = 0; z < kZ; ++z)
+        for (int y = 0; y < kY; ++y)
+            for (int x = 0; x < kX; ++x) {
+                const uint8_t v = ids[at(x, y, z)];
+                if (v == 0 || v == m.water) continue;
+                trees += tree(v) ? 1 : 0;
+                const bool edge = x == 0 || y == 0 || z == 0 || x == kX - 1 || y == kY - 1 || z == kZ - 1;
+                if (!tree(v) || edge) {
+                    reached[at(x, y, z)] = 1;
+                    open.push_back(glm::ivec3(x, y, z));
+                }
+            }
+    ASSERT_GT(trees, 2000u) << "the block holds trees";
+    while (!open.empty()) {
+        const glm::ivec3 p = open.back();
+        open.pop_back();
+        for (const glm::ivec3 d : {glm::ivec3(1, 0, 0), glm::ivec3(-1, 0, 0), glm::ivec3(0, 1, 0), glm::ivec3(0, -1, 0), glm::ivec3(0, 0, 1),
+                                   glm::ivec3(0, 0, -1)}) {
+            const glm::ivec3 q = p + d;
+            if (q.x < 0 || q.y < 0 || q.z < 0 || q.x >= kX || q.y >= kY || q.z >= kZ) continue;
+            const size_t i = at(q.x, q.y, q.z);
+            if (reached[i] || ids[i] == 0 || ids[i] == m.water) continue;
+            reached[i] = 1;
+            open.push_back(q);
+        }
+    }
+    size_t loose = 0;
+    glm::ivec3 first(0);
+    for (int z = 0; z < kZ; ++z)
+        for (int y = 0; y < kY; ++y)
+            for (int x = 0; x < kX; ++x)
+                if (tree(ids[at(x, y, z)]) && !reached[at(x, y, z)] && loose++ == 0) first = glm::ivec3(x, y, z);
+    EXPECT_EQ(loose, 0u) << "of " << trees << " tree voxels; the first at block voxel " << first.x << " " << first.y << " " << first.z;
 }

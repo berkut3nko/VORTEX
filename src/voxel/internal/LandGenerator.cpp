@@ -637,17 +637,67 @@ namespace vortex::voxel {
                     if (lx < 0 || lz < 0 || lx >= kChunkSize || lz >= kChunkSize) return INT32_MIN / 2;
                     return int(std::floor(tile.At(lx, lz)));
                 };
-                // An ellipsoid of voxels (centre and radii in voxels), with hashed ragged edges.
+                // An ellipsoid of voxels (centre and radii in voxels), with hashed ragged edges. Its voxels join its centre
+                // voxel by faces: one is kept only when its neighbour a step toward the centre (along its largest scaled
+                // offset) is kept, so a blast that frees the blob never leaves a loose voxel of it in the air. The rule
+                // reads world coordinates only, so every chunk keeps the same voxels; `keep` caches it per blob.
+                std::vector<uint8_t> keep;
                 auto blob = [&](const glm::vec3& c, const glm::vec3& r, float ragged, auto&& pick) {
                     const glm::ivec3 lo = glm::max(glm::ivec3(glm::floor(c - r)), origin);
                     const glm::ivec3 hi = glm::min(glm::ivec3(glm::ceil(c + r)) + 1, origin + glm::ivec3(kChunkSize));
+                    if (lo.x >= hi.x || lo.y >= hi.y || lo.z >= hi.z) return;
+                    const glm::ivec3 centre(glm::floor(c));
+                    const glm::ivec3 ext = glm::ivec3(glm::ceil(r)) + 2;
+                    // A walk only moves toward the centre: the cache spans this chunk's part and the centre.
+                    const glm::ivec3 mlo = glm::max(glm::min(lo, centre), centre - ext), mhi = glm::min(glm::max(hi - 1, centre), centre + ext);
+                    const glm::ivec3 size = mhi - mlo + 1;
+                    keep.assign(size_t(size.x) * size_t(size.y) * size_t(size.z), 0);   // 0 unknown, 1 kept, 2 not
+                    const auto slot = [&](const glm::ivec3& w) {
+                        const glm::ivec3 o = w - mlo;
+                        return size_t(o.x) + size_t(size.x) * (size_t(o.y) + size_t(size.y) * size_t(o.z));
+                    };
+                    const auto inside = [&](const glm::ivec3& w) {
+                        if (w == centre) return true;
+                        const glm::vec3 d = (glm::vec3(w) + 0.5f - c) / r;
+                        const float n = HashToFloat(Hash3(w.x, w.y, w.z, m_S.seed));
+                        return d.x * d.x + d.y * d.y + d.z * d.z + ragged * n * n <= 1.0f;
+                    };
+                    const auto parent = [&](const glm::ivec3& w) {
+                        const glm::ivec3 o = w - centre;
+                        const glm::vec3 a = glm::abs(glm::vec3(o)) / r;
+                        const int axis = a.x >= a.y && a.x >= a.z ? 0 : (a.y >= a.z ? 1 : 2);
+                        glm::ivec3 p = w;
+                        p[axis] -= o[axis] > 0 ? 1 : -1;
+                        return p;
+                    };
+                    glm::ivec3 chain[96];
                     for (int z = lo.z; z < hi.z; ++z)
                         for (int y = lo.y; y < hi.y; ++y)
                             for (int x = lo.x; x < hi.x; ++x) {
-                                const glm::vec3 d = (glm::vec3(float(x), float(y), float(z)) + 0.5f - c) / r;
-                                const float n = HashToFloat(Hash3(x, y, z, m_S.seed));
-                                if (d.x * d.x + d.y * d.y + d.z * d.z + ragged * n * n > 1.0f) continue;
-                                pick(glm::ivec3(x, y, z), d);
+                                const glm::ivec3 w(x, y, z);
+                                const glm::ivec3 o = glm::abs(w - centre);
+                                if (o.x > ext.x || o.y > ext.y || o.z > ext.z) continue;
+                                // Walk toward the centre to the first voxel already known, then settle the walk back.
+                                int n = 0;
+                                glm::ivec3 q = w;
+                                uint8_t state = 0;
+                                while (n < 96) {
+                                    state = keep[slot(q)];
+                                    if (state != 0) break;
+                                    if (!inside(q)) {
+                                        state = 2;
+                                        keep[slot(q)] = 2;
+                                        break;
+                                    }
+                                    chain[n++] = q;
+                                    if (q == centre) {
+                                        state = 1;
+                                        break;
+                                    }
+                                    q = parent(q);
+                                }
+                                for (int k = 0; k < n; ++k) keep[slot(chain[k])] = state;
+                                if (state == 1) pick(w, (glm::vec3(w) + 0.5f - c) / r);
                             }
                 };
                 auto column = [&](int wx, int wz, int from, int to, uint8_t v, bool soft, bool intoWater = false) {
@@ -682,7 +732,7 @@ namespace vortex::voxel {
                     const uint8_t needles = id(mat.needles, mat.leaves);
                     // A tapered wood segment (voxel units), clipped to this chunk.
                     auto segment = [&](const glm::vec3& a, const glm::vec3& b, float ra, float rb, uint8_t v) {
-                        const float rmax = std::max(ra, rb) + 0.5f;
+                        const float rmax = std::max(std::max(ra, rb), 0.9f) + 0.5f;
                         const glm::ivec3 lo = glm::max(glm::ivec3(glm::floor(glm::min(a, b) - rmax)), origin);
                         const glm::ivec3 hi = glm::min(glm::ivec3(glm::ceil(glm::max(a, b) + rmax)) + 1, origin + glm::ivec3(kChunkSize));
                         if (lo.x >= hi.x || lo.y >= hi.y || lo.z >= hi.z) return;
@@ -695,13 +745,18 @@ namespace vortex::voxel {
                                     const glm::vec3 ap = p - a;
                                     const float t = std::clamp((ap.x * ab.x + ap.y * ab.y + ap.z * ab.z) / len2, 0.0f, 1.0f);
                                     const glm::vec3 d = p - (a + ab * t);
-                                    const float r = std::max(0.5f, ra + (rb - ra) * t);
+                                    // At least 0.9 voxel: a line in any direction then joins by faces, and the voxel
+                                    // holding an end point is always filled (a thinner trunk on a voxel corner had none).
+                                    const float r = std::max(0.9f, ra + (rb - ra) * t);
                                     if (d.x * d.x + d.y * d.y + d.z * d.z <= r * r) put(glm::ivec3(x, y, z), v, false);
                                 }
                     };
-                    // A ragged leaf clump (voxel units), its foot kept at 2.4 m above the tree's ground or higher.
+                    // A ragged leaf clump (voxel units), its foot kept at 2.4 m above the tree's ground or higher; a clump
+                    // lifted off its branch hangs on a twig from it.
                     auto clump = [&](glm::vec3 c, float r, float flat, float groundVoxel, uint8_t v) {
+                        const glm::vec3 on = c;
                         c.y = std::max(c.y, groundVoxel + 2.4f * m_Inv + r * flat);
+                        if (c.y > on.y) segment(on, c, 0.0f, 0.0f, mat.wood);
                         blob(c, glm::vec3(r, r * flat, r), 1.2f, [&](glm::ivec3 w, glm::vec3) { put(w, v, true); });
                     };
                     auto unit = [](glm::vec3 v) {
@@ -824,7 +879,9 @@ namespace vortex::voxel {
                                               HashToFloat(hb + 40u + uint32_t(c)) < 0.08f ? mat.leavesAutumn : mat.leaves);
                                     }
                                 }
-                                clump(fork + up * (0.35f * H * m_Inv), 1.4f * scale * m_Inv, 0.65f, vy, mat.leaves);
+                                const glm::vec3 crown = fork + up * (0.35f * H * m_Inv);
+                                segment(fork, crown, 0.4f * R * m_Inv, 0.25f * R * m_Inv, mat.wood);   // the leader to the crown
+                                clump(crown, 1.4f * scale * m_Inv, 0.65f, vy, mat.leaves);
                                 break;
                             }
                             case Species::Birch: {

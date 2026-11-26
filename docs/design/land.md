@@ -408,6 +408,12 @@ deterministic and cheap enough for a per-chunk generator. Space colonisation sta
 - **Clear of play:** the trunk's cell and 8 directions at 1.5, 3 and 4.5 m around it are natural ground without water
   (a trail 0.9 m wide passing diagonally slipped between 4 samples at 4 m), so trunks, roots and canopies never stand
   on or hang over a road, a trail, the castle site or a bank; every clump's foot stays 2.4 m above the tree's ground.
+- **Joined by faces** (2026-11-26): a blast frees only what no face path ties to the ground, so every tree voxel
+  joins its tree through faces. Wood segments are at least 0.9 voxel in radius (a line in any direction then joins
+  by faces, and a thin trunk on a voxel corner is never empty); a ragged clump, shrub lump or boulder keeps a voxel
+  only when its neighbour a step toward the centre is kept; a clump lifted to 2.4 m hangs on a twig from its branch;
+  the oak's crown clump stands on a leader from the fork. Before, a felled tree left loose leaves in the air
+  (`LandSampling.EveryTreeVoxelJoinsTheGroundByFaces`; no measurable cost: 87 us a chunk against 89).
 - **Determinism:** branch azimuths turn by the golden angle as fixed (cos, sin) constants, lengths and jitters from
   integer hashes, directions normalised with sqrt: no libm function.
 
