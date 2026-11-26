@@ -12,6 +12,7 @@ cmake_minimum_required(VERSION 3.28)
 #    Vortex::Net       the session protocol: transports, messages, server, client
 #                      (no GPU, no window: vortex_server links only this)
 #    Vortex::Graphics  Vulkan renderer, window, UI              (VORTEX_GRAPHICS)
+#    Vortex::Audio     sound: manifest, mixer, miniaudio output  (VORTEX_GRAPHICS; no GPU)
 #    Vortex::Engine    application loop, editor                <- games link this (VORTEX_GRAPHICS)
 #    VortexShaders     GLSL -> SPIR-V                           (VORTEX_GRAPHICS)
 #    vortex_cpu_check  start-up CPU check, linked into every executable
@@ -182,10 +183,31 @@ target_link_libraries(VortexGraphics
 )
 add_library(Vortex::Graphics ALIAS VortexGraphics)
 
+# --- Audio (docs/design/audio.md): built with the graphics because only the engine plays sound,
+# but it needs no GPU and no window, and its tests need no audio device --------------------------
+# miniaudio and stb_vorbis: one plain C translation unit, warnings off (third-party code).
+add_library(vortex_miniaudio STATIC "${CMAKE_CURRENT_SOURCE_DIR}/src/audio/internal/MiniaudioImpl.c")
+target_include_directories(vortex_miniaudio SYSTEM PUBLIC ${miniaudio_SOURCE_DIR})
+# The same configuration for the implementation and every file that includes miniaudio.h: Ogg Vorbis (stb_vorbis)
+# and WAV only.
+target_compile_definitions(vortex_miniaudio PUBLIC MA_NO_MP3 MA_NO_FLAC MA_NO_ENCODING)
+set_target_properties(vortex_miniaudio PROPERTIES C_STANDARD 11 POSITION_INDEPENDENT_CODE ON)
+if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(vortex_miniaudio PRIVATE -w)
+endif()
+if(NOT WIN32)
+    find_package(Threads REQUIRED)
+    target_link_libraries(vortex_miniaudio PUBLIC Threads::Threads ${CMAKE_DL_LIBS} m)
+endif()
+
+vortex_add_module_library(VortexAudio audio)
+target_link_libraries(VortexAudio PUBLIC VortexCore PRIVATE vortex_miniaudio)
+add_library(Vortex::Audio ALIAS VortexAudio)
+
 # --- Engine (what games link) ----------------------------------------------------
 vortex_add_module_library(VortexEngine engine editor)
 target_link_libraries(VortexEngine
-    PUBLIC  VortexCore VortexPhysics VortexSim VortexNet VortexGraphics EnTT::EnTT vortex_imgui
+    PUBLIC  VortexCore VortexPhysics VortexSim VortexNet VortexGraphics VortexAudio EnTT::EnTT vortex_imgui
     PRIVATE vortex_imguizmo glfw
 )
 add_dependencies(VortexEngine VortexShaders)
@@ -277,6 +299,24 @@ function(vortex_assert_no_https target)
 endfunction()
 foreach(_t VortexCore VortexPhysics VortexSim VortexNet)
     vortex_assert_no_https(${_t})
+endforeach()
+
+# audio.md: sound belongs to VortexAudio and the engine (presentation). The simulation, the session protocol, the
+# server and the bot must stay free of it (a session server has no device; sim must not depend on what is heard).
+function(vortex_assert_no_audio target)
+    if(NOT TARGET ${target})
+        return()
+    endif()
+    vortex_collect_link_closure(${target} _closure)
+    foreach(_item ${_closure})
+        if(_item MATCHES "^(VortexAudio|Vortex::Audio|vortex_miniaudio)$")
+            message(FATAL_ERROR "VORTEX: ${target} must not link '${_item}': sound is presentation, it belongs to "
+                                "VortexAudio and the engine only (docs/design/audio.md \"Layering\").")
+        endif()
+    endforeach()
+endfunction()
+foreach(_t VortexCore VortexPhysics VortexSim VortexNet)
+    vortex_assert_no_audio(${_t})
 endforeach()
 
 # --- Tools & tests ---------------------------------------------------------------

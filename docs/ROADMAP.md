@@ -14,6 +14,17 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
 
 ## Now
 
+- **[audio-1] Audio first pass: built, not reviewed** (2026-11-26). The new module `vortex.audio` (`Vortex::Audio`,
+  miniaudio 0.11.25 with stb_vorbis; linked by the engine only, checked by `vortex_assert_no_audio`): the manifest,
+  a mixer with five buses (master, sfx, ambience, ui, music), 32 voices with priority and steal rules, at most 4 per
+  sound, a start budget per sound (6, refilled at 12 per second), the burst and merge rules, distance classes, and
+  per-play variant, pitch and volume variation. `tools/audio/build_sounds.py` made the shipped set from the 1272
+  generated WAV takes (1694.5 MB): 256 sounds, 636 Ogg Vorbis files, **16.97 MB** in `assets/audio`, with the licence
+  log `docs/product/sound-licence-log.csv`. The engine plays blasts, breaks by material, island cracks, impacts by
+  material and speed, mechanisms, rope cuts and pick-ups (`vortex::SoundEffects`, from the scene: also in a session);
+  the game plays steps by ground material, jumps, landings, casts, use refusals, throws, the menus and ambience beds
+  by biome, water, cover and height. Five volume settings on the settings page. Headless runs mix offline and log
+  `Audio:` lines. [design/audio.md](design/audio.md). The owner listens: owner check 30.
 - **[wp-7] M2a "first fight": built and reviewed** (2026-11-23; review fixes 2026-11-24). The sandbox is a PvP game: a session file with
   `mode = deathmatch` or `felling` runs health 100, blast damage (60 at the capsule, 0 at 1.2 m, integer mm), falls,
   lava and the void, death (not stepped, casts refused `Dead`) and a 3 s respawn at the team spawn with 2 s of spawn
@@ -232,8 +243,8 @@ In rough order:
   protocol bump), collapse from fire, liquid, presentation, tuning (spread.md).
 - Frame-rate block B: [perf-L1] (= lod.md stage 1 = [vd-4] distance budgets) and [perf-H1] half-resolution lighting
   (perf.md).
-- Audio first pass (presentation only); rigid-part characters with procedural animation and team colours (3-5 d (e)
-  each, may slot between packages).
+- [audio-2]..[audio-4] (audio.md): the fight's sounds in a session, occlusion, spells and the castle; rigid-part
+  characters with procedural animation and team colours (3-5 d (e), may slot between packages).
 - [shred-2] / [shred-3] crumble profiles and fracture (shred.md); M2b's characters and training dummy; [net-9] the on-demand server world and
   1 km zones (behind M2, owner decision of 2026-11-11); [vd-5] exact visibility flood (memory); M6 ([vd-6] / [vd-7]
   LOD levels and presets, Windows and CI); M7.
@@ -283,13 +294,14 @@ Engine backlog (no order):
 
 ## Not a game yet
 
-One round per session and no matchmaking (M2a); no audio; settings are only render scale, vsync, mouse
-speed, FOV and the play-bounds curtain (no key rebinding); no character animation (one static figure model). A 5v5 has never run (the most so far: 4 bots and a game client in the soak); the GTX 1650 has
+One round per session and no matchmaking (M2a); sound is a first pass (no fight sounds in a session, no occlusion,
+no music); settings are only render scale, vsync, mouse speed, FOV, the play-bounds curtain and five volumes (no key
+rebinding); no character animation (one static figure model). A 5v5 has never run (the most so far: 4 bots and a game client in the soak); the GTX 1650 has
 never been measured.
 
 ## State
 
-Tests: **966** in ctest: 958 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
+Tests: **981** in ctest: 974 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
 game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts), `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
 `Tools.DocCheck`, `Tools.DocCheckSelftest`, `Tools.SessionCheckVerdict` and `Tools.VerifyAssertions` (WP2's checks
 and their self-tests), `Tools.RendezvousWorker` (the rendezvous Worker under `node --test`, registered when `node` is
@@ -322,6 +334,7 @@ before `[wp-4]` (2026-11-23: G1 + G2 took 2.6 ms off the far view, 0.4 ms off th
 
 | Date | Measure | Value | Source |
 |---|---|---|---|
+| 2026-11-26 | [audio-1] the sound set and its cost (the Windows PC, the 13 headless game runs of `verify.sh quick`, offline output) | assets 16.97 MB (256 sounds, 636 files, 1578 s; from 1694.5 MB of WAV takes); mixing 0.14-0.54 % of one core (up to 23 voices at once, 24-58 plays a run); main-thread `AudioSystem::Update` 0.008-0.028 ms (once 1.1 ms); the first play of a variant decodes it on the main thread offline: 2.5-4.6 ms (once 29.5 ms); decoded 0.6-4.0 MB a run. A device run decodes the sounds of every fight on miniaudio's job thread at the start instead, 18 MB of 16-bit PCM (e, from the files' lengths); the device thread's cost is the offline mixing cost (e) (m) | `build/verify/quick-20261126-105653` |
 | 2026-11-24 | G17 (`tools/soak.sh --short`, both regions) on the batch [wp-5] / [wp-6] / [wp-7] | 5 runs: 2 FAIL, 3 PASS. Both failures were `Bot: N FAILED: its drain did not hold again within 15 s of the leave word`: one server body stayed awake through the whole drain, creeping about 1 cm in 16 s (playground object 842 at (10.8, 8.1, 14.9), arena object 814 at (19.5, 4.5, -8.9)), so the bots' copies never got an `EntityRest`; a copy still moving differed from the server's by 0.05-0.11 m (sample timing, not a desync); terrain hashes and resting objects agreed. The first failure ran last in a loaded `full` run, the second alone on the pre-review tree; on the reviewed HEAD (engine `5b2c193`, game `ba5c851`) `verify.sh full --only G17` passed twice (202 / 192 s). The same symptom predates the batch: G19 of 2026-11-22 (WP2 tree) logged `the drain did not settle in 60 s: ... 1 copies not resting` before its drain held, and the soak of 2026-11-17 (`build/soak-o2`) failed the same way. Recorded as a known intermittent flake (a body that never sleeps), not chased (m) | `build/verify/full-20261124-000048`, `-003255`, `-003917`, `-074054`, `-074416` |
 | 2026-11-23 | The cast path through the rules seam and the net split, before / after (drill: G11's command; walk: G13's; session-check: G16) | drill: equal world hash `7cf265595fef59bf` at opSeq 3163, `Drill: freed` line and both `Entities: client N ... agree` lines in 2 runs before and 5 after; arena walk: equal `Drill: freed` line and world / sync-box hashes (`2f47611cfe48a298`), entity id hash `3f44ac910423721e`, in 2 before and 4 after (its end opSeq 770-775, end tick and awake count vary between runs of one build: timing); session-check `PASS` 2 / 2 before, 4 / 4 after, the walking client's corrections 1, 3 before and 2, 2, 6, 2 after, max error 0.063, 0.321 m before and 0.183, 0.467, 0.379, 0.100 m after (wall-clock ENet: its worlds differ run to run) | [wp-6] |
 | 2026-11-23 | [wp-7] the fight: G22's command (`duel.session`, 4 fighting bots, 5 % loss, 40 + 0-30 ms) and `Shredborne --headless --practice` | G22: team 1 won 5-4 by score at tick 6197 (Live from tick 126), 9 kills, 64 damage events / 1078 hp, 23 casts refused for no charge, 4 for dead, hashes equal, 33 s wall (Countdown took 22 s of it: the bots' joins); `Fight.ATwoVersusTwoBotMatchEndsWithAWinner` (loopback, flat field, first to 2) about 1.5 s. Practice (UHD 620, headless, 1500 frames): server ready 8.2 s with 1 bot / 18.8 s with 3; CPU frame p50 16.76 / p99 28.94 ms with 1 bot, 17.24 / 31.45 ms with 3; RSS at exit 748 MiB with 1 bot, 1385 MiB with 3 (every bot is a whole client world) | [wp-7] |

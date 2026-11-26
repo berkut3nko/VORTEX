@@ -30,6 +30,7 @@ namespace vortex {
     void EngineConfig::ApplyCommandLine(const CommandLine& args) {
         if (args.Has("--headless")) headless = true;
         if (args.Has("--validation")) validation = true;
+        if (args.Has("--no-audio")) audioOutput = audio::AudioOutput::Off;
         exitAfterFrames = static_cast<uint32_t>(args.GetInt("--frames", static_cast<int>(exitAfterFrames)));
         screenshotPath = args.GetString("--screenshot", screenshotPath);
         width = static_cast<uint32_t>(args.GetInt("--width", static_cast<int>(width)));
@@ -128,6 +129,9 @@ namespace vortex {
         graphics::Renderer renderer;
         graphics::UiLayer ui;
         HudCanvas hud;
+        // Sound (docs/design/audio.md): presentation only, beside the renderer.
+        audio::AudioSystem audio;
+        SoundEffects sounds;
         bool hudOverflowReported = false;
         glm::dvec4 playBounds{0.0};   // [wp-5]: (min x, min z, max x, max z) in world metres; zero = none
 
@@ -158,6 +162,7 @@ namespace vortex {
 
     Engine::~Engine() {
         Impl& s = *m_Impl;
+        s.audio.Shutdown();         // voices first: they hold decoded sounds
         if (s.device.IsInitialized()) s.device.WaitIdle();
         s.sim.Shutdown();           // entities (bodies, model chunk slots), terrain colliders, world, physics
         s.ui.Shutdown();
@@ -188,6 +193,21 @@ namespace vortex {
         if (!s.renderer.Initialize(s.device, window, s.config.width, s.config.height, s.sim.Chunks().Capacity(), s.config.render)) return false;
         if (!s.ui.Initialize(s.device, window, s.renderer.BackbufferFormat(), s.renderer.BackbufferImageCount())) return false;
         s.renderer.SetUiLayer(&s.ui);
+        // Sound never stops the game from starting: a missing manifest or device is logged and the game runs silent.
+        audio::AudioConfig ac;
+        ac.output = s.config.audioOutput;
+        if (ac.output == audio::AudioOutput::Device && s.config.headless) ac.output = audio::AudioOutput::Offline;
+        ac.root = s.config.audioRoot.empty() ? Paths::Asset("audio") : s.config.audioRoot;
+        ac.volumes = s.config.audioVolumes;
+        s.audio.Initialize(ac);
+        if (s.audio.Output() != audio::AudioOutput::Off) {
+            s.sounds.Bind(s.audio, s.sim.Materials());
+            // The sounds of every fight, decoded on miniaudio's job thread at the start (about 18 MB of 16-bit PCM), so
+            // their first play never decodes on the main thread; the rest decode on their first play.
+            constexpr std::string_view kPreload[] = {"sfx.foot.",  "sfx.blast.", "sfx.cast.",        "sfx.break.",       "sfx.impact.",
+                                                     "sfx.chaff.", "sfx.rubble.", "sfx.player.jump", "sfx.player.land.", "ui.menu."};
+            s.audio.Preload(kPreload);
+        }
         s.initialized = true;
         return true;
     }
@@ -202,6 +222,7 @@ namespace vortex {
 
     void Engine::PresentBlast(const sim::BlastResult& blast) {
         sim::Simulation& sim = m_Impl->sim;
+        m_Impl->sounds.Blast(blast, sim);
         const uint32_t slotsBefore = sim.Chunks().UsedCount();
         const scene::RubbleStats rubbleBefore = sim.Scene().Rubble();
         const uint64_t crumbledBefore = rubbleBefore.crumbledByCap + rubbleBefore.crumbledByBake;
@@ -404,6 +425,10 @@ namespace vortex {
             }
 
             app.OnUpdate(*this, dt);
+            // Sound follows the camera the game has just placed; what moved, opened or landed this frame sounds.
+            s.audio.SetListener(camera.position, camera.Forward(), glm::vec3(0.0f, 1.0f, 0.0f));
+            s.sounds.Watch(sim, dt);
+            s.audio.Update(dt);
             const double particlesStart = NowSeconds();
             sim.Particles().Update(dt, [&world = sim.World()](const glm::dvec3& p) { return world.IsSolidAt(p); });
             s.fx.particlesUpdate.Add((NowSeconds() - particlesStart) * 1000.0);
@@ -553,6 +578,7 @@ namespace vortex {
         // Every run, windowed included, leaves its numbers (docs/verify.md "Game (offline, headless)", the `Perf:` line).
         Log::Info("{}", FormatPerfLine(s.perf, s.renderer.PresentModeLabel()));
         if (s.fx.blasts > 0) Log::Info("{}", FormatFxLine(s.fx));
+        if (s.audio.Output() != audio::AudioOutput::Off) Log::Info("{}", s.audio.SummaryLine());
         if (s.gpuClock.Count() > 0) {
             const std::optional<long> maxMhz = ReadInteger(s.gpuClockFile.parent_path() / "gt_max_freq_mhz");
             Log::Info("GPU clock: {} samples, p50 {:.0f} MHz, min {:.0f}, max {:.0f}{}", s.gpuClock.Count(), s.gpuClock.Percentile(50),
@@ -614,6 +640,8 @@ namespace vortex {
         m_Impl->playBounds = glm::dvec4(bounds->min.x, bounds->min.y, bounds->max.x, bounds->max.y);
     }
     scene::Scene& Engine::Scene() { return m_Impl->sim.Scene(); }
+    audio::AudioSystem& Engine::Audio() { return m_Impl->audio; }
+    SoundEffects& Engine::Sounds() { return m_Impl->sounds; }
 
     void Engine::SetBlastLog(bool on) { m_Impl->blastLog = on; }
     Engine::FrameTimes Engine::LastFrameTimes() const { return m_Impl->lastFrameTimes; }
@@ -628,6 +656,12 @@ namespace vortex {
         if (settings.playBounds != previous.playBounds) rs.playBounds = settings.playBounds;
         if (settings.fovDegrees != previous.fovDegrees)
             camera.fovY = glm::radians(static_cast<float>(std::clamp(settings.fovDegrees, 50, 110)));
+        const std::pair<int, int> volumes[] = {{settings.masterVolume, previous.masterVolume}, {settings.sfxVolume, previous.sfxVolume},
+                                               {settings.ambienceVolume, previous.ambienceVolume}, {settings.uiVolume, previous.uiVolume},
+                                               {settings.musicVolume, previous.musicVolume}};
+        for (uint32_t bus = 0; bus < audio::kBusCount; ++bus)
+            if (volumes[bus].first != volumes[bus].second)
+                m_Impl->audio.SetBusVolume(static_cast<audio::Bus>(bus), static_cast<float>(std::clamp(volumes[bus].first, 0, 100)) / 100.0f);
     }
 
     Engine::LivePerf Engine::LivePerformance() const {

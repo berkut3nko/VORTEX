@@ -240,6 +240,22 @@ target_link_libraries(vortex_imguizmo PUBLIC vortex_imgui)
 endif()   # VORTEX_GRAPHICS
 
 # -----------------------------------------------------------------------------
+#  Audio: miniaudio (single header, C) with stb_vorbis from its extras (VORTEX_GRAPHICS:
+#  only the engine plays sound; docs/design/audio.md). Built below as vortex_miniaudio from
+#  one plain C file (src/audio/internal/MiniaudioImpl.c) and linked PRIVATE into VortexAudio
+#  only: Core, Physics, Sim, Net, the server and the bot never see it (vortex_assert_no_audio).
+# -----------------------------------------------------------------------------
+if(VORTEX_GRAPHICS)
+FetchContent_Declare(miniaudio
+    GIT_REPOSITORY https://github.com/mackron/miniaudio.git
+    GIT_TAG        0.11.25
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  _vortex_headers_only_   # its CMake builds examples and tests; the library is built in CMakeLists.txt
+)
+FetchContent_MakeAvailable(miniaudio)
+endif()   # VORTEX_GRAPHICS
+
+# -----------------------------------------------------------------------------
 #  Tests
 # -----------------------------------------------------------------------------
 if(VORTEX_BUILD_TESTS)

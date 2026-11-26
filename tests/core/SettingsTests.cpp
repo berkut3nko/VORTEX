@@ -22,15 +22,17 @@ namespace {
 }
 
 TEST(GameSettings, RoundTripsAndRefusesBadValues) {
-    const GameSettings custom{0.75f, false, 1.5f, 90, false};
+    const GameSettings custom{0.75f, false, 1.5f, 90, false, 60, 40, 0, 100, 20};
     GameSettings parsed;
     std::string error;
     ASSERT_TRUE(ParseGameSettings(FormatGameSettings(custom), parsed, &error)) << error;
     EXPECT_EQ(parsed, custom);
     EXPECT_EQ(FormatGameSettings(GameSettings{}),
-              "# Shredborne settings (key = value)\nrender_scale = 0.60\nvsync = on\nsensitivity = 1.00\nfov = 60\nplay_bounds = on\n");
+              "# Shredborne settings (key = value)\nrender_scale = 0.60\nvsync = on\nsensitivity = 1.00\nfov = 60\nplay_bounds = on\n"
+              "master_volume = 100\nsfx_volume = 100\nambience_volume = 80\nui_volume = 80\nmusic_volume = 70\n");
 
-    for (const char* bad : {"render_scale = 2", "render_scale = abc", "vsync = yes", "sensitivity = 0.1", "fov = 49", "fov = 70.5", "fov 70", "play_bounds = 1"}) {
+    for (const char* bad : {"render_scale = 2", "render_scale = abc", "vsync = yes", "sensitivity = 0.1", "fov = 49", "fov = 70.5", "fov 70", "play_bounds = 1",
+                            "master_volume = 101", "sfx_volume = -1", "music_volume = 50.5"}) {
         GameSettings s = custom;
         error.clear();
         EXPECT_FALSE(ParseGameSettings(bad, s, &error)) << bad;
@@ -98,6 +100,15 @@ TEST(SettingsPage, ActivatingCyclesThePresets) {
     EXPECT_FALSE(page.Settings().playBounds);
     EXPECT_TRUE(Press(page, MenuInput{.activate = true}).changed);
     EXPECT_TRUE(page.Settings().playBounds);
+    // The volumes (audio.md "Settings") step by 20 and wrap to 0; a value that is no step goes to the next one.
+    Press(page, MenuInput{.down = true});
+    for (int want : {0, 20, 40}) {
+        EXPECT_TRUE(Press(page, MenuInput{.activate = true}).changed);
+        EXPECT_EQ(page.Settings().masterVolume, want);
+    }
+    for (int i = 0; i < 4; ++i) Press(page, MenuInput{.down = true});
+    EXPECT_TRUE(Press(page, MenuInput{.activate = true}).changed);
+    EXPECT_EQ(page.Settings().musicVolume, 80) << "70 from the defaults goes to the next step";
 
     GameSettings odd;
     odd.renderScale = 0.9f;   // a value from the file that is no preset
@@ -119,7 +130,7 @@ TEST(SettingsPage, BackClosesThePage) {
     EXPECT_EQ(page.Settings(), start);
 
     page.Open(start);
-    for (int i = 0; i < 5; ++i) Press(page, MenuInput{.down = true});
+    for (int i = 0; i < 10; ++i) Press(page, MenuInput{.down = true});
     r = Press(page, MenuInput{.activate = true});
     EXPECT_TRUE(r.closed);
     EXPECT_FALSE(r.changed);

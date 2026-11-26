@@ -2,6 +2,7 @@ module;
 
 #include <glm/glm.hpp>
 
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <cstdlib>
@@ -83,6 +84,15 @@ namespace vortex {
             } else if (key == "play_bounds") {
                 ok = value == "on" || value == "off";
                 if (ok) s.playBounds = value == "on";
+            } else if (int* volume = key == "master_volume"     ? &s.masterVolume
+                                     : key == "sfx_volume"      ? &s.sfxVolume
+                                     : key == "ambience_volume" ? &s.ambienceVolume
+                                     : key == "ui_volume"       ? &s.uiVolume
+                                     : key == "music_volume"    ? &s.musicVolume
+                                                                : nullptr) {
+                int v = 0;
+                ok = ParseWhole(value, v) && v >= 0 && v <= 100;
+                if (ok) *volume = v;
             }
             // Any other key is skipped: a newer game's file stays readable.
             if (!ok) {
@@ -95,9 +105,11 @@ namespace vortex {
     }
 
     std::string FormatGameSettings(const GameSettings& settings) {
-        return std::format("# Shredborne settings (key = value)\nrender_scale = {:.2f}\nvsync = {}\nsensitivity = {:.2f}\nfov = {}\nplay_bounds = {}\n",
+        return std::format("# Shredborne settings (key = value)\nrender_scale = {:.2f}\nvsync = {}\nsensitivity = {:.2f}\nfov = {}\nplay_bounds = {}\n"
+                           "master_volume = {}\nsfx_volume = {}\nambience_volume = {}\nui_volume = {}\nmusic_volume = {}\n",
                            settings.renderScale, settings.vsync ? "on" : "off", settings.sensitivity, settings.fovDegrees,
-                           settings.playBounds ? "on" : "off");
+                           settings.playBounds ? "on" : "off", settings.masterVolume, settings.sfxVolume, settings.ambienceVolume,
+                           settings.uiVolume, settings.musicVolume);
     }
 
     std::filesystem::path DefaultSettingsPath() {
@@ -169,6 +181,11 @@ namespace vortex {
         m_Menu.AddItem(std::format("Mouse speed    {:.2f}", m_Settings.sensitivity), kSensitivity);
         m_Menu.AddItem(std::format("Field of view  {}", m_Settings.fovDegrees), kFov);
         m_Menu.AddItem(std::format("Play bounds    {}", m_Settings.playBounds ? "on" : "off"), kPlayBounds);
+        m_Menu.AddItem(std::format("Volume         {}", m_Settings.masterVolume), kMasterVolume);
+        m_Menu.AddItem(std::format("  Effects      {}", m_Settings.sfxVolume), kSfxVolume);
+        m_Menu.AddItem(std::format("  Ambience     {}", m_Settings.ambienceVolume), kAmbienceVolume);
+        m_Menu.AddItem(std::format("  Interface    {}", m_Settings.uiVolume), kUiVolume);
+        m_Menu.AddItem(std::format("  Music        {}", m_Settings.musicVolume), kMusicVolume);
         m_Menu.AddItem("Back", kBack);
         m_Menu.SetFocus(focus);
     }
@@ -188,6 +205,19 @@ namespace vortex {
             case kRenderScale: m_Settings.renderScale = NextPreset({0.5f, 0.6f, 0.75f}, m_Settings.renderScale); break;
             case kVsync: m_Settings.vsync = !m_Settings.vsync; break;
             case kPlayBounds: m_Settings.playBounds = !m_Settings.playBounds; break;
+            case kMasterVolume:
+            case kSfxVolume:
+            case kAmbienceVolume:
+            case kUiVolume:
+            case kMusicVolume: {
+                int& v = event.id == kMasterVolume     ? m_Settings.masterVolume
+                         : event.id == kSfxVolume      ? m_Settings.sfxVolume
+                         : event.id == kAmbienceVolume ? m_Settings.ambienceVolume
+                         : event.id == kUiVolume       ? m_Settings.uiVolume
+                                                       : m_Settings.musicVolume;
+                v = v >= 100 ? 0 : std::min(100, (v / 20 + 1) * 20);   // 0, 20 ... 100, then 0 again
+                break;
+            }
             case kSensitivity: m_Settings.sensitivity = NextPreset({0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 2.0f}, m_Settings.sensitivity); break;
             case kFov: {
                 int next = 60;

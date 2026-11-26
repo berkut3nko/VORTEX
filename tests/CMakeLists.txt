@@ -10,6 +10,8 @@
 #  tests/graphics/ -> VortexGraphicsTests shader reflection / layout contracts (CPU only, no Vulkan device;
 #                                         VORTEX_GRAPHICS only)
 #  tests/engine/   -> VortexEngineTests   scene / engine / editor logic that needs no GPU (VORTEX_GRAPHICS only)
+#  tests/audio/    -> VortexAudioTests    manifest, mixer policy (voices, stealing, budgets, variation); no audio
+#                                         device (VORTEX_GRAPHICS only, as VortexAudio)
 #
 #  None of the tests need a Vulkan driver, so they run on CI machines and laptops
 #  without a GPU. Run them with:  ctest --test-dir <build> --output-on-failure
@@ -59,9 +61,13 @@ set(VORTEX_SERIAL_TESTS_VortexNetTests "EnetSession.*:Relay.*")   # wall clock: 
 vortex_add_tests(VortexNetTests net VortexNet)
 vortex_assert_gpu_free(VortexNetTests)
 vortex_assert_no_https(VortexNetTests)
+vortex_assert_no_audio(VortexSimTests)
+vortex_assert_no_audio(VortexNetTests)
 if(VORTEX_GRAPHICS)
     vortex_add_tests(VortexGraphicsTests graphics VortexGraphics)
     vortex_add_tests(VortexEngineTests engine VortexEngine)
+    vortex_add_tests(VortexAudioTests audio VortexAudio)
+    vortex_assert_gpu_free(VortexAudioTests)
 endif()
 
 # The start-up CPU check refuses a CPU without the build's instructions (src/startup/CpuCheck.c): with

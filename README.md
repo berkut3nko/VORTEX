@@ -18,10 +18,12 @@ simulation and a session protocol for destructible multiplayer worlds.
 | `Vortex::Sim` | `vortex.scene`, `vortex.sim` (world operations, blasts, regions, the player step) | Core, Physics | no |
 | `Vortex::Net` | `vortex.net` (transports, wire format, server, client, bots; ENet private) | Sim | no |
 | `Vortex::Graphics` | `vortex.graphics` (Vulkan renderer) | Core | yes |
-| `Vortex::Engine` | `vortex.engine`, `vortex.editor` (what a game links) | Core, Physics, Sim, Net, Graphics | yes |
+| `Vortex::Audio` | `vortex.audio` (manifest, mixer, miniaudio output; docs/design/audio.md) | Core | built with it, needs none |
+| `Vortex::Engine` | `vortex.engine`, `vortex.editor` (what a game links) | Core, Physics, Sim, Net, Graphics, Audio | yes |
 
 The configure step fails if Core, Physics, Sim, Net or the GPU-free tools ever link Vulkan, GLFW or ImGui
-(`vortex_assert_gpu_free`), and if Core, Physics or Sim link Net or ENet (`vortex_assert_no_network`).
+(`vortex_assert_gpu_free`), if Core, Physics or Sim link Net or ENet (`vortex_assert_no_network`), and if Core,
+Physics, Sim, Net, the tools or their tests link the audio library (`vortex_assert_no_audio`).
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) section 2.
 
 Tools (`tools/`, link `Vortex::Net` only, so they build and run without a GPU or a window):
@@ -81,7 +83,8 @@ Options: `VORTEX_BUILD_TESTS` (default on when the engine is the top-level proje
 (`vortex_server`, `vortex_bot`; on), `VORTEX_WARNINGS_AS_ERRORS` (off), `VORTEX_GRAPHICS` (on; off builds only Core,
 Physics, Sim, Net, the tools and their tests, with no Vulkan loader, GLFW or ImGui: a server host or a CI job without
 a GPU). Tests are GoogleTest suites per library (`VortexCoreTests`, `VortexPhysicsTests`, `VortexSimTests`,
-`VortexNetTests`, `VortexGraphicsTests`, `VortexEngineTests`; the last two only with `VORTEX_GRAPHICS`) plus
+`VortexNetTests`, `VortexGraphicsTests`, `VortexEngineTests`, `VortexAudioTests`; the last three only with
+`VORTEX_GRAPHICS`) plus
 `CpuCheck.RefusesAMissingFeature`; run them with `ctest`. Every program logs its build first (`Build: ...`, both
 commits, build type, compiler, CPU flags: `cmake/BuildInfo.cmake`) and prints it with `--version`.
 

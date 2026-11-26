@@ -3,3 +3,4 @@
 add_executable(vortex_server main.cpp)
 target_link_libraries(vortex_server PRIVATE VortexNet vortex_https vortex_warnings vortex_cpu_check)
 vortex_assert_gpu_free(vortex_server)
+vortex_assert_no_audio(vortex_server)

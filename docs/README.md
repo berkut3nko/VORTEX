@@ -43,6 +43,7 @@ Rules every document follows:
 | [design/magic.md](design/magic.md) | decision + plan (spells: four forms x four elements, the 16 siege spells, conjured matter, zones) | designed | code read at `58f2650` | 145 |
 | [design/rules.md](design/rules.md) | decision + current spec (the rules seam `vortex.sim:rules`, the net split) | built | `ed409ee` + [wp-6] | 12 |
 | [design/fight.md](design/fight.md) | decision + current spec (M2a: health, damage, teams, charges, rounds, Felling, fighting bots, the fight HUD, practice) | built | `85bf73b` + [wp-7] | 15 |
+| [design/audio.md](design/audio.md) | decision + current spec (sound: `vortex.audio`, the mixer, voices and budgets, the shipped set and its tool, the events, ambience, volume settings) | partly built | `a67ec57` + [audio-1] | 17 |
 | [llm/README.md](llm/README.md) | guide: task packs for a local model (work loop, rules, values planned across packs, card template); the packs `llm/<stage>.md` | current | `bafca16` | 22 |
 | [notes/core-fx-editor.md](notes/core-fx-editor.md) | notes: map, invariants, traps, recipes, verifying | current | `430fde0` | 33 |
 | [notes/graphics.md](notes/graphics.md) | notes | current | `430fde0` | 25 |
@@ -67,6 +68,7 @@ the files and sections named, measured on 2026-11-18, CLAUDE.md not included):
 | Physics change (bodies, colliders, characters) | [ARCHITECTURE.md](ARCHITECTURE.md) 6 and 7.3; [notes/physics.md](notes/physics.md); networking.md "Player movement" and "Entity replication"; shred.md SI-2 for impacts | 68 |
 | World generation (terrain, regions, templates) | [design/worldgen.md](design/worldgen.md); [ARCHITECTURE.md](ARCHITECTURE.md) 4.3; [notes/voxel.md](notes/voxel.md); view-distance.md "Vertical design" and "Voxel size choice"; shred.md Part 4b (what the load check releases); the game's `docs/world/setting.md` for names and lore | 228 |
 | Game interface (HUD, menu, input, cursor) | [design/game-ui.md](design/game-ui.md); [ARCHITECTURE.md](ARCHITECTURE.md) 11; [notes/core-fx-editor.md](notes/core-fx-editor.md) | 53 |
+| Sound change (mixer, events, assets) | [design/audio.md](design/audio.md); the game's `docs/product/sound-list.md` sections 15-18 | 17 plus the sections |
 | Spell change (forms, elements, conjured matter, zones) | [design/magic.md](design/magic.md); [design/spread.md](design/spread.md) (Thermal's fire); [notes/net.md](notes/net.md) section 2 (the wire-value registry); networking.md "World operations" and "Player movement"; shred.md Part 2 (R1-R7), and Part 4b for `extraLoad` | 255 (without Part 4b) |
 | A card of a task pack (local model) | [llm/README.md](llm/README.md); the pack's header, "Decisions", "Skeleton" and its card; the card's "Read first" list | 22 plus the card's list |
 | A new design | [ROADMAP.md](ROADMAP.md) "Now" / "Next" (where it fits); the design documents it touches (their "Related" lines); one built design as a model of the form, e.g. [design/networking.md](design/networking.md) | 83 plus the documents it touches |
@@ -158,6 +160,7 @@ Also: [owner-questions-2026-11-11.md](history/view-distance/owner-questions-2026
 | `[lod-1]`..`[lod-5]` | Distance budgets; one terrain level; edits and holes; levels 2-3; multiplayer | [lod.md](design/lod.md#stages) | - |
 | `[fx-1]`..`[fx-6]` | Measure; cheap wins; `FxDirector`; collider churn; authoring; only if measured | [fx-budget.md](design/fx-budget.md#stages) | - |
 | `[fog-1]`..`[fog-4]` | Analytic extras; terrain map and fog pass; the simulation; only if the owner asks | [fog.md](design/fog.md#stages) | [design-review-2026-11-17.md](history/fog/design-review-2026-11-17.md) |
+| `[audio-1]`..`[audio-4]` | Module, mixer, assets and the offline events; the fight in a session; occlusion; spells, castle, fire, weather, music | [audio.md](design/audio.md#stages) | - |
 
 ### Gameplay and world
 

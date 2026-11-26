@@ -70,6 +70,7 @@ Vortex::Physics   physics                      -> Core, Jolt
 Vortex::Sim       scene, sim                   -> Core, Physics, EnTT        (no GPU, no window)
 Vortex::Net       net                          -> Sim; ENet (private)        (no GPU, no window)
 Vortex::Graphics  graphics                     -> Core, Vulkan, VMA, vk-bootstrap, GLFW, ImGui
+Vortex::Audio     audio                        -> Core; miniaudio (private)  (no GPU, no window)
 Vortex::Engine    engine, editor               -> all of the above, ImGuizmo
 vortex_server     tools/server                 -> Net                        (no GPU, no window)
 vortex_bot        tools/bot                    -> Net                        (no GPU, no window)

@@ -4,7 +4,9 @@ module;
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <array>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -21,6 +23,8 @@ export import vortex.physics;
 export import vortex.graphics;
 export import vortex.scene;
 export import vortex.sim;
+export import vortex.audio;
+export import :sound;
 
 export namespace vortex {
 
@@ -66,12 +70,19 @@ export namespace vortex {
         /// The world window follows the camera (offline). A session's window is the region's and
         /// never moves: false.
         bool windowFollowsCamera = true;
+        /// Sound (docs/design/audio.md): the default device; a headless run mixes offline (nothing is heard, the
+        /// whole path runs); --no-audio turns it off. `audioRoot` empty = `Paths::Asset("audio")`.
+        audio::AudioOutput audioOutput = audio::AudioOutput::Device;
+        std::filesystem::path audioRoot;
+        /// Bus volumes 0..1 by audio::Bus (master, sfx, ambience, ui, music): the player's settings at the start.
+        std::array<float, audio::kBusCount> audioVolumes{1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
 
         /// @brief Applies --headless --validation --frames N --screenshot F --width W --height H --scale S
         /// --ao-distance M --no-shadows --no-ao --no-emissive --no-taa --no-checkerboard --debug-view NAME
         /// (none albedo normal depth lighting steps motion material; anything else is a warning and ignored)
         /// --no-vsync (= --present immediate) --present fifo|relaxed|immediate (wins over --no-vsync)
-        /// --job-threads N --physics-threads N (0 = default; a negative value is a warning and ignored).
+        /// --job-threads N --physics-threads N (0 = default; a negative value is a warning and ignored)
+        /// --no-audio (audioOutput Off).
         void ApplyCommandLine(const CommandLine& args);
     };
 
@@ -170,9 +181,15 @@ export namespace vortex {
         void SetPlayBounds(const std::optional<sim::PlayArea>& bounds);
         /// @brief The entities of the game: voxel objects, lights, lifetimes (see scene::Scene).
         scene::Scene& Scene();
+        /// @brief Sound (docs/design/audio.md): the mixer with the game's manifest. The engine sets the listener
+        /// to the camera and updates it every frame; the game plays its own events through it.
+        audio::AudioSystem& Audio();
+        /// @brief The engine's sound presentation (blasts, impacts, mechanisms, ropes, holds) and the material
+        /// tables the game uses for footsteps.
+        SoundEffects& Sounds();
 
         /// @brief Applies a change of the player's settings: only the fields that differ from `previous` (render
-        /// scale, present preference from vsync, camera field of view), so a command-line flag (`--scale`,
+        /// scale, present preference from vsync, camera field of view, sound volumes), so a command-line flag (`--scale`,
         /// `--no-vsync`, `--present`) stays in effect until the player changes that same setting. Sensitivity is the
         /// game's (it scales its own mouse look).
         void ApplySettings(const GameSettings& settings, const GameSettings& previous);
@@ -226,7 +243,8 @@ export namespace vortex {
 
         /// @brief The presentation half of a blast in this engine's simulation: sim::PresentBlast
         /// (debris particles, rubble for Detach operations and object fragments, particles for
-        /// the crumbs of a ClearMask, the explosion and a flash). Simulates nothing else.
+        /// the crumbs of a ClearMask, the explosion and a flash) and its sounds (SoundEffects::Blast).
+        /// Simulates nothing else.
         void PresentBlast(const sim::BlastResult& blast);
 
         /// @brief Shows an outcome of the rules seam: PresentBlast for each of its blasts, in order ([wp-6]).
