@@ -381,6 +381,22 @@ TEST(Mechanism, LayerFollowsMotion) {
     EXPECT_EQ(sim::MechanismLayer(*f.MechanismOf(gate), 345), physics::Layer::Dynamic);
 }
 
+TEST(Mechanism, AnOpenDoorAtRestHasNoSpin) {
+    // A door at rest open: its two poses are the same turned rotation, whose product rounds just under the identity. That
+    // gave a NaN spin, refused (and logged) on every tick a player stood near it.
+    YardField f;
+    ASSERT_TRUE(f.initialized);
+    const Entity door = MakeYardDoor(f, {0, kGroundVoxels, 0});
+    ASSERT_NE(door, kNoEntity);
+    const math::AABB all = YardEverywhere();
+    sim::PushSegment(f.MechanismOf(door)->track, {100, 0, 1024, 36, 0});
+    const physics::BodyId body = f.simulation.Scene().TryGet<scene::RigidBody>(door)->body;
+    sim::PoseMechanisms(f.simulation, 120, all);
+    EXPECT_GT(glm::length(f.simulation.Physics().GetState(body).angularVelocity), 0.1f) << "it turns while it opens";
+    sim::PoseMechanisms(f.simulation, 150, all);
+    EXPECT_EQ(f.simulation.Physics().GetState(body).angularVelocity, glm::vec3(0.0f)) << "open and at rest, it does not spin";
+}
+
 TEST(Mechanism, NotCountedAsAwake) {
     sim::SimulationConfig config = sim::ServerConfig(YardConfig());
     config.replication.maxAwakePieces = 1;    // one counted door would refuse every new piece

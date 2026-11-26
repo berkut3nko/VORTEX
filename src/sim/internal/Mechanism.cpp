@@ -116,9 +116,12 @@ namespace vortex::sim {
         glm::vec3 AngularVelocity(const glm::quat& q0, const glm::quat& q1, float dt) {
             glm::quat d = q1 * glm::conjugate(q0);
             if (d.w < 0.0f) d = -d;
-            const float angle = 2.0f * std::acos(std::min(d.w, 1.0f));
-            if (angle < 1.0e-7f) return glm::vec3(0.0f);
-            return glm::normalize(glm::vec3(d.x, d.y, d.z)) * angle / dt;
+            // The angle from the axis part, not acos(w): equal turned rotations round w just under 1 while the axis part
+            // stays 0, and acos then gave an angle with no axis to normalise (a NaN spin).
+            const glm::vec3 axis(d.x, d.y, d.z);
+            const float s = glm::length(axis);
+            if (s < 1.0e-7f) return glm::vec3(0.0f);
+            return axis / s * (2.0f * std::atan2(s, d.w) / dt);
         }
 
         /// The world point of current model voxel coordinates `local` (voxels, not metres) at `pose`.
