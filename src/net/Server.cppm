@@ -117,6 +117,10 @@ export namespace vortex::net {
         uint32_t hashCheckTicks = 120;
         uint32_t entityCheckTicks = 120;
         HashCheckSettings hashCheck;
+        /// [mag-2] Live or pending zones in the region and per player (magic.md "Caps"): a spell over them is refused
+        /// TooManyZones when it runs.
+        uint32_t maxZones = 32;
+        uint32_t maxZonesPerPlayer = 4;
     };
 
     /// @brief What server terrain mode cost one peer (stage 7b M-b; vortex_server's `Terrain:` lines):
@@ -303,6 +307,14 @@ export namespace vortex::net {
         uint32_t castsRefusedNoCharge = 0;///< cast edges without a charge (CastRejection::NoCharge)
         uint32_t respawns = 0;            ///< lives started (the round's start counts every player)
         uint32_t rostersSent = 0;         ///< Roster broadcasts (at most one per tick: StepFight sends a changed roster)
+        // [mag-2] Spells (docs/design/magic.md; the `Magic: server:` and `Zones:` lines).
+        uint32_t spellCasts = 0;          ///< spells run (CastSpell passed)
+        uint32_t spellsRefused = 0;       ///< Spell edges refused at capture or at the run (every CastRejection)
+        uint32_t spellOps = 0;            ///< terrain operations of spells: at the cast, and scheduled ones (bands, blows, expiries, site checks)
+        uint64_t spellBytes = 0;          ///< event bytes of spells: their CastFx, operations, object events and zone events
+        uint32_t zonesEmitted = 0;        ///< ZoneStart events
+        uint32_t zonesCancelled = 0;      ///< ZoneCancel events
+        uint32_t attunes = 0, attunesRefused = 0;   ///< Attune messages taken / ignored
 
         // Replicated objects (stage 6).
         uint32_t objectSpawns = 0;        ///< EntitySpawn of objects with a NetId (template objects, crates, object pieces)
@@ -444,6 +456,12 @@ export namespace vortex::net {
         bool SessionOver() const;
         /// @brief The `Fight: kills K, deaths D, ...` line (fight.md "Rules"; G22 reads it).
         std::string FightLine() const;
+        /// @brief [mag-2] The `Magic: server: casts N, refused R, ops O, bytes B, scheduled S, sites C` and the `Zones:
+        /// emitted Z, late 0, cancelled C` lines (the server's zones are never late).
+        std::string MagicLine() const;
+        std::string ZonesLine() const;
+        /// @brief [mag-2] The caster state (form cooldowns, elements) of the player in `slot`.
+        sim::CasterState Caster(uint8_t slot) const;
 
         uint32_t TickNumber() const;      ///< The tick that runs next.
         uint32_t LastOpSeq() const;       ///< 0 before the first event.

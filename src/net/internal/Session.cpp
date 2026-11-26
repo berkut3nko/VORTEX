@@ -344,19 +344,24 @@ namespace vortex::net {
         return s;
     }
 
-    uint64_t BuildHashOf(uint32_t protocol, uint64_t generatorGolden, uint64_t materialTable, uint32_t playerRule, uint64_t landGolden) {
+    uint64_t BuildHashOf(uint32_t protocol, uint64_t generatorGolden, uint64_t materialTable, uint32_t playerRule, uint64_t landGolden,
+                         uint64_t spellTable, uint64_t turningTable) {
         uint64_t h = voxel::HashMix64(0x56425549ull, protocol);   // "VBUI"
         h = voxel::HashMix64(h, generatorGolden);
         h = voxel::HashMix64(h, materialTable);
         // Revision 0 mixes nothing, so the hash of a build before the revision existed is unchanged
-        // only for that build; every revision from 1 on gives another hash. The land golden hash alike.
+        // only for that build; every revision from 1 on gives another hash. The land golden hash and
+        // the magic tables alike.
         if (playerRule != 0) h = voxel::HashMix64(h, playerRule);
-        return landGolden == 0 ? h : voxel::HashMix64(h, landGolden);
+        if (landGolden != 0) h = voxel::HashMix64(h, landGolden);
+        if (spellTable != 0) h = voxel::HashMix64(h, spellTable);
+        return turningTable == 0 ? h : voxel::HashMix64(h, turningTable);
     }
 
     uint64_t BuildHash(const voxel::MaterialLibrary& materials) {
         return BuildHashOf(kProtocolVersion, voxel::kGeneratorGoldenHash, voxel::MaterialTableHash(materials), sim::kPlayerRuleRevision,
-                           voxel::kLandGoldenHash);
+                           voxel::kLandGoldenHash, sim::SpellTableHash(sim::BuildSpellTable(voxel::kDefaultVoxelSize)),
+                           voxel::TurningTableHash(voxel::WorldTurningTable()));
     }
 
     namespace {

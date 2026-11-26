@@ -108,14 +108,22 @@ namespace vortex::net {
     }
 
     void Server::Impl::LateCast(Peer& p, const sim::PlayerInput& in, uint32_t now) {
+        if (!LateTake(p, in, now)) return;
+        const sim::PlayerState* at = p.player->StateAt(in.tick);
+        CaptureCast(p, in, at != nullptr ? *at : p.player->state, true);
+    }
+
+    bool Server::Impl::LateTake(Peer& p, const sim::PlayerInput& in, uint32_t now) {
         Player& pl = *p.player;
         const sim::PlayerState* at = pl.StateAt(in.tick);
         const uint8_t cooldownThen = at != nullptr ? at->cooldownTicks : pl.state.cooldownTicks;
-        if (cooldownThen > 0 || pl.state.cooldownTicks > 0) return RejectCast(p, in.tick);
+        if (cooldownThen > 0 || pl.state.cooldownTicks > 0) {
+            RejectCast(p, in.tick);
+            return false;
+        }
         const uint32_t elapsed = now - 1 - in.tick;   // ticks simulated after the input's tick
         const uint32_t full = settings.player.castCooldownTicks;
         pl.state.cooldownTicks = static_cast<uint8_t>(full > elapsed ? full - elapsed : 0u);
-        CaptureCast(p, in, at != nullptr ? *at : pl.state, true);
         // The kept states of the ticks since then get the cooldown they would have had, so that a
         // later late edge in the same stream is judged as its client predicted it (review of
         // stage 5: they still said 0, and a second edge a few ticks later was taken).
@@ -123,6 +131,7 @@ namespace vortex::net {
         for (uint32_t k = std::max(in.tick, now > kStateHistory ? now - kStateHistory : 0u); k < now; ++k)
             if (sim::PlayerState* kept = pl.StateAt(k))
                 kept->cooldownTicks = static_cast<uint8_t>(full > k - in.tick ? full - (k - in.tick) : 0u);
+        return true;
     }
 
     void Server::Impl::RunCast(const QueuedCast& q, bool overdue) {
@@ -233,6 +242,13 @@ namespace vortex::net {
                 break;
             }
             queue.pop_front();
+            if (q.spell) {
+                // [mag-2] A spell: sim::CastSpell plans and applies it on the world as the casts before it left it.
+                simulation->Replication().refuseNewPieces = entityCredit <= 0;
+                RunSpell(q, overdue && (castCredit <= 0 || eventCredit <= 0));
+                simulation->Replication().refuseNewPieces = false;
+                continue;
+            }
             // A player's ray is cast now, when the cast runs, on the world as the casts before it
             // left it; one that casts nothing costs nothing and the next cast is looked at.
             if (q.ray && !ResolveRay(q)) continue;

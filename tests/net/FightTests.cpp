@@ -52,7 +52,7 @@ namespace {
 
 TEST(FightWire, MessagesRoundTripAndRefuseBadValues) {
     net::Roster roster;
-    roster.players = {{0, 1, 3, 1}, {2, 2, 0, 4}, {5, 1, 65535, 2}};
+    roster.players = {{0, 1, 3, 1, 0x8}, {2, 2, 0, 4, 0}, {5, 1, 65535, 2, 0xF}};
     {
         const std::vector<uint8_t> bytes = net::Encode(roster);
         net::Roster r;
@@ -60,13 +60,14 @@ TEST(FightWire, MessagesRoundTripAndRefuseBadValues) {
         EXPECT_EQ(r, roster);
         RefusesTrailingAndMissing<net::Roster>(bytes);
         EXPECT_FALSE(DecodesWith<net::Roster>(bytes, 3, 3));        // team 3
-        EXPECT_FALSE(DecodesWith<net::Roster>(bytes, 8, 0));        // slot 0 twice
+        EXPECT_FALSE(DecodesWith<net::Roster>(bytes, 9, 0));        // slot 0 twice
+        EXPECT_FALSE(DecodesWith<net::Roster>(bytes, 8, 16));       // [mag-2] attune bits above 3
         net::Roster many;
         for (uint8_t i = 0; i < 65; ++i) many.players.push_back({i, 1, 0, 0});
         std::vector<uint8_t> tooMany = net::Encode(many);           // the encoder keeps 64
         EXPECT_EQ(tooMany[1], 64);
         tooMany[1] = 65;
-        for (int i = 0; i < 6; ++i) tooMany.push_back(0);
+        for (int i = 0; i < 7; ++i) tooMany.push_back(0);
         net::Roster r2;
         EXPECT_FALSE(net::Decode(tooMany, r2));
     }
@@ -125,24 +126,25 @@ TEST(FightWire, MessagesRoundTripAndRefuseBadValues) {
         EXPECT_FALSE(DecodesWith<net::Snapshot>(bytes, flagsAt, 8));
         EXPECT_TRUE(DecodesWith<net::Snapshot>(bytes, flagsAt, 7));
         const size_t rejectedAt = net::kSnapshotHeaderBytes - 2 + 31;
-        EXPECT_TRUE(DecodesWith<net::Snapshot>(bytes, rejectedAt, 5));
-        EXPECT_FALSE(DecodesWith<net::Snapshot>(bytes, rejectedAt, 6));
+        EXPECT_TRUE(DecodesWith<net::Snapshot>(bytes, rejectedAt, 11));   // [mag-2] NearSpawn is the last
+        EXPECT_FALSE(DecodesWith<net::Snapshot>(bytes, rejectedAt, 12));
     }
     EXPECT_STREQ(net::ToString(net::CastRejection::NoCharge), "no charge");
     EXPECT_STREQ(net::ToString(net::CastRejection::Dead), "dead");
-    EXPECT_EQ(net::kProtocolVersion, 13);   // [land-5]
+    EXPECT_EQ(net::kProtocolVersion, 14);   // [mag-2]
 }
 
 TEST(FightWire, SizesAreAsDesigned) {
     net::Snapshot none, owner;
     owner.hasOwner = true;
-    EXPECT_EQ(net::Encode(owner).size() - net::Encode(none).size(), 44u);   // [mech-1]: + lastUseTick, useResult
-    EXPECT_EQ(net::kSnapshotOwnerBytes, 44u);
+    EXPECT_EQ(net::Encode(owner).size() - net::Encode(none).size(), 64u);   // [mag-2]: + the magic state, 20 B
+    EXPECT_EQ(net::kSnapshotOwnerBytes, 64u);
     net::Snapshot one = owner;
     one.others.push_back({});
-    EXPECT_EQ(net::Encode(one).size() - net::Encode(owner).size(), 18u);    // [mech-1]: + holdPitch
-    EXPECT_EQ(net::kSnapshotPlayerBytes, 18u);
-    // The Welcome's last 7 bytes are its fight fields: without them it does not decode.
+    EXPECT_EQ(net::Encode(one).size() - net::Encode(owner).size(), 19u);    // [mag-2]: + statusBits
+    EXPECT_EQ(net::kSnapshotPlayerBytes, 19u);
+    // The Welcome's fight fields are its 7 bytes before the zone lead ([mag-2]'s last byte): without them it does not
+    // decode.
     net::Welcome w;
     w.region.terrain.voxelSize = 0.125f;
     w.fight = {sim::GameMode::Deathmatch, 100, 3, 72, 180};
@@ -150,12 +152,13 @@ TEST(FightWire, SizesAreAsDesigned) {
     net::Welcome back;
     ASSERT_TRUE(net::Decode(bytes, back));
     EXPECT_EQ(back.fight, w.fight);
-    EXPECT_FALSE(net::Decode(std::span(bytes).first(bytes.size() - 7), back));
-    EXPECT_EQ(bytes[bytes.size() - 7], 1);   // mode
-    EXPECT_EQ(bytes[bytes.size() - 5], 3);   // max charges
+    EXPECT_FALSE(net::Decode(std::span(bytes).first(bytes.size() - 8), back));
+    EXPECT_EQ(bytes[bytes.size() - 8], 1);   // mode
+    EXPECT_EQ(bytes[bytes.size() - 6], 3);   // max charges
+    EXPECT_EQ(bytes[bytes.size() - 1], 24);  // [mag-2] the zone lead
     net::Roster four;
     for (uint8_t i = 0; i < 4; ++i) four.players.push_back({i, static_cast<sim::TeamId>(1 + i % 2), 0, 0});
-    EXPECT_EQ(net::Encode(four).size(), 26u);
+    EXPECT_EQ(net::Encode(four).size(), 30u);   // [mag-2]: 7 B per player
     EXPECT_EQ(net::Encode(net::RoundUpdate{}).size(), 16u);
     EXPECT_EQ(net::Encode(net::KillNotice{}).size(), 9u);
 }

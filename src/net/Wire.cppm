@@ -92,7 +92,9 @@ export namespace vortex::net {
         ObjectModel = 35,   ///< A replicated object's model changed (Scene::Damage; stage 6).
         EntityWake = 36,    ///< A replicated object at rest started to move (review of stage 6).
         MechanismMove = 37, ///< [mech-1] a mechanism took a new segment (a use, a link, a jam, a release).
-        // 38-40 are planned for [mag-2] (ZoneStart, ZoneCancel, CastFx).
+        ZoneStart = 38,     ///< [mag-2] a zone that acts on players from its start tick (the lead ahead).
+        ZoneCancel = 39,    ///< [mag-2] a zone's truncation: it ends at endTick at the latest.
+        CastFx = 40,        ///< [mag-2] a spell was cast: presentation only (never in sim or hashes).
         EntityHold = 41,    ///< [mech-1] a player picked a replicated body up.
         EntityRelease = 42, ///< [mech-1] a held body was let go: its pose and velocity.
     };
@@ -214,9 +216,54 @@ export namespace vortex::net {
         friend bool operator==(const EntityRelease&, const EntityRelease&) = default;
     };
 
-    /// @brief One event of the opSeq stream: a world operation or an entity event.
+    /// @brief `ZoneStart` ([mag-2], 30 / 42 / 40 / 32 B for a sphere / capsule / box / cylinder): zoneId u16, kind u8,
+    /// teamMask u8, startTick u32, duration u16, strength i16 x 2, then the shape as a MapShape writes it.
+    struct ZoneStartEvent {
+        sim::Zone zone;
+        friend bool operator==(const ZoneStartEvent&, const ZoneStartEvent&) = default;
+    };
+    /// @brief `ZoneCancel{zoneId, endTick}` ([mag-2], 7 B): the zone acts on no tick from `endTick` on.
+    struct ZoneCancelEvent {
+        uint16_t zoneId = 0;
+        uint32_t endTick = 0;
+        friend bool operator==(const ZoneCancelEvent&, const ZoneCancelEvent&) = default;
+    };
+    /// @brief `CastFx` ([mag-2], 32 B): a spell's streak and impact for the clients to draw. `slot` is the caster's
+    /// slot + 1 (0: a server script), `originQ` and `hitQ` in q (1/16 voxel), `face` axis * 2 + (sign < 0), `tick` T_run.
+    struct CastFx {
+        uint8_t slot = 0;
+        uint8_t spell = 0;
+        glm::ivec3 originQ{0}, hitQ{0};
+        uint8_t face = 0;
+        uint32_t tick = 0;
+        friend bool operator==(const CastFx&, const CastFx&) = default;
+    };
+
+    /// @brief One event of the opSeq stream: a world operation, an entity event or a zone event.
     using Event = std::variant<sim::WorldOp, EntitySpawn, EntityDespawn, EntityRest, ObjectModel, EntityWake, MechanismMove, EntityHold,
-                               EntityRelease>;
+                               EntityRelease, ZoneStartEvent, ZoneCancelEvent, CastFx>;
+
+    /// Decoder limits of the magic events and ops (magic.md "Wire values").
+    inline constexpr uint16_t kMaxZoneDuration = 600;
+    inline constexpr int32_t kMaxCapsuleLengthQ = 8192;     ///< 64 m at 0.125 m
+    inline constexpr uint16_t kMaxCapsuleRadiusQ = 1024;
+    /// Zone kinds a decoder accepts (1-9: Impulse .. Rune; the later stages give the reserved ones behaviour).
+    inline constexpr uint8_t kMaxZoneKind = 9;
+    /// Spell ids a decoder accepts in a CastFx (0-15 the matrix, 16 and 17 the drills).
+    inline constexpr uint8_t kMaxSpellId = 17;
+    /// @brief A shape as MapShape and ZoneStart write it: kind u8, then sphere centre i32 x 3 q and radius u16 q,
+    /// capsule A and B i32 x 3 q and radius u16 q, box min and max i32 x 3 voxels, cylinder centre i32 x 3 q, radius u16
+    /// q and half height u16 q.
+    void WriteShape(ByteWriter& out, const voxel::ShapeQ& shape);
+    /// @brief False for a kind over 3, a sphere or cylinder radius over sim::kMaxCastRadiusQ, a capsule radius over
+    /// kMaxCapsuleRadiusQ or longer than kMaxCapsuleLengthQ, a box corner beyond kMaxSyncChunkCoordinate chunks, or a
+    /// read past the end.
+    bool ReadShape(ByteReader& in, voxel::ShapeQ& shape);
+    /// @brief A zone as ZoneStart writes it after its kind byte (29 / 41 / 39 / 31 B by shape).
+    void WriteZone(ByteWriter& out, const sim::Zone& zone);
+    /// @brief False for a zone kind of 0 or over kMaxZoneKind, a duration of 0 or over kMaxZoneDuration, a shape ReadShape
+    /// refuses, or a read past the end.
+    bool ReadZone(ByteReader& in, sim::Zone& zone);
 
     /// @brief The event of a sim::HoldChange for the body `netId`: EntityHold or EntityRelease ([mech-1]).
     Event HoldEvent(const sim::HoldChange& change, uint32_t netId);
@@ -255,7 +302,7 @@ export namespace vortex::net {
     /// @brief Decodes a RegionDesc. Does not validate it (sim::IsValid does).
     bool ReadRegion(ByteReader& in, sim::RegionDesc& region);
 
-    /// @brief sim::PlayerTuning on the wire: raw float bits and the cooldown (45 bytes).
+    /// @brief sim::PlayerTuning on the wire: raw float bits, the cooldown and the push decays (49 bytes).
     void WritePlayerTuning(ByteWriter& out, const sim::PlayerTuning& tuning);
     /// @brief Decodes a PlayerTuning. Does not validate it (sim::IsValid does).
     bool ReadPlayerTuning(ByteReader& in, sim::PlayerTuning& tuning);

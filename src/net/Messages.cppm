@@ -33,7 +33,10 @@ export namespace vortex::net {
     /// 12: [mech-1] (EntityKind::Mechanism, MechanismMove 37, the owner block's lastUseTick / useResult, PlayerButton_Use
     /// 16; EntityHold 41, EntityRelease 42, kObjectHeld, the remote record's holdPitch).
     /// 13: [land-5] (RegionGenerator::Land 2; the region's landHash and landSourceHash in Welcome).
-    inline constexpr uint16_t kProtocolVersion = 13;
+    /// 14: [mag-2] (WorldOpKind MapShape 7 and MapMask 8 on the wire; ZoneStart 38, ZoneCancel 39, CastFx 40;
+    /// PlayerInput::spell and PlayerButton_Spell 32; the owner block's magic state +20, the remote record +1, the
+    /// roster +1 per player; Attune 24; CastRejection 6-11; Welcome's zone lead and push decays; BaselineEnd's zones).
+    inline constexpr uint16_t kProtocolVersion = 14;
 
     /// @brief First byte of every message. Wire format.
     enum class MessageType : uint8_t {
@@ -63,6 +66,7 @@ export namespace vortex::net {
         Roster = 21,        ///< server -> client, events channel: every player's team, kills and deaths
         RoundUpdate = 22,   ///< server -> client, events channel: the round's phase, score and result
         KillNotice = 23,    ///< server -> client, events channel: one death (the kill feed)
+        Attune = 24,        ///< [mag-2] client -> server, events channel: the two elements of the next life
     };
 
     using Token = std::array<uint8_t, 16>;
@@ -117,6 +121,10 @@ export namespace vortex::net {
         /// The stream position the joiner starts after (J): no event at or before it is ever sent to it.
         uint32_t joinOpSeq = 0;
         std::vector<ProbeHash> probes;    ///< Hashes of pristine chunks chosen from the seed (ProbeChunks).
+        /// [mag-2] The zone lead in ticks (u8 after the fight fields, at most 60): a ZoneStart made at T_run starts at
+        /// T_run + zoneLeadTicks (magic.md "Why zones, and why the lead").
+        uint8_t zoneLeadTicks = 24;
+        static constexpr uint8_t kMaxZoneLeadTicks = 60;
         /// [wp-7] The fight fields (7 B after the probes; fight.md "Wire"): mode, maxHealth, maxCharges,
         /// chargeTicks, respawnTicks. A sandbox session sends mode 0, max charges 0.
         struct Fight {
@@ -143,8 +151,9 @@ export namespace vortex::net {
 
     /// Inputs a decoder accepts in one InputBatch (a client sends at most ClientSettings::maxInputsPerPacket, 8).
     inline constexpr uint32_t kMaxBatchInputs = 32;
-    /// Bytes of one input on the wire (moveX, moveZ, yaw, pitch, buttons) and of the batch header (type, first tick, count).
-    inline constexpr size_t kInputBytes = 7;
+    /// Bytes of one input on the wire (moveX, moveZ, yaw, pitch, buttons, spell) and of the batch header (type, first
+    /// tick, count).
+    inline constexpr size_t kInputBytes = 8;
     inline constexpr size_t kInputBatchHeaderBytes = 6;
 
     /**
@@ -168,6 +177,9 @@ export namespace vortex::net {
         static constexpr uint8_t kDeadBit = 0x80;
         /// [mech-1] sim::HoldPitch of its last input (-64..64): other clients pose what it holds.
         int8_t holdPitch = 0;
+        /// [mag-2] bits 0-3 sim::PlayerState::status & 15 (Rooted, Pinned, Chilled, Lifted), bits 4-5 the element of its
+        /// last Spell edge (the hands' colour).
+        uint8_t statusBits = 0;
         friend bool operator==(const RemotePlayer&, const RemotePlayer&) = default;
     };
 
@@ -192,19 +204,29 @@ export namespace vortex::net {
         Outside = 3,    ///< the hit is outside the play bounds or the window's rows (sim::CastFitsRegion)
         NoCharge = 4,   ///< [wp-7] no cast charge left at the input's tick (fight.md "Rules")
         Dead = 5,       ///< [wp-7] the player was dead at the input's tick
+        // [mag-2] spells (magic.md "Wire values").
+        FormCooling = 6,      ///< the spell's form cooldown ran at the input's tick
+        NotAttuned = 7,       ///< the spell's element is not one of the caster's two, or the spell is not built
+        TooMuchConjured = 8,  ///< the region holds the most conjured voxels
+        TooManyZones = 9,     ///< the region's or the caster's live or pending zones are at their cap
+        TooMuchFire = 10,     ///< reserved for spread's fire cap (nothing emits it yet)
+        NearSpawn = 11,       ///< an op or a zone of the spell meets an enemy spawn area
     };
-    inline constexpr uint8_t kMaxCastRejection = 5;
+    inline constexpr uint8_t kMaxCastRejection = 11;
     const char* ToString(CastRejection rejection);
     /// @brief The rejection a snapshot reports for a refusal of the rules seam (values are equal; [wp-6]).
     CastRejection RejectionOf(sim::ActionRefusal refusal);
+    /// @brief The rejection a snapshot reports for a spell's refusal: NotBuilt -> NotAttuned; Missed and Rooted -> Missed
+    /// (a Dash with no own move); Outside as a blast's; the others by name.
+    CastRejection RejectionOf(sim::SpellRefusal refusal);
 
     /// `Snapshot::inputMargin` before the server has had an input from this client.
     inline constexpr int16_t kNoInputMargin = -32768;
     /// Header (type, tick, lastOpSeq, ackInputTick, marginTick, inputMargin, owner flag, player
     /// count, body count), owner state, one other player and one body, in bytes.
     inline constexpr size_t kSnapshotHeaderBytes = 22;
-    inline constexpr size_t kSnapshotOwnerBytes = 44;
-    inline constexpr size_t kSnapshotPlayerBytes = 18;
+    inline constexpr size_t kSnapshotOwnerBytes = 64;
+    inline constexpr size_t kSnapshotPlayerBytes = 19;
     inline constexpr size_t kSnapshotBodyBytes = 31;
     /// A snapshot is at most this large (networking.md "Entity replication": 1200 B hold about 36
     /// bodies after the players); bodies that do not fit wait for a later one (priority).
@@ -250,6 +272,14 @@ export namespace vortex::net {
         /// [mech-1] The input tick of the newest Use edge the server took from this player (0 = none) and its result.
         uint32_t lastUseTick = 0;
         sim::UseResult useResult = sim::UseResult::None;
+        /// [mag-2] After useResult, 20 B: the owner's push (i16 x 3), status, slowQ, slowLeft, rootLeft, pinLeft,
+        /// ccGuardLeft, dashLeft (u8 each) and dashDir (i8 x 2) travel in `owner` (the client restores them before a
+        /// replay); then the four form cooldowns in 4-tick units rounded up (0 = ready, 255 at most; for the HUD, never
+        /// for prediction) and the attunement byte (bits 0-1 element A, 2-3 element B, bit 4 set: the last Spell edge's
+        /// element was B).
+        std::array<uint8_t, 4> formCooldown4{};
+        uint8_t attune = 0;
+        static constexpr uint8_t kAttuneActiveB = 16;
         std::vector<RemotePlayer> others;
         /// Awake replicated bodies, by the server's priority for this client (stage 6). At most 255.
         std::vector<BodySample> bodies;
@@ -270,9 +300,10 @@ export namespace vortex::net {
         uint8_t slot = 0;
         sim::TeamId team = 0;             ///< 0 (sandbox), 1 or 2
         uint16_t kills = 0, deaths = 0;
+        uint8_t attune = 0;               ///< [mag-2] bits 0-1 element A, bits 2-3 element B (the team panel's letters)
         friend bool operator==(const RosterEntry&, const RosterEntry&) = default;
     };
-    /// @brief Every joined player's team, kills and deaths (slot ascending; count u8, 6 B each).
+    /// @brief Every joined player's team, kills, deaths and elements (slot ascending; count u8, 7 B each).
     struct Roster {
         std::vector<RosterEntry> players;
         friend bool operator==(const Roster&, const Roster&) = default;
@@ -305,8 +336,22 @@ export namespace vortex::net {
     std::vector<uint8_t> Encode(const Roster& m);
     std::vector<uint8_t> Encode(const RoundUpdate& m);
     std::vector<uint8_t> Encode(const KillNotice& m);
-    /// @brief Refuses more than kMaxRosterPlayers, a team over 2, duplicate slots.
+    /// @brief Refuses more than kMaxRosterPlayers, a team over 2, duplicate slots, attune bits above 3.
     bool Decode(std::span<const uint8_t> bytes, Roster& out);
+
+    // --- magic ([mag-2], docs/design/magic.md "Wire values") --------------------------------------
+
+    /// @brief The two elements (sim::Element values) of the sender's next life (3 B with the type byte). The server
+    /// takes it while the player is dead or before its first spawn (two different, built elements) and applies it at
+    /// the next spawn; else it is ignored.
+    struct Attune {
+        uint8_t craftA = 0;
+        uint8_t craftB = 2;
+        friend bool operator==(const Attune&, const Attune&) = default;
+    };
+    std::vector<uint8_t> Encode(const Attune& m);
+    /// @brief Refuses an element over 3 (two equal elements decode: the server judges them).
+    bool Decode(std::span<const uint8_t> bytes, Attune& out);
     /// @brief Refuses a mode over 2, a phase over 3, a winner not 0, 1, 2 or 255, an end over 4, overtime over 1.
     bool Decode(std::span<const uint8_t> bytes, RoundUpdate& out);
     /// @brief Refuses a cause of 0 or over 5, flags over 1, a killer that is the victim.
@@ -381,14 +426,17 @@ export namespace vortex::net {
         EntitySpawn spawn;
         static constexpr uint32_t kAwake = 0xFFFFFFFFu;
     };
-    /// @brief The join's baseline is complete: `count` BaselineEntity messages were sent before it.
+    /// Most zones a BaselineEnd carries (the server's cap of live or pending zones).
+    inline constexpr uint32_t kMaxBaselineZones = 32;
+    /// @brief The join's baseline is complete: `count` BaselineEntity messages were sent before it. [mag-2] `zones`
+    /// are the zones live or pending at `asOfOpSeq` (u8 count, each a ZoneStart body without its kind byte).
     struct BaselineEnd {
         uint32_t asOfOpSeq = 0;
         uint32_t count = 0;
+        std::vector<sim::Zone> zones;
     };
     /// @brief The join's baseline entities within ServerSettings::baselineNearMetres of the spawn are
-    /// sent (`count` BaselineEntity messages so far): the joiner's start gate may open. Same layout as
-    /// BaselineEnd (9 bytes).
+    /// sent (`count` BaselineEntity messages so far): the joiner's start gate may open (9 bytes).
     struct BaselineNear {
         uint32_t asOfOpSeq = 0;
         uint32_t count = 0;

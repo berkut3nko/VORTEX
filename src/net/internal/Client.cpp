@@ -383,7 +383,7 @@ namespace vortex::net {
                     if (!e.valid || e.tick != k) continue;
                     s.PrepareStep(k);
                     sim::StepPlayer(s.simulation->Physics(), s.simulation->Terrain(), s.character, s.player, e.input, s.welcome.player, s.playArea,
-                                    s.ZonesAt(e.tick), s.Dt());
+                                    s.ZonesAt(e.tick, e.spellMove), s.Dt());
                     e.state = s.player;
                 }
             }
@@ -448,6 +448,16 @@ namespace vortex::net {
     std::vector<KillNotice> Client::TakeKillNotices() {
         std::vector<KillNotice> out(m_Impl->kills.begin(), m_Impl->kills.end());
         m_Impl->kills.clear();
+        return out;
+    }
+    const Client::MagicView& Client::Magic() const { return m_Impl->magic; }
+    void Client::SendAttune(uint8_t craftA, uint8_t craftB) {
+        if (m_Impl->server == 0 || m_Impl->state != ClientState::Playing) return;
+        m_Impl->transport.Send(m_Impl->server, Channel::Events, Encode(Attune{craftA, craftB}));
+    }
+    std::vector<CastFx> Client::TakeCastFx() {
+        std::vector<CastFx> out(m_Impl->castFx.begin(), m_Impl->castFx.end());
+        m_Impl->castFx.clear();
         return out;
     }
     sim::TeamId Client::TeamOf(uint8_t slot) const {

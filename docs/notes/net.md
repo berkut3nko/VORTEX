@@ -174,22 +174,23 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
 - **Event kinds** (`EventKind`, the first byte of an event): 1-6 = `sim::WorldOpKind` (1 `CarveSphere`, 2
   `FillSphere`, 3 `SwapSphere`, 4 `FillBox`, 5 `Detach`, 6 `ClearMask`), 32 `EntitySpawn`, 33 `EntityDespawn`, 34
   `EntityRest`, 35 `ObjectModel`, 36 `EntityWake` [net-6]; 37 `MechanismMove`, 41 `EntityHold`, 42 `EntityRelease`
-  [mech-1] (38-40 stay free for [mag-2]'s planned `ZoneStart`, `ZoneCancel`, `CastFx`). `sim::WorldOpKind` 7 `MapShape` and 8
-  `MapMask` landed with [mag-1] as **sim values only**: no event carries them until [mag-2]'s protocol bump. A new
-  `WorldOpKind` takes the next free value (9 today; magic's `CarveCapsule` with [mag-3]), a new event the next free one after 42 (`RopeCut` with the session part of [mech-2]).
+  [mech-1]; 38 `ZoneStart`, 39 `ZoneCancel`, 40 `CastFx` [mag-2]. `sim::WorldOpKind` 7 `MapShape` and 8 `MapMask` landed
+  with [mag-1] as sim values and are on the wire since protocol 14 ([mag-2]); 9 `CarveCapsule` is reserved by protocol 14
+  with its layout ("Magic" below) for [mag-3], and this build's decoder refuses it. A new `WorldOpKind` takes the next
+  free value (10: spread's `SpreadStep`), a new event the next free one after 42 (`RopeCut` with the session part of [mech-2]).
 - **This list is the registry** (magic.md amendment 4, 2026-11-21): every new `WorldOpKind`, event kind, message type,
   refusal, rejection, template, generator and `PlayerButton` value takes the **next free value when it lands** and is
   added here in the same commit. Numbers written in a design (spread.md, shred.md Part 3, mechanisms.md, magic.md) are
-  provisional until then. On the ROADMAP order of 2026-11-21 that gives magic's `MapShape` 7, `MapMask` 8 (sim values since
-  [mag-1]), `CarveCapsule` 9 ([mag-3]), `ZoneStart` 38, `ZoneCancel` 39, `CastFx` 40 (`MechanismMove` 37, `EntityHold` 41 and
-  `EntityRelease` 42 landed with [mech-1]; `RopeCut` takes the next free value after 42 with [mech-2]), then spread's `SpreadStep` 10 (its `IgniteSphere` / `DouseSphere` become `MapShape` maps). **One exception**,
-  reserved now: `PlayerButton_Spell = 32`, so mechanisms' `PlayerButton_Use = 16` keeps its value whichever lands
-  first (unless M2a builds a generic action-slot bit that carries the spell edge).
+  provisional until then. Magic's values landed with [mag-2] (protocol 14, "Magic" below); `RopeCut` takes the next free
+  event after 42 with [mech-2], spread's `SpreadStep` the `WorldOpKind` 10 (its `IgniteSphere` / `DouseSphere` become
+  `MapShape` maps). **One exception**, kept from the plan: `PlayerButton_Spell = 32`, so that mechanisms' `PlayerButton_Use =
+  16` kept its value.
 - **Message types** (`MessageType`): 1 `Hello`, 2 `Welcome`, 3 `Refuse`, 4 `EventBatch`, (5 retired: `ServerStatus`),
   6 `Inputs`, 7 `Snapshot`; [net-7a] chunk sync 8 `WindowUpdate`, 9 `WindowAck`, 10 `ChunkData`, 11 `ChunkRequest`,
   12 `ModelRequest`, 13 `BaselineEntity`, 14 `BaselineEnd`, 15 `BaselineNear`; [net-7b] checks and terrain mode 16
   `TerrainAck`, 17 `HashCheck`, 18 `EntityCheck`, 19 `EntityListRequest`, 20 `EntityList`; [wp-7] the fight 21
-  `Roster`, 22 `RoundUpdate`, 23 `KillNotice` (events channel, taken on receipt, not by opSeq). Protocol 12 ([mech-1]).
+  `Roster`, 22 `RoundUpdate`, 23 `KillNotice` (events channel, taken on receipt, not by opSeq); [mag-2] 24 `Attune` (client ->
+  server, events channel). Protocol 14 ([mag-2]).
 - **The fight** [wp-7] (fight.md "Wire"): `CastRejection` 4 `NoCharge`, 5 `Dead`; `sim::DamageCause` 1 `Blast`, 2
   `Fall`, 3 `Lava`, 4 `Void`, 5 `Crush` (reserved for [si-2]); `sim::GameMode` 0 `Sandbox`, 1 `Deathmatch`, 2
   `Felling`; `sim::RoundPhase` 0 `Warmup`, 1 `Countdown`, 2 `Live`, 3 `Ended`; `sim::RoundEnd` 0 `None`, 1 `Score`, 2
@@ -215,6 +216,54 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
   `Damaged`, 6 `Pinned`. The owner block gains `lastUseTick` and `useResult` (`kSnapshotOwnerBytes` 44), the remote
   record `holdPitch` (`kSnapshotPlayerBytes` 18). Event sizes: `MechanismMove` 16 B, `EntityHold` 12 B,
   `EntityRelease` 44 B. `ServerStats::eventsByKind` has 48 entries (kinds up to 42).
+- **Magic** [mag-2] (magic.md "Wire values"), protocol 14 (13 was [land-5]'s). Sizes include the kind or type byte.
+  - Ops: `MapShape` 7: map u8, then the shape: kind u8 (0 sphere, 1 capsule, 2 box, 3 y-cylinder); sphere centre i32 x 3 q,
+    radius u16 q; capsule A, B i32 x 3 q, radius u16 q; box min, max i32 x 3 voxels; cylinder centre i32 x 3 q, radius u16
+    q, half height u16 q: 17 / 29 / 27 / 19 B. `MapMask` 8: map u8, axis u8 (the run order: 0 x, 1 y, 2 z), origin i32 x
+    3, dims u16 x 3, then `voxel::MaskRuns(mask, axis)` as LEB128 (the first run clear, may be 0): 21 B + runs.
+    `CarveCapsule` 9 (reserved for [mag-3]): A, B i32 x 3 q, radius u16 q, power u16: 29 B.
+  - Events: `ZoneStart` 38: zoneId u16, zone kind u8, teamMask u8, startTick u32, duration u16, strength i16 x 2, the
+    shape as `MapShape`'s: 30 / 42 / 40 / 32 B. `ZoneCancel` 39: zoneId u16, endTick u32: 7 B. `CastFx` 40: slot + 1 u8 (0 a
+    server script), spell u8, originQ i32 x 3, hitQ i32 x 3, face u8 (axis * 2 + (sign < 0)), tick u32 (T_run): 32 B.
+  - Decoder limits: map 1-15; axis 0-2; a sphere's or cylinder's radius at most `sim::kMaxCastRadiusQ`; a capsule at most
+    8 192 q (64 m) long with a radius of at most 1 024 q; box corners within `kMaxSyncChunkCoordinate` chunks; mask voxels
+    charged against the batch's budget before the mask is made; zone kinds 1-9 (Impulse 1 .. Block 7, Shove 8, Rune 9;
+    the kinds without behaviour are reserved and decode); duration 1-600; `CastFx` spell 0-17, face 0-5. A `ZoneCancel`
+    decodes with any values: the client ignores one that ends before its zone's start (logged).
+  - Reserved by this protocol (decoders accept, the later stages give them use): zone kinds 1-9, shapes 0-3, maps 1-15,
+    `SpellId` 0-17 (16 and 17 spread's drills), the whole owner block below.
+  - `PlayerButton` 32 `Spell` (an edge: the selected spell; `kPlayerButtonMask` 63; the input decoder refuses other
+    bits). `PlayerInput::spell` u8 after `buttons` in every input: `kInputBytes` 8. A spell over 17 is the server's to
+    refuse (`NotAttuned`), never the decoder's.
+  - `CastRejection` 6 `FormCooling`, 7 `NotAttuned`, 8 `TooMuchConjured`, 9 `TooManyZones`, 10 `TooMuchFire` (reserved for
+    spread's fire cap), 11 `NearSpawn`; `kMaxCastRejection` 11.
+  - Owner block +20 B after `useResult` (`kSnapshotOwnerBytes` 64): push i16 x 3 (each within +-1 500), status, slowQ (at
+    most 16), slowLeft, rootLeft, pinLeft, ccGuardLeft, dashLeft (u8 each), dashDir i8 x 2 (the client restores these 12
+    and the dash's 3 before every replay), the four form cooldowns u8 in 4-tick units rounded up (0 ready, 255 at most;
+    HUD only), the attunement byte (bits 0-1 element A, 2-3 element B, bit 4 `kAttuneActiveB`: the last Spell edge's
+    element was B; bits above 4 refused). Remote record +1 B (`kSnapshotPlayerBytes` 19): `statusBits`, bits 0-3 status
+    & 15, bits 4-5 the element of its last Spell edge. Roster +1 B per player (7 B each): bits 0-1 element A, 2-3 element
+    B.
+  - `Attune` 24: craftA u8, craftB u8 (element values 0-3): 3 B. `Welcome` +1 B after the fight fields: the zone lead u8
+    (at most 60; 24 by default); `PlayerTuning` on the wire +4 B: `pushDecayGround`, `pushDecayAir` u16 (49 B). `BaselineEnd`
+    +1 B count (at most 32) and that many zones as `ZoneStart` writes them after its kind byte: 10 B with none.
+  - `buildHash` mixes `sim::SpellTableHash(BuildSpellTable(voxel::kDefaultVoxelSize))` and
+    `voxel::TurningTableHash(WorldTurningTable())` after the land golden hash.
+- **The server's spells** [mag-2] (`ServerMagic.cpp`): a Spell edge (no Cast edge in the same input) goes through the
+  cast's cooldown in `StepPlayer`; before the step the server decides `PlayerZones::spellMoveAllowed` from the capture
+  checks it will make (alive, `sim::CheckCapture`, a charge), so a Dash starts inside `StepPlayer` exactly when its
+  capture passes. Capture: Dead, then `CheckCapture` (`RejectionOf(SpellRefusal)`), then a charge (Countdown, Live and
+  Ended), then the form cooldown and the one cast queue (`QueuedCast::spell`). The run (`sim::CastSpell` with no caster
+  state: the dash is never started twice) emits `CastFx`, its operations through `EmitOp` (`EmitGroup`, as a blast's),
+  every `ZoneStart`, every `ZoneCancel`, then the damage through `DealDamage` (cause `Blast`). `RunScheduled` runs every
+  tick after `RunCasts`: bands, blows, zone ticks, expiries, site checks, zone pruning; its groups through `EmitGroup`, its
+  damage through `DealDamage`. Zone events and `CastFx` charge the cast queue's event credit, as operations do. `Attune`
+  is taken while dead or before the first spawn and applied at the next spawn. A joiner's `BaselineEnd` carries the live
+  or pending zones. The exit lines `Magic: server:` and `Zones:` count them (vortex_server prints them after a spell).
+- **The client's zones** [mag-2] (`ClientSync.cpp` `ApplyMagic`): `ZoneStart` and `ZoneCancel` are applied to the
+  simulation's zones at their opSeq; a cancel of a zone not held yet waits for its start (a joiner's baseline zones);
+  `CastFx` is kept for the presentation (`Client::TakeCastFx`). Zones are pruned after each predicted tick at `nextTick -
+  kHistoryTicks`. Each history entry keeps its `spellMoveAllowed` for replays (alive and a charge as the owner block said).
 - **The server's half** [mech-1] (`ServerMechanisms.cpp`): the session key `mechanisms = 1` with the playground
   template builds the mechanism yard at the start (its operations through `EmitOp`, then one `EntitySpawn` of kind
   `Mechanism` per mechanism, resting). A Use edge is judged from the player's state at the input's tick (older than
@@ -236,9 +285,9 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
   server (a confirmed hold only).
 - Also wire format: `WindowUpdate::kTerrainMode` (2) and `kReset`, `EntityKind` (1 `Light`, 2 `Object`, 3 `Mechanism`),
   `scene::DespawnReason` (1 `Destroyed`, 2 `ToRubble`, 3 `Broken`), `PlayerButton` (1 `Jump`, 2 `Run`, 4 `Cast`, 8
-  `Crate`, 16 `Use`), `RegionGenerator` (0 `Terrain`, 1 `Flat`, 2 `Land` since protocol 13: the region then carries
+  `Crate`, 16 `Use`, 32 `Spell`), `RegionGenerator` (0 `Terrain`, 1 `Flat`, 2 `Land` since protocol 13: the region then carries
   `landHash` and `landSourceHash`, 8 bytes each, after `flatGroundVoxels`), `RegionTemplateId` (0 `Empty`, 1 `Playground`),
-  `RefuseReason` (1 `Protocol`, 2 `Build`, 3 `Token`, 4 `Full`, 5 `Malformed`; 6 retired), `CastRejection` (0-5).
+  `RefuseReason` (1 `Protocol`, 2 `Build`, 3 `Token`, 4 `Full`, 5 `Malformed`; 6 retired), `CastRejection` (0-11).
 
 Ordering, the base rule and sync
 - **Integers on the wire decide voxels.** Everything a client applies is a `sim::WorldOp`'s integers; floats travel
@@ -696,15 +745,15 @@ Regions, templates and tests
   field in `PlayerInput` (and `kInputBytes`), its radius / power in the tuning, `kProtocolVersion` + 1, and a
   `Movement.*` test that a late cast of it is judged at its tick.
 - New player rule (crouch, sprint, a second jump): `sim::StepPlayer` and `PlayerTuning` (+ `WritePlayerTuning` /
-  `ReadPlayerTuning`, `sim::IsValid`), a button in `PlayerButton` if it needs one (wire format, next free bit 16; 32 is reserved for magic's Spell edge),
+  `ReadPlayerTuning`, `sim::IsValid`), a button in `PlayerButton` if it needs one (wire format, next free bit 64),
   `kProtocolVersion` + 1 (or, with no byte changed, only `sim::kPlayerRuleRevision` + 1), a `Player.*` test, then `Movement.NoCorrectionAbove2cmOnFlatGround` must still see 0
   corrections.
-- New event kind: value in `EventKind` (or a new `WorldOpKind` 7+), `WriteEvent` / `ReadEvent`, a size line in
+- New event kind: value in `EventKind` (or a new `WorldOpKind` 10+), `WriteEvent` / `ReadEvent`, a size line in
   `Wire.EveryWorldOpRoundTripsAtItsSize` (`Wire.EntityEventsRoundTripAtTheirSizes` for entity events),
   `kProtocolVersion` + 1 (and its comment), the client's `Apply` / `ApplyEntity`, and `MaskVoxels` in `Server.cpp` if
   it carries a volume (the batch decoder's voxel budget). A terrain op also goes through `Server::Impl::EmitOp`, gets a
   correct `sim::OpChunkRange` and a `CastWorkOf` weight, and is covered by the base rule and the ring like the others.
-- New message: a value after 23 in `MessageType`, `Encode` / `Decode` with a size check in `WireTests.cpp`,
+- New message: a value after 24 in `MessageType`, `Encode` / `Decode` with a size check in `WireTests.cpp`,
   `kProtocolVersion` + 1. A check-like message rides the events channel and is processed at its opSeq.
 - New kind of server body (a thrown object, a spell's matter): create it, `sim::Replicate(simulation, entity, piece)`,
   then the server's `EmitObjectSpawn`; it is then in snapshots, rests, despawns and the entity check like a crate. A

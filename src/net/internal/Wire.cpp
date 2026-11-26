@@ -237,6 +237,128 @@ namespace vortex::net {
             return {x, y, z};
         }
 
+        bool ValidMap(uint8_t map) { return map != 0 && map < voxel::kTurningMapCount; }
+
+        /// MapMask's runs in the order of `axis` (voxel::MaskRuns), LEB128; the first run is clear and may be 0.
+        void WriteAxisRuns(ByteWriter& out, const voxel::VoxelMask& mask, uint8_t axis) {
+            for (const uint32_t run : voxel::MaskRuns(mask, axis)) out.VarU(run);
+        }
+
+        bool ReadAxisRuns(ByteReader& in, const glm::ivec3& size, uint8_t axis, voxel::VoxelMask& mask, uint64_t* voxelBudget) {
+            if (axis > 2) return false;
+            for (int a = 0; a < 3; ++a)
+                if (size[a] < 0 || size[a] > kMaxMaskAxis) return false;
+            const uint64_t total = static_cast<uint64_t>(size.x) * static_cast<uint64_t>(size.y) * static_cast<uint64_t>(size.z);
+            if (total > kMaxMaskVoxels) return false;
+            if (voxelBudget) {
+                if (total > *voxelBudget) return false;
+                *voxelBudget -= total;
+            }
+            // Every run after the first is at least one voxel and one byte: the list is bounded by the message.
+            std::vector<uint32_t> runs;
+            uint64_t at = 0;
+            bool first = true;
+            while (first || at < total) {
+                const uint64_t run = in.VarU();
+                if (in.Failed() || run > total - at || (run == 0 && !first)) return false;
+                runs.push_back(static_cast<uint32_t>(run));
+                at += run;
+                first = false;
+            }
+            return voxel::MaskFromRuns(size, axis, runs, mask);
+        }
+    }
+
+    void WriteShape(ByteWriter& out, const voxel::ShapeQ& shape) {
+        out.U8(shape.kind);
+        switch (shape.kind) {
+            case voxel::kShapeSphere:
+                WriteIvec3(out, shape.a);
+                out.U16(shape.radiusQ);
+                break;
+            case voxel::kShapeCapsule:
+                WriteIvec3(out, shape.a);
+                WriteIvec3(out, shape.b);
+                out.U16(shape.radiusQ);
+                break;
+            case voxel::kShapeBox:
+                WriteIvec3(out, shape.a);
+                WriteIvec3(out, shape.b);
+                break;
+            case voxel::kShapeCylinder:
+                WriteIvec3(out, shape.a);
+                out.U16(shape.radiusQ);
+                out.U16(shape.halfHeightQ);
+                break;
+            default: break;
+        }
+    }
+
+    bool ReadShape(ByteReader& in, voxel::ShapeQ& shape) {
+        shape = voxel::ShapeQ{};
+        shape.kind = in.U8();
+        switch (shape.kind) {
+            case voxel::kShapeSphere:
+                shape.a = ReadIvec3(in);
+                shape.radiusQ = in.U16();
+                return !in.Failed() && shape.radiusQ <= sim::kMaxCastRadiusQ;
+            case voxel::kShapeCapsule: {
+                shape.a = ReadIvec3(in);
+                shape.b = ReadIvec3(in);
+                shape.radiusQ = in.U16();
+                if (in.Failed() || shape.radiusQ > kMaxCapsuleRadiusQ) return false;
+                const glm::i64vec3 d = glm::i64vec3(shape.b) - glm::i64vec3(shape.a);
+                const int64_t max = kMaxCapsuleLengthQ;
+                for (int a = 0; a < 3; ++a)
+                    if (d[a] > max || d[a] < -max) return false;
+                return d.x * d.x + d.y * d.y + d.z * d.z <= max * max;
+            }
+            case voxel::kShapeBox: {
+                shape.a = ReadIvec3(in);
+                shape.b = ReadIvec3(in);
+                if (in.Failed()) return false;
+                const int64_t limit = int64_t{kMaxSyncChunkCoordinate} * voxel::kChunkSize;
+                for (int a = 0; a < 3; ++a)
+                    for (const int32_t v : {shape.a[a], shape.b[a]})
+                        if (v < -limit || v > limit) return false;
+                return true;
+            }
+            case voxel::kShapeCylinder:
+                shape.a = ReadIvec3(in);
+                shape.radiusQ = in.U16();
+                shape.halfHeightQ = in.U16();
+                return !in.Failed() && shape.radiusQ <= sim::kMaxCastRadiusQ;
+            default: return false;
+        }
+    }
+
+    void WriteZone(ByteWriter& out, const sim::Zone& z) {
+        out.U16(z.zoneId);
+        out.U8(static_cast<uint8_t>(z.kind));
+        out.U8(z.teamMask);
+        out.U32(z.startTick);
+        out.U16(z.duration);
+        out.I16(z.strength[0]);
+        out.I16(z.strength[1]);
+        WriteShape(out, z.shape);
+    }
+
+    bool ReadZone(ByteReader& in, sim::Zone& z) {
+        z = sim::Zone{};
+        z.zoneId = in.U16();
+        const uint8_t kind = in.U8();
+        z.teamMask = in.U8();
+        z.startTick = in.U32();
+        z.duration = in.U16();
+        z.strength[0] = in.I16();
+        z.strength[1] = in.I16();
+        if (in.Failed() || kind == 0 || kind > kMaxZoneKind || z.duration == 0 || z.duration > kMaxZoneDuration) return false;
+        z.kind = static_cast<sim::ZoneKind>(kind);
+        return ReadShape(in, z.shape);
+    }
+
+    namespace {
+
         void WriteOp(ByteWriter& out, const sim::WorldOp& op) {
             out.U8(static_cast<uint8_t>(op.kind));
             switch (op.kind) {
@@ -277,9 +399,20 @@ namespace vortex::net {
                     break;
                 }
                 case sim::WorldOpKind::MapShape:
-                case sim::WorldOpKind::MapMask:
-                    // Simulation values only: no peer sends them, and ReadEvent refuses them.
+                    out.U8(op.map);
+                    WriteShape(out, op.shape);
                     break;
+                case sim::WorldOpKind::MapMask: {
+                    out.U8(op.map);
+                    out.U8(op.axis);
+                    WriteIvec3(out, op.min);
+                    const glm::ivec3 size = op.mask.Size();
+                    out.U16(static_cast<uint16_t>(size.x));
+                    out.U16(static_cast<uint16_t>(size.y));
+                    out.U16(static_cast<uint16_t>(size.z));
+                    WriteAxisRuns(out, op.mask, op.axis);
+                    break;
+                }
             }
         }
 
@@ -323,7 +456,19 @@ namespace vortex::net {
                     return ReadMaskRuns(in, size, op.mask, maskVoxelBudget);
                 }
                 case sim::WorldOpKind::MapShape:
-                case sim::WorldOpKind::MapMask: return false;
+                    op.map = in.U8();
+                    return !in.Failed() && ValidMap(op.map) && ReadShape(in, op.shape);
+                case sim::WorldOpKind::MapMask: {
+                    op.map = in.U8();
+                    op.axis = in.U8();
+                    op.min = ReadIvec3(in);
+                    glm::ivec3 size;
+                    size.x = in.U16();
+                    size.y = in.U16();
+                    size.z = in.U16();
+                    if (in.Failed() || !ValidMap(op.map)) return false;
+                    return ReadAxisRuns(in, size, op.axis, op.mask, maskVoxelBudget);
+                }
             }
             return false;
         }
@@ -509,6 +654,24 @@ namespace vortex::net {
                 out.U32(k.netId);
                 out.U32(k.tick);
             }
+            void operator()(const ZoneStartEvent& e) const {
+                out.U8(static_cast<uint8_t>(EventKind::ZoneStart));
+                WriteZone(out, e.zone);
+            }
+            void operator()(const ZoneCancelEvent& e) const {
+                out.U8(static_cast<uint8_t>(EventKind::ZoneCancel));
+                out.U16(e.zoneId);
+                out.U32(e.endTick);
+            }
+            void operator()(const CastFx& fx) const {
+                out.U8(static_cast<uint8_t>(EventKind::CastFx));
+                out.U8(fx.slot);
+                out.U8(fx.spell);
+                WriteIvec3(out, fx.originQ);
+                WriteIvec3(out, fx.hitQ);
+                out.U8(fx.face);
+                out.U32(fx.tick);
+            }
             void operator()(const ObjectModel& m) const {
                 out.U8(static_cast<uint8_t>(EventKind::ObjectModel));
                 out.U32(m.netId);
@@ -526,7 +689,7 @@ namespace vortex::net {
     bool ReadEvent(ByteReader& in, Event& event, uint64_t* maskVoxelBudget) {
         const uint8_t kind = in.U8();
         if (in.Failed()) return false;
-        if (kind >= 1 && kind <= 6) {
+        if (kind >= 1 && kind <= static_cast<uint8_t>(sim::WorldOpKind::MapMask)) {
             sim::WorldOp op;
             if (!ReadOp(in, kind, op, maskVoxelBudget)) return false;
             event = std::move(op);
@@ -633,6 +796,32 @@ namespace vortex::net {
                 event = r;
                 return true;
             }
+            case EventKind::ZoneStart: {
+                ZoneStartEvent e;
+                if (!ReadZone(in, e.zone)) return false;
+                event = e;
+                return true;
+            }
+            case EventKind::ZoneCancel: {
+                ZoneCancelEvent e;
+                e.zoneId = in.U16();
+                e.endTick = in.U32();
+                if (in.Failed()) return false;
+                event = e;
+                return true;
+            }
+            case EventKind::CastFx: {
+                CastFx fx;
+                fx.slot = in.U8();
+                fx.spell = in.U8();
+                fx.originQ = ReadIvec3(in);
+                fx.hitQ = ReadIvec3(in);
+                fx.face = in.U8();
+                fx.tick = in.U32();
+                if (in.Failed() || fx.spell > kMaxSpellId || fx.face > 5) return false;
+                event = fx;
+                return true;
+            }
             case EventKind::ObjectModel: {
                 ObjectModel m;
                 m.netId = in.U32();
@@ -729,6 +918,8 @@ namespace vortex::net {
             out.F32(f);
         out.U8(t.castCooldownTicks);
         for (const float f : {t.castRadius, t.castPower, t.castRange}) out.F32(f);
+        out.U16(t.pushDecayGround);
+        out.U16(t.pushDecayAir);
     }
 
     bool ReadPlayerTuning(ByteReader& in, sim::PlayerTuning& t) {
@@ -737,6 +928,8 @@ namespace vortex::net {
             *f = in.F32();
         t.castCooldownTicks = in.U8();
         for (float* f : {&t.castRadius, &t.castPower, &t.castRange}) *f = in.F32();
+        t.pushDecayGround = in.U16();
+        t.pushDecayAir = in.U16();
         return !in.Failed();
     }
 }

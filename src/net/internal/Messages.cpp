@@ -40,8 +40,30 @@ namespace vortex::net {
             case CastRejection::Outside: return "outside the play area";
             case CastRejection::NoCharge: return "no charge";
             case CastRejection::Dead: return "dead";
+            case CastRejection::FormCooling: return "form cooling";
+            case CastRejection::NotAttuned: return "not attuned";
+            case CastRejection::TooMuchConjured: return "too much matter";
+            case CastRejection::TooManyZones: return "too many zones";
+            case CastRejection::TooMuchFire: return "too much fire";
+            case CastRejection::NearSpawn: return "near spawn";
         }
         return "unknown";
+    }
+
+    CastRejection RejectionOf(sim::SpellRefusal refusal) {
+        switch (refusal) {
+            case sim::SpellRefusal::None: return CastRejection::None;
+            case sim::SpellRefusal::NotBuilt: return CastRejection::NotAttuned;
+            case sim::SpellRefusal::FormCooling: return CastRejection::FormCooling;
+            case sim::SpellRefusal::NotAttuned: return CastRejection::NotAttuned;
+            case sim::SpellRefusal::Missed: return CastRejection::Missed;
+            case sim::SpellRefusal::Outside: return CastRejection::Outside;
+            case sim::SpellRefusal::TooMuchConjured: return CastRejection::TooMuchConjured;
+            case sim::SpellRefusal::TooManyZones: return CastRejection::TooManyZones;
+            case sim::SpellRefusal::NearSpawn: return CastRejection::NearSpawn;
+            case sim::SpellRefusal::Rooted: return CastRejection::Missed;
+        }
+        return CastRejection::Missed;
     }
 
     CastRejection RejectionOf(sim::ActionRefusal refusal) {
@@ -70,6 +92,7 @@ namespace vortex::net {
             w.U16(in.yaw);
             w.I16(in.pitch);
             w.U8(in.buttons);
+            w.U8(in.spell);
         }
 
         sim::PlayerInput ReadInput(ByteReader& r) {
@@ -79,6 +102,7 @@ namespace vortex::net {
             in.yaw = r.U16();
             in.pitch = r.I16();
             in.buttons = r.U8();
+            in.spell = r.U8();
             return in;
         }
     }
@@ -134,6 +158,7 @@ namespace vortex::net {
         w.U8(m.fight.maxCharges);
         w.U16(m.fight.chargeTicks);
         w.U16(m.fight.respawnTicks);
+        w.U8(m.zoneLeadTicks);
         return w.Take();
     }
 
@@ -167,6 +192,12 @@ namespace vortex::net {
             for (const uint8_t b : {f.health, f.charges, f.chargeTicks, f.flags, f.respawnTicks, f.lifeSeq, f.hits}) w.U8(b);
             w.U32(m.lastUseTick);
             w.U8(static_cast<uint8_t>(m.useResult));
+            for (const int16_t p : o.push) w.I16(p);
+            for (const uint8_t b : {o.status, o.slowQ, o.slowLeft, o.rootLeft, o.pinLeft, o.ccGuardLeft, o.dashLeft}) w.U8(b);
+            w.U8(static_cast<uint8_t>(o.dashDir[0]));
+            w.U8(static_cast<uint8_t>(o.dashDir[1]));
+            for (const uint8_t c : m.formCooldown4) w.U8(c);
+            w.U8(m.attune);
         }
         w.U8(static_cast<uint8_t>(std::min<size_t>(m.others.size(), 255)));
         for (size_t i = 0; i < std::min<size_t>(m.others.size(), 255); ++i) {
@@ -179,6 +210,7 @@ namespace vortex::net {
             w.U8(p.flags);
             w.U8(p.fight);
             w.U8(static_cast<uint8_t>(p.holdPitch));
+            w.U8(p.statusBits);
         }
         const size_t bodies = std::min<size_t>(m.bodies.size(), 255);
         w.U8(static_cast<uint8_t>(bodies));
@@ -284,7 +316,8 @@ namespace vortex::net {
         out.fight.maxCharges = in.U8();
         out.fight.chargeTicks = in.U16();
         out.fight.respawnTicks = in.U16();
-        if (in.Failed() || mode > sim::kMaxGameMode || out.fight.maxHealth == 0) return false;
+        out.zoneLeadTicks = in.U8();
+        if (in.Failed() || mode > sim::kMaxGameMode || out.fight.maxHealth == 0 || out.zoneLeadTicks > Welcome::kMaxZoneLeadTicks) return false;
         out.fight.mode = static_cast<sim::GameMode>(mode);
         return End(in);
     }
@@ -318,6 +351,7 @@ namespace vortex::net {
         out.inputs.clear();
         for (uint32_t i = 0; i < count; ++i) {
             sim::PlayerInput input = ReadInput(in);
+            if ((input.buttons & ~sim::kPlayerButtonMask) != 0) return false;
             input.tick = out.firstTick + i;
             out.inputs.push_back(input);
         }
@@ -341,6 +375,8 @@ namespace vortex::net {
         out.fight = Snapshot::Fight{};
         out.lastUseTick = 0;
         out.useResult = sim::UseResult::None;
+        out.formCooldown4 = {};
+        out.attune = 0;
         if (out.hasOwner) {
             sim::PlayerState& o = out.owner;
             for (float* f : {&o.position.x, &o.position.y, &o.position.z, &o.velocity.x, &o.velocity.y, &o.velocity.z}) *f = in.F32();
@@ -358,6 +394,15 @@ namespace vortex::net {
             const uint8_t use = in.U8();
             if (in.Failed() || use > sim::kMaxUseResult) return false;
             out.useResult = static_cast<sim::UseResult>(use);
+            for (int16_t& p : o.push) p = in.I16();
+            for (uint8_t* b : {&o.status, &o.slowQ, &o.slowLeft, &o.rootLeft, &o.pinLeft, &o.ccGuardLeft, &o.dashLeft}) *b = in.U8();
+            o.dashDir[0] = static_cast<int8_t>(in.U8());
+            o.dashDir[1] = static_cast<int8_t>(in.U8());
+            for (uint8_t& c : out.formCooldown4) c = in.U8();
+            out.attune = in.U8();
+            if (in.Failed() || out.attune > 0x1F) return false;
+            for (const int16_t p : o.push)
+                if (p < -sim::kPushLimitCmS || p > sim::kPushLimitCmS) return false;
             if (!Finite(o.position) || !Finite(o.velocity)) return false;
         }
         const uint32_t count = in.U8();
@@ -373,7 +418,8 @@ namespace vortex::net {
             p.flags = in.U8();
             p.fight = in.U8();
             p.holdPitch = static_cast<int8_t>(in.U8());
-            if (!Finite(p.position) || p.holdPitch < -64 || p.holdPitch > 64) return false;
+            p.statusBits = in.U8();
+            if (!Finite(p.position) || p.holdPitch < -64 || p.holdPitch > 64 || p.statusBits > 0x3F) return false;
             out.others.push_back(p);
         }
         const uint32_t bodies = in.U8();
@@ -592,6 +638,9 @@ namespace vortex::net {
         w.U8(static_cast<uint8_t>(MessageType::BaselineEnd));
         w.U32(m.asOfOpSeq);
         w.U32(m.count);
+        const size_t zones = std::min<size_t>(m.zones.size(), kMaxBaselineZones);
+        w.U8(static_cast<uint8_t>(zones));
+        for (size_t i = 0; i < zones; ++i) WriteZone(w, m.zones[i]);
         return w.Take();
     }
 
@@ -600,6 +649,14 @@ namespace vortex::net {
         if (!Begin(in, MessageType::BaselineEnd)) return false;
         out.asOfOpSeq = in.U32();
         out.count = in.U32();
+        const uint32_t zones = in.U8();
+        if (in.Failed() || zones > kMaxBaselineZones) return false;
+        out.zones.clear();
+        for (uint32_t i = 0; i < zones; ++i) {
+            sim::Zone z;
+            if (!ReadZone(in, z)) return false;
+            out.zones.push_back(z);
+        }
         return End(in);
     }
 
@@ -777,6 +834,7 @@ namespace vortex::net {
             w.U8(e.team);
             w.U16(e.kills);
             w.U16(e.deaths);
+            w.U8(e.attune);
         }
         return w.Take();
     }
@@ -785,7 +843,7 @@ namespace vortex::net {
         ByteReader in(bytes);
         if (!Begin(in, MessageType::Roster)) return false;
         const uint32_t count = in.U8();
-        if (in.Failed() || count > kMaxRosterPlayers || in.Remaining() != static_cast<size_t>(count) * 6) return false;
+        if (in.Failed() || count > kMaxRosterPlayers || in.Remaining() != static_cast<size_t>(count) * 7) return false;
         out.players.clear();
         std::array<bool, 256> seen{};
         for (uint32_t i = 0; i < count; ++i) {
@@ -794,7 +852,8 @@ namespace vortex::net {
             e.team = in.U8();
             e.kills = in.U16();
             e.deaths = in.U16();
-            if (in.Failed() || e.team > sim::kTeamCount || seen[e.slot]) return false;
+            e.attune = in.U8();
+            if (in.Failed() || e.team > sim::kTeamCount || seen[e.slot] || e.attune > 15) return false;
             seen[e.slot] = true;
             out.players.push_back(e);
         }
@@ -857,6 +916,25 @@ namespace vortex::net {
         if (in.Failed() || cause == 0 || cause > sim::kMaxDamageCause || out.flags > 1) return false;
         if (out.killer != 0 && out.killer == out.victim + 1u) return false;
         out.cause = static_cast<sim::DamageCause>(cause);
+        return End(in);
+    }
+
+    // --- magic ([mag-2]) ---------------------------------------------------------------------------
+
+    std::vector<uint8_t> Encode(const Attune& m) {
+        ByteWriter w;
+        w.U8(static_cast<uint8_t>(MessageType::Attune));
+        w.U8(m.craftA);
+        w.U8(m.craftB);
+        return w.Take();
+    }
+
+    bool Decode(std::span<const uint8_t> bytes, Attune& out) {
+        ByteReader in(bytes);
+        if (!Begin(in, MessageType::Attune)) return false;
+        out.craftA = in.U8();
+        out.craftB = in.U8();
+        if (in.Failed() || out.craftA > 3 || out.craftB > 3) return false;
         return End(in);
     }
 }

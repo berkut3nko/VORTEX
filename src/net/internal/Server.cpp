@@ -105,7 +105,9 @@ namespace vortex::net {
         ByteWriter w;
         WriteEvent(w, event);
         const size_t bytes = w.Size();
-        const bool entity = !std::holds_alternative<sim::WorldOp>(event);
+        // Zone events and CastFx follow from a spell's integers, as its operations do: the cast queue's credit pays them.
+        const bool entity = !std::holds_alternative<sim::WorldOp>(event) && !std::holds_alternative<ZoneStartEvent>(event) &&
+                            !std::holds_alternative<ZoneCancelEvent>(event) && !std::holds_alternative<CastFx>(event);
         if (bytes > settings.eventBurstBytes) {
             ++stats.oversizeEvents;
             Log::Warn("Server: event {} is {} bytes, more than the {}-byte event burst (sent anyway)", lastOpSeq + 1, bytes,
@@ -247,6 +249,7 @@ namespace vortex::net {
                         else if (type == MessageType::ChunkRequest) ok = OnChunkRequest(it->second, e.data);
                         else if (type == MessageType::ModelRequest) ok = OnModelRequest(it->second, e.data);
                         else if (type == MessageType::EntityListRequest) ok = OnEntityListRequest(it->second, e.data);
+                        else if (type == MessageType::Attune) ok = OnAttune(it->second, e.data);
                         if (!ok) {
                             ++stats.malformedRequests;
                             Log::Warn("Server: client {} sent a malformed or out-of-order sync message: disconnected", e.peer);
@@ -385,6 +388,7 @@ namespace vortex::net {
             return false;
         }
         s.started = true;
+        s.StartMagic();
 
         // The template: operations 1..k, lights as EntitySpawn, objects as server bodies.
         s.tmpl = sim::BuildRegionTemplate(*s.simulation, s.region);
@@ -452,6 +456,7 @@ namespace vortex::net {
         // Fight order per tick (fight.md "Rules"; ServerImpl.cppm): StepPlayers, the casts, StepFight, snapshots.
         s.StepPlayers();
         s.RunCasts();
+        s.RunScheduledSpells();
         s.StepFight();
         const uint32_t tick = s.Tick();
         // [mech-1] Held bodies follow their holders, then the mechanisms' motion of this physics step (crushed bodies

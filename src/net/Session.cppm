@@ -67,15 +67,18 @@ export namespace vortex::net {
      * island searches and the load check read; shred.md R6) and sim::kPlayerRuleRevision (the
      * movement rule: a client and a server that would move a player differently refuse each
      * other instead of correcting each other) and voxel::kLandGoldenHash (the world map's bake and
-     * sampling: land.md "Decision" 3). Two builds that may share a session have equal values.
+     * sampling: land.md "Decision" 3) and the magic tables (sim::SpellTableHash of the table at
+     * voxel::kDefaultVoxelSize, voxel::TurningTableHash of the world palette's table; magic.md
+     * "Wire values"). Two builds that may share a session have equal values.
      * = BuildHashOf(kProtocolVersion, kGeneratorGoldenHash, MaterialTableHash(materials),
-     * kPlayerRuleRevision, kLandGoldenHash).
+     * kPlayerRuleRevision, kLandGoldenHash, SpellTableHash, TurningTableHash).
      */
     uint64_t BuildHash(const voxel::MaterialLibrary& materials);
-    /// @brief The hash BuildHash mixes; a player rule revision of 0 (builds before it existed)
-    /// and a land golden hash of 0 (builds before the world map) mix nothing.
+    /// @brief The hash BuildHash mixes; a player rule revision of 0 (builds before it existed), a
+    /// land golden hash of 0 (builds before the world map) and table hashes of 0 (builds before
+    /// [mag-2]) mix nothing.
     uint64_t BuildHashOf(uint32_t protocol, uint64_t generatorGolden, uint64_t materialTable, uint32_t playerRule,
-                         uint64_t landGolden = 0);
+                         uint64_t landGolden = 0, uint64_t spellTable = 0, uint64_t turningTable = 0);
 
     /// Probe chunks per session (networking.md "Region start-up": 64).
     inline constexpr uint32_t kProbeChunks = 64;

@@ -131,18 +131,6 @@ TEST(Wire, EveryWorldOpRoundTripsAtItsSize) {
     EXPECT_EQ(net::QuantizeVelocity(v), glm::vec3(1.5f, -6.0f, 32.0f / 256.0f));
 }
 
-TEST(Wire, MapOpsAreSimulationValuesOnly) {
-    // MapShape (7) and MapMask (8) have no wire layout yet: a decoder refuses them whatever follows.
-    for (const uint8_t kind : {uint8_t{7}, uint8_t{8}}) {
-        std::vector<uint8_t> bytes(64, 0);
-        bytes[0] = kind;
-        bytes[1] = 3;
-        net::ByteReader r(bytes);
-        net::Event out;
-        EXPECT_FALSE(net::ReadEvent(r, out)) << static_cast<int>(kind);
-    }
-}
-
 TEST(Wire, LightSpawnRoundTrips) {
     net::EntitySpawn spawn;
     spawn.netId = 4000000000u;
@@ -451,8 +439,8 @@ TEST(Wire, MessagesRoundTripAndRefuseTrailingOrMissingBytes) {
         EXPECT_EQ(sback.bodies[0].velocity, net::QuantizeVelocity(body.velocity));
         EXPECT_FALSE(net::Decode(std::span(sb).first(sb.size() - 1), sback));
         {
-            std::vector<uint8_t> bad = sb;                       // an unknown rejection is refused (5 Dead is the last, [wp-7])
-            bad[net::kSnapshotHeaderBytes - 2 + 31] = 6;
+            std::vector<uint8_t> bad = sb;                       // an unknown rejection is refused (11 NearSpawn is the last, [mag-2])
+            bad[net::kSnapshotHeaderBytes - 2 + 31] = 12;
             EXPECT_FALSE(net::Decode(bad, sback));
         }
         {
@@ -693,15 +681,15 @@ TEST(Wire, ChunkSyncMessagesRoundTripAtTheirSizes) {
     noId.spawn.netId = 0;
     EXPECT_FALSE(net::Decode(net::Encode(noId), b2));
 
-    const std::vector<uint8_t> eb = net::Encode(net::BaselineEnd{12, 34});
-    EXPECT_EQ(eb.size(), 9u);
+    const std::vector<uint8_t> eb = net::Encode(net::BaselineEnd{12, 34, {}});
+    EXPECT_EQ(eb.size(), 10u);                                  // [mag-2]: + the zone count
     net::BaselineEnd e2;
     ASSERT_TRUE(net::Decode(eb, e2));
     EXPECT_EQ(e2.asOfOpSeq, 12u);
     EXPECT_EQ(e2.count, 34u);
     EXPECT_TRUE(refusedCut(eb, net::BaselineEnd{}));
 
-    // Review of stage 7a: the near-set marker, BaselineEnd's layout under type 15.
+    // Review of stage 7a: the near-set marker, BaselineEnd's first 9 bytes under type 15.
     const std::vector<uint8_t> nb = net::Encode(net::BaselineNear{56, 78});
     EXPECT_EQ(nb.size(), 9u);
     EXPECT_EQ(nb[0], 15u);
@@ -725,7 +713,7 @@ TEST(Wire, CheckAndTerrainMessagesRoundTripAtTheirSizes) {
         longer.push_back(0);
         return !net::Decode(shorter, decoded) && !net::Decode(longer, decoded);
     };
-    EXPECT_EQ(net::kProtocolVersion, 13u);   // [land-5]: the region's land hashes
+    EXPECT_EQ(net::kProtocolVersion, 14u);   // [mag-2]: the magic values
 
     // [wp-7] The fight's messages round-trip and refuse a byte too few or too many (FightWire.* for the values).
     {

@@ -167,7 +167,7 @@ TEST(Player, EdgesComeFromLevelsAndTheCooldownTakesOneCast) {
     sim::PlayerTuning t;
     EXPECT_EQ(sim::PressButtons(s, sim::PlayerButton_Cast | sim::PlayerButton_Run), sim::PlayerButton_Cast | sim::PlayerButton_Run);
     EXPECT_EQ(sim::PressButtons(s, sim::PlayerButton_Cast | sim::PlayerButton_Run), 0);      // repeated: no edge
-    EXPECT_EQ(sim::PressButtons(s, sim::PlayerButton_Run | 0xE0), 0);                         // unknown bits (above Use) ignored
+    EXPECT_EQ(sim::PressButtons(s, sim::PlayerButton_Run | 0xC0), 0);                         // unknown bits (above Spell) ignored
     EXPECT_EQ(s.lastButtons, sim::PlayerButton_Run);
     EXPECT_EQ(sim::PressButtons(s, sim::PlayerButton_Cast | sim::PlayerButton_Jump), sim::PlayerButton_Cast | sim::PlayerButton_Jump);
 
@@ -860,4 +860,82 @@ TEST(Player, CastCooldownFollowsTheSlow) {
     t.castCooldownTicks = 250;
     s.slowQ = 255;
     EXPECT_EQ(sim::CastCooldownFor(s, t), 255);
+}
+
+// [mag-2] (magic.md "PlayerState, StepPlayer and the physics call" step 1): the Spell edge goes through the cast's
+// cooldown; a step with both edges takes the Cast and drops the Spell.
+TEST(Player, SpellEdgeSharesTheCastCooldown) {
+    Field f;
+    ASSERT_TRUE(f.initialized);
+    Settle(f);
+    sim::PlayerInput spell;
+    spell.buttons = sim::PlayerButton_Spell;
+    spell.spell = sim::kUpdraft;
+    const sim::PlayerInput none;
+    for (int tick = 0; tick < 20; ++tick) {
+        const bool press = tick == 10 || tick == 12;
+        const sim::PlayerStepResult r = f.Tick(press ? spell : none);
+        EXPECT_FALSE(r.cast) << tick;
+        if (tick == 10) {
+            EXPECT_TRUE(r.spell) << "the first Spell edge is taken";
+            EXPECT_EQ(f.state.cooldownTicks, f.tuning.castCooldownTicks);
+        } else if (tick == 12) {
+            EXPECT_EQ(r.pressed & sim::PlayerButton_Spell, sim::PlayerButton_Spell);
+            EXPECT_FALSE(r.spell) << "the cooldown refuses the second";
+        } else {
+            EXPECT_FALSE(r.spell) << tick;
+        }
+        EXPECT_FALSE(r.spellMove) << "Updraft has no own move";
+    }
+    // Both edges on one tick: the Cast is taken, the Spell is not.
+    for (int i = 0; i < 20; ++i) f.Tick(none);
+    sim::PlayerInput both = spell;
+    both.buttons = static_cast<uint8_t>(sim::PlayerButton_Spell | sim::PlayerButton_Cast);
+    const sim::PlayerStepResult r = f.Tick(both);
+    EXPECT_TRUE(r.cast);
+    EXPECT_FALSE(r.spell);
+}
+
+// [mag-2]: a Dash's Spell edge starts the dash inside StepPlayer at the input's tick, along the input's look, unless
+// the stepping side does not allow it (no charge, dead, the form cooling) or the state refuses it (rooted).
+TEST(Player, ADashSpellEdgeStartsTheDashInsideTheStep) {
+    Field f({-4.0f, kGround, 0.3f});
+    ASSERT_TRUE(f.initialized);
+    Settle(f);
+    sim::PlayerInput dash;
+    dash.buttons = sim::PlayerButton_Spell;
+    dash.spell = sim::kDash;
+    dash.yaw = sim::QuantizeYaw(-1.5707963f);     // looking along +x
+    const glm::vec3 start = f.state.position;
+    sim::PlayerStepResult r = f.ZoneTick(dash);
+    EXPECT_TRUE(r.spell);
+    EXPECT_TRUE(r.spellMove);
+    EXPECT_EQ(f.state.dashLeft, sim::kDashTicks - 1) << "the dash moved on the edge's own tick";
+    EXPECT_EQ(f.state.dashDir[0], 127);
+    EXPECT_GT(f.state.position.x - start.x, 0.3f);
+    for (int i = 0; i < 30; ++i) f.ZoneTick(sim::PlayerInput{});
+    EXPECT_NEAR(f.state.position.x - start.x, 8.0f, 0.8f);
+
+    // Not allowed by the stepping side: the edge still takes the cooldown, nothing moves.
+    for (int i = 0; i < 30; ++i) f.ZoneTick(sim::PlayerInput{});
+    const std::array<glm::dvec3, 1> focus = {glm::dvec3(f.state.position)};
+    f.simulation.UpdateStreaming(focus);
+    sim::PlayerZones refused{&f.simulation.Zones(), &f.simulation.World(), f.simulation.Tick(), 1};
+    refused.spellMoveAllowed = false;
+    r = sim::StepPlayer(f.simulation.Physics(), f.simulation.Terrain(), f.character, f.state, dash, f.tuning, f.area, refused,
+                        f.simulation.FixedTimeStep());
+    f.simulation.StepPhysics();
+    EXPECT_TRUE(r.spell);
+    EXPECT_FALSE(r.spellMove);
+    EXPECT_EQ(f.state.dashLeft, 0);
+    EXPECT_EQ(f.state.cooldownTicks, f.tuning.castCooldownTicks);
+
+    // Rooted: the state refuses it.
+    for (int i = 0; i < 30; ++i) f.ZoneTick(sim::PlayerInput{});
+    f.state.rootLeft = 5;
+    r = f.ZoneTick(dash);
+    EXPECT_TRUE(r.spell);
+    EXPECT_FALSE(r.spellMove);
+    EXPECT_EQ(f.state.dashLeft, 0);
+    EXPECT_FALSE(sim::StartSpellMove(f.state, sim::kPunch, {1.0f, 0.0f, 0.0f})) << "Punch has no own move";
 }

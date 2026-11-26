@@ -160,9 +160,9 @@ TEST(Mechanisms, WireSizes) {
 }
 
 TEST(Mechanisms, SnapshotCarriesTheUseResultAndTheHoldPitch) {
-    EXPECT_EQ(net::kSnapshotOwnerBytes, 44u) << "[wp-7]'s 39 + lastUseTick 4 + useResult 1";
-    EXPECT_EQ(net::kSnapshotPlayerBytes, 18u) << "[wp-7]'s 17 + holdPitch 1";
-    EXPECT_EQ(net::kProtocolVersion, 13u);   // [land-5]
+    EXPECT_EQ(net::kSnapshotOwnerBytes, 64u) << "[wp-7]'s 39 + lastUseTick 4 + useResult 1 + [mag-2]'s 20";
+    EXPECT_EQ(net::kSnapshotPlayerBytes, 19u) << "[wp-7]'s 17 + holdPitch 1 + [mag-2]'s statusBits 1";
+    EXPECT_EQ(net::kProtocolVersion, 14u);   // [mag-2]
 
     net::Snapshot s;
     s.tick = 10;
@@ -191,9 +191,9 @@ TEST(Mechanisms, SnapshotCarriesTheUseResultAndTheHoldPitch) {
     EXPECT_EQ(net::Encode(onePlayer).size() - net::Encode(bare).size(), net::kSnapshotPlayerBytes);
 
     // Refused: a use result above kMaxUseResult, a hold pitch of 65 and -65.
-    const size_t ownerEnd = net::kSnapshotHeaderBytes - 2 + net::kSnapshotOwnerBytes;   // header without the two counts
+    const size_t useAt = net::kSnapshotHeaderBytes - 2 + 43;   // header without the two counts; [mech-1]'s last owner byte
     std::vector<uint8_t> bad = bytes;
-    bad[ownerEnd - 1] = 7;
+    bad[useAt] = 7;
     EXPECT_FALSE(net::Decode(bad, back)) << "use result 7";
     for (const int8_t pitch : {int8_t{65}, int8_t{-65}}) {
         net::Snapshot p = s;

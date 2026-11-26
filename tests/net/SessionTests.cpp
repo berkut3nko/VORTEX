@@ -331,10 +331,12 @@ TEST(SessionFile, BuildHashSeesThePlayerRuleRevision) {
     voxel::MaterialLibrary materials;
     voxel::RegisterDefaultWorldMaterials(materials);
     const uint64_t table = voxel::MaterialTableHash(materials);
-    EXPECT_EQ(net::BuildHash(materials),
-              net::BuildHashOf(net::kProtocolVersion, voxel::kGeneratorGoldenHash, table, sim::kPlayerRuleRevision, voxel::kLandGoldenHash));
+    const uint64_t spells = sim::SpellTableHash(sim::BuildSpellTable(voxel::kDefaultVoxelSize));
+    const uint64_t turning = voxel::TurningTableHash(voxel::WorldTurningTable());
+    EXPECT_EQ(net::BuildHash(materials), net::BuildHashOf(net::kProtocolVersion, voxel::kGeneratorGoldenHash, table, sim::kPlayerRuleRevision,
+                                                          voxel::kLandGoldenHash, spells, turning));
     EXPECT_GE(sim::kPlayerRuleRevision, 1u);
-    const uint64_t before = net::BuildHashOf(net::kProtocolVersion, voxel::kGeneratorGoldenHash, table, 0, voxel::kLandGoldenHash);
+    const uint64_t before = net::BuildHashOf(net::kProtocolVersion, voxel::kGeneratorGoldenHash, table, 0, voxel::kLandGoldenHash, spells, turning);
     EXPECT_NE(net::BuildHash(materials), before);
     EXPECT_NE(net::BuildHashOf(net::kProtocolVersion, voxel::kGeneratorGoldenHash, table, 2),
               net::BuildHashOf(net::kProtocolVersion, voxel::kGeneratorGoldenHash, table, 1));

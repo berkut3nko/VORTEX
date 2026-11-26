@@ -58,6 +58,7 @@ namespace vortex::net {
                     q.request.player = 0;
                 }
             FightLeave(p.slot);   // [wp-7] its place on its team is free (never rebalanced mid-round)
+            MagicLeave(p.slot);
         }
     }
 
@@ -112,13 +113,16 @@ namespace vortex::net {
                     // [wp-7] An input of the dead time (or from before the round start's teleport) that arrives after
                     // the spawn (review of [wp-7]): the new life's levels stay the spawn's (decision 7: every button
                     // held until released) and a cast in it is refused Dead; nothing else of it acts.
-                    if ((in.buttons & sim::PlayerButton_Cast) != 0) RefuseDeadCast(p, t);
+                    if ((in.buttons & (sim::PlayerButton_Cast | sim::PlayerButton_Spell)) != 0) RefuseDeadCast(p, t);
                 } else {
                     const uint8_t pressed = sim::PressButtons(pl.state, in.buttons);
                     // [mech-1] A throw (or an auto-drop's echo) replaces the late cast and its use.
                     const bool consumed = !dead && HoldEdges(p, in, pressed);
                     // [wp-7] A dead player's late edges do nothing but refuse its cast (fight.md "Rules").
                     if (!consumed && (pressed & sim::PlayerButton_Cast) != 0 && !RefuseDeadCast(p, in.tick)) LateCast(p, in, now);
+                    // [mag-2] A late Spell edge (none with a Cast edge in the same input: StepPlayer's rule).
+                    else if (!consumed && (pressed & sim::PlayerButton_Spell) != 0 && (pressed & sim::PlayerButton_Cast) == 0 && !RefuseDeadCast(p, in.tick))
+                        LateSpell(p, in, now);
                     // [mech-1] A late use is judged from the state of its own tick.
                     if (!consumed && (pressed & sim::PlayerButton_Use) != 0 && !dead) PlayerUse(p, in, pl.StateAt(in.tick), now);
                     if ((pressed & sim::PlayerButton_Crate) != 0 && !dead) PlayerCrate(p, in, pl.state);
@@ -187,7 +191,8 @@ namespace vortex::net {
                 // [wp-7] A dead player is not stepped (fight.md "Rules", decision 7: no change to StepPlayer): it
                 // stays where it died; its input is consumed, a cast edge in it refused Dead.
                 const uint8_t levels = static_cast<uint8_t>(input.buttons & sim::kPlayerButtonMask);
-                if ((levels & sim::PlayerButton_Cast) != 0 && (pl.state.lastButtons & sim::PlayerButton_Cast) == 0) RefuseDeadCast(*peer, now);
+                const uint8_t edges = static_cast<uint8_t>(levels & ~pl.state.lastButtons);
+                if ((edges & (sim::PlayerButton_Cast | sim::PlayerButton_Spell)) != 0) RefuseDeadCast(*peer, now);
                 pl.state.lastButtons = levels;
                 pl.lateJump = false;
                 pl.Store(now);
@@ -209,8 +214,10 @@ namespace vortex::net {
                 input.buttons = static_cast<uint8_t>(input.buttons | sim::PlayerButton_Jump);
                 pl.lateJump = false;
             }
-            const sim::PlayerZones zones{&simulation->Zones(), &simulation->World(), now,
-                                         static_cast<uint8_t>(1u << fighters[peer->slot].team)};
+            sim::PlayerZones zones{&simulation->Zones(), &simulation->World(), now, static_cast<uint8_t>(1u << fighters[peer->slot].team)};
+            // [mag-2] A Spell edge starts the caster's own move inside StepPlayer only if its capture will pass.
+            if ((input.buttons & sim::PlayerButton_Spell) != 0 && (pl.state.lastButtons & sim::PlayerButton_Spell) == 0)
+                zones.spellMoveAllowed = SpellAllowed(*peer, input, now);
             const sim::PlayerStepResult r = sim::StepPlayer(simulation->Physics(), simulation->Terrain(), pl.character, pl.state, input,
                                                             settings.player, playArea, zones, dt);
             if (lateJump) pl.state.lastButtons = static_cast<uint8_t>(levels & sim::kPlayerButtonMask);
@@ -229,6 +236,8 @@ namespace vortex::net {
             const bool consumed = HoldEdges(*peer, input, r.pressed);
             if (!consumed && r.cast) CaptureCast(*peer, input, pl.state, false);
             else if (!consumed && (r.pressed & sim::PlayerButton_Cast) != 0) RejectCast(*peer, now);
+            if (!consumed && r.spell) CaptureSpell(*peer, input, pl.state);
+            else if (!consumed && (r.pressed & sim::PlayerButton_Spell) != 0 && (r.pressed & sim::PlayerButton_Cast) == 0) RejectCast(*peer, now);
             if (!consumed && (r.pressed & sim::PlayerButton_Use) != 0) PlayerUse(*peer, input, &pl.state, now);
             if ((r.pressed & sim::PlayerButton_Crate) != 0) PlayerCrate(*peer, input, pl.state);
         }
@@ -251,10 +260,11 @@ namespace vortex::net {
             snap.lastUseTick = peer->player->lastUseTick;
             snap.useResult = peer->player->useResult;
             snap.fight = OwnerFightOf(peer->slot);
+            FillMagicOwner(snap, peer->slot, *peer->player);
             for (const auto& [otherId, other] : players) {
                 if (otherId == id) continue;
                 snap.others.push_back({other->slot, other->player->state.position, other->player->last.yaw, other->player->state.flags,
-                                       RemoteFightOf(other->slot), sim::HoldPitch(other->player->last.pitch)});
+                                       RemoteFightOf(other->slot), sim::HoldPitch(other->player->last.pitch), RemoteStatusOf(*other->player)});
             }
             // Bodies by priority: what was left out longest, nearest first, as many as fit.
             const size_t fixed = kSnapshotHeaderBytes + kSnapshotOwnerBytes + snap.others.size() * kSnapshotPlayerBytes;
@@ -339,6 +349,7 @@ namespace vortex::net {
             welcome.fight.respawnTicks = Rules().respawnTicks;
         }
         welcome.player = settings.player;
+        welcome.zoneLeadTicks = static_cast<uint8_t>(std::min<uint32_t>(spellTable.zoneLeadTicks, Welcome::kMaxZoneLeadTicks));
         welcome.tickSeconds = simulation->FixedTimeStep();
         welcome.gravity = simulation->Config().physics.gravity;
         welcome.joinOpSeq = LastOpSeq();
@@ -367,6 +378,7 @@ namespace vortex::net {
         p.player->state.position = glm::vec3(welcome.spawn);
         p.player->character = simulation->Physics().CreateCharacter(sim::PlayerCharacterDesc(p.player->state.position, settings.player));
         tickEvents |= kTickHello;
+        MagicJoin(slot);
         FightJoin(p);
         ++stats.clientsJoined;
         Log::Info("Server: client {} joined at tick {} (slot {}, join point opSeq {}, {} entities in its baseline, {} modified chunks)",

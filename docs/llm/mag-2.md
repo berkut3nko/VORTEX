@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| State | **Out of date:** the owner replaced 4 spells on 2026-11-26 ([magic.md](../design/magic.md) "The sixteen spells" 9, 11, 12, 13); [mag-1] now builds Updraft, Dash, Punch and Barricade Wave. Rewrite every card that names Siege Cannon or Shockwave before starting |
+| State | **Re-scoped** on 2026-11-26 ("Re-scope" below wins over every card where they differ) |
 | Stage | `[mag-2]`: the four `[mag-1]` spells (Siege Cannon, Barricade Wave, Shockwave, Updraft) in offline practice and in sessions: the one magic protocol bump, zone events with a lead, `CastFx`, the Spell edge, the owner block, `Attune`, the spell HUD |
 | Design | [magic.md](../design/magic.md) "Stages" row `[mag-2]`; "Wire values (one protocol bump, in [mag-2])"; "`sim::ZoneSet`" (retention, late zones, joiners); "What can still cause a correction"; "Input and HUD"; "Where every effect lives"; "Follow-ups (`RunScheduled`)"; "Caps"; "Presentation"; "Tests" (VortexNetTests); "Headless flags and gates". ROADMAP "Next" item 7 |
 | Code read at | engine `ea41341`, game `58d7b87` (before `[wp-4]`..`[mag-1]`: where a card builds on them it names the symbol and says "read the built interface") |
@@ -12,6 +12,33 @@
 | Cards | 10 |
 | Effort | 6-9 d (e) |
 | Changes | wire: **yes**, `net::kProtocolVersion` 12 -> **13** in card 3 only. Movement rule: **no** (`kPlayerRuleRevision` stays 2: the Spell bit was refused by the decoder before, so no old input reaches the new path). `buildHash`: `SpellTableHash`, `TurningTableHash` (card 3). Gate: **G24** (the spell drill, card 7) |
+
+## Re-scope (2026-11-26, the owner's spell change)
+
+The owner made Pressure the movement element ([magic.md](../design/magic.md) "The sixteen spells" 9-12). [mag-1] built
+**Updraft (6), Dash (10, Pierce x Pressure), Punch (14, Burst x Pressure) and Barricade Wave (12)**
+([history/magic/mag-1-as-built.md](../history/magic/mag-1-as-built.md)). Where a card below names Siege Cannon or
+Shockwave, these rules replace it:
+
+1. **The four spells.** Read Dash for Siege Cannon and Punch for Shockwave (its dispel is card 6's truncation across
+   clients). The bots' rotation (decision 16) is Barricade Wave, Updraft, Dash, Punch.
+2. **One protocol bump reserves every later wire value** (magic.md "Wire values"): `WorldOpKind` 9 `CarveCapsule` with its
+   layout (built in [mag-3]; the decoder of this stage refuses it) and the zone kinds Shove 8 and Rune 9 beside 1-7. The
+   bump takes the next free number: `kProtocolVersion` 14 ([land-5] took 13).
+3. **A Dash starts at its Spell edge inside `StepPlayer`** (magic.md "PlayerState, StepPlayer and the physics call" step
+   1, spell 11). The Spell edge with Dash selected calls `sim::StartSpellMove` (it calls `sim::StartDash`; Meteor Leap's
+   launch goes into the same function later) at the input's tick, on the server and on the predicting client alike.
+   The stepping side can refuse it (`PlayerZones::spellMoveAllowed`: dead, or no charge as the owner block last said;
+   the server also checks the capture), and so can the state (rooted, pinned). The server's `CastSpell` gets no caster
+   state: it traces the path and announces the Impulse, and never starts the dash a second time. A server refusal that
+   the client did not foresee is a correction, counted under the cause `cast refused` (card 5).
+4. **The owner block also carries the dash** (`dashLeft`, `dashDir`): decision 10's block is 20 B, not 17
+   (`kSnapshotOwnerBytes` 64). The client restores the dash with the other player fields before every replay.
+5. **No rule revision** (decision 3 holds): `kPlayerRuleRevision` stays 3. No input of an older protocol reaches the
+   Spell edge, and the protocol bump changes `buildHash` anyway.
+6. **No skeleton of stubs.** Card 1's stub bodies tagged with card numbers and its disabled tests would put workflow
+   references into the code (CLAUDE.md "No workflow artifacts"). Each part is built complete, with its tests enabled,
+   in the cards' order.
 
 ## Before you start
 

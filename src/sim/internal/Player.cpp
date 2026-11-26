@@ -93,6 +93,7 @@ namespace vortex::sim {
         if (t.castRadius < 0.0f || t.castRadius > 9.0f || t.castPower < 0.0f || t.castPower > 4000.0f || t.castRange < 0.0f ||
             t.castRange > 1000.0f)
             return fail("cast radius 0..9 m, power 0..4000, range 0..1000 m");
+        if (t.pushDecayGround > kPushLimitCmS || t.pushDecayAir > kPushLimitCmS) return fail("push decays 0..1500 cm/s per tick");
         return true;
     }
 
@@ -185,6 +186,11 @@ namespace vortex::sim {
         state.dashDir[0] = static_cast<int8_t>(std::lround(x / len * 127.0));
         state.dashDir[1] = static_cast<int8_t>(std::lround(z / len * 127.0));
         return true;
+    }
+
+    bool StartSpellMove(PlayerState& state, SpellId spell, const glm::vec3& aim) {
+        if (spell == kDash) return StartDash(state, aim);
+        return false;
     }
 
     std::optional<float> ApplyZones(PlayerState& state, const PlayerZones& zones, const PlayerTuning& tuning, float gravity) {
@@ -287,6 +293,10 @@ namespace vortex::sim {
         r.pressed = PressButtons(state, input.buttons);
         if (state.cooldownTicks > 0) --state.cooldownTicks;
         r.cast = TakeCast(state, r.pressed, tuning);
+        if ((r.pressed & PlayerButton_Spell) != 0 && (r.pressed & PlayerButton_Cast) == 0) {
+            r.spell = TakeCast(state, PlayerButton_Cast, tuning);
+            if (r.spell && zones.spellMoveAllowed) r.spellMove = StartSpellMove(state, input.spell, LookDirection(input.yaw, input.pitch));
+        }
 
         // The gate: chunks loaded and a collider built at least once (never "re-cooked yet").
         if (!terrain.HasCollider(PlayerBounds(state.position, tuning))) {

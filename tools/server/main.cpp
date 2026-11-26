@@ -1203,6 +1203,11 @@ int main(int argc, char** argv) {
         std::ofstream file(*out);
         file << hashes << "\n";
     }
+    // [mag-2] Spells and zones (magic.md): what the server cast, scheduled and announced.
+    if (server.Stats().spellCasts + server.Stats().spellsRefused > 0) {
+        Log::Info("{}", server.MagicLine());
+        Log::Info("{}", server.ZonesLine());
+    }
     // [wp-7] The fight (fight.md "Rules"): what it did, and --until-round-end / --require-winner.
     bool fightOk = true;
     if (session.fight.Active()) {

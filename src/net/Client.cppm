@@ -228,6 +228,11 @@ export namespace vortex::net {
         uint32_t copiesDropped = 0;       ///< copies the list does not have (as old as the list): removed and tombstoned
         uint32_t tombstonesEvicted = 0;   ///< despawned NetIds forgotten (maxTombstones)
         uint32_t testDroppedEvents = 0;   ///< entity events dropped by ClientSettings::testDropEntityEvent
+        // [mag-2] Zones and spells (magic.md "sim::ZoneSet").
+        uint32_t zonesApplied = 0;        ///< ZoneStart events (and a joiner's baseline zones) put into the simulation's zones
+        uint32_t zonesIgnored = 0;        ///< ... refused: a known id, the records full, a cancel before the start
+        uint32_t zoneCancels = 0;         ///< ZoneCancel events applied
+        uint32_t castFx = 0;              ///< CastFx events received
         double checkSeconds = 0.0, maxCheckSeconds = 0.0;   ///< wall clock of the checks (logged only)
 
         // Server terrain mode (stage 7b M-b); the acks' outcomes are ChunkSync::Stats().
@@ -361,6 +366,20 @@ export namespace vortex::net {
         const Roster& RosterOf() const;
         const RoundUpdate& RoundOf() const;
         std::vector<KillNotice> TakeKillNotices();
+        /// @brief [mag-2] The owner block's magic state of the newest snapshot (the HUD's spell bar and element panel):
+        /// the form cooldowns in 4-tick units and the attunement byte (Snapshot::attune).
+        struct MagicView {
+            std::array<uint8_t, 4> formCooldown4{};
+            uint8_t attune = 0;
+            uint32_t tick = 0;            ///< the snapshot it is from
+        };
+        const MagicView& Magic() const;
+        /// @brief [mag-2] Sends Attune{craftA, craftB} (sim::Element values): the server takes it while this player is
+        /// dead or before its first spawn, for the next life.
+        void SendAttune(uint8_t craftA, uint8_t craftB);
+        /// @brief [mag-2] The CastFx events applied since the last call (stream order; ClientSettings::presentation
+        /// only, at most 64 kept).
+        std::vector<CastFx> TakeCastFx();
         /// @brief The roster's team of `slot` (0 when it is not listed).
         sim::TeamId TeamOf(uint8_t slot) const;
         /// @brief The session's player tuning (from Welcome).

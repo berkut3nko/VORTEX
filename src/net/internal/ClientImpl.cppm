@@ -106,7 +106,11 @@ namespace vortex::net {
             uint32_t tick = 0;
             sim::PlayerInput input;
             sim::PlayerState state;      ///< after the tick
+            bool spellMove = true;       ///< [mag-2] a Spell edge of this tick could start the own move (kept for replays)
         };
+
+        /// [mag-2] CastFx events kept for the owner's presentation (Client::TakeCastFx), at most this many.
+        inline constexpr size_t kMaxCastFx = 64;
     }
     using namespace detail;
 
@@ -364,8 +368,18 @@ namespace vortex::net {
         void PoseMechanismCopy(const Copy& c, uint32_t tick);
         /// FlushBox, the mechanisms' pose at `tick` and the push-out: before every StepPlayer (the server's order).
         void PrepareStep(uint32_t tick);
-        /// The zones a StepPlayer of `tick` reads: the predicted tick, or a replayed entry's own tick.
-        sim::PlayerZones ZonesAt(uint32_t tick) const;
+        /// The zones a StepPlayer of `tick` reads: the predicted tick, or a replayed entry's own tick, and whether a
+        /// Spell edge may start the own move (a replay passes its entry's).
+        sim::PlayerZones ZonesAt(uint32_t tick, bool spellMove = true) const;
+        // [mag-2] Zones by opSeq and the spell's own move.
+        /// A Spell edge may start the own move: alive and, in a fight past its warmup, a charge as the owner block said.
+        bool SpellMoveAllowed() const;
+        /// A ZoneStart, a ZoneCancel or a CastFx at its stream position.
+        void ApplyMagic(const Event& event);
+        /// Cancels of zones this client does not hold yet (a joiner's baseline zones come later): applied on insert.
+        std::map<uint16_t, uint32_t> earlyCancels;
+        std::deque<CastFx> castFx;
+        Client::MagicView magic;
         uint32_t NetIdOfEntity(scene::Entity entity) const;
         /// The server's hold of a copy (EntityHold, or a spawn / baseline with kObjectHeld).
         void ApplyHold(uint32_t netId, uint8_t holder, uint16_t relYaw, uint32_t tick);

@@ -96,6 +96,11 @@ namespace vortex::net {
             /// [mech-1] The owner block's use result: the newest Use edge's input tick and its fate.
             uint32_t lastUseTick = 0;
             sim::UseResult useResult = sim::UseResult::None;
+            /// [mag-2] The element of its last Spell edge (the owner block's active bit, the remote record's colour) and
+            /// an Attune taken while it was dead or before its first spawn, applied at its next spawn.
+            uint8_t spellElement = static_cast<uint8_t>(sim::Element::Metal);
+            bool attunePending = false;
+            uint8_t attuneA = 0, attuneB = 0;
             /// [mech-1] Holding (mechanisms.md "One use key: E"): the held body (its scene::Held component is the
             /// truth), the busy rule's last change, the echo window after an auto-drop (0: none) and the
             /// replicated body it stood on last.
@@ -234,6 +239,9 @@ namespace vortex::net {
             bool ray = false;
             sim::ActionRequest request;   ///< the captured action (ray casts; a server cast keeps the defaults)
             scene::Entity body = scene::kNoEntity;   ///< the body the ray resolved on (a mechanism takes a MechanismBlast)
+            /// [mag-2] A spell (request.spell; request.eye and dir of its input's tick): sim::CastSpell runs it at dequeue.
+            bool spell = false;
+            sim::TeamId team = sim::kNoTeam;   ///< the caster's team at capture
         };
 
         /// A terrain-mode peer's bulk goes nearest its eyes first: this far above the feet.
@@ -250,7 +258,8 @@ namespace vortex::net {
                 return spawn->kind == EntityKind::Object ? volumeVoxels(spawn->object.volume) : 0;
             if (const ObjectModel* model = std::get_if<ObjectModel>(&event)) return volumeVoxels(model->volume);
             const sim::WorldOp* op = std::get_if<sim::WorldOp>(&event);
-            if (!op || (op->kind != sim::WorldOpKind::Detach && op->kind != sim::WorldOpKind::ClearMask)) return 0;
+            if (!op || (op->kind != sim::WorldOpKind::Detach && op->kind != sim::WorldOpKind::ClearMask && op->kind != sim::WorldOpKind::MapMask))
+                return 0;
             return op->mask.VoxelCount();
         }
     }
@@ -561,6 +570,46 @@ namespace vortex::net {
         void RunCast(const QueuedCast& q, bool overdue);
 
         void RunCasts();
+
+        /// The events of one group of operations (a blast's, a band's, an expiry's): its operations through EmitOp, then
+        /// its hold releases, object events and mechanism changes, as a blast's. The operations it emitted.
+        uint32_t EmitGroup(const sim::BlastResult& r);
+
+        // --- magic ([mag-2], docs/design/magic.md "The cast pipeline"; ServerMagic.cpp) ---------------------------
+        // Order per tick: StepPlayers (a Spell edge: its own move inside StepPlayer when SpellMoveAllowed, then
+        // CaptureSpell), RunCasts (spells in the one cast queue: RunSpell), RunScheduledSpells (bands, blows, zone ticks,
+        // expiries, site checks, zone pruning), StepFight (a respawn applies a pending Attune), snapshots.
+        sim::SpellTable spellTable;
+        sim::CastContext castContext;
+        uint64_t scheduledGroups = 0;     // groups RunScheduled emitted (the Magic: line)
+        uint64_t sitesRun = 0;
+        void StartMagic();                                   // at Start: the table, the walls, the spawn areas
+        /// The capture checks a Spell edge of `input` would pass at `tick` (alive, attuned, the form ready, a charge),
+        /// as StepPlayer's spellMoveAllowed: it changes nothing.
+        bool SpellAllowed(const Peer& p, const sim::PlayerInput& input, uint32_t tick) const;
+        /// A Spell edge the cooldown accepted (decision 5): Dead, the capture checks, a charge, then the form cooldown
+        /// and the cast queue. `at`: the state after the input's tick.
+        void CaptureSpell(Peer& p, const sim::PlayerInput& input, const sim::PlayerState& at);
+        /// A Spell edge in a late input: judged at its input's tick as LateCast judges a cast; a Dash allowed then starts
+        /// now with the ticks it would have run taken off.
+        void LateSpell(Peer& p, const sim::PlayerInput& in, uint32_t now);
+        void RunSpell(const QueuedCast& q, bool overdue);
+        void RunScheduledSpells();
+        std::vector<sim::SpellTarget> SpellTargets();
+        /// Attune (decision 12): taken while the player is dead or before its first spawn; false only for a message that
+        /// does not decode (the peer is dropped).
+        bool OnAttune(Peer& p, std::span<const uint8_t> bytes);
+        void ApplyAttune(uint8_t slot);                      // at a spawn: a pending Attune becomes the caster's pair
+        void MagicJoin(uint8_t slot);
+        void MagicLeave(uint8_t slot);
+        void FillMagicOwner(Snapshot& snap, uint8_t slot, const Player& pl) const;
+        uint8_t RemoteStatusOf(const Player& pl) const;
+        uint8_t RosterAttuneOf(uint8_t slot) const;
+        /// The zones a joiner gets in its BaselineEnd: live or pending now, at most kMaxBaselineZones.
+        std::vector<sim::Zone> BaselineZones() const;
+        /// Judges a cast or Spell edge of a late input by the state of its tick (true: taken; the cooldown and the kept
+        /// states are rewritten as if it was taken then).
+        bool LateTake(Peer& p, const sim::PlayerInput& in, uint32_t now);
 
         /// Disconnects a joined peer at once (a broken sync stream, too slow).
         void DropPeer(PeerId id);

@@ -149,7 +149,39 @@ namespace vortex::net {
             return;
         }
         CloseGroup();
+        if (std::holds_alternative<ZoneStartEvent>(event) || std::holds_alternative<ZoneCancelEvent>(event) || std::holds_alternative<CastFx>(event))
+            return ApplyMagic(event);
         ApplyEntity(seq, event);
+    }
+
+    void Client::Impl::ApplyMagic(const Event& event) {
+        sim::ZoneSet& zones = simulation->Zones();
+        if (const ZoneStartEvent* e = std::get_if<ZoneStartEvent>(&event)) {
+            sim::Zone zone = e->zone;
+            if (const auto early = earlyCancels.find(zone.zoneId); early != earlyCancels.end()) {
+                if (early->second >= zone.startTick) zone.duration = static_cast<uint16_t>(std::min<uint32_t>(zone.duration, early->second - zone.startTick));
+                earlyCancels.erase(early);
+            }
+            if (zone.duration > 0 && zones.Insert(zone)) ++stats.zonesApplied;
+            else ++stats.zonesIgnored;
+        } else if (const ZoneCancelEvent* c = std::get_if<ZoneCancelEvent>(&event)) {
+            const sim::Zone* z = zones.Find(c->zoneId);
+            if (z != nullptr && c->endTick < z->startTick) {
+                ++stats.zonesIgnored;
+                Log::Warn("Client: a ZoneCancel of zone {} ends at tick {}, before its start {}: ignored", c->zoneId, c->endTick, z->startTick);
+            } else if (z != nullptr) {
+                zones.Cancel(c->zoneId, c->endTick);
+                ++stats.zoneCancels;
+            } else if (earlyCancels.size() < sim::kMaxZoneRecords) {
+                earlyCancels[c->zoneId] = c->endTick;
+            }
+        } else if (const CastFx* fx = std::get_if<CastFx>(&event)) {
+            ++stats.castFx;
+            if (settings.presentation) {
+                if (castFx.size() >= kMaxCastFx) castFx.pop_front();
+                castFx.push_back(*fx);
+            }
+        }
     }
 
     void Client::Impl::Hold(uint32_t netId, uint32_t seq, const Event& event) {
@@ -233,6 +265,9 @@ namespace vortex::net {
             } else if (type == MessageType::BaselineEnd) {
                 BaselineEnd e;
                 if (!Decode(bytes, e)) return Fail("malformed BaselineEnd");
+                // [mag-2] The zones live or pending at its opSeq; one the live stream already brought is kept as it is.
+                for (const sim::Zone& z : e.zones)
+                    if (simulation->Zones().Find(z.zoneId) == nullptr) ApplyMagic(Event{ZoneStartEvent{z}});
                 baselineEnded = true;
                 entityAsOf = std::max(entityAsOf, e.asOfOpSeq);
                 baselineNear = true;

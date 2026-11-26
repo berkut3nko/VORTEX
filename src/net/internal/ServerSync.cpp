@@ -375,7 +375,7 @@ namespace vortex::net {
         }
         if (end) {
             p.baselineOpen = false;
-            return Encode(BaselineEnd{LastOpSeq(), p.baselineSent});
+            return Encode(BaselineEnd{LastOpSeq(), p.baselineSent, BaselineZones()});
         }
         if (item.kind == BulkItem::Kind::Chunk) {
             p.queued.erase(item.chunk);

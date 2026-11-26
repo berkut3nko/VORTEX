@@ -14,6 +14,7 @@ import vortex.math;
 import vortex.physics;
 import vortex.voxel;
 import :zones;
+import :spell;
 
 export namespace vortex::sim {
 
@@ -27,8 +28,11 @@ export namespace vortex::sim {
         /// (networking stage 6), nothing is predicted.
         PlayerButton_Crate = 8,
         PlayerButton_Use = 16,   ///< edge: E, a use (mechanisms.md); the crate moves to Q
+        /// edge: RMB, the selected spell (PlayerInput::spell; magic.md "What a player carries"). It shares the
+        /// cast's cooldown; a step with both edges takes the Cast and drops the Spell.
+        PlayerButton_Spell = 32,
     };
-    inline constexpr uint8_t kPlayerButtonMask = 31;
+    inline constexpr uint8_t kPlayerButtonMask = 63;
 
     /**
      * @brief What a player does in one tick (docs/design/networking.md "Player movement"): integers
@@ -41,10 +45,11 @@ export namespace vortex::sim {
         uint16_t yaw = 0;        ///< Look yaw, 2 pi / 65536 per unit (0 looks along -z, as the camera's).
         int16_t pitch = 0;       ///< Look pitch, (pi / 2) / 32767 per unit, positive up.
         uint8_t buttons = 0;     ///< PlayerButton levels.
+        uint8_t spell = 0;       ///< The selected SpellId; read on a Spell edge only.
         friend bool operator==(const PlayerInput&, const PlayerInput&) = default;
         /// @brief Equal apart from the tick.
         bool SameControls(const PlayerInput& o) const {
-            return moveX == o.moveX && moveZ == o.moveZ && yaw == o.yaw && pitch == o.pitch && buttons == o.buttons;
+            return moveX == o.moveX && moveZ == o.moveZ && yaw == o.yaw && pitch == o.pitch && buttons == o.buttons && spell == o.spell;
         }
     };
 
@@ -171,6 +176,10 @@ export namespace vortex::sim {
         const voxel::World* world = nullptr;     ///< its voxel size gives q (nullptr: 0.125 m)
         uint32_t tick = 0;                       ///< the tick being stepped (a replay: that entry's own tick)
         uint8_t teamBit = 1;                     ///< 1u << the player's team (no team: team 0)
+        /// A Spell edge may start the caster's own move (StartSpellMove): the stepping side found the
+        /// player alive, with a charge and the spell's form ready, as far as it knows them. The server
+        /// decides it from its own state; a predicting client from the owner block it last had.
+        bool spellMoveAllowed = true;
     };
 
     /// @brief What one StepPlayer did.
@@ -179,6 +188,8 @@ export namespace vortex::sim {
         bool held = false;       ///< The gate held the player: nothing moved.
         bool jumped = false;     ///< A jump was asked for on the ground.
         bool cast = false;       ///< A cast edge the cooldown accepted (the server captures it; a client shows it).
+        bool spell = false;      ///< A Spell edge the cooldown accepted (no Cast edge in the same input).
+        bool spellMove = false;  ///< ... and it started the caster's own move (StartSpellMove).
         bool pushedBack = false; ///< The move ended past the play area's edge (float rounding at its walls): taken back along that axis.
     };
 
@@ -218,6 +229,13 @@ export namespace vortex::sim {
      * `aim` has no finite horizontal part.
      */
     bool StartDash(PlayerState& state, const glm::vec3& aim);
+    /**
+     * @brief The caster's own move of `spell`, started at its Spell edge inside StepPlayer at the
+     * input's tick, on the server and on the predicting client alike (magic.md "PlayerState,
+     * StepPlayer and the physics call" step 1): Dash calls StartDash. False for a spell without an
+     * own move, or one the state refuses.
+     */
+    bool StartSpellMove(PlayerState& state, SpellId spell, const glm::vec3& aim);
 
     /**
      * @brief The zones' part of a step (StepPlayer calls it after the gate), from the feet quantised
@@ -239,7 +257,8 @@ export namespace vortex::sim {
      * @brief One tick of a player: the single movement rule of the server, the predicting client
      * and the offline game (docs/design/networking.md "Player movement").
      * @details In order: button edges (PressButtons), cooldown down by one, a cast edge
-     * (TakeCast), then the gate: if `terrain.HasCollider(PlayerBounds(state.position))` is false
+     * (TakeCast), else a Spell edge through the same TakeCast (when `zones.spellMoveAllowed`, its
+     * own move: StartSpellMove along the input's look), then the gate: if `terrain.HasCollider(PlayerBounds(state.position))` is false
      * the player is held (PlayerFlag_Held, nothing moves; the gate does not wait for re-cooks, see
      * HasCollider). Otherwise the character moves with the wish velocity (run or walk speed),
      * jumps on a Jump edge if on the ground, and `state` takes its new position, velocity and

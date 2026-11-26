@@ -76,11 +76,19 @@ namespace vortex::net {
     sim::PlayerStepResult Client::Impl::PredictTick(sim::PlayerInput input) {
         input.tick = nextTick;
         PrepareStep(nextTick);
+        const bool spellMove = SpellMoveAllowed();
         const sim::PlayerStepResult r = sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, input,
-                                                        welcome.player, playArea, ZonesAt(nextTick), Dt());
-        history[nextTick % kHistoryTicks] = {true, nextTick, input, player};
+                                                        welcome.player, playArea, ZonesAt(nextTick, spellMove), Dt());
+        history[nextTick % kHistoryTicks] = {true, nextTick, input, player, spellMove};
         ++nextTick;
+        // Zones stay while a replay may still step a tick that sees them (magic.md "sim::ZoneSet", retention).
+        simulation->Zones().PruneEndedBefore(nextTick > kHistoryTicks ? nextTick - kHistoryTicks : 0u);
         return r;
+    }
+
+    bool Client::Impl::SpellMoveAllowed() const {
+        if (fight.dead) return false;
+        return !fight.Active() || roundState.phase == sim::RoundPhase::Warmup || fight.maxCharges == 0 || fight.charges > 0;
     }
 
     void Client::Impl::SendInputs() {
@@ -192,7 +200,7 @@ namespace vortex::net {
                     HistoryEntry& e = history[k % kHistoryTicks];
                     if (!e.valid || e.tick != k) continue;
                     PrepareStep(k);
-                    sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, e.input, welcome.player, playArea, ZonesAt(e.tick), Dt());
+                    sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, e.input, welcome.player, playArea, ZonesAt(e.tick, e.spellMove), Dt());
                     e.state = player;
                 }
             }
@@ -265,7 +273,8 @@ namespace vortex::net {
         for (uint32_t k = t + 1; k < nextTick; ++k) {
             HistoryEntry& e = history[k % kHistoryTicks];
             PrepareStep(k);
-            sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, e.input, welcome.player, playArea, ZonesAt(k), Dt());
+            sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, e.input, welcome.player, playArea, ZonesAt(k, e.spellMove),
+                            Dt());
             e.state = player;
             ++replayed;
         }
@@ -338,6 +347,7 @@ namespace vortex::net {
             lastCast = {snap.lastCastTick, snap.castRejected};
         }
         OnOwnerFight(snap);
+        magic = {snap.formCooldown4, snap.attune, snap.tick};
         lastUseTick = snap.lastUseTick;
         lastUseResult = snap.useResult;
         // Both are ticks of inputs this client made: never at or past the tick it predicts next
