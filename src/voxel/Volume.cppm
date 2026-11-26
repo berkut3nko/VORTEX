@@ -2,7 +2,9 @@ module;
 
 #include <glm/glm.hpp>
 
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 export module vortex.voxel:volume;
@@ -109,4 +111,19 @@ export namespace vortex::voxel {
         glm::ivec3 m_Size{0};
         std::vector<uint8_t> m_Bits;
     };
+
+    // --- mask run encoding ----------------------------------------------------------------------
+    //  A mask as alternating clear / set run lengths, the first run clear (it may be 0). The run
+    //  axis is the fastest; the other two follow in x, y, z order: axis 0 visits x, y, z; axis 1
+    //  y, x, z; axis 2 z, x, y (fastest first). The axis changes only the order, never the voxels.
+
+    /// @brief The runs of `mask` in the order of `axis` (0 x, 1 y, 2 z). Empty when axis > 2.
+    std::vector<uint32_t> MaskRuns(const VoxelMask& mask, uint8_t axis);
+    /// @brief The inverse of MaskRuns. False (and `out` an empty mask of `size`) when axis > 2, a
+    /// size is negative, or the runs do not add up to the voxel count exactly.
+    bool MaskFromRuns(const glm::ivec3& size, uint8_t axis, std::span<const uint32_t> runs, VoxelMask& out);
+    /// @brief Bytes of MaskRuns(mask, axis) as LEB128 numbers (0 when axis > 2).
+    size_t MaskRunBytes(const VoxelMask& mask, uint8_t axis);
+    /// @brief The axis whose runs take the fewest bytes (a tie goes to the lower axis).
+    uint8_t ShortestRunAxis(const VoxelMask& mask);
 }

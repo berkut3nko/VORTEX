@@ -810,9 +810,13 @@ TEST(EditorMaterials, ListsTheNamedEntriesOfAPalette) {
     EXPECT_TRUE(ListMaterials(library, 42).empty());                    // no such palette
 
     const voxel::WorldMaterials ids = voxel::RegisterDefaultWorldMaterials(library);
-    bool hasBrick = false;
-    for (const MaterialChoice& choice : ListMaterials(library)) hasBrick |= choice.id == ids.brick;
+    bool hasBrick = false, hasKnit = false;
+    for (const MaterialChoice& choice : ListMaterials(library)) {
+        hasBrick |= choice.id == ids.brick;
+        hasKnit |= choice.id == ids.knitIron;
+    }
     EXPECT_TRUE(hasBrick);
+    EXPECT_FALSE(hasKnit) << "conjured ids are not offered";
 }
 
 TEST(EditorMaterials, BuildsAPaletteFromImportedMaterials) {

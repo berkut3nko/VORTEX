@@ -182,8 +182,8 @@ export namespace vortex::editor {
         std::string name;
     };
 
-    /// @brief The named entries (ids 1..255, ascending) of a palette. Entries without a name are
-    /// not listed; an unknown palette gives an empty list.
+    /// @brief The named entries (ids 1..255, ascending) of a palette. Entries without a name and
+    /// conjured ids (MaterialFlag_Conjured) are not listed; an unknown palette gives an empty list.
     std::vector<MaterialChoice> ListMaterials(const voxel::MaterialLibrary& library, voxel::PaletteId palette = voxel::kWorldPalette);
 
     /**

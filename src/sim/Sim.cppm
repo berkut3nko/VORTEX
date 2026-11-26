@@ -12,3 +12,6 @@ export import :rules;
 export import :combat;
 export import :mechanism;
 export import :rope;
+export import :spell;
+export import :propagate;
+export import :knit;

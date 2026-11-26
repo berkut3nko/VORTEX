@@ -15,6 +15,7 @@ import vortex.voxel;
 import vortex.fx;
 import vortex.physics;
 import vortex.scene;
+import :worldop;
 
 export namespace vortex::sim {
 
@@ -148,12 +149,24 @@ export namespace vortex::sim {
      */
     SimulationConfig ServerConfig(SimulationConfig config = {});
 
+    /**
+     * @brief What one island search covers and what it carves first: a blast's sphere (SphereSite)
+     * or a site check over one chunk (ChunkSite, no carve). sim::Blast runs it.
+     */
+    struct BlastSite {
+        /// The carve applied before the search (a CarveSphere); not applied with BlastOptions::noCarve.
+        WorldOp carve;
+        glm::ivec3 islandMin{0}, islandMax{0};   ///< The island box [min, max), voxels.
+        glm::ivec3 floodMin{0}, floodMax{0};     ///< The flood box [min, max), voxels; it holds the island box.
+        glm::dvec3 center{0.0};                  ///< Metres: the objects, the push and the log.
+        float radius = 0.0f;                     ///< Metres: the objects' and the push's reach (0: none).
+    };
+
     /// @brief The island search of a blast that could not run because a chunk of its island box,
     /// or of its flood box that a flood reached, was not loaded (sim::Blast remembers it,
     /// sim::RetryIslandSearches runs it later).
     struct DeferredIslandSearch {
-        voxel::SphereQ sphere;
-        uint16_t power = 0;           ///< Of the blast's carve, to replay it.
+        BlastSite site;               ///< Its boxes, and the carve to replay on `carvePending`.
         /// Chunks the blast's carve skipped (not loaded) that may still load, in its visit order:
         /// the carve is replayed on each of them, and only on them, as soon as it is loaded.
         std::vector<glm::ivec3> carvePending;

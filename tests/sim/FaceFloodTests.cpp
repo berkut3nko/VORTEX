@@ -824,7 +824,7 @@ TEST(Blast, DeferredSearchDropIsCounted) {
     };
     const auto Waiting = [&a](int z) {
         for (const sim::DeferredIslandSearch& s : a.simulation.DeferredIslandSearches())
-            if (s.sphere.center.z == z * 16 + 8) return true;
+            if (s.site.carve.sphere.center.z == z * 16 + 8) return true;
         return false;
     };
     static constexpr int kZ[16] = {0, -80, -70, -60, -50, 80, -40, -30, -20, -10, 10, 20, 30, 40, 50, 60};

@@ -189,7 +189,8 @@ export namespace vortex::sim {
      * presentation (PresentBlast) needs.
      */
     struct BlastResult {
-        /// ops[0] is the CarveSphere; one Detach (netId 0) per terrain island of at least
+        /// ops[0] is the CarveSphere (none with BlastOptions::noCarve; the Ablate MapShape when
+        /// `absorbed`); one Detach (netId 0) per terrain island of at least
         /// scene::MinPieceVoxels(world voxel size) follows: first the islands inside the island
         /// box in the order ExtractFloatingIslands found them, then the face components the flood
         /// proved, in candidate order (in-box count ascending, ties by label), then the parts the
@@ -243,6 +244,9 @@ export namespace vortex::sim {
         std::vector<HoldChange> holdChanges;   ///< releases (Damaged) the blast made, before its object events
         glm::dvec3 center{0.0};        ///< The blast as applied (after quantisation), world metres.
         float radius = 0.0f;           ///< Metres, after quantisation.
+        /// BlastAt only: the hit was fresh conjured matter (AbsorbsBlast). ops[0] is the Ablate
+        /// MapShape and no carve follows; the island search, the objects and the push ran.
+        bool absorbed = false;
 
         /// @brief Union of the skipped / unsynced chunks of all operations.
         voxel::EditReport Report() const;
@@ -375,7 +379,8 @@ export namespace vortex::sim {
      *  4. Every rigid body within three radii gets mass x BlastPush; bodies within two radii are
      *     woken (PhysicsWorld::ActivateInBox), so what rested on removed ground falls.
      *  With SimulationConfig::replication (a session server, networking stage 6): a Detach of at
-     *  least SceneConfig::replicatedPieceVoxels whose TakePieceSlot says so carries a new NetId, and
+     *  least SceneConfig::replicatedPieceVoxels that holds no conjured id (voxel::MaterialFlag_Conjured:
+     *  such a piece never asks for a slot) and whose TakePieceSlot says so carries a new NetId, and
      *  after step 4 its server body is made from the voxels it removed (velocity = its push, as a
      *  client's rubble); an object piece of step 3 gets a NetId (an ObjectEvent::Spawn) or, over a
      *  budget, becomes a fragment; a damaged replicated object that survives is an
@@ -386,6 +391,36 @@ export namespace vortex::sim {
      * or from Application::OnUpdate; never inside a registry view.
      */
     BlastResult Blast(Simulation& simulation, const voxel::SphereQ& sphere, uint16_t power);
+
+    /// @brief How a site-based blast runs.
+    struct BlastOptions {
+        /// Skip step 1 (the site's carve): no carve in `ops`, nothing to replay. The island search
+        /// and the load check still run, and the objects and the push when the site's radius > 0.
+        bool noCarve = false;
+    };
+    /// @brief The site of `Blast(simulation, sphere, power)`: its carve, IslandBox, FloodBox and the
+    /// sphere's centre and radius in metres.
+    BlastSite SphereSite(const voxel::World& world, const voxel::SphereQ& sphere, uint16_t power);
+    /// @brief A site check over one chunk (docs/design/magic.md "Expiry and structure"): no carve,
+    /// island box [32 c - 24, 32 c + 56), flood box 32 c + 16 +- kFloodHalfExtent, radius 0.
+    BlastSite ChunkSite(const voxel::World& world, const glm::ivec3& chunk);
+    /**
+     * @brief Blast steps 1-5 on a site. `Blast(simulation, sphere, power)` is
+     * `Blast(simulation, SphereSite(world, sphere, power))`: the same operations bit for bit.
+     * Steps 3 and 4 (objects and push) reach only as far as `site.radius`.
+     */
+    BlastResult Blast(Simulation& simulation, const BlastSite& site, const BlastOptions& options = {});
+
+    /// @brief The absorb rule (magic.md "The absorb rule, ablative"): the hit voxel `hitMaterial`
+    /// is conjured and harder than the blast (`hardness * 16 > power`, the compare of CarveSphereQ).
+    bool AbsorbsBlast(const voxel::MaterialLibrary& materials, uint8_t hitMaterial, uint16_t power);
+    /**
+     * @brief A blast that obeys the absorb rule. `hitMaterial` is the world id the cast ray hit (0:
+     * a body or unknown). Not absorbed: `Blast(simulation, sphere, power)`. Absorbed: ops[0] is
+     * `MapShape(Map_Ablate, sphere at the centre, r 0.25 m)` (knit and slag become air), then the
+     * sphere's site runs with `noCarve`: its islands, objects and push; `absorbed` is set.
+     */
+    BlastResult BlastAt(Simulation& simulation, const voxel::SphereQ& sphere, uint16_t power, uint8_t hitMaterial);
 
     /**
      * @brief Runs the island search (step 2 of Blast) of earlier blasts that had to wait

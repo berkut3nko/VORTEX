@@ -125,9 +125,22 @@ TEST(Wire, EveryWorldOpRoundTripsAtItsSize) {
         if (masked) EXPECT_GT(bytes, c.bytes);
         else EXPECT_EQ(bytes, c.bytes);
         EXPECT_EQ(net::EventBytes(c.op), bytes);
+        EXPECT_EQ(sim::OpWireBytes(c.op), bytes) << static_cast<int>(c.op.kind);
     }
     // The velocity is presentation only, on the wire in 1/256 m/s.
     EXPECT_EQ(net::QuantizeVelocity(v), glm::vec3(1.5f, -6.0f, 32.0f / 256.0f));
+}
+
+TEST(Wire, MapOpsAreSimulationValuesOnly) {
+    // MapShape (7) and MapMask (8) have no wire layout yet: a decoder refuses them whatever follows.
+    for (const uint8_t kind : {uint8_t{7}, uint8_t{8}}) {
+        std::vector<uint8_t> bytes(64, 0);
+        bytes[0] = kind;
+        bytes[1] = 3;
+        net::ByteReader r(bytes);
+        net::Event out;
+        EXPECT_FALSE(net::ReadEvent(r, out)) << static_cast<int>(kind);
+    }
 }
 
 TEST(Wire, LightSpawnRoundTrips) {

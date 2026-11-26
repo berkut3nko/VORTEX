@@ -276,6 +276,10 @@ namespace vortex::net {
                     WriteMaskRuns(out, op.mask);
                     break;
                 }
+                case sim::WorldOpKind::MapShape:
+                case sim::WorldOpKind::MapMask:
+                    // Simulation values only: no peer sends them, and ReadEvent refuses them.
+                    break;
             }
         }
 
@@ -318,6 +322,8 @@ namespace vortex::net {
                     if (in.Failed()) return false;
                     return ReadMaskRuns(in, size, op.mask, maskVoxelBudget);
                 }
+                case sim::WorldOpKind::MapShape:
+                case sim::WorldOpKind::MapMask: return false;
             }
             return false;
         }

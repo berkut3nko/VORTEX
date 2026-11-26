@@ -192,6 +192,8 @@ namespace vortex::editor {
         if (palette >= library.PaletteCount()) return out;
         for (uint32_t i = 1; i < voxel::kPaletteSize; ++i) {
             const std::string_view name = library.Name(palette, static_cast<uint8_t>(i));
+            // Conjured matter comes only from spells: a builder never places it.
+            if ((library.Get(palette, static_cast<uint8_t>(i)).flags & voxel::MaterialFlag_Conjured) != 0) continue;
             if (!name.empty()) out.push_back({static_cast<uint8_t>(i), std::string(name)});
         }
         return out;

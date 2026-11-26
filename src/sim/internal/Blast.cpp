@@ -138,11 +138,10 @@ namespace vortex::sim {
         };
 
         /// The stage-1 search: ExtractFloatingIslands over the island box, then the face flood.
-        Found VoxelSearch(Simulation& simulation, const voxel::SphereQ& sphere) {
+        Found VoxelSearch(Simulation& simulation, const BlastSite& site) {
             voxel::World& world = simulation.World();
             Found out;
-            glm::ivec3 boxMin, boxMax;
-            IslandBox(sphere, boxMin, boxMax);
+            const glm::ivec3 boxMin = site.islandMin, boxMax = site.islandMax;
             Clock::time_point start = Clock::now();
             voxel::IslandBoxScan scan;
             out.boxIslands = voxel::ExtractFloatingIslands(world, &simulation.Materials(), boxMin, boxMax, kMaxIslandVoxels, false,
@@ -158,7 +157,8 @@ namespace vortex::sim {
             start = Clock::now();
             if (!scan.faceComponents.empty()) {
                 voxel::FloodLimits limits;
-                FloodBox(sphere, limits.floodMin, limits.floodMax);
+                limits.floodMin = site.floodMin;
+                limits.floodMax = site.floodMax;
                 limits.maxVoxels = kMaxIslandVoxels;
                 limits.maxVisitsPerSearch = kFloodVisitBudget;
                 limits.deferOnUnloaded = !simulation.Config().sessionServer;
@@ -181,11 +181,13 @@ namespace vortex::sim {
         }
 
         /// Stage 4: the same islands from the cell graph cached per terrain chunk.
-        Found GraphSearch(Simulation& simulation, const voxel::SphereQ& sphere) {
+        Found GraphSearch(Simulation& simulation, const BlastSite& site) {
             Found out;
             voxel::GraphSearchLimits limits;
-            IslandBox(sphere, limits.boxMin, limits.boxMax);
-            FloodBox(sphere, limits.floodMin, limits.floodMax);
+            limits.boxMin = site.islandMin;
+            limits.boxMax = site.islandMax;
+            limits.floodMin = site.floodMin;
+            limits.floodMax = site.floodMax;
             limits.maxIslandVoxels = kMaxIslandVoxels;
             limits.maxNodeVisits = kGraphNodeVisitBudget;
             limits.deferOnUnloaded = !simulation.Config().sessionServer;
@@ -287,18 +289,18 @@ namespace vortex::sim {
             return SameIslands(a.faceIslands, b.faceIslands);
         }
 
-        /// Step 2 of Blast: islands in the island box of `sphere`, and face components the flood
+        /// Step 2 of Blast: islands in the island box of `site`, and face components the flood
         /// proves, become Detach operations, crumbs one ClearMask, each applied at once and
         /// appended to `result.ops`. BoxNotLoaded: a chunk of the island box is not loaded,
         /// nothing was done. FloodWaits (offline only): a flood met `waitChunk`, which is not
         /// loaded; the in-box islands were emitted, the face pieces were not. Both boxes are
-        /// derived from the integer sphere only.
-        SearchOutcome SearchIslands(Simulation& simulation, const voxel::SphereQ& sphere, BlastResult& result, glm::ivec3& waitChunk) {
+        /// the site's, from integers only.
+        SearchOutcome SearchIslands(Simulation& simulation, const BlastSite& site, BlastResult& result, glm::ivec3& waitChunk) {
             voxel::World& world = simulation.World();
             const glm::vec3 center(result.center);
             const float radius = result.radius;
             const bool graph = simulation.Config().islandSearch == IslandSearchKind::Graph;
-            Found found = graph ? GraphSearch(simulation, sphere) : VoxelSearch(simulation, sphere);
+            Found found = graph ? GraphSearch(simulation, site) : VoxelSearch(simulation, site);
             result.times.searchMs += found.searchMs;
             result.times.floodMs += found.floodMs;
             result.times.graphBuildMs += found.graphBuildMs;
@@ -309,7 +311,7 @@ namespace vortex::sim {
             ++simulation.IslandSearchCheck().run;
             if (simulation.Config().checkIslandSearch) {
                 // Nothing has been applied yet: the other search reads the same voxels.
-                const Found other = graph ? VoxelSearch(simulation, sphere) : GraphSearch(simulation, sphere);
+                const Found other = graph ? VoxelSearch(simulation, site) : GraphSearch(simulation, site);
                 result.reference = other.stats;
                 result.times.referenceMs += other.searchMs + other.floodMs;
                 Simulation::IslandSearchChecks& checks = simulation.IslandSearchCheck();
@@ -441,12 +443,23 @@ namespace vortex::sim {
                     size_t list, index;
                 };
                 std::vector<Candidate> candidates;
+                // A piece that holds conjured matter never asks for a slot (magic.md "Expiry and
+                // structure"): it is client rubble, so no server body outlives its conjuring.
+                std::array<bool, 256> conjured{};
+                for (uint32_t id = 1; id < 256; ++id)
+                    conjured[id] = (simulation.Materials().Get(voxel::kWorldPalette, static_cast<uint8_t>(id)).flags & voxel::MaterialFlag_Conjured) != 0;
+                const auto holdsConjured = [&conjured](const voxel::FloatingIsland& island) {
+                    for (const uint8_t id : island.volume.Data())
+                        if (conjured[id]) return true;
+                    return false;
+                };
                 uint32_t order = 0;
                 for (size_t l = 0; l < lists.size(); ++l) {
                     netIds[l].assign(lists[l]->size(), 0u);
                     for (size_t i = 0; i < lists[l]->size(); ++i, ++order) {
                         const voxel::FloatingIsland& island = (*lists[l])[i];
-                        if (island.voxelCount >= replicated) candidates.push_back({island.voxelCount, island.origin.y, order, l, i});
+                        if (island.voxelCount >= replicated && !holdsConjured(island))
+                            candidates.push_back({island.voxelCount, island.origin.y, order, l, i});
                     }
                 }
                 std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
@@ -517,11 +530,11 @@ namespace vortex::sim {
             return found.neckWaits && !simulation.Config().sessionServer ? SearchOutcome::NeckWaits : SearchOutcome::Done;
         }
 
-        /// Squared distance (voxels) from the centre of the island box of `sphere` to the middle of
+        /// Squared distance (voxels) from the centre of the island box of `site` to the middle of
         /// the world window: what a full list of deferred searches drops first.
-        int64_t DistanceToWindow(const voxel::World& world, const voxel::SphereQ& sphere) {
+        int64_t DistanceToWindow(const voxel::World& world, const BlastSite& site) {
             const glm::ivec3 mid = voxel::ChunkToVoxel(world.WindowMinChunk() + world.WindowSize() / 2);
-            const glm::ivec3 c = math::FloorDiv(sphere.center, voxel::kQuantaPerVoxel);
+            const glm::ivec3 c = math::FloorDiv(site.islandMin + site.islandMax, 2);
             int64_t sum = 0;
             for (int a = 0; a < 3; ++a) {
                 const int64_t d = static_cast<int64_t>(c[a]) - static_cast<int64_t>(mid[a]);
@@ -539,14 +552,13 @@ namespace vortex::sim {
                 size_t farthest = 0;
                 int64_t best = -1;
                 for (size_t i = 0; i < deferred.size(); ++i) {
-                    const int64_t d = DistanceToWindow(world, deferred[i].sphere);
+                    const int64_t d = DistanceToWindow(world, deferred[i].site);
                     if (d > best) {            // ties keep the oldest
                         best = d;
                         farthest = i;
                     }
                 }
-                const glm::dvec3 at = glm::dvec3(deferred[farthest].sphere.center) *
-                                      (static_cast<double>(world.VoxelSize()) / static_cast<double>(voxel::kQuantaPerVoxel));
+                const glm::dvec3 at = deferred[farthest].site.center;
                 Log::Warn("Blast: {} island searches are already waiting; the one of the blast at ({:.1f}, {:.1f}, {:.1f}) m (farthest "
                           "from the window) is dropped: what it would have freed stays in the air",
                           deferred.size(), at.x, at.y, at.z);
@@ -559,10 +571,10 @@ namespace vortex::sim {
 
         /// Asks the world for what a waiting search needs: the island box, or the flood box once a
         /// flood met a chunk that is not loaded.
-        void RequestFor(voxel::World& world, const voxel::SphereQ& sphere, SearchOutcome outcome) {
-            glm::ivec3 min, max;
-            if (outcome == SearchOutcome::FloodWaits || outcome == SearchOutcome::NeckWaits) FloodBox(sphere, min, max);
-            else IslandBox(sphere, min, max);
+        void RequestFor(voxel::World& world, const BlastSite& site, SearchOutcome outcome) {
+            const bool flood = outcome == SearchOutcome::FloodWaits || outcome == SearchOutcome::NeckWaits;
+            const glm::ivec3 min = flood ? site.floodMin : site.islandMin;
+            const glm::ivec3 max = flood ? site.floodMax : site.islandMax;
             world.RequestLoad(voxel::VoxelToChunk(min), voxel::VoxelToChunk(max - glm::ivec3(1)));
         }
 
@@ -574,11 +586,9 @@ namespace vortex::sim {
             return chunk.y >= bottomRow && chunk.y < bottomRow + world.WindowSize().y;
         }
 
-        void SetCenter(const voxel::World& world, const voxel::SphereQ& sphere, BlastResult& result) {
-            constexpr double kInvQ = 1.0 / static_cast<double>(voxel::kQuantaPerVoxel);
-            const double vs = static_cast<double>(world.VoxelSize());
-            result.center = glm::dvec3(sphere.center) * (kInvQ * vs);
-            result.radius = static_cast<float>(static_cast<double>(sphere.radius) * kInvQ * vs);
+        void SetCenter(const BlastSite& site, BlastResult& result) {
+            result.center = site.center;
+            result.radius = site.radius;
         }
     }
 
@@ -624,22 +634,52 @@ namespace vortex::sim {
                      voxel::QuantizePower(desc.power));
     }
 
+    BlastSite SphereSite(const voxel::World& world, const voxel::SphereQ& sphere, uint16_t power) {
+        constexpr double kInvQ = 1.0 / static_cast<double>(voxel::kQuantaPerVoxel);
+        const double vs = static_cast<double>(world.VoxelSize());
+        BlastSite site;
+        site.carve = WorldOp::Carve(sphere, power);
+        IslandBox(sphere, site.islandMin, site.islandMax);
+        FloodBox(sphere, site.floodMin, site.floodMax);
+        site.center = glm::dvec3(sphere.center) * (kInvQ * vs);
+        site.radius = static_cast<float>(static_cast<double>(sphere.radius) * kInvQ * vs);
+        return site;
+    }
+
+    BlastSite ChunkSite(const voxel::World& world, const glm::ivec3& chunk) {
+        BlastSite site;
+        const glm::ivec3 origin = voxel::ChunkToVoxel(chunk);
+        site.islandMin = origin - glm::ivec3(kIslandSearchMargin);
+        site.islandMax = origin + glm::ivec3(voxel::kChunkSize + kIslandSearchMargin);
+        const glm::ivec3 middle = origin + glm::ivec3(voxel::kChunkSize / 2);
+        site.floodMin = middle - glm::ivec3(voxel::kFloodHalfExtent);
+        site.floodMax = middle + glm::ivec3(voxel::kFloodHalfExtent);
+        site.center = glm::dvec3(middle) * static_cast<double>(world.VoxelSize());
+        site.radius = 0.0f;
+        return site;
+    }
+
     BlastResult Blast(Simulation& simulation, const voxel::SphereQ& sphere, uint16_t power) {
+        return Blast(simulation, SphereSite(simulation.World(), sphere, power));
+    }
+
+    BlastResult Blast(Simulation& simulation, const BlastSite& site, const BlastOptions& options) {
         voxel::World& world = simulation.World();
         physics::PhysicsWorld& physics = simulation.Physics();
         scene::Scene& scene = simulation.Scene();
+        const uint16_t power = site.carve.power;
 
         BlastResult result;
-        SetCenter(world, sphere, result);
+        SetCenter(site, result);
         const glm::vec3 center(result.center);
         const float radius = result.radius;
 
         // 1. Carve.
         Clock::time_point start = Clock::now();
         std::vector<glm::ivec3> carvePending;
-        {
+        if (!options.noCarve) {
             AppliedOp carve;
-            carve.op = WorldOp::Carve(sphere, power);
+            carve.op = site.carve;
             carve.result = ApplyOp(world, carve.op, &carve.edits);
             // Skipped chunks that can still load (not above the ceiling or below the bottom of a
             // fixed-height window), in the carve's own visit order.
@@ -654,13 +694,12 @@ namespace vortex::sim {
         //    either: the world loads what is missing and the search runs later
         //    (RetryIslandSearches), the carve first again if it skipped chunks.
         glm::ivec3 waitChunk(0);
-        const SearchOutcome outcome = SearchIslands(simulation, sphere, result, waitChunk);
+        const SearchOutcome outcome = SearchIslands(simulation, site, result, waitChunk);
         result.islandsSearched = outcome == SearchOutcome::Done || outcome == SearchOutcome::NeckWaits;
         if (outcome == SearchOutcome::BoxNotLoaded || outcome == SearchOutcome::FloodWaits || outcome == SearchOutcome::NeckWaits) {
-            RequestFor(world, sphere, outcome);
+            RequestFor(world, site, outcome);
             DeferredIslandSearch search;
-            search.sphere = sphere;
-            search.power = power;
+            search.site = site;
             search.carvePending = std::move(carvePending);
             search.waitsForChunk = outcome != SearchOutcome::BoxNotLoaded;
             search.waitChunk = waitChunk;
@@ -786,6 +825,37 @@ namespace vortex::sim {
         return result;
     }
 
+    bool AbsorbsBlast(const voxel::MaterialLibrary& materials, uint8_t hitMaterial, uint16_t power) {
+        if (hitMaterial == 0) return false;
+        const voxel::Material& m = materials.Get(voxel::kWorldPalette, hitMaterial);
+        // The exact compare of CarvableIdsFor: hardness * 16 and a 16-bit power are exact in float.
+        const bool tooHard = m.hardness * static_cast<float>(voxel::kPowerQuantaPerHardness) > static_cast<float>(power);
+        return (m.flags & voxel::MaterialFlag_Conjured) != 0 && tooHard;
+    }
+
+    BlastResult BlastAt(Simulation& simulation, const voxel::SphereQ& sphere, uint16_t power, uint8_t hitMaterial) {
+        if (!AbsorbsBlast(simulation.Materials(), hitMaterial, power)) return Blast(simulation, sphere, power);
+        voxel::World& world = simulation.World();
+        // The patch is 0.25 m at every voxel size, rounded once from the session's float voxel size.
+        voxel::ShapeQ patch;
+        patch.kind = voxel::kShapeSphere;
+        patch.a = sphere.center;
+        patch.radiusQ = static_cast<uint16_t>(std::lround(0.25 / static_cast<double>(world.VoxelSize()) * 16.0));
+        AppliedOp ablate;
+        ablate.op = WorldOp::Map(voxel::Map_Ablate, patch);
+        const Clock::time_point start = Clock::now();
+        ablate.result = ApplyOp(world, ablate.op, &ablate.edits);
+        const double ablateMs = MsSince(start);
+
+        BlastOptions options;
+        options.noCarve = true;
+        BlastResult result = Blast(simulation, SphereSite(world, sphere, power), options);
+        result.ops.insert(result.ops.begin(), std::move(ablate));
+        result.times.carveMs = ablateMs;
+        result.absorbed = true;
+        return result;
+    }
+
     std::vector<BlastResult> RetryIslandSearches(Simulation& simulation) {
         std::vector<BlastResult> out;
         std::vector<DeferredIslandSearch>& deferred = simulation.DeferredIslandSearches();
@@ -794,13 +864,12 @@ namespace vortex::sim {
         for (size_t i = 0; i < deferred.size();) {
             DeferredIslandSearch& search = deferred[i];
             ++search.attempts;
-            glm::ivec3 islandMin, islandMax, floodMin, floodMax;
-            IslandBox(search.sphere, islandMin, islandMax);
-            FloodBox(search.sphere, floodMin, floodMax);
+            const glm::ivec3 islandMin = search.site.islandMin, islandMax = search.site.islandMax;
+            const glm::ivec3 floodMin = search.site.floodMin, floodMax = search.site.floodMax;
 
             BlastResult result;
             result.deferred = true;
-            SetCenter(world, search.sphere, result);
+            SetCenter(search.site, result);
 
             // Given up only once nothing of the flood box is in the window any more: until then
             // the window may still bring in what the search waits for.
@@ -822,14 +891,15 @@ namespace vortex::sim {
             if (!search.carvePending.empty()) {
                 const Clock::time_point start = Clock::now();
                 AppliedOp carve;
-                carve.op = WorldOp::Carve(search.sphere, search.power);
+                carve.op = search.site.carve;
                 std::vector<glm::ivec3> waiting;
                 for (const glm::ivec3& chunk : search.carvePending) {
                     if (!world.IsChunkLoaded(chunk)) {
                         waiting.push_back(chunk);
                         continue;
                     }
-                    carve.result.changed += world.CarveSphereQInChunk(search.sphere, search.power, chunk, &carve.edits, &carve.result.report);
+                    carve.result.changed +=
+                        world.CarveSphereQInChunk(carve.op.sphere, carve.op.power, chunk, &carve.edits, &carve.result.report);
                     result.carveReplayChunks.push_back(chunk);
                 }
                 if (!result.carveReplayChunks.empty()) {
@@ -848,13 +918,13 @@ namespace vortex::sim {
             }
 
             glm::ivec3 waitChunk(0);
-            const SearchOutcome outcome = SearchIslands(simulation, search.sphere, result, waitChunk);
+            const SearchOutcome outcome = SearchIslands(simulation, search.site, result, waitChunk);
             result.islandsSearched = outcome == SearchOutcome::Done || outcome == SearchOutcome::NeckWaits;
             const bool done = outcome == SearchOutcome::Done || outcome == SearchOutcome::Refused;
             if (!done) {
                 search.waitsForChunk = outcome != SearchOutcome::BoxNotLoaded;
                 search.waitChunk = waitChunk;
-                RequestFor(world, search.sphere, outcome);
+                RequestFor(world, search.site, outcome);
             }
             if (!result.ops.empty()) out.push_back(std::move(result));
             if (done) deferred.erase(deferred.begin() + static_cast<std::ptrdiff_t>(i));
@@ -1022,7 +1092,7 @@ namespace vortex::sim {
 
     BlastResult MechanismBlast(Simulation& simulation, scene::Entity target, const voxel::SphereQ& sphere, uint16_t power) {
         BlastResult result;
-        SetCenter(simulation.World(), sphere, result);
+        SetCenter(SphereSite(simulation.World(), sphere, power), result);
         result.islandsSearched = true;
         DamageMechanism(simulation, target, result.center, power, result);
 

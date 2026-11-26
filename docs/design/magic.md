@@ -7,7 +7,7 @@
 | Status | Designed and reviewed, nothing built or measured for it. Merged from three proposals by a judge's synthesis brief; reviewed by two critics on 2026-11-21 (29 findings on 27 issues, all taken, three only in part: [design-review-2026-11-21.md](../history/magic/design-review-2026-11-21.md)). Four spells replaced by the owner on 2026-11-26 (below). |
 | Decided | - Owner's concept (2026-11-21), verbatim in [owner-concept-2026-11-21.md](../history/magic/owner-concept-2026-11-21.md), not reopened here: every spell is a **Cast Type** (Liquid: down and pooling; Flame: up and rising; Solid: linear penetration that spends structural health per voxel; Torrent: lateral or radial burst) x an **Element** (Metal: create and reinforce voxels; Thermal: damage over time, ignition, heats metal; Pressure: impulse, knockback, launch, bonus damage to brittle voxels, no residue; Frost, the owner's recommended 4th: slow, freeze liquid into walkable ice, brittleness 2x against Pressure and Solid). All 16 named siege spells and their tactical roles.<br>- Owner, 2026-11-26: Pressure is mostly movement on the map (high jumps, dashes, punches): Meteor Leap, Updraft, Dash and Punch replace Crushing Weight, Siege Cannon and Shockwave; Flow x Frost is a static Rune Trap instead of Glacier Slide; the other 12 spells are unchanged. [mag-1] builds Updraft, Dash, Punch and Barricade Wave.<br>- Owner, standing rules: fun gameplay with few bugs first; realistic synced simulation is unnecessary; we settle open design questions ourselves with a recommended answer; every feature has a cheap path and a measured cost; replicated world edits are integer-exact and no float decides which voxel changes; no randomness in replicated rules; everything stays original.<br>- Owner (2026-11-17, [spread.md](spread.md)): fire is lockstep, a simple spread operation, no randomness; Claude implements it. Owner (2026-11-10, ROADMAP "Direction"): building only in fights, created matter is temporary; magic means create matter, move matter, change materials, spreading fire and summoning.<br>- Us (this design, 2026-11-21): items 1-16 of "Decision in brief" and every answer in "Open questions", as amended by the design review. Base: proposal 3 (8.2 of 10), with proposal 2's player design (7.2) and proposal 1's exact operators (7.0) ([proposal-scores-2026-11-21.md](../history/magic/proposal-scores-2026-11-21.md)).<br>- Owner (2026-11-21, "Doors first"): [mag-1] and [mag-2] right after [mech-1] ("ROADMAP placement"); our proposal to put them before it was vetoed. |
 | Next | The owner reviews the 4 new spells (9, 11, 12, 13 in "The sixteen spells"). Then [mag-1], headless only, in ROADMAP "Next" after [mech-1] (owner, 2026-11-21). |
-| Open | "Open questions" 1-31, each with the recommended answer. For the owner: who sees a Rune Trap and how far Dash and Meteor Leap go (questions 30, 31), the in-world name for "Napalm" (question 19), the keys, colours and feel of slick ground and launches (windowed, question 23), the reorder of ROADMAP "Next" (question 24), and the damage split between Thermal and Pressure (question 27). |
+| Open | "Open questions" 1-31, each with the recommended answer. For the owner: how far Dash and Meteor Leap go (question 31), the in-world name for "Napalm" (question 19), the keys, colours and feel of slick ground and launches (windowed, question 23), the reorder of ROADMAP "Next" (question 24), and the damage split between Thermal and Pressure (question 27). |
 | History | [owner-concept-2026-11-21.md](../history/magic/owner-concept-2026-11-21.md): the owner's concept, verbatim<br>[proposal-scores-2026-11-21.md](../history/magic/proposal-scores-2026-11-21.md): the scores of the three proposals, what the merged design takes from each, and the conflicts settled<br>[design-review-2026-11-21.md](../history/magic/design-review-2026-11-21.md): the two critics' findings and what was done with each |
 | Marks | **(m)** measured (quoted from ROADMAP), **(c)** computed from sizes, **(e)** estimate; every (e) names the measurement that replaces it. Voxel counts are at 0.125 m. Work units are `sim::CastWorkOf` units (about 0.11 us each on the UHD 620 laptop: 10 000 units = 1.09 ms). Code read at engine `58f2650`. |
 
@@ -897,9 +897,8 @@ other effect on a player does ("Why zones, and why the lead").
   blocked move ends the dash (a wall or a Barricade stops it; it carves nothing). After it, `push` keeps 4 m/s of it,
   decaying as a knockback does. Refused while rooted or pinned; a Chill shortens it (the wish's `slowQ` cut applies).
 - The shove: at `T_run` the server traces the dash's path through the world (a capsule sweep at the capsule's radius,
-  from the feet at the input tick, stopped at the first collider) and announces **Shove**, a capsule zone along that
-  path, r 1 m, at `T_z`, enemies: 6 m/s away from the path's axis + 2 m/s up, falling to 0 at the rim (Impulse's
-  rule). No damage. Bodies along the path: impulses at `T_z` (at most 8).
+  from the feet at the input tick, stopped at the first collider) and announces an **Impulse**, a capsule zone along
+  that path, r 1 m, at `T_z`, enemies: 6 m/s away from the path's axis + 2 m/s up, falling to 0 at the rim. No damage. Bodies along the path: impulses at `T_z` (at most 8).
 - Bytes `ZoneStart` 42 + `CastFx` 32 = **about 75 B**; work about 0.02 ms.
 - Counter: a Barricade Wave or any wall ends it; a Rune Trap on the line; Root or Pin before it.
 
@@ -938,8 +937,8 @@ other effect on a player does ("Why zones, and why the lead").
   the wire does not. Runes count in the server's 32 live zones.
 - **It breaks** (cancelled, no burst) when a carve removes the voxel under its middle, when Heat or pitch reaches that
   voxel, or under a Punch's dispel.
-- **Seen by enemies only within 4 m** (presentation, "Readability rules"): a faint frost mark; allies see it always,
-  with its ring. Every client holds the zone, so a modified client could draw it from afar (question 30).
+- **Who sees it** (the owner, 2026-11-26; presentation): enemies see a faint, barely noticeable glow at any distance;
+  the caster and the caster's team see a bright glow with its ring. Every client holds the zone (question 30).
 - Bytes: cast `ZoneStart` 32 + `CastFx` 32; the burst `ZoneCancel` 7 + 2 zones 64 + ice 0.05-0.2 KB + Unknit 27 B:
   **0.15-0.35 KB**; work: the trigger test about 0.001 ms per rune per tick, the burst about 0.1 ms.
 - Counter: look for the mark; Punch it; blast it or burn it; walk round it; wait 60 s.
@@ -986,7 +985,7 @@ other effect on a player does ("Why zones, and why the lead").
 |---|---|---|---|---|
 | **Flow** | Molten Pour: slag shell and pool, sets in 1 s, 25 s | Pitchfall: burning carpet, fire climbs | Meteor Leap: the caster's long jump on the lob's arc, a slam: Pin, Shatter, load check with `extraLoad` | Rune Trap: a static rune, 60 s; Root, Chill and an ice patch when an enemy steps on it |
 | **Plume** | Rising Spire: pillar, ledges, ride-up Lift, 15 s | Wildfire: pitch up the face, Heat on contact | Updraft: Lift zone 1.5 s | Permafrost Climb: ice plugs and ledges, rime, Root |
-| **Pierce** | Rebar Lance: two sockets + horizontal pegs, Root | Meltdown Beam: Heat, bore, Burning | Dash: the caster 8 m along the aim in 0.3 s, a Shove along the path | Shatter Spike: bore, Rime capsule, Chill |
+| **Pierce** | Rebar Lance: two sockets + horizontal pegs, Root | Meltdown Beam: Heat, bore, Burning | Dash: the caster 8 m along the aim in 0.3 s, an Impulse along the path | Shatter Spike: bore, Rime capsule, Chill |
 | **Burst** | Barricade Wave: 4.5 x 1.5 m wall, 20 s | Firestorm Sweep: fire curtain, Heat, ring damage | Punch: a 2.5 m blow, Shove, a light carve, dispel and release | Flash Freeze: floe bridge, ice, Root + Chill |
 
 Interactions fall out of the tables, with no extra code: Thermal melts ice and thaws rime (Heat); Frost quenches hot
@@ -1024,7 +1023,7 @@ conjured matter its power allows.
 
 - A zone: `{zoneId u16, kind u8, teamMask u8, shape, startTick u32, duration u16, strength i16 x 2}`. Kinds: Impulse
   1, Lift 2, Pin 3, Chill 4, Root 5, Release 6, Block 7 (reserved, "What can still cause a correction"), Shove 8 (a
-  capsule's push along its axis: Dash, Punch) and Rune 9 (a trigger the server alone tests; no effect on a step). Shapes
+  capsule's push along its axis: Punch) and Rune 9 (a trigger the server alone tests; no effect on a step). Shapes
   as `MapShape`'s: sphere, capsule, box, y-cylinder, in q.
 - Filled by `ZoneStart` events at their opSeq. A zone acts on the ticks `[startTick, startTick + duration)`.
   `ZoneCancel{zoneId, endTick}` is a **truncation**: `duration = min(duration, endTick - startTick)`; the ticks before
@@ -1131,7 +1130,7 @@ arguments: `const voxel::World&` for the ground id, `const sim::ZoneSet&` and th
 | Terrain changing under the feet | Any world op (knit, ice, carve) applies on the client about RTT/2 after the server | Existing behaviour ("a step at a crater rim"). Slick changes only acceleration, so a player who does not change input on new ice shows no error |
 | A fill where a predicted capsule stands | Bands (Barricade Wave, Rising Spire) are not announced ahead. The server skips every capsule (grown by 1 voxel) at the band's tick, but an enemy whose predicted path enters the band's cells in the RTT + Target + 2 ticks before the op arrives meets the knit in a replay | **Expected** for players charging through a Barricade line, not rare. Jolt depenetration, a correction counted under `terrain`; `Movement.BarricadeAcrossAWalkerCountsCorrectionsByCause` measures it. If [mag-2]'s session-check shows it often, the next step is the reserved **Block** zone: announced with the lead, it cuts the wish into the band's box from its start tick, and the band op goes out at that tick |
 | A zone's rim | Pin, Chill or Root with feet within the two sides' difference of the rim | Counted under `zone edge`; rare (c) |
-| A zone whose world target moved | A Dash's Shove or a Meteor Leap's slam was announced, then a wall rose in its path or the caster was knocked off the arc | The zone stays where announced (v1); counted |
+| A zone whose world target moved | A Dash's Impulse or a Meteor Leap's slam was announced, then a wall rose in its path or the caster was knocked off the arc | The zone stays where announced (v1); counted |
 | A cast the server refused | The client predicted a Meteor Leap or a Dash, the server refused the cast (a charge spent that the owner block had not yet shown) | Counted under `cast refused`; rare (c) |
 
 **Acceptance:** `Movement.ZonesPredictedWithoutCorrection` (net, in-process, 40 ms + 0-30 ms each way, no loss, 10
@@ -1652,10 +1651,9 @@ become `MapShape` maps.
 29. **How big is a spawn area, and how long is respawn immunity?** 6 m round each team spawn point, full height,
     and 2 s (or until the player casts) of immunity to roots, pins and knockback. M2a's spawn points set the centres;
     W-stage maps keep spawn areas of stone so spread's fire cannot burn into them.
-30. **Who sees a Rune Trap?** Allies always, with its ring; enemies only within 4 m, as a faint frost mark
-    (presentation). Every client holds the zone, so a modified client could draw it from afar; sending runes only to
-    the caster's team and to enemies within 4 m would need per-peer zone visibility, and is the next step if cheating
-    on runes shows. One rune per caster, 60 s; the first knob if traps feel oppressive is 30 s.
+30. **Who sees a Rune Trap?** Answered by the owner (2026-11-26): enemies see a faint, barely noticeable glow; the
+    caster and the caster's team see a bright glow with its ring. Every client holds the zone, so a modified client
+    could draw an enemy's rune brightly; that is accepted, as the rune is never hidden, only hard to see. One rune per caster, 60 s; the first knob if traps feel oppressive is 30 s.
 31. **How far do Dash and Meteor Leap go?** Dash 8 m in 0.3 s; Meteor Leap about 15 m on flat ground at its best
     pitch (12 m/s along an aim of 45 degrees). Both cost a charge and the form's cooldown (Pierce 5 s, Flow 9 s). For the owner's
     windowed taste check after [mag-2] ([mag-7] for the leap).

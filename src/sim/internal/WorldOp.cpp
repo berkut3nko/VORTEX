@@ -2,6 +2,7 @@ module;
 
 #include <glm/glm.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <utility>
@@ -65,6 +66,24 @@ namespace vortex::sim {
         return op;
     }
 
+    WorldOp WorldOp::Map(uint8_t map, const voxel::ShapeQ& shape) {
+        WorldOp op;
+        op.kind = WorldOpKind::MapShape;
+        op.map = map;
+        op.shape = shape;
+        return op;
+    }
+
+    WorldOp WorldOp::MapMasked(uint8_t map, const glm::ivec3& origin, voxel::VoxelMask mask) {
+        WorldOp op;
+        op.kind = WorldOpKind::MapMask;
+        op.map = map;
+        op.min = origin;
+        op.axis = voxel::ShortestRunAxis(mask);
+        op.mask = std::move(mask);
+        return op;
+    }
+
     void WorldOp::Bounds(glm::ivec3& outMin, glm::ivec3& outMax) const {
         switch (kind) {
             case WorldOpKind::CarveSphere:
@@ -78,8 +97,12 @@ namespace vortex::sim {
                 return;
             case WorldOpKind::Detach:
             case WorldOpKind::ClearMask:
+            case WorldOpKind::MapMask:
                 outMin = min;
                 outMax = min + glm::max(mask.Size(), glm::ivec3(0));
+                return;
+            case WorldOpKind::MapShape:
+                voxel::ShapeVoxelBounds(shape, outMin, outMax);
                 return;
         }
         outMin = outMax = glm::ivec3(0);
@@ -104,6 +127,15 @@ namespace vortex::sim {
             case WorldOpKind::ClearMask:
                 result.changed = world.ClearMask(op.min, op.mask, edits, &result.report, clip);
                 break;
+            case WorldOpKind::MapShape:
+            case WorldOpKind::MapMask: {
+                // Map 0 is the identity and unknown maps change nothing: no voxel is visited.
+                if (op.map == 0 || op.map >= voxel::kTurningMapCount) break;
+                const voxel::TurningMap& map = voxel::WorldTurningTable().maps[op.map];
+                result.changed = op.kind == WorldOpKind::MapShape ? world.MapShapeQ(op.shape, map, edits, &result.report, clip)
+                                                                  : world.MapMaskQ(op.min, op.mask, map, edits, &result.report, clip);
+                break;
+            }
         }
         return result;
     }
@@ -128,9 +160,11 @@ namespace vortex::sim {
             case WorldOpKind::CarveSphere:
             case WorldOpKind::FillSphere:
             case WorldOpKind::SwapSphere: return voxel::SphereTouchesBox(op.sphere, lo, hi);
-            case WorldOpKind::FillBox: return true;
+            case WorldOpKind::FillBox:
+            case WorldOpKind::MapShape: return true;
             case WorldOpKind::Detach:
             case WorldOpKind::ClearMask:
+            case WorldOpKind::MapMask:
                 for (int z = lo.z; z < hi.z; ++z)
                     for (int y = lo.y; y < hi.y; ++y) {
                         const size_t i = op.mask.Index(lo.x - op.min.x, y - op.min.y, z - op.min.z);
@@ -139,6 +173,24 @@ namespace vortex::sim {
                 return false;
         }
         return false;
+    }
+
+    size_t OpWireBytes(const WorldOp& op) {
+        switch (op.kind) {
+            case WorldOpKind::CarveSphere: return 17;
+            case WorldOpKind::FillSphere: return 16;
+            case WorldOpKind::SwapSphere: return 17;
+            case WorldOpKind::FillBox: return 26;
+            case WorldOpKind::Detach: return 29 + voxel::MaskRunBytes(op.mask, 0);
+            case WorldOpKind::ClearMask: return 19 + voxel::MaskRunBytes(op.mask, 0);
+            case WorldOpKind::MapShape: {
+                // kind, map, shape kind, then sphere 14 / capsule 26 / box 24 / cylinder 16 bytes of parameters.
+                constexpr size_t kBytes[4] = {17, 29, 27, 19};
+                return op.shape.kind < 4 ? kBytes[op.shape.kind] : 3;
+            }
+            case WorldOpKind::MapMask: return 21 + voxel::MaskRunBytes(op.mask, op.axis);
+        }
+        return 0;
     }
 
     voxel::VoxelVolume BuildDetachedPiece(const WorldOp& op, std::span<const voxel::VoxelEdit> removed) {

@@ -2,6 +2,7 @@ module;
 
 #include <glm/glm.hpp>
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -14,6 +15,7 @@ import vortex.core;
 import :chunk;
 import :store;
 import :material;
+import :turning;
 import :generator;
 import :region;
 import :trace;
@@ -131,6 +133,37 @@ export namespace vortex::voxel {
      * clipped to +-kMaxEditVoxel. Empty when no voxel centre is within the radius on some axis.
      */
     void SphereVoxelBounds(const SphereQ& sphere, glm::ivec3& min, glm::ivec3& max);
+
+    /**
+     * @brief A shape in world voxel space for the map edits (docs/design/magic.md "Apply").
+     * @details `kind` is a wire value: kShapeSphere (`a` = centre in q, `radiusQ`), kShapeCapsule
+     * (the segment `a`-`b` in q, `radiusQ`), kShapeBox (voxels [`a`, `b`)), kShapeCylinder (a
+     * vertical cylinder: `a` = centre in q, `radiusQ`, `halfHeightQ`). Unused fields stay 0.
+     */
+    struct ShapeQ {
+        uint8_t kind = 0;
+        glm::ivec3 a{0}, b{0};
+        uint16_t radiusQ = 0, halfHeightQ = 0;
+        friend bool operator==(const ShapeQ&, const ShapeQ&) = default;
+    };
+    inline constexpr uint8_t kShapeSphere = 0, kShapeCapsule = 1, kShapeBox = 2, kShapeCylinder = 3;
+    /// A capsule with `|b - a|` above this on an axis (q) holds no voxel: it keeps the exact test in range.
+    inline constexpr int64_t kMaxCapsuleAxisQ = int64_t{1} << 30;
+
+    /**
+     * @brief True if voxel `v` is in the shape: integers only, with the voxel centre c = 16 v + 8 (q).
+     * @details Sphere: InSphereQ. Capsule: the squared distance from c to the segment is at most
+     * radiusQ^2 (int64, the last compare in 128 bits). Box: a <= v < b per axis. Cylinder:
+     * (c.x - a.x)^2 + (c.z - a.z)^2 <= radiusQ^2 and |c.y - a.y| <= halfHeightQ. Unknown kind: false.
+     */
+    bool InShapeQ(const ShapeQ& shape, const glm::ivec3& voxel);
+    /// @brief Voxel box [min, max) holding every voxel of the shape, clipped to +-kMaxEditVoxel
+    /// (empty when the shape holds no voxel on some axis, or its kind is unknown).
+    void ShapeVoxelBounds(const ShapeQ& shape, glm::ivec3& min, glm::ivec3& max);
+    /// @brief The "may be carved" table of a carve of `power` (CarveSphereQ's rule): an id is
+    /// carvable when it is not Indestructible and `hardness * 16 <= power`. Without a library every
+    /// solid id is carvable. Entry 0 (air) is false.
+    std::array<bool, 256> CarvableIdsFor(const MaterialLibrary* materials, uint16_t power);
 
     /**
      * @brief Chunks an edit could not apply, appended by the edit functions of World.
@@ -432,6 +465,14 @@ export namespace vortex::voxel {
         /// that broke off). Returns the number of voxels changed (masked voxels already air do not count).
         uint32_t ClearMask(const glm::ivec3& origin, const VoxelMask& mask, std::vector<VoxelEdit>* removed = nullptr,
                            EditReport* report = nullptr, const ChunkClip* clip = nullptr);
+        /// @brief id = map[old] for every voxel of the shape (EditRegion order). The chunks it touches
+        /// are those of the shape's box (conservative). Returns the number of voxels changed.
+        uint32_t MapShapeQ(const ShapeQ& shape, const TurningMap& map, std::vector<VoxelEdit>* edits = nullptr,
+                           EditReport* report = nullptr, const ChunkClip* clip = nullptr);
+        /// @brief id = map[old] for every voxel `origin + p` whose mask bit p is set. Air is mapped
+        /// too (Knit turns air into a solid). Returns the number of voxels changed.
+        uint32_t MapMaskQ(const glm::ivec3& origin, const VoxelMask& mask, const TurningMap& map,
+                          std::vector<VoxelEdit>* edits = nullptr, EditReport* report = nullptr, const ChunkClip* clip = nullptr);
 
         /// @brief FillSphereQ(QuantizeSphere(centre, radius), ...): centre and radius in voxels.
         uint32_t FillSphere(const glm::vec3& centerVoxel, float radiusVoxels, uint8_t id, std::vector<VoxelEdit>* edits = nullptr);

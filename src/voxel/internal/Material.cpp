@@ -181,6 +181,8 @@ namespace vortex::voxel {
         ids.wattleDaub   = add("wattle_daub",  Srgb(222, 212, 186),   0.95f,  900.0f,  0.6f, 0.08f, MaterialFlag_Flammable);
         ids.soot         = add("soot",         Srgb(66, 60, 56),      0.95f, 2400.0f,  3.0f, 0.10f);
         ids.graniteDamp  = add("granite_damp", Srgb(62, 74, 66),      0.9f,  2700.0f,  7.5f, 0.14f);
+        // Conjured matter: light (a knit wall does not overload a floor), with stone's bonds; the basic blast does not carve it.
+        ids.knitIron     = add("knit_iron",    Srgb(92, 84, 112),     0.55f, 2000.0f,  7.0f, 0.10f, MaterialFlag_Conjured, 0.0f, 0.6f);
 
         // Bond strengths, kg/m^2: compression / shear / tension (docs/design/shred.md Part 4b,
         // "Material strengths"). A free column of height h holds while density x h <= C, a
@@ -231,6 +233,7 @@ namespace vortex::voxel {
         strength(ids.wattleDaub, 10000, 4000, 3000);
         strength(ids.soot, 100000, 40000, 15000);
         strength(ids.graniteDamp, 200000, 80000, 25000);
+        strength(ids.knitIron, 100000, 40000, 15000);
         for (const uint8_t soft : {ids.needles, ids.reed, ids.fern, ids.flowerYellow, ids.flowerViolet, ids.mushroom}) strength(soft, 10000, 5000, 5000);
         return ids;
     }

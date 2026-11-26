@@ -2,6 +2,7 @@ module;
 
 #include <glm/glm.hpp>
 
+#include <cstddef>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -23,6 +24,10 @@ export namespace vortex::sim {
         /// voxels are cleared like a Detach's; whoever draws shows them as particles, nobody
         /// makes a piece or a body of them.
         ClearMask = 6,
+        MapShape = 7,      ///< `map`, `shape`: id = map[old] for every voxel of the shape (magic.md "Apply")
+        /// `map`, `min` = origin, `mask`: id = map[old] for every masked voxel. `axis` is the run order of the
+        /// mask's encoding only, never which voxels change.
+        MapMask = 8,
     };
 
     /**
@@ -49,6 +54,9 @@ export namespace vortex::sim {
         voxel::VoxelMask mask;                 ///< Detach, ClearMask: voxels cleared, relative to `min`.
         /// Detach: initial velocity of the piece in m/s (the blast's push). Not used by ApplyOp.
         glm::vec3 velocity{0.0f};
+        uint8_t map = 0;                       ///< MapShape, MapMask: a voxel::TurningMapId (1..15).
+        voxel::ShapeQ shape;                   ///< MapShape: the shape.
+        uint8_t axis = 0;                      ///< MapMask: the run axis of its mask's encoding (0 x, 1 y, 2 z).
 
         static WorldOp Carve(const voxel::SphereQ& sphere, uint16_t power);
         static WorldOp Fill(const voxel::SphereQ& sphere, uint8_t id);
@@ -57,6 +65,11 @@ export namespace vortex::sim {
         static WorldOp Detach(const glm::ivec3& origin, voxel::VoxelMask mask, const glm::vec3& velocity, uint32_t netId = 0);
         /// @brief A ClearMask: the voxels `origin + p` of every set bit `p` become air.
         static WorldOp Clear(const glm::ivec3& origin, voxel::VoxelMask mask);
+        /// @brief A MapShape: every voxel of `shape` takes `map`'s new id.
+        static WorldOp Map(uint8_t map, const voxel::ShapeQ& shape);
+        /// @brief A MapMask: the voxels `origin + p` of every set bit `p` take `map`'s new id; `axis` is
+        /// voxel::ShortestRunAxis(mask).
+        static WorldOp MapMasked(uint8_t map, const glm::ivec3& origin, voxel::VoxelMask mask);
 
         /// @brief Voxel box [min, max) the operation can change (empty for an empty sphere / box).
         void Bounds(glm::ivec3& outMin, glm::ivec3& outMax) const;
@@ -87,12 +100,16 @@ export namespace vortex::sim {
     OpResult ApplyOp(voxel::World& world, const WorldOp& op, std::vector<voxel::VoxelEdit>* edits = nullptr,
                      const voxel::ChunkClip* clip = nullptr);
 
+    /// @brief Bytes the operation takes as an event on the wire, its kind byte included (kinds 1-6 as
+    /// net::WriteEvent writes them; MapShape and MapMask in the layout of magic.md "Wire values").
+    size_t OpWireBytes(const WorldOp& op);
+
     /// @brief The chunk box [minChunk, maxChunk] (inclusive) of `op.Bounds()`; false when the
     /// operation's box is empty.
     bool OpChunkRange(const WorldOp& op, glm::ivec3& minChunk, glm::ivec3& maxChunk);
-    /// @brief True if the operation can change a voxel of `chunk` (exact: the sphere, box and mask
-    /// tests World's edits use to decide whether they touch a chunk). A chunk it does not touch is
-    /// never changed by it, whatever its content.
+    /// @brief True if the operation can change a voxel of `chunk` (the sphere, box and mask tests
+    /// World's edits use to decide whether they touch a chunk: exact, except MapShape, which touches
+    /// every chunk of its box). A chunk it does not touch is never changed by it, whatever its content.
     bool OpTouchesChunk(const WorldOp& op, const glm::ivec3& chunk);
 
     /**

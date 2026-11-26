@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| State | **Out of date:** the owner replaced 4 spells on 2026-11-26 ([magic.md](../design/magic.md) "The sixteen spells" 9, 11, 12, 13); [mag-1] now builds Updraft, Dash, Punch and Barricade Wave. Rewrite cards 4, 5, 6, 10 and 11 (Siege Cannon, Shockwave; the Pierce operator of card 5 moves to [mag-3]) before starting |
+| State | Re-scoped on 2026-11-26 ("Re-scope" below wins over every card where they differ) |
 | Stage | `[mag-1]`: four spells in sim, offline and headless: Siege Cannon (breach), Barricade Wave (cover), Shockwave (knock off), Updraft (climb) |
 | Design | [magic.md](../design/magic.md) "Decision in brief", "The two axes as data", "The four operators (exact)" (Pierce, Burst, Plume's column), "The element verbs", "Conjured matter", "Players: zones, statuses and the movement rule", "Determinism and replication" ("Apply", "Determinism traps"), "Tests", "Headless flags and gates", "Stages" row `[mag-1]` |
 | Code read at | engine `bafca16`, game `0e27ea7` (before `[wp-4]`..`[mech-1]`: where a card builds on what those stages add, it names the symbol and says "read the built interface") |
@@ -12,6 +12,41 @@
 | Cards | 12 |
 | Effort | 6-9 d (e) |
 | Changes | wire: **no** (`kProtocolVersion` stays; the three op kinds are sim values only). Movement rule: **yes**, `sim::kPlayerRuleRevision` 1 -> 2 in card 9 only. `buildHash`: through `MaterialTableHash` only (card 3 adds `knit_iron`); `SpellTableHash` and `TurningTableHash` are computed here and join `buildHash` in `[mag-2]`. Gates: **G23** (`--siege-matrix`, card 11) |
+
+## Re-scope (2026-11-26, the owner's spell change)
+
+The owner made Pressure the movement element ([magic.md](../design/magic.md) "The sixteen spells" 9-12). This stage
+builds **Updraft (6), Dash (10, Pierce x Pressure), Punch (14, Burst x Pressure) and Barricade Wave (12)**. Where a card
+below names Siege Cannon or Shockwave, these rules replace it:
+
+1. **Dropped from this stage** (they move to [mag-3], with Shatter Spike): `WorldOpKind::CarveCapsule` (value 9 stays
+   free), `World::CarveCapsuleQ`, `WorldOp::Bore`, `CapsuleSite`, the Pierce operator and `SpellTable::boreCost`
+   (card 5 is not built), `Materials.BoreCostMatchesHardness`, `Pierce.*`, `CarveCapsule.*`.
+2. **Zone kinds** gain Shove 8 (`startTick` only: the horizontal push along the capsule's axis, its size from the
+   distance to the axis, `f = strength * max(0, R - len) / R`, plus `strength2 * (R - len) / R` up) and Rune 9
+   (reserved, no behaviour). **Decision 15 is replaced:** an Impulse pushes radially from its centre, or from the
+   nearest point of a capsule's axis (Dash); only Shove pushes along an axis (Punch).
+3. **The dash** (`PlayerState` gains `uint8_t dashLeft`, `int8_t dashDir[2]` in 1/127 units). `sim::StartDash(state,
+   aim)` sets `dashLeft = 18` and `dashDir` to the aim's horizontal direction, unless the state is rooted or pinned. The
+   caster's cast calls it (the offline script now; [mag-2]'s cast edge inside `StepPlayer`). While `dashLeft > 0`,
+   `StepPlayer`'s wish is `dashDir` x 26.7 m/s x `(16 - slowQ) / 16`; a move the physics call cuts to under half its
+   length ends the dash; on its last tick `push` gains 400 cm/s along `dashDir`.
+4. **Dash on the server** (`CastSpell`): the path trace sweeps the player's capsule in 0.125 m steps from the feet along
+   `dashDir`, at most 8 m, stopping before the first step whose capsule meets a solid voxel. It announces an Impulse
+   capsule along the traced path, r 1 m, at `T_z`, enemies, strength {600, 200} cm/s; bodies in it get impulses (at
+   most 8). No damage.
+5. **Punch on the server**: the fist point is the first solid voxel or enemy capsule within 2.5 m of the eye along the
+   aim at `T_run`, else the point 2.5 m out. At `T_z` (scheduled): `BlastAt` a sphere r 0.75 m, power 2.5 (40 in
+   sixteenths) at the fist point (the absorb rule applies); a Shove capsule from 0.5 m to 3 m out of the eye along the
+   aim, r 1 m, strength {1200, 300}, enemies; 25 damage to enemies in it; the dispel: `ZoneCancel{id, T_z}` for every
+   enemy zone that lasts (Updraft's Lift; Pin, Chill and Rune when they exist) whose centre lies within 2.5 m of the
+   fist point and that is live at `T_z`. Release and the Shatter flood wait for [mag-3].
+6. **Names:** `kDash = MakeSpell(Pierce, Pressure)` (10), `kPunch = MakeSpell(Burst, Pressure)` (14). Demos:
+   `--spell-demo updraft | dash | punch | barricade-wave`; `--siege-matrix` has the 4 rows. Lines: `Dash: X m in N
+   ticks`, `Punch: planks broken N, shoved H`.
+7. **No skeleton of stubs.** Card 1's stub bodies tagged with card numbers and its disabled tests would put workflow
+   references into the code (CLAUDE.md "No workflow artifacts"). Each part is built complete, with its tests enabled,
+   in the cards' order.
 
 ## Before you start
 

@@ -1735,23 +1735,22 @@ namespace vortex::voxel {
             if (a > radius) return -1;
             return a * a;
         }
+    }
 
-        /// Builds the per-material "may be carved" table of one carve.
-        std::array<bool, 256> CarvableIds(const MaterialLibrary* materials, uint16_t power) {
-            std::array<bool, 256> carvable{};
-            for (uint32_t id = 1; id < 256; ++id) {
-                if (!materials) {
-                    carvable[id] = true;
-                    continue;
-                }
-                const Material& m = materials->Get(kWorldPalette, static_cast<uint8_t>(id));
-                // hardness * 16 is exact in float (a power of two), and so is the conversion of
-                // a 16-bit integer: this compare has no rounding.
-                const bool tooHard = m.hardness * static_cast<float>(kPowerQuantaPerHardness) > static_cast<float>(power);
-                carvable[id] = (m.flags & MaterialFlag_Indestructible) == 0 && !tooHard;
+    std::array<bool, 256> CarvableIdsFor(const MaterialLibrary* materials, uint16_t power) {
+        std::array<bool, 256> carvable{};
+        for (uint32_t id = 1; id < 256; ++id) {
+            if (!materials) {
+                carvable[id] = true;
+                continue;
             }
-            return carvable;
+            const Material& m = materials->Get(kWorldPalette, static_cast<uint8_t>(id));
+            // hardness * 16 is exact in float (a power of two), and so is the conversion of
+            // a 16-bit integer: this compare has no rounding.
+            const bool tooHard = m.hardness * static_cast<float>(kPowerQuantaPerHardness) > static_cast<float>(power);
+            carvable[id] = (m.flags & MaterialFlag_Indestructible) == 0 && !tooHard;
         }
+        return carvable;
     }
 
     bool SphereTouchesBox(const SphereQ& s, const glm::ivec3& lo, const glm::ivec3& hi) {
@@ -1811,6 +1810,102 @@ namespace vortex::voxel {
         }
     }
 
+    namespace {
+        // The squares below stay under 2^62: a capsule's axis is at most kMaxCapsuleAxisQ per axis,
+        // and the voxel centre is first checked against the capsule's box.
+        __extension__ typedef __int128 Int128;
+
+        bool CapsuleTooLong(const ShapeQ& s) {
+            for (int a = 0; a < 3; ++a) {
+                const int64_t u = static_cast<int64_t>(s.b[a]) - s.a[a];
+                if (u > kMaxCapsuleAxisQ || -u > kMaxCapsuleAxisQ) return true;
+            }
+            return false;
+        }
+
+        bool InCapsuleQ(const ShapeQ& s, const glm::ivec3& v) {
+            if (CapsuleTooLong(s)) return false;
+            const int64_t r = s.radiusQ;
+            int64_t d[3], u[3];
+            for (int a = 0; a < 3; ++a) {
+                const int64_t c = kQ * static_cast<int64_t>(v[a]) + kQ / 2;
+                const int64_t lo = std::min<int64_t>(s.a[a], s.b[a]) - r;
+                const int64_t hi = std::max<int64_t>(s.a[a], s.b[a]) + r;
+                if (c < lo || c > hi) return false;
+                d[a] = c - s.a[a];
+                u[a] = static_cast<int64_t>(s.b[a]) - s.a[a];
+            }
+            const int64_t rr = r * r;
+            const int64_t dd = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            const int64_t uu = u[0] * u[0] + u[1] * u[1] + u[2] * u[2];
+            const int64_t t = d[0] * u[0] + d[1] * u[1] + d[2] * u[2];
+            if (uu == 0 || t <= 0) return dd <= rr;
+            if (t >= uu) {
+                int64_t ee = 0;
+                for (int a = 0; a < 3; ++a) ee += (d[a] - u[a]) * (d[a] - u[a]);
+                return ee <= rr;
+            }
+            // The squared distance to the segment is dd - t^2 / uu.
+            return static_cast<Int128>(dd) * uu - static_cast<Int128>(t) * t <= static_cast<Int128>(rr) * uu;
+        }
+
+        /// Voxels [min, max) whose centre 16 v + 8 lies in [loQ, hiQ], clipped to +-kMaxEditVoxel.
+        void QToVoxelRange(int64_t loQ, int64_t hiQ, int32_t& min, int32_t& max) {
+            int64_t lo = CeilDiv64(loQ - kQ / 2, kQ);
+            int64_t hi = FloorDiv64(hiQ - kQ / 2, kQ) + 1;
+            lo = std::clamp<int64_t>(lo, -kMaxEditVoxel, kMaxEditVoxel);
+            hi = std::clamp<int64_t>(hi, lo, kMaxEditVoxel);
+            min = static_cast<int32_t>(lo);
+            max = static_cast<int32_t>(hi);
+        }
+    }
+
+    bool InShapeQ(const ShapeQ& s, const glm::ivec3& v) {
+        switch (s.kind) {
+            case kShapeSphere: return InSphereQ(SphereQ{s.a, s.radiusQ}, v);
+            case kShapeCapsule: return InCapsuleQ(s, v);
+            case kShapeBox:
+                return v.x >= s.a.x && v.x < s.b.x && v.y >= s.a.y && v.y < s.b.y && v.z >= s.a.z && v.z < s.b.z;
+            case kShapeCylinder: {
+                const int64_t r = s.radiusQ;
+                const int64_t h = s.halfHeightQ;
+                const int64_t dx = kQ * static_cast<int64_t>(v.x) + kQ / 2 - s.a.x;
+                const int64_t dy = kQ * static_cast<int64_t>(v.y) + kQ / 2 - s.a.y;
+                const int64_t dz = kQ * static_cast<int64_t>(v.z) + kQ / 2 - s.a.z;
+                if (dx > r || -dx > r || dz > r || -dz > r || dy > h || -dy > h) return false;
+                return dx * dx + dz * dz <= r * r;
+            }
+            default: return false;
+        }
+    }
+
+    void ShapeVoxelBounds(const ShapeQ& s, glm::ivec3& min, glm::ivec3& max) {
+        switch (s.kind) {
+            case kShapeSphere:
+                SphereVoxelBounds(SphereQ{s.a, s.radiusQ}, min, max);
+                return;
+            case kShapeCapsule:
+                if (CapsuleTooLong(s)) break;
+                for (int a = 0; a < 3; ++a) {
+                    QToVoxelRange(std::min<int64_t>(s.a[a], s.b[a]) - s.radiusQ, std::max<int64_t>(s.a[a], s.b[a]) + s.radiusQ,
+                                  min[a], max[a]);
+                }
+                return;
+            case kShapeBox:
+                min = glm::clamp(s.a, glm::ivec3(-kMaxEditVoxel), glm::ivec3(kMaxEditVoxel));
+                max = glm::clamp(s.b, min, glm::ivec3(kMaxEditVoxel));
+                return;
+            case kShapeCylinder:
+                for (int a = 0; a < 3; ++a) {
+                    const int64_t extent = a == 1 ? s.halfHeightQ : s.radiusQ;
+                    QToVoxelRange(static_cast<int64_t>(s.a[a]) - extent, static_cast<int64_t>(s.a[a]) + extent, min[a], max[a]);
+                }
+                return;
+            default: break;
+        }
+        min = max = glm::ivec3(0);
+    }
+
     bool World::SetVoxel(const glm::ivec3& v, uint8_t id) {
         if (!IsChunkLoaded(VoxelToChunk(v))) return false;
         if (GetVoxel(v) == id) return true;
@@ -1839,7 +1934,7 @@ namespace vortex::voxel {
                                  const ChunkClip* clip) {
         glm::ivec3 mn, mx;
         SphereVoxelBounds(sphere, mn, mx);
-        const std::array<bool, 256> carvable = CarvableIds(m_Materials, power);
+        const std::array<bool, 256> carvable = CarvableIdsFor(m_Materials, power);
         return EditRegion(mn, mx, [&sphere, &carvable](const glm::ivec3& v, uint8_t oldId) {
             if (oldId == 0 || !carvable[oldId] || !InSphereQ(sphere, v)) return -1;
             return 0;
@@ -1887,6 +1982,38 @@ namespace vortex::voxel {
                 }
             return false;
         }, removed, report, clip, anyInRow);
+    }
+
+    uint32_t World::MapShapeQ(const ShapeQ& shape, const TurningMap& map, std::vector<VoxelEdit>* edits, EditReport* report,
+                              const ChunkClip* clip) {
+        glm::ivec3 mn, mx;
+        ShapeVoxelBounds(shape, mn, mx);
+        return EditRegion(mn, mx, [&shape, &map](const glm::ivec3& v, uint8_t oldId) {
+            return map[oldId] != oldId && InShapeQ(shape, v) ? static_cast<int>(map[oldId]) : -1;
+        }, [](const glm::ivec3&, const glm::ivec3&) { return true; }, edits, report, clip);
+    }
+
+    uint32_t World::MapMaskQ(const glm::ivec3& origin, const VoxelMask& mask, const TurningMap& map, std::vector<VoxelEdit>* edits,
+                             EditReport* report, const ChunkClip* clip) {
+        const glm::ivec3 size = mask.Size();
+        if (size.x <= 0 || size.y <= 0 || size.z <= 0) return 0;
+        for (int a = 0; a < 3; ++a) {
+            if (origin[a] < -kMaxEditVoxel || static_cast<int64_t>(origin[a]) + size[a] > kMaxEditVoxel) return 0;
+        }
+        const auto anyInRow = [&mask, origin](const glm::ivec3& first, int length) {
+            const glm::ivec3 p = first - origin;
+            const size_t i = mask.Index(p.x, p.y, p.z);
+            return mask.AnyInRange(i, i + static_cast<size_t>(length));
+        };
+        return EditRegion(origin, origin + size, [&mask, &map, origin](const glm::ivec3& v, uint8_t oldId) {
+            return map[oldId] != oldId && mask.Get(v - origin) ? static_cast<int>(map[oldId]) : -1;
+        }, [&anyInRow](const glm::ivec3& lo, const glm::ivec3& hi) {
+            for (int z = lo.z; z < hi.z; ++z)
+                for (int y = lo.y; y < hi.y; ++y) {
+                    if (anyInRow(glm::ivec3(lo.x, y, z), hi.x - lo.x)) return true;
+                }
+            return false;
+        }, edits, report, clip, anyInRow);
     }
 
     uint32_t World::FillSphere(const glm::vec3& center, float radius, uint8_t id, std::vector<VoxelEdit>* edits) {

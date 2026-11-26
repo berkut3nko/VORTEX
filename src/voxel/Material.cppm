@@ -19,6 +19,8 @@ export namespace vortex::voxel {
         MaterialFlag_Flammable      = 1u << 1,
         MaterialFlag_Liquid         = 1u << 2,   ///< Not a collider; shaded as an animated, reflecting surface.
         MaterialFlag_Foliage        = 1u << 3,   ///< Soft: no debris bodies, only particles.
+        /// Made by a spell (knit iron): the absorb rule, the caps and the piece rule read it; the editor hides it.
+        MaterialFlag_Conjured       = 1u << 4,
     };
 
     /**
@@ -124,6 +126,7 @@ export namespace vortex::voxel {
         uint8_t slate = 0, roofTile = 0, thatch = 0;   ///< roof covers (Tier 3), at an effective density
         uint8_t wattleDaub = 0;   ///< plastered wattle infill of timber frames (Tier 3)
         uint8_t soot = 0, graniteDamp = 0;   ///< weathering: ashlar blackened by smoke, granite stained by damp (their stone's strength)
+        uint8_t knitIron = 0;   ///< conjured matter (magic.md "Conjured matter"): Barricade Wave's walls
     };
 
     /// @brief Fills the world palette with a starter set of natural and building materials.

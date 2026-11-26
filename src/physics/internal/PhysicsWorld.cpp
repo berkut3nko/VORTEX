@@ -1237,7 +1237,8 @@ namespace vortex::physics {
         m_Impl->sim->freeCharacters.push_back(character.value & kCharacterIndexMask);
     }
 
-    void PhysicsWorld::UpdateCharacter(CharacterId character, float dt, const glm::vec3& desiredVelocity, float jumpSpeed) {
+    void PhysicsWorld::UpdateCharacter(CharacterId character, float dt, const glm::vec3& desiredVelocity, float jumpSpeed,
+                                       std::optional<float> vertical) {
         CharacterSlot* slot = m_Impl->FindCharacter(character);
         if (!slot || !(dt > 0.0f) || !IsFinite(dt)) return;
         Impl::Simulation& sim = *m_Impl->sim;
@@ -1261,13 +1262,17 @@ namespace vortex::physics {
             velocity = JPH::Vec3(0.0f, verticalSpeed, 0.0f);
         }
         velocity += gravity * dt;
+        const bool hasVertical = vertical.has_value() && IsFinite(*vertical);
+        if (hasVertical) velocity.SetY(std::max(velocity.GetY(), *vertical));
         velocity += JPH::Vec3(wanted.x, 0.0f, wanted.z);
         ch.SetLinearVelocity(velocity);
 
         JPH::CharacterVirtual::ExtendedUpdateSettings update;
         update.mWalkStairsStepUp = JPH::Vec3(0.0f, slot->stepHeight, 0.0f);
-        // Follow the ground down ledges the character could also climb, instead of hopping off them.
+        // Follow the ground down ledges the character could also climb, instead of hopping off them. Not while
+        // something lifts the character: the snap would pull it back onto the floor.
         update.mStickToFloorStepDown = JPH::Vec3(0.0f, -std::max(slot->stepHeight, 0.1f), 0.0f);
+        if (hasVertical && *vertical > 0.0f) update.mStickToFloorStepDown = JPH::Vec3::sZero();
 
         ch.ExtendedUpdate(dt, gravity, update, sim.system.GetDefaultBroadPhaseLayerFilter(kLayerCharacter),
                           sim.characterFilter, JPH::BodyFilter(), JPH::ShapeFilter(), sim.tempAllocator);

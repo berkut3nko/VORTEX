@@ -5,7 +5,9 @@ module;
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 module vortex.voxel;
@@ -121,5 +123,96 @@ namespace vortex::voxel {
         uint32_t n = 0;
         for (const uint8_t b : m_Bits) n += static_cast<uint32_t>(std::popcount(b));
         return n;
+    }
+
+    // --- mask run encoding -----------------------------------------------------------------------
+
+    namespace {
+        /// Calls `fn(x, y, z)` for every voxel of `size` with `axis` fastest and the other two in
+        /// x, y, z order (axis <= 2).
+        template <typename Fn>
+        void ForEachInRunOrder(const glm::ivec3& size, uint8_t axis, Fn&& fn) {
+            const int inner = axis;
+            const int mid = axis == 0 ? 1 : 0;
+            const int outer = axis == 2 ? 1 : 2;
+            glm::ivec3 p(0);
+            for (p[outer] = 0; p[outer] < size[outer]; ++p[outer])
+                for (p[mid] = 0; p[mid] < size[mid]; ++p[mid])
+                    for (p[inner] = 0; p[inner] < size[inner]; ++p[inner]) fn(p.x, p.y, p.z);
+        }
+
+        size_t Leb128Bytes(uint64_t n) {
+            size_t bytes = 1;
+            while (n >= 0x80u) {
+                n >>= 7;
+                ++bytes;
+            }
+            return bytes;
+        }
+
+        /// Calls `emit(run)` for every run of `mask` in the order of `axis` (axis <= 2).
+        template <typename Emit>
+        void EmitRuns(const VoxelMask& mask, uint8_t axis, Emit&& emit) {
+            bool value = false;
+            uint32_t run = 0;
+            ForEachInRunOrder(mask.Size(), axis, [&](int x, int y, int z) {
+                const bool bit = mask.Get(x, y, z);
+                if (bit != value) {
+                    emit(run);
+                    value = bit;
+                    run = 0;
+                }
+                ++run;
+            });
+            emit(run);
+        }
+    }
+
+    std::vector<uint32_t> MaskRuns(const VoxelMask& mask, uint8_t axis) {
+        std::vector<uint32_t> runs;
+        if (axis > 2) return runs;
+        EmitRuns(mask, axis, [&runs](uint32_t run) { runs.push_back(run); });
+        return runs;
+    }
+
+    bool MaskFromRuns(const glm::ivec3& size, uint8_t axis, std::span<const uint32_t> runs, VoxelMask& out) {
+        out = VoxelMask(size);
+        if (axis > 2 || size.x < 0 || size.y < 0 || size.z < 0) return false;
+        uint64_t sum = 0;
+        for (const uint32_t run : runs) sum += run;
+        if (sum != out.VoxelCount()) return false;
+        size_t at = 0;
+        uint64_t left = runs.empty() ? 0 : runs[0];
+        bool value = false;
+        ForEachInRunOrder(size, axis, [&](int x, int y, int z) {
+            while (left == 0) {
+                ++at;
+                left = runs[at];
+                value = !value;
+            }
+            if (value) out.Set(x, y, z, true);
+            --left;
+        });
+        return true;
+    }
+
+    size_t MaskRunBytes(const VoxelMask& mask, uint8_t axis) {
+        if (axis > 2) return 0;
+        size_t bytes = 0;
+        EmitRuns(mask, axis, [&bytes](uint32_t run) { bytes += Leb128Bytes(run); });
+        return bytes;
+    }
+
+    uint8_t ShortestRunAxis(const VoxelMask& mask) {
+        uint8_t best = 0;
+        size_t bestBytes = MaskRunBytes(mask, 0);
+        for (uint8_t axis = 1; axis <= 2; ++axis) {
+            const size_t bytes = MaskRunBytes(mask, axis);
+            if (bytes < bestBytes) {
+                best = axis;
+                bestBytes = bytes;
+            }
+        }
+        return best;
     }
 }

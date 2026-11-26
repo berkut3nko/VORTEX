@@ -16,18 +16,19 @@ for the symbol. The text before this rewrite, with its line numbers and measured
 | `src/voxel/Voxel.cppm` | Primary interface; re-exports every partition. A new partition must be added here. |
 | `Chunk.cppm` (header-only) | `Chunk`, `ChunkOccupancy`, index maths, `VoxelToChunk/Local`, `ChunkToVoxel`, `kDefaultVoxelSize`. |
 | `Store.cppm`, `internal/Store.cpp` | `ChunkStore`: slot pool, LIFO free list, dirty list, high-water mark. |
-| `World.cppm`, `internal/World.cpp` | Window, cells, grid encoding, load jobs, edits, raycast, change list, revisions. Quantised edits [net-2]: `SphereQ`, `QuantizeSphere`, `QuantizePower`, `InSphereQ`, `SphereVoxelBounds`, `EditReport`, `CarveSphereQ` / `FillSphereQ` / `SwapSphereQ` / `ClearMask`. Chunk sync calls [net-7a]: `ChunkClip`, `EncodeChunkAt`, `SetChunkEncoded`, `TakeLoadedChunks`, `TakeWindowSteps`; install modes [net-7b]. |
+| `World.cppm`, `internal/World.cpp` | Window, cells, grid encoding, load jobs, edits, raycast, change list, revisions. Quantised edits [net-2]: `SphereQ`, `QuantizeSphere`, `QuantizePower`, `InSphereQ`, `SphereVoxelBounds`, `EditReport`, `CarveSphereQ` / `FillSphereQ` / `SwapSphereQ` / `ClearMask`. Map edits [mag-1]: `ShapeQ` (sphere, capsule, box, y-cylinder), `InShapeQ`, `ShapeVoxelBounds`, `CarvableIdsFor`, `MapShapeQ` / `MapMaskQ`. Chunk sync calls [net-7a]: `ChunkClip`, `EncodeChunkAt`, `SetChunkEncoded`, `TakeLoadedChunks`, `TakeWindowSteps`; install modes [net-7b]. |
 | `Hash.cppm`, `internal/Hash.cpp` | `ChunkHash`, `UniformChunkHash`, `kAirChunkHash`, `WorldHashTerm`, `WorldHash`, `ChunkHashAt` (one chunk of a world in any cell state, the per-cell part of `WorldHash`; what a HashCheck compares [net-7b]), `HashMix64`, `MaterialTableHash` (what replicated decisions read of the world palette) and `kGeneratorGoldenHash` (a hash of the golden tables in `tests/core/HashTests.cpp`; both in `Hello::buildHash`) [net-3]. |
 | `Region.cppm`, `internal/Region.cpp` | Chunk RLE codec (`EncodeChunk` / `DecodeChunk`), `RegionStore` (`r.x.y.z.vxr`). |
 | `Generator.cppm`, `internal/Generator.cpp` | `IWorldGenerator`, `TerrainGenerator` (height tiles, caves, trees), `FlatGenerator`. |
-| `Volume.cppm`, `internal/Volume.cpp` | `VoxelVolume`: dense x/y/z array, the authoring form of objects. `VoxelMask`: one bit per voxel of a box, packed 8 per byte in `VoxelVolume::Index` order (the `Detach` / `ClearMask` mask); `AnyInRange` tests a run of bits, `SetRange` sets one (the wire decoder). |
+| `Volume.cppm`, `internal/Volume.cpp` | `VoxelVolume`: dense x/y/z array, the authoring form of objects. `VoxelMask`: one bit per voxel of a box, packed 8 per byte in `VoxelVolume::Index` order (the `Detach` / `ClearMask` mask); `AnyInRange` tests a run of bits, `SetRange` sets one (the wire decoder). The run encoding [mag-1]: `MaskRuns`, `MaskFromRuns`, `MaskRunBytes`, `ShortestRunAxis` (the run axis fastest, the other two in x, y, z order). |
 | `Model.cppm`, `internal/Model.cpp` | `VoxelModel`: volume + baked `ModelPart`s (one slot per non-empty 32^3 piece), `Revision()`. |
 | `Instances.cppm`, `internal/Instances.cpp` | `GpuInstance` (224 B), `GpuBvhNode` (32 B), `BuildBvh`. |
 | `Trace.cppm`, `internal/Trace.cpp` | `TraceScene`, `Trace` / `TraceWorld` / `TraceChunk`; `TraceKernel` includes `shared/trace.glsl`. |
 | `Collider.cppm`, `internal/Collider.cpp` | `BuildColliderBoxes`, `ComputeMassProperties`, `CollisionFilter`, `BuildChunkCollisionMesh`. |
 | `Connectivity.cppm`, `internal/Connectivity.cpp` | `LabelComponents`, `SplitComponents`, `ExtractFloatingIslands` (+ `IslandBoxScan`), `ProveFaceComponents` (the face flood [shred-1]; `FaceComponent`, `FloodLimits`, `FloodResult`, `kFloodHalfExtent`). |
 | `Structure.cppm`, `internal/Structure.cpp` | The cell graph [shred-4]: `GraphNode`, `GraphLink`, `ChunkGraph`, `BondVoxels`, `GraphMaterials` / `MakeGraphMaterials`, `BuildChunkGraph`, `NodeVoxels`, `TerrainGraphCache`, `SearchIslandsOnGraph` (+ `GraphSearchLimits`, `GraphSearchResult`), `kCellSize`, `kMaxCellNodes`. The load check [shred-4b] (shred.md Part 4b): `StrengthClass` / `StrengthClassOf`, `kNoCut`, `kCutAnchorBit`, `NeckLimits` / `MakeNeckLimits` / `VoxelSizeMicro`, `NeckCut`, `NeckNetwork` / `SolveNeckNetwork` (the rule on an abstract network, for tests), the `NeckCheck` phase inside the search. |
-| `Material.cppm`, `internal/Material.cpp` | `Material`, `GpuMaterial`, `MaterialLibrary` (palettes), `RegisterDefaultWorldMaterials`. |
+| `Material.cppm`, `internal/Material.cpp` | `Material`, `GpuMaterial`, `MaterialLibrary` (palettes), `RegisterDefaultWorldMaterials`. `MaterialFlag_Conjured` (bit 4) marks matter made by spells: `knit_iron` (id 44, after `granite_damp`) [mag-1]; the editor palette hides it. |
+| `Turning.cppm`, `internal/Turning.cpp` | The Turning table [mag-1] (magic.md "The Turning table"): `TurningMap` (new id = `map[old]`), `TurningMapId` (map numbers 1-15, wire values), `BuildTurningTable`, `WorldTurningTable`, `TurningTableHash`. Filled today: Knit (air -> knit), Unknit and Ablate (knit -> air); the other maps are the identity. |
 | `VoxFormat.cppm`, `internal/VoxFormat.cpp` | MagicaVoxel `.vox` read/write, `RegisterVoxPalette`. |
 | `MeshImport.cppm`, `internal/MeshImport.cpp` | `VoxelizeTriangles` (SAT), interior fill, glTF import through tinygltf. |
 | `internal/ThirdPartyImpl.cpp` | The one non-module TU with the tinygltf / stb implementations. |
@@ -332,6 +333,12 @@ again). Hashes never depend on the mode (`World.ContentInstallsPackHiddenChunksL
   order: the `VoxelEdit` order is what `sim::BuildDetachedPiece` and the particle sampling read, and two machines must
   agree on it. The float `CarveSphere` / `FillSphere` quantise first (`llround(x * 16)`, halves away from zero), so a
   sphere 1/32 voxel off a voxel centre can differ from a plain float test; whole and half voxel values are exact.
+- **Map edits** (`MapShapeQ`, `MapMaskQ`; `sim::WorldOpKind::MapShape` / `MapMask`) write `map[old]` and decide from
+  (voxel, old id, the shape or mask, the map) only. `MapShapeQ` reports and touches every chunk of its shape's box
+  (conservative: a skipped chunk there may hold no voxel of the shape); `MapMaskQ` uses `ClearMask`'s exact row test
+  but, unlike `ClearMask`, maps air too (Knit makes solid voxels from air, so the build ceiling can refuse it whole).
+  `InShapeQ` is int64 with the voxel centre checked against the shape's box first; the capsule's last compare is
+  128-bit, and a capsule longer than `kMaxCapsuleAxisQ` (2^30 q) on an axis holds no voxel.
 - `SphereQ::center` is an int32 in 1/16 voxel: +-2^27 voxels (13 400 km at 0.1 m). `QuantizeSphere` clamps there;
   every edit box is clipped to +-`kMaxEditVoxel` (2^30) voxels, `FillBox` included. `SphereVoxelBounds` is the
   per-axis box, up to one voxel larger than the tight bounds per side; the voxel test decides.

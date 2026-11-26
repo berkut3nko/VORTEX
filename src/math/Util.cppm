@@ -30,6 +30,16 @@ export namespace vortex::math {
     }
     constexpr bool IsPowerOfTwo(uint32_t v) { return v != 0 && (v & (v - 1)) == 0; }
 
+    /// @brief floor(sqrt(v)), exact for every uint64_t (the double estimate is corrected in integers).
+    inline uint64_t ISqrt64(uint64_t v) {
+        constexpr uint64_t kMaxRoot = 0xFFFFFFFFull;   // floor(sqrt(2^64 - 1)): its square fits
+        uint64_t r = static_cast<uint64_t>(std::sqrt(static_cast<double>(v)));
+        if (r > kMaxRoot) r = kMaxRoot;
+        while (r * r > v) --r;
+        while (r < kMaxRoot && (r + 1) * (r + 1) <= v) ++r;
+        return r;
+    }
+
     /**
      * @brief Rigid transform with uniform scale: the only kind of transform voxel objects use.
      * @details Uniform scale keeps voxels cubic, which ray marching and physics both rely on.

@@ -291,8 +291,11 @@ export namespace vortex::physics {
          * @brief Moves a character for one fixed step.
          * @param desiredVelocity Horizontal velocity the character wants (m/s); y is ignored.
          * @param jumpSpeed If > 0 and the character is on the ground, it takes off with this vertical speed.
+         * @param vertical If set (and finite), the vertical speed after gravity is at least this value (m/s): a lift
+         * or a kick. A positive value also turns off the floor snap for this step, so the character can leave the ground.
          */
-        void UpdateCharacter(CharacterId character, float dt, const glm::vec3& desiredVelocity, float jumpSpeed = 0.0f);
+        void UpdateCharacter(CharacterId character, float dt, const glm::vec3& desiredVelocity, float jumpSpeed = 0.0f,
+                             std::optional<float> vertical = std::nullopt);
         CharacterState GetCharacterState(CharacterId character) const;
         void SetCharacterPosition(CharacterId character, const glm::vec3& feetPosition);
         /**

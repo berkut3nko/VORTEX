@@ -22,7 +22,8 @@ measurements, is `docs/history/notes/scene-engine-2026-11-18.md`.
   `ListRubble`, `DespawnDebris`, `UpdateDebris`, `Damage`, `DestroyBelow`, `DestroyAbove`. No render data: the module
   imports nothing of `vortex.graphics`.
 - `src/sim/Sim.cppm` - primary unit of `vortex.sim`; re-exports `:simulation`, `:worldop`, `:blast`, `:region`,
-  `:player`, `:replication` (see `notes/net.md` for the last three and `:region`).
+  `:player`, `:replication` (see `notes/net.md` for the last three and `:region`), and `:spell`, `:propagate`, `:knit`
+  [mag-1]. `:simulation` imports `:worldop` (for `BlastSite`).
 - `src/sim/WorldOp.cppm`, `internal/WorldOp.cpp` - `WorldOpKind` (wire values), `WorldOp` + factories + `Bounds`,
   `OpResult`, `ApplyOp`, `BuildDetachedPiece`. Kinds 1-6, the last `ClearMask` (`WorldOp::Clear`: a blast's crumbs).
 - `src/sim/Blast.cppm`, `internal/Blast.cpp` - `BlastDesc`, `AppliedOp`, `BlastResult`, `BlastPush`, `Blast` (the
@@ -33,7 +34,19 @@ measurements, is `docs/history/notes/scene-engine-2026-11-18.md`.
   end of the constants the cast work budget (`CastWork`, `CastWorkOf`, `OpWork`, the weights) [net-3]. In Blast.cpp
   the search is `GraphSearch` (default) or `VoxelSearch` (the stage-1 reference), both returning a `Found`;
   `SearchIslands` emits the operations from either. The crumb threshold is `scene::MinPieceVoxels(world.VoxelSize())`
-  (8 at 0.125 m).
+  (8 at 0.125 m). Blasts are site-based [mag-1]: a `BlastSite` (in `Simulation.cppm`: the carve, the island and flood
+  boxes, the centre and radius in metres) from `SphereSite` (the sphere blast forwards to it, bit for bit) or
+  `ChunkSite` (a site check: no carve, radius 0); `BlastOptions::noCarve` skips step 1; `DeferredIslandSearch` keeps
+  the site. `AbsorbsBlast` / `BlastAt` are the absorb rule (an Ablate `MapShape`, then the sphere's site with
+  `noCarve`). With replication, an island that holds a `MaterialFlag_Conjured` id never asks `TakePieceSlot`.
+- `src/sim/Spell.cppm`, `internal/Spell.cpp` [mag-1] - `Form`, `Element`, `SpellId`, `ZoneKind` / `ZonePlace` /
+  `ZoneTarget`, `FormDef`, `ZoneDef`, `SpellDef`, `SpellTable`, `BuildSpellTable` (metres to voxels and q once, from
+  the float voxel size), `SpellTableHash` (`MixSpell` lists every field). Built: Updraft, Dash, Barricade Wave, Punch.
+- `src/sim/Propagate.cppm`, `internal/Propagate.cpp` [mag-1] - the operators' world (`OperatorWalls`, `WindowWalls`,
+  `VoxelCache`), `FaceAxesOf`, `BurstStrip`, `PlumeSingleColumn`, `BarricadeFill` (bands), `MapCellsOp`.
+- `src/sim/Knit.cppm`, `internal/Knit.cpp` [mag-1] - `KnitRegistry` (per-chunk sorted owner entries, the
+  `overlapped` bit, shape / box / mask expiries in (dueTick, owner) order, `MakeRoom`), `StructureCredit` (site checks
+  on their own work credit), `IsCollider`, the conjured caps.
 - `src/sim/Simulation.cppm` - `SimulationConfig`, `ServerConfig`, `DeferredIslandSearch`, `IslandSearchChecks`, the
   `Simulation` interface. Its doc comment is the contract (tick, phases, what is not stepped).
 - `src/sim/internal/Simulation.cpp` - `Resolve` (the config overrides), `Impl` (member order), `HeldWindowFocus`,
