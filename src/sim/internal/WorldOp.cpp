@@ -84,6 +84,14 @@ namespace vortex::sim {
         return op;
     }
 
+    WorldOp WorldOp::Bore(const voxel::ShapeQ& capsule, uint16_t power) {
+        WorldOp op;
+        op.kind = WorldOpKind::CarveCapsule;
+        op.shape = capsule;
+        op.power = power;
+        return op;
+    }
+
     void WorldOp::Bounds(glm::ivec3& outMin, glm::ivec3& outMax) const {
         switch (kind) {
             case WorldOpKind::CarveSphere:
@@ -102,6 +110,7 @@ namespace vortex::sim {
                 outMax = min + glm::max(mask.Size(), glm::ivec3(0));
                 return;
             case WorldOpKind::MapShape:
+            case WorldOpKind::CarveCapsule:
                 voxel::ShapeVoxelBounds(shape, outMin, outMax);
                 return;
         }
@@ -136,6 +145,9 @@ namespace vortex::sim {
                                                                   : world.MapMaskQ(op.min, op.mask, map, edits, &result.report, clip);
                 break;
             }
+            case WorldOpKind::CarveCapsule:
+                result.changed = world.CarveCapsuleQ(op.shape, op.power, edits, &result.report, clip);
+                break;
         }
         return result;
     }
@@ -161,7 +173,8 @@ namespace vortex::sim {
             case WorldOpKind::FillSphere:
             case WorldOpKind::SwapSphere: return voxel::SphereTouchesBox(op.sphere, lo, hi);
             case WorldOpKind::FillBox:
-            case WorldOpKind::MapShape: return true;
+            case WorldOpKind::MapShape:
+            case WorldOpKind::CarveCapsule: return true;
             case WorldOpKind::Detach:
             case WorldOpKind::ClearMask:
             case WorldOpKind::MapMask:
@@ -189,6 +202,7 @@ namespace vortex::sim {
                 return op.shape.kind < 4 ? kBytes[op.shape.kind] : 3;
             }
             case WorldOpKind::MapMask: return 21 + voxel::MaskRunBytes(op.mask, op.axis);
+            case WorldOpKind::CarveCapsule: return 29;   // kind, A and B (i32 x 3 each), radius u16, power u16
         }
         return 0;
     }

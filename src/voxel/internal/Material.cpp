@@ -183,6 +183,16 @@ namespace vortex::voxel {
         ids.graniteDamp  = add("granite_damp", Srgb(62, 74, 66),      0.9f,  2700.0f,  7.5f, 0.14f);
         // Conjured matter: light (a knit wall does not overload a floor), with stone's bonds; the basic blast does not carve it.
         ids.knitIron     = add("knit_iron",    Srgb(92, 84, 112),     0.55f, 2000.0f,  7.0f, 0.10f, MaterialFlag_Conjured, 0.0f, 0.6f);
+        // Frost: conjured ice and floe, then the rimed ids at half their base's hardness (multiples of 1/16, so the
+        // carve's compare stays exact).
+        constexpr uint32_t kIce = MaterialFlag_Conjured | MaterialFlag_Slick;
+        ids.ice          = add("ice",          Srgb(188, 228, 238),   0.10f,  900.0f,  1.0f, 0.04f, kIce);
+        ids.floe         = add("floe",         Srgb(164, 206, 236),   0.10f,  900.0f,  1.0f, 0.04f, kIce | MaterialFlag_Indestructible);
+        ids.knitIronRimed = add("knit_iron_rimed", Srgb(150, 148, 176), 0.50f, 2000.0f, 3.5f, 0.12f, MaterialFlag_Conjured, 0.0f, 0.5f);
+        ids.stoneRimed   = add("stone_rimed",  Srgb(168, 176, 184),   0.80f, 2600.0f,  1.5f, 0.14f);
+        ids.stoneDarkRimed = add("stone_dark_rimed", Srgb(124, 132, 146), 0.80f, 2800.0f, 2.0f, 0.14f);
+        ids.brickRimed   = add("brick_rimed",  Srgb(188, 140, 138),   0.80f, 1900.0f,  1.25f, 0.14f);
+        ids.ironRimed    = add("iron_rimed",   Srgb(184, 190, 202),   0.35f, 7800.0f,  4.0f, 0.06f, 0, 0.0f, 1.0f);
 
         // Bond strengths, kg/m^2: compression / shear / tension (docs/design/shred.md Part 4b,
         // "Material strengths"). A free column of height h holds while density x h <= C, a
@@ -234,6 +244,14 @@ namespace vortex::voxel {
         strength(ids.soot, 100000, 40000, 15000);
         strength(ids.graniteDamp, 200000, 80000, 25000);
         strength(ids.knitIron, 100000, 40000, 15000);
+        strength(ids.ice, 40000, 8000, 3000);
+        strength(ids.floe, 40000, 8000, 3000);
+        strength(ids.knitIronRimed, 100000, 40000, 15000);
+        // Rime is hardness only: the bonds stay the base's.
+        strength(ids.stoneRimed, 100000, 40000, 15000);
+        strength(ids.stoneDarkRimed, 150000, 60000, 20000);
+        strength(ids.brickRimed, 80000, 30000, 8000);
+        strength(ids.ironRimed, 1000000, 600000, 600000);
         for (const uint8_t soft : {ids.needles, ids.reed, ids.fern, ids.flowerYellow, ids.flowerViolet, ids.mushroom}) strength(soft, 10000, 5000, 5000);
         return ids;
     }

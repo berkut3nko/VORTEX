@@ -57,8 +57,19 @@ TEST(SpellTable, SizesHoldWithinOneVoxelAcrossVoxelSizes) {
         ExpectWithinAVoxel(Metres(punch.zone.farQ, vs), 3.0, vs, "the shove's end");
         ExpectWithinAVoxel(Metres(punch.dispelRadiusQ, vs), 2.5, vs, "the dispel radius");
         ExpectWithinAVoxel(Metres(t.ablateRadiusQ, vs), 0.25, vs, "the ablated patch");
+        const sim::SpellDef& spike = t.spells[sim::kShatterSpike];
+        const sim::SpellDef& freeze = t.spells[sim::kFlashFreeze];
+        const sim::SpellDef& climb = t.spells[sim::kPermafrostClimb];
+        ExpectWithinAVoxel(spike.pierceMaxSlices * static_cast<double>(vs), 3.0, vs, "the spike's slices");
+        ExpectWithinAVoxel(Metres(spike.rimeRadiusQ, vs), 0.75, vs, "the spike's Rime capsule");
+        ExpectWithinAVoxel(freeze.burstDiscRadius * static_cast<double>(vs), 3.0, vs, "Flash Freeze's disc");
+        ExpectWithinAVoxel(Metres(freeze.floeRadiusQ, vs), 3.0, vs, "the floe slab");
+        ExpectWithinAVoxel(climb.riseMax * static_cast<double>(vs), 6.0, vs, "Permafrost Climb's rise");
+        ExpectWithinAVoxel(Metres(punch.shatterRadiusQ, vs), 1.0, vs, "Punch's Shatter flood");
+        EXPECT_EQ(spike.pierceRadiusQ, 24) << "a bore's radius is counted in voxels";
         for (sim::SpellId id = 0; id < sim::kSpellCount; ++id) {
-            const bool built = id == sim::kUpdraft || id == sim::kDash || id == sim::kBarricadeWave || id == sim::kPunch;
+            const bool built = id == sim::kUpdraft || id == sim::kDash || id == sim::kBarricadeWave || id == sim::kPunch ||
+                               id == sim::kShatterSpike || id == sim::kFlashFreeze || id == sim::kPermafrostClimb;
             EXPECT_EQ(t.spells[id].built, built) << "spell " << int(id);
         }
     }
@@ -196,6 +207,30 @@ TEST(SpellTable, HashCoversEveryField) {
         {"maxBodies", [&S](sim::SpellTable& t) { ++S(t).maxBodies; }},
         {"maxBodyKickCmS", [&S](sim::SpellTable& t) { ++S(t).maxBodyKickCmS; }},
         {"dispelRadiusQ", [&S](sim::SpellTable& t) { ++S(t).dispelRadiusQ; }},
+        {"burstDiscRadius", [&S](sim::SpellTable& t) { ++S(t).burstDiscRadius; }},
+        {"plumeSeedRadius", [&S](sim::SpellTable& t) { ++S(t).plumeSeedRadius; }},
+        {"plumeRunPops", [&S](sim::SpellTable& t) { ++S(t).plumeRunPops; }},
+        {"plumeLateral", [&S](sim::SpellTable& t) { ++S(t).plumeLateral; }},
+        {"plumeVisitCap", [&S](sim::SpellTable& t) { ++S(t).plumeVisitCap; }},
+        {"supportReach", [&S](sim::SpellTable& t) { ++S(t).supportReach; }},
+        {"pierceRadiusQ", [&S](sim::SpellTable& t) { ++S(t).pierceRadiusQ; }},
+        {"piercePower", [&S](sim::SpellTable& t) { ++S(t).piercePower; }},
+        {"pierceBudget", [&S](sim::SpellTable& t) { ++S(t).pierceBudget; }},
+        {"pierceMaxSlices", [&S](sim::SpellTable& t) { ++S(t).pierceMaxSlices; }},
+        {"floeLifetimeTicks", [&S](sim::SpellTable& t) { ++S(t).floeLifetimeTicks; }},
+        {"floeRadiusQ", [&S](sim::SpellTable& t) { ++S(t).floeRadiusQ; }},
+        {"rimeRadiusQ", [&S](sim::SpellTable& t) { ++S(t).rimeRadiusQ; }},
+        {"rimeDepth", [&S](sim::SpellTable& t) { ++S(t).rimeDepth; }},
+        {"rimeLifetimeTicks", [&S](sim::SpellTable& t) { ++S(t).rimeLifetimeTicks; }},
+        {"shatterRadiusQ", [&S](sim::SpellTable& t) { ++S(t).shatterRadiusQ; }},
+        {"shatterDepth", [&S](sim::SpellTable& t) { ++S(t).shatterDepth; }},
+        {"shatterVisitCap", [&S](sim::SpellTable& t) { ++S(t).shatterVisitCap; }},
+        {"zone.halfHeightQ", [&S](sim::SpellTable& t) { ++S(t).zone.halfHeightQ; }},
+        {"zone2.kind", [&S](sim::SpellTable& t) { S(t).zone2.kind = sim::ZoneKind::Chill; }},
+        {"zone2.durationTicks", [&S](sim::SpellTable& t) { ++S(t).zone2.durationTicks; }},
+        {"release.kind", [&S](sim::SpellTable& t) { S(t).release.kind = sim::ZoneKind::None; }},
+        {"release.target", [&S](sim::SpellTable& t) { S(t).release.target = sim::ZoneTarget::Everyone; }},
+        {"boreCost", [](sim::SpellTable& t) { ++t.boreCost[3]; }},
     };
     for (const auto& [name, change] : changes) {
         sim::SpellTable copy = base;

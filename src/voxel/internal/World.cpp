@@ -1993,6 +1993,17 @@ namespace vortex::voxel {
         }, [](const glm::ivec3&, const glm::ivec3&) { return true; }, edits, report, clip);
     }
 
+    uint32_t World::CarveCapsuleQ(const ShapeQ& capsule, uint16_t power, std::vector<VoxelEdit>* removed, EditReport* report,
+                                  const ChunkClip* clip) {
+        if (capsule.kind != kShapeCapsule) return 0;
+        glm::ivec3 mn, mx;
+        ShapeVoxelBounds(capsule, mn, mx);
+        const std::array<bool, 256> carvable = CarvableIdsFor(m_Materials, power);
+        return EditRegion(mn, mx, [&capsule, &carvable](const glm::ivec3& v, uint8_t oldId) {
+            return oldId != 0 && carvable[oldId] && InShapeQ(capsule, v) ? 0 : -1;
+        }, [](const glm::ivec3&, const glm::ivec3&) { return true; }, removed, report, clip);
+    }
+
     uint32_t World::MapMaskQ(const glm::ivec3& origin, const VoxelMask& mask, const TurningMap& map, std::vector<VoxelEdit>* edits,
                              EditReport* report, const ChunkClip* clip) {
         const glm::ivec3 size = mask.Size();

@@ -104,6 +104,15 @@ namespace vortex::net {
             blast.ops.push_back(std::move(applied));
             presentations.push_back(std::move(blast));
             groupOpen = true;
+        } else if (op.kind == sim::WorldOpKind::CarveCapsule) {
+            // A bore opens a group of its own: its islands follow it, as a blast's do; it has no sphere to flash.
+            sim::BlastResult bore;
+            const double toMetres = static_cast<double>(world.VoxelSize()) / static_cast<double>(voxel::kQuantaPerVoxel);
+            bore.center = (glm::dvec3(op.shape.a) + glm::dvec3(op.shape.b)) * (0.5 * toMetres);
+            bore.islandsSearched = true;
+            bore.ops.push_back(std::move(applied));
+            presentations.push_back(std::move(bore));
+            groupOpen = true;
         } else if (op.kind == sim::WorldOpKind::Detach || op.kind == sim::WorldOpKind::ClearMask) {
             if (!groupOpen) {
                 sim::BlastResult late;

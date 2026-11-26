@@ -3,6 +3,7 @@ module;
 #include <glm/glm.hpp>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -10,6 +11,7 @@ module;
 
 module vortex.sim;
 
+import vortex.math;
 import vortex.voxel;
 
 namespace vortex::sim {
@@ -25,6 +27,30 @@ namespace vortex::sim {
 
         bool Before(const Zone& a, const Zone& b) {
             return a.startTick != b.startTick ? a.startTick < b.startTick : a.zoneId < b.zoneId;
+        }
+    }
+
+    bool ZoneShapeHolds(const Zone& zone, const glm::ivec3& feetQ) {
+        const voxel::ShapeQ& sh = zone.shape;
+        const glm::i64vec3 p(feetQ), a(sh.a), b(sh.b);
+        const int64_t R = sh.radiusQ;
+        const auto length = [](const glm::i64vec3& d) {
+            return static_cast<int64_t>(math::ISqrt64(static_cast<uint64_t>(d.x * d.x + d.y * d.y + d.z * d.z)));
+        };
+        switch (sh.kind) {
+        case voxel::kShapeSphere: return length(p - a) < R;
+        case voxel::kShapeCapsule: {
+            const glm::i64vec3 u = b - a;
+            const int64_t uu = u.x * u.x + u.y * u.y + u.z * u.z;
+            if (uu == 0) return length(p - a) < R;
+            const glm::i64vec3 d = p - a;
+            const int64_t t = std::clamp<int64_t>(d.x * u.x + d.y * u.y + d.z * u.z, 0, uu);
+            return length(p - (a + u * t / uu)) < R;
+        }
+        case voxel::kShapeCylinder:
+            return std::abs(p.y - a.y) <= int64_t{sh.halfHeightQ} && length(glm::i64vec3(p.x - a.x, 0, p.z - a.z)) <= R;
+        case voxel::kShapeBox: return glm::all(glm::greaterThanEqual(feetQ >> 4, sh.a)) && glm::all(glm::lessThan(feetQ >> 4, sh.b));
+        default: return false;
         }
     }
 

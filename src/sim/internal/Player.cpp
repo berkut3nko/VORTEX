@@ -66,6 +66,24 @@ namespace vortex::sim {
             return len > 0.0f ? d / len : glm::vec2(0.0f);
         }
 
+        /// The status counters of one step (magic.md step 8) and the status bits that follow from them.
+        void CountDownStatuses(PlayerState& state) {
+            const bool held = state.rootLeft > 0 || state.pinLeft > 0;
+            if (state.slowLeft > 0) --state.slowLeft;
+            if (state.slowLeft == 0) state.slowQ = 0;
+            if (state.rootLeft > 0) --state.rootLeft;
+            if (state.pinLeft > 0) --state.pinLeft;
+            if (state.ccGuardLeft > 0) --state.ccGuardLeft;
+            if (held && state.rootLeft == 0 && state.pinLeft == 0) state.ccGuardLeft = kControlGuardTicks;
+            uint8_t s = static_cast<uint8_t>(state.status & (PlayerStatus_Lifted | PlayerStatus_Fresh));
+            if (state.ccGuardLeft == 0) s = static_cast<uint8_t>(s & ~PlayerStatus_Fresh);
+            if (state.rootLeft > 0) s |= PlayerStatus_Rooted;
+            if (state.pinLeft > 0) s |= PlayerStatus_Pinned;
+            if (state.slowLeft > 0) s |= PlayerStatus_Chilled;
+            if (state.ccGuardLeft > 0) s |= PlayerStatus_Free;
+            state.status = s;
+        }
+
         /// Where a move from `from` to `to` along one axis may end: `to`, or the bound it passed
         /// (from inside the area), or `from` (a move that started outside and went further out).
         float AreaBound(float from, float to, float lo, float hi) {
@@ -193,6 +211,24 @@ namespace vortex::sim {
         return false;
     }
 
+    void StartFreshLife(PlayerState& state) {
+        state.status = static_cast<uint8_t>(state.status | PlayerStatus_Fresh | PlayerStatus_Free);
+        state.ccGuardLeft = kFreshGuardTicks;
+    }
+
+    glm::ivec3 GroundVoxel(const glm::vec3& feet, float voxelSize) {
+        const double q = 16.0 / static_cast<double>(voxelSize > 0.0f ? voxelSize : 0.125f);
+        const auto Q = [q](float v) { return static_cast<int64_t>(std::llround(std::clamp(static_cast<double>(v) * q, -1.0e15, 1.0e15))); };
+        const auto voxelOf = [](int64_t vq) { return static_cast<int32_t>(vq >= 0 ? vq / 16 : -((-vq + 15) / 16)); };
+        return {voxelOf(Q(feet.x)), voxelOf(Q(feet.y) - 8), voxelOf(Q(feet.z))};
+    }
+
+    bool OnSlickGround(const voxel::World* world, const glm::vec3& feet) {
+        if (world == nullptr || world->Materials() == nullptr) return false;
+        const uint8_t id = world->GetVoxel(GroundVoxel(feet, world->VoxelSize()));
+        return id != 0 && (world->Materials()->Get(voxel::kWorldPalette, id).flags & voxel::MaterialFlag_Slick) != 0;
+    }
+
     std::optional<float> ApplyZones(PlayerState& state, const PlayerZones& zones, const PlayerTuning& tuning, float gravity) {
         std::optional<float> vertical;
         if (zones.zones == nullptr || zones.zones->Size() == 0) return vertical;
@@ -216,7 +252,7 @@ namespace vortex::sim {
             switch (z.kind) {
             case ZoneKind::Impulse:
             case ZoneKind::Shove: {
-                if (zones.tick != z.startTick) return;
+                if (zones.tick != z.startTick || (state.status & PlayerStatus_Fresh) != 0) return;
                 if (z.kind == ZoneKind::Shove && sh.kind != voxel::kShapeCapsule) return;
                 glm::i64vec3 d;
                 if (sh.kind == voxel::kShapeSphere) {
@@ -266,6 +302,25 @@ namespace vortex::sim {
                 state.status = static_cast<uint8_t>(state.status | PlayerStatus_Lifted);
                 return;
             }
+            case ZoneKind::Chill: {
+                if (!ZoneShapeHolds(z, glm::ivec3(feet))) return;
+                state.slowLeft = std::max(state.slowLeft, static_cast<uint8_t>(std::clamp<int32_t>(z.strength[1], 0, 255)));
+                state.slowQ = std::max(state.slowQ, static_cast<uint8_t>(std::clamp<int32_t>(z.strength[0], 0, 16)));
+                return;
+            }
+            case ZoneKind::Root: {
+                if (zones.tick != z.startTick || state.ccGuardLeft > 0 || !ZoneShapeHolds(z, glm::ivec3(feet))) return;
+                state.rootLeft = std::max(state.rootLeft, static_cast<uint8_t>(std::min<uint32_t>(z.duration, 255)));
+                return;
+            }
+            case ZoneKind::Release: {
+                if (zones.tick != z.startTick || !ZoneShapeHolds(z, glm::ivec3(feet))) return;
+                const bool held = state.rootLeft > 0 || state.pinLeft > 0;
+                state.rootLeft = state.pinLeft = state.slowLeft = 0;
+                state.slowQ = 0;
+                if (held) state.ccGuardLeft = kControlGuardTicks;
+                return;
+            }
             default:
                 return;
             }
@@ -297,6 +352,8 @@ namespace vortex::sim {
             r.spell = TakeCast(state, PlayerButton_Cast, tuning);
             if (r.spell && zones.spellMoveAllowed) r.spellMove = StartSpellMove(state, input.spell, LookDirection(input.yaw, input.pitch));
         }
+        // A cast ends Fresh (the guard itself runs on).
+        if (r.cast || r.spell) state.status = static_cast<uint8_t>(state.status & ~PlayerStatus_Fresh);
 
         // The gate: chunks loaded and a collider built at least once (never "re-cooked yet").
         if (!terrain.HasCollider(PlayerBounds(state.position, tuning))) {
@@ -305,16 +362,38 @@ namespace vortex::sim {
             return r;
         }
         std::optional<float> vertical = ApplyZones(state, zones, tuning, -physics.Gravity().y);
+        const bool rooted = state.rootLeft > 0, pinned = state.pinLeft > 0;
+        // A root ends a dash where it stands.
+        if (rooted) state.dashLeft = 0;
+        const bool slick = !rooted && state.OnGround() && OnSlickGround(zones.world, state.position);
 
         const bool run = (input.buttons & PlayerButton_Run) != 0;
         glm::vec3 wish = MoveDirection(input) * (run ? tuning.runSpeed : tuning.walkSpeed);
+        if (rooted) wish = glm::vec3(0.0f);
+        else if (pinned) wish *= 6.0f / 16.0f;
+        if (state.slowLeft > 0 && state.slowQ > 0) wish *= static_cast<float>(16 - std::min<int>(state.slowQ, 16)) / 16.0f;
         const bool dashing = state.dashLeft > 0;
         const glm::vec2 dashDir = DashDirection(state);
         const float dashSpeed = static_cast<float>(kDashSpeedCmS) / 100.0f * static_cast<float>(16 - std::min<int>(state.slowQ, 16)) / 16.0f;
         if (dashing) wish = glm::vec3(dashDir.x, 0.0f, dashDir.y) * dashSpeed;
+        if (slick) wish *= static_cast<float>(kSlickWishNum) / 16.0f;
         // Only a push that is there changes the wish: a step without one stays bit for bit as before.
         if (state.push[0] != 0) wish.x += static_cast<float>(state.push[0]) / 100.0f;
         if (state.push[2] != 0) wish.z += static_cast<float>(state.push[2]) / 100.0f;
+        if (slick && dt > 0.0f) {
+            // Momentum carries: the velocity turns toward the wish by a bounded acceleration.
+            const glm::vec2 v(state.velocity.x, state.velocity.z);
+            glm::vec2 change = glm::vec2(wish.x, wish.z) - v;
+            const float most = static_cast<float>(kSlickAccelCmS2) / 100.0f * dt;
+            const float length = std::sqrt(change.x * change.x + change.y * change.y);
+            if (length > most) change *= most / length;
+            glm::vec2 next = v + change;
+            const float top = tuning.runSpeed * static_cast<float>(kSlickTopSpeedNum) / 16.0f;
+            const float speed = std::sqrt(next.x * next.x + next.y * next.y);
+            if (speed > top) next *= top / speed;
+            wish.x = next.x;
+            wish.z = next.y;
+        }
         const bool bounded = area.Bounded() && dt > 0.0f;
         if (bounded) {
             // The play area: the outward wish stops at its edge, before the character moves. A push cut
@@ -332,7 +411,7 @@ namespace vortex::sim {
             }
             state.push[1] = 0;
         }
-        const bool jump = (r.pressed & PlayerButton_Jump) != 0;
+        const bool jump = (r.pressed & PlayerButton_Jump) != 0 && !rooted && !pinned;
         r.jumped = jump && state.OnGround();
         const glm::vec3 before = state.position;
         physics.UpdateCharacter(character, dt, wish, jump ? tuning.jumpSpeed : 0.0f, vertical);
@@ -356,7 +435,8 @@ namespace vortex::sim {
         state.flags = cs.onGround ? PlayerFlag_OnGround : 0;
 
         if (cs.onGround) state.status = static_cast<uint8_t>(state.status & ~PlayerStatus_Lifted);
-        const uint16_t decay = cs.onGround ? tuning.pushDecayGround : tuning.pushDecayAir;
+        const uint16_t decay =
+            cs.onGround ? (OnSlickGround(zones.world, state.position) ? kPushDecaySlick : tuning.pushDecayGround) : tuning.pushDecayAir;
         state.push[0] = Decay(state.push[0], decay);
         state.push[2] = Decay(state.push[2], decay);
         if (dashing) {
@@ -372,6 +452,7 @@ namespace vortex::sim {
                 AddPush(state, 2, std::lround(dashDir.y * static_cast<float>(kDashEndPushCmS)));
             }
         }
+        CountDownStatuses(state);
         return r;
     }
 

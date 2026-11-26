@@ -3,6 +3,7 @@ module;
 #include <glm/glm.hpp>
 
 #include <algorithm>
+#include <cstdlib>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -90,8 +91,10 @@ namespace vortex::sim {
             dp = 1;
         }
         const int64_t Du = du0, Dv = dv0, Dp = dp;
+        const bool alongNormal = dp == 0 || (du0 == 1 && dv0 == 0 && Dot(params.aim, ax.u) == 0 && Dot(params.aim, ax.v) == 0);
         const int64_t width = static_cast<int64_t>(params.halfWidth) * Dp;
         const int64_t thickness = static_cast<int64_t>(params.halfThickness) * Dp;
+        const int64_t disc = params.discRadius;
 
         struct Offsets {
             int64_t du, dv, dn;
@@ -102,7 +105,13 @@ namespace vortex::sim {
         };
         const auto inBox = [&](const Offsets& o) { return Abs64(o.du) <= p && Abs64(o.dv) <= p && o.dn >= nMin && o.dn <= nMax; };
         const auto inFootprint = [&](const Offsets& o) {
+            if (disc > 0) return o.du * o.du + o.dv * o.dv <= disc * disc;
             return Abs64(o.du * Dv - o.dv * Du) <= width && Abs64(o.du * Du + o.dv * Dv) <= thickness;
+        };
+        const auto isFront = [&](int64_t du, int64_t dv) {
+            if (disc == 0) return true;
+            if (du * du + dv * dv <= (disc - 1) * (disc - 1)) return false;
+            return alongNormal || du * Du + dv * Dv >= 0;
         };
         // Outside the box every cell reads as a wall (support, never open).
         const auto read = [&](const glm::ivec3& c) { return inBox(offsets(c)) ? cache.Get(c) : VoxelCache::kWallId; };
@@ -137,6 +146,7 @@ namespace vortex::sim {
             const glm::ivec3 c(std::get<6>(key), std::get<5>(key), std::get<4>(key));
             out.cells.push_back(c);
             out.lateral.push_back(static_cast<int32_t>(Abs64(std::get<1>(key) * Dv - std::get<2>(key) * Du) / Dp));
+            out.front.push_back(isFront(std::get<1>(key), std::get<2>(key)) ? uint8_t{1} : uint8_t{0});
             for (const glm::ivec3& e : steps) {
                 const glm::ivec3 pc = c + e;
                 bool found = false;
@@ -203,6 +213,254 @@ namespace vortex::sim {
                 add(above, band);
             }
         }
+        return out;
+    }
+
+    PlumeResult PlumeOperator(const voxel::World& world, const OperatorWalls& walls, const PlumeParams& params) {
+        PlumeResult out;
+        VoxelCache cache(world, walls);
+        const glm::ivec3 s0 = params.seed;
+        const int32_t rf = params.seedRadius;
+        const int32_t side = static_cast<int32_t>(params.lateral) + rf + 1;
+        const glm::ivec3 boxMin = s0 - glm::ivec3(side, rf + 4, side);
+        const glm::ivec3 boxMax = s0 + glm::ivec3(side, static_cast<int32_t>(params.riseMax) + rf + 2, side);   // inclusive
+        const glm::ivec3 size = boxMax - boxMin + glm::ivec3(1);
+        std::vector<uint64_t> visited(static_cast<size_t>((int64_t{size.x} * size.y * size.z + 63) / 64), 0u);
+        const auto inBox = [&](const glm::ivec3& c) { return glm::all(glm::greaterThanEqual(c, boxMin)) && glm::all(glm::lessThanEqual(c, boxMax)); };
+        const auto bit = [&](const glm::ivec3& c) {
+            const glm::ivec3 l = c - boxMin;
+            return static_cast<size_t>((int64_t{l.z} * size.y + l.y) * size.x + l.x);
+        };
+        const auto seen = [&](const glm::ivec3& c) { const size_t i = bit(c); return ((visited[i >> 6] >> (i & 63)) & 1u) != 0; };
+        const auto mark = [&](const glm::ivec3& c) { const size_t i = bit(c); visited[i >> 6] |= uint64_t{1} << (i & 63); };
+        const auto open = [&](const glm::ivec3& c) {
+            ++out.visits;
+            return inBox(c) && IsOpenId(cache.Get(c));
+        };
+        const int32_t topY = s0.y + static_cast<int32_t>(params.riseMax);
+
+        using Key = std::tuple<int32_t, int64_t, int32_t, int32_t>;   // (-y, d2, z, x); y follows from -y
+        std::priority_queue<Key, std::vector<Key>, std::greater<Key>> heap;
+        const auto push = [&](const glm::ivec3& c) {
+            mark(c);
+            const int64_t dx = c.x - s0.x, dz = c.z - s0.z;
+            heap.emplace(-c.y, dx * dx + dz * dz, c.z, c.x);
+        };
+
+        // 1. Rise: each seed of the disc, in (a, b) order, while the cell above is open.
+        for (int32_t a = -rf; a <= rf; ++a)
+            for (int32_t b = -rf; b <= rf; ++b) {
+                if (a * a + b * b > rf * rf || out.visits >= params.visitCap) continue;
+                const glm::ivec3 seed = s0 + params.axes.u * a + params.axes.v * b;
+                if (!inBox(seed) || seen(seed) || !open(seed)) continue;
+                mark(seed);
+                glm::ivec3 c = seed;
+                bool ceiling = false;
+                while (true) {
+                    const glm::ivec3 up = c + glm::ivec3(0, 1, 0);
+                    if (up.y > seed.y + static_cast<int32_t>(params.riseMax)) break;
+                    if (!open(up)) {
+                        ceiling = true;
+                        break;
+                    }
+                    if (seen(up)) break;
+                    out.rise.push_back(c);
+                    mark(up);
+                    c = up;
+                }
+                out.front.push_back(c);
+                if (ceiling) {
+                    const int64_t dx = c.x - s0.x, dz = c.z - s0.z;
+                    heap.emplace(-c.y, dx * dx + dz * dz, c.z, c.x);
+                }
+            }
+
+        // 2. Spread under the ceilings: highest first, then nearest the hit column.
+        const std::array<glm::ivec3, 4> sides = {glm::ivec3(1, 0, 0), glm::ivec3(-1, 0, 0), glm::ivec3(0, 0, 1), glm::ivec3(0, 0, -1)};
+        uint32_t pops = 0;
+        const size_t columnTops = out.front.size();
+        while (!heap.empty() && pops < params.runPops && out.visits < params.visitCap) {
+            const Key key = heap.top();
+            heap.pop();
+            ++pops;
+            const glm::ivec3 c(std::get<3>(key), -std::get<0>(key), std::get<2>(key));
+            const glm::ivec3 up = c + glm::ivec3(0, 1, 0);
+            const bool upOpen = up.y <= topY && open(up);
+            if (upOpen && !seen(up)) {
+                push(up);
+                if (std::find(out.front.begin(), out.front.begin() + static_cast<std::ptrdiff_t>(columnTops), c) ==
+                    out.front.begin() + static_cast<std::ptrdiff_t>(columnTops))
+                    out.run.push_back(c);
+                continue;
+            }
+            const bool underCeiling = !upOpen && up.y <= topY;
+            const bool isTop = std::find(out.front.begin(), out.front.begin() + static_cast<std::ptrdiff_t>(columnTops), c) !=
+                               out.front.begin() + static_cast<std::ptrdiff_t>(columnTops);
+            if (!isTop) {
+                if (underCeiling) out.front.push_back(c);
+                else out.run.push_back(c);
+            }
+            for (const glm::ivec3& e : sides) {
+                const glm::ivec3 n = c + e;
+                if (std::abs(n.x - s0.x) > static_cast<int32_t>(params.lateral) || std::abs(n.z - s0.z) > static_cast<int32_t>(params.lateral))
+                    continue;
+                if (!inBox(n) || seen(n) || !open(n)) continue;
+                push(n);
+            }
+        }
+        out.chunksRead = cache.ChunksRead();
+        return out;
+    }
+
+    namespace {
+        int64_t Dot64(const glm::i64vec3& a, const glm::i64vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+
+        /// Half away from zero: (2n + d) / (2d) for n >= 0, (2n - d) / (2d) below.
+        int64_t RoundDiv(int64_t n, int64_t d) { return n >= 0 ? (2 * n + d) / (2 * d) : (2 * n - d) / (2 * d); }
+    }
+
+    PierceResult Pierce(const voxel::World& world, const OperatorWalls& walls, const PierceParams& params) {
+        PierceResult out;
+        VoxelCache cache(world, walls);
+        const int64_t r = std::min<int64_t>(params.radiusQ, 16 * kMaxPierceRadiusVoxels);
+        const glm::i64vec3 aim(params.aim);
+        const int64_t len = static_cast<int64_t>(math::ISqrt64(static_cast<uint64_t>(Dot64(aim, aim))));
+        out.capsule.kind = voxel::kShapeCapsule;
+        out.capsule.radiusQ = static_cast<uint16_t>(r);
+        out.budgetLeft = params.budget;
+        if (len == 0 || params.boreCost == nullptr) return out;
+        const glm::i64vec3 S(RoundDiv(16 * aim.x, len), RoundDiv(16 * aim.y, len), RoundDiv(16 * aim.z, len));
+        out.step = glm::ivec3(S);
+        const glm::i64vec3 hit(params.hitQ);
+        const glm::i64vec3 A = hit - (S * (2 * r)) / int64_t{16};
+        const std::array<bool, 256> carvable = voxel::CarvableIdsFor(params.materials, params.power);
+        const int64_t maxLen = int64_t{16} * kMaxBoreVoxels;
+        const int64_t stubSlices = (2 * r) / 16;
+
+        const auto capsule = [&](const glm::i64vec3& b) {
+            voxel::ShapeQ s;
+            s.kind = voxel::kShapeCapsule;
+            s.a = glm::ivec3(A);
+            s.b = glm::ivec3(b);
+            s.radiusQ = static_cast<uint16_t>(r);
+            return s;
+        };
+        const auto isLiquid = [&](uint8_t id) {
+            return params.materials != nullptr && (params.materials->Get(voxel::kWorldPalette, id).flags & voxel::MaterialFlag_Liquid) != 0;
+        };
+        std::vector<glm::ivec3> slice;
+        glm::i64vec3 prev = A;
+        for (int64_t k = 0;; ++k) {
+            const glm::i64vec3 b = A + S * k;
+            if (k > params.maxSlices) {
+                out.stop = PierceStop::Slices;
+                break;
+            }
+            if (k >= 1 && Dot64(b - hit, b - hit) > maxLen * maxLen) {
+                out.stop = PierceStop::Length;
+                break;
+            }
+            // The new voxels: in Capsule(A, B_k) and not in Capsule(A, B_{k-1}), over Capsule(B_{k-1}, B_k)'s box.
+            const voxel::ShapeQ now = capsule(b), before = capsule(prev);
+            voxel::ShapeQ cap = now;
+            cap.a = glm::ivec3(prev);
+            glm::ivec3 lo, hi;
+            voxel::ShapeVoxelBounds(cap, lo, hi);
+            ++out.scanned;
+            slice.clear();
+            for (int z = lo.z; z < hi.z; ++z)
+                for (int y = lo.y; y < hi.y; ++y)
+                    for (int x = lo.x; x < hi.x; ++x) {
+                        const glm::ivec3 v(x, y, z);
+                        if (!voxel::InShapeQ(now, v) || (k > 0 && voxel::InShapeQ(before, v))) continue;
+                        slice.push_back(v);
+                    }
+            if (out.visits + slice.size() > kPierceVisitCap) {
+                out.stop = PierceStop::VisitCap;
+                break;
+            }
+            uint64_t cost = 0;
+            uint32_t solid = 0;
+            bool stop = false;
+            for (const glm::ivec3& v : slice) {
+                const uint8_t id = cache.Get(v);
+                if (id == VoxelCache::kWallId) {
+                    out.stop = PierceStop::Wall;
+                    stop = true;
+                    break;
+                }
+                if (id == 0 || isLiquid(id)) continue;
+                if (!carvable[id] || (*params.boreCost)[id] == kBoreStop) {
+                    out.stop = PierceStop::TooHard;
+                    stop = true;
+                    break;
+                }
+                cost += (*params.boreCost)[id];
+                ++solid;
+            }
+            if (stop) break;
+            if (cost > out.budgetLeft) {
+                out.stop = PierceStop::Budget;
+                break;
+            }
+            out.budgetLeft -= static_cast<uint32_t>(cost);
+            out.visits += static_cast<uint32_t>(slice.size());
+            out.paidVoxels += solid;
+            if (k <= stubSlices) out.frontVoxels += static_cast<uint32_t>(slice.size());
+            if (params.paidOut != nullptr)
+                for (const glm::ivec3& v : slice) {
+                    const uint8_t id = cache.Get(v);
+                    if (id != 0 && !isLiquid(id)) params.paidOut->push_back(v);
+                }
+            out.bored = true;
+            out.slices = static_cast<uint32_t>(k);
+            out.capsule = now;
+            prev = b;
+        }
+        out.chunksRead = cache.ChunksRead();
+        return out;
+    }
+
+    ShatterResult ShatterFlood(const voxel::World& world, const OperatorWalls& walls, const voxel::SphereQ& sphere, uint8_t maxDepth,
+                               uint32_t visitCap) {
+        ShatterResult out;
+        VoxelCache cache(world, walls);
+        const voxel::TurningMap& shatter = voxel::WorldTurningTable().maps[voxel::Map_Shatter];
+        const auto shatterable = [&](uint8_t id) { return id != VoxelCache::kWallId && shatter[id] != id; };
+        const std::array<glm::ivec3, 6> faces = {glm::ivec3(1, 0, 0), glm::ivec3(-1, 0, 0), glm::ivec3(0, 1, 0),
+                                                 glm::ivec3(0, -1, 0), glm::ivec3(0, 0, 1), glm::ivec3(0, 0, -1)};
+        using Key = std::tuple<int32_t, int32_t, int32_t, int32_t>;   // (depth, z, y, x)
+        std::priority_queue<Key, std::vector<Key>, std::greater<Key>> heap;
+        std::set<std::tuple<int32_t, int32_t, int32_t>> seen;
+        glm::ivec3 lo, hi;
+        voxel::SphereVoxelBounds(sphere, lo, hi);
+        for (int z = lo.z; z < hi.z; ++z)
+            for (int y = lo.y; y < hi.y; ++y)
+                for (int x = lo.x; x < hi.x; ++x) {
+                    const glm::ivec3 v(x, y, z);
+                    if (!voxel::InSphereQ(sphere, v) || !shatterable(cache.Get(v))) continue;
+                    bool exposed = false;
+                    for (const glm::ivec3& f : faces) exposed = exposed || cache.Get(v + f) == 0;
+                    if (!exposed) continue;
+                    seen.emplace(x, y, z);
+                    heap.emplace(0, z, y, x);
+                }
+        while (!heap.empty() && out.visits < visitCap) {
+            const auto [depth, z, y, x] = heap.top();
+            heap.pop();
+            ++out.visits;
+            const glm::ivec3 v(x, y, z);
+            out.cells.push_back(v);
+            if (depth + 1 >= maxDepth) continue;
+            for (const glm::ivec3& f : faces) {
+                const glm::ivec3 n = v + f;
+                ++out.visits;
+                if (!voxel::InSphereQ(sphere, n) || seen.contains({n.x, n.y, n.z}) || !shatterable(cache.Get(n))) continue;
+                seen.emplace(n.x, n.y, n.z);
+                heap.emplace(depth + 1, n.z, n.y, n.x);
+            }
+        }
+        out.chunksRead = cache.ChunksRead();
         return out;
     }
 

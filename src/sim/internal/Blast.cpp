@@ -659,6 +659,25 @@ namespace vortex::sim {
         return site;
     }
 
+    BlastSite CapsuleSite(const voxel::World& world, const voxel::ShapeQ& capsule, uint16_t power, const glm::ivec3& hitQ) {
+        BlastSite site;
+        site.carve = WorldOp::Bore(capsule, power);
+        voxel::ShapeVoxelBounds(capsule, site.islandMin, site.islandMax);
+        site.islandMin -= glm::ivec3(kIslandSearchMargin);
+        site.islandMax += glm::ivec3(kIslandSearchMargin);
+        glm::ivec3 middle;
+        for (int a = 0; a < 3; ++a) {
+            const int64_t sum = static_cast<int64_t>(hitQ[a]) + capsule.b[a], den = 2 * voxel::kQuantaPerVoxel;
+            middle[a] = static_cast<int32_t>(sum / den - ((sum % den != 0) && sum < 0 ? 1 : 0));
+        }
+        site.floodMin = middle - glm::ivec3(voxel::kFloodHalfExtent);
+        site.floodMax = middle + glm::ivec3(voxel::kFloodHalfExtent);
+        const glm::dvec3 mid = (glm::dvec3(capsule.a) + glm::dvec3(capsule.b)) * 0.5;
+        site.center = mid * (static_cast<double>(world.VoxelSize()) / static_cast<double>(voxel::kQuantaPerVoxel));
+        site.radius = 0.0f;
+        return site;
+    }
+
     BlastResult Blast(Simulation& simulation, const voxel::SphereQ& sphere, uint16_t power) {
         return Blast(simulation, SphereSite(simulation.World(), sphere, power));
     }
@@ -898,8 +917,14 @@ namespace vortex::sim {
                         waiting.push_back(chunk);
                         continue;
                     }
-                    carve.result.changed +=
-                        world.CarveSphereQInChunk(carve.op.sphere, carve.op.power, chunk, &carve.edits, &carve.result.report);
+                    if (carve.op.kind == WorldOpKind::CarveCapsule) {
+                        // A one-chunk clip: the bore's decisions in its own order, nothing outside the chunk.
+                        const voxel::ChunkClip clip = voxel::ChunkClip::One(chunk);
+                        carve.result.changed += world.CarveCapsuleQ(carve.op.shape, carve.op.power, &carve.edits, &carve.result.report, &clip);
+                    } else {
+                        carve.result.changed +=
+                            world.CarveSphereQInChunk(carve.op.sphere, carve.op.power, chunk, &carve.edits, &carve.result.report);
+                    }
                     result.carveReplayChunks.push_back(chunk);
                 }
                 if (!result.carveReplayChunks.empty()) {
@@ -948,7 +973,7 @@ namespace vortex::sim {
 
         for (const AppliedOp& applied : blast.ops) {
             const std::vector<voxel::VoxelEdit>& removed = applied.edits;
-            if (applied.op.kind == WorldOpKind::CarveSphere) {
+            if (applied.op.kind == WorldOpKind::CarveSphere || applied.op.kind == WorldOpKind::CarveCapsule) {
                 // Debris for a bounded sample of the removed voxels, in their material's colour.
                 const size_t stride = std::max<size_t>(1, (removed.size() + kMaxBursts - 1) / kMaxBursts);
                 size_t burst = 0;

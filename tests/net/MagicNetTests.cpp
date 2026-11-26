@@ -397,9 +397,9 @@ TEST(Magic, AttuneOnlyWhileDeadOrBeforeSpawn) {
     const uint8_t slotA = a.client->Slot();
     ASSERT_FALSE(y.server.Fighter(slotA).spawned) << "alone in the warmup: not spawned yet";
     constexpr uint8_t kMetal = static_cast<uint8_t>(sim::Element::Metal), kPressure = static_cast<uint8_t>(sim::Element::Pressure),
-                      kFrost = static_cast<uint8_t>(sim::Element::Frost);
+                      kThermal = static_cast<uint8_t>(sim::Element::Thermal);
     a.client->SendAttune(kPressure, kMetal);
-    a.client->SendAttune(kFrost, kMetal);                    // Frost has no built spell: ignored, the first stays
+    a.client->SendAttune(kThermal, kMetal);                  // Thermal has no built spell: ignored, the first stays
     y.Passes(10);
     EXPECT_EQ(y.server.Stats().attunes, 1u);
     EXPECT_EQ(y.server.Stats().attunesRefused, 1u);

@@ -6,6 +6,8 @@
 
 #include <glm/glm.hpp>
 
+#include <array>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <random>
@@ -50,20 +52,37 @@ TEST(TurningTable, NeverNameBedrockAndIdentityElsewhere) {
     const WorldMaterials ids = RegisterDefaultWorldMaterials(library);
     const TurningTable table = BuildTurningTable(ids);
     ASSERT_NE(ids.knitIron, 0);
+    // Every row each map names (magic.md "The Turning table"); Heat, Cool, Slag, Set, Pitch, Ignite and Douse name ids
+    // that are not built yet and stay the identity.
+    const std::vector<std::pair<uint8_t, uint8_t>> rimed = {{ids.stone, ids.stoneRimed},
+                                                            {ids.stoneDark, ids.stoneDarkRimed},
+                                                            {ids.brick, ids.brickRimed},
+                                                            {ids.iron, ids.ironRimed},
+                                                            {ids.knitIron, ids.knitIronRimed}};
+    std::array<std::vector<std::pair<uint8_t, uint8_t>>, kTurningMapCount> rows;
+    rows[Map_Knit] = {{0, ids.knitIron}};
+    rows[Map_Ablate] = {{ids.knitIron, 0}};
+    rows[Map_Unknit] = {{ids.knitIron, 0}, {ids.knitIronRimed, 0}, {ids.ice, 0}, {ids.floe, ids.water}};
+    for (const auto& [base, frosted] : rimed) {
+        rows[Map_Rime].push_back({base, frosted});
+        rows[Map_Thaw].push_back({frosted, base});
+        rows[Map_Shatter].push_back({frosted, 0});
+    }
+    rows[Map_Shatter].push_back({ids.ice, 0});
+    rows[Map_Shatter].push_back({ids.floe, ids.water});
+    rows[Map_Freeze] = {{0, ids.ice}, {ids.water, ids.floe}};
+    rows[Map_FreezeWater] = {{ids.water, ids.floe}};
     for (uint32_t m = 0; m < kTurningMapCount; ++m) {
         const TurningMap& map = table.maps[m];
         EXPECT_EQ(map[ids.bedrock], ids.bedrock) << "map " << m;
         for (uint32_t id = 0; id < 256; ++id) {
-            bool named = false;
-            if (m == Map_Knit) named = id == 0;
-            if (m == Map_Unknit || m == Map_Ablate) named = id == ids.knitIron;
-            if (named) EXPECT_NE(map[id], id) << "map " << m << " id " << id;
+            int to = -1;
+            for (const auto& [from, into] : rows[m])
+                if (from == id) to = into;
+            if (to >= 0) EXPECT_EQ(map[id], to) << "map " << m << " id " << id;
             else EXPECT_EQ(map[id], id) << "map " << m << " id " << id;
         }
     }
-    EXPECT_EQ(table.maps[Map_Knit][0], ids.knitIron);
-    EXPECT_EQ(table.maps[Map_Unknit][ids.knitIron], 0);
-    EXPECT_EQ(table.maps[Map_Ablate][ids.knitIron], 0);
     // The process-wide table is the default palette's.
     EXPECT_EQ(WorldTurningTable().maps, table.maps);
 }
@@ -94,10 +113,38 @@ TEST(Materials, KnitIronIsConjuredAndStoneStrong) {
     EXPECT_EQ(m.strength[0], 100000u);
     EXPECT_EQ(m.strength[1], 40000u);
     EXPECT_EQ(m.strength[2], 15000u);
-    // No other material of the palette is conjured.
+    // No other material of the palette is conjured but Frost's ice, floe and rimed knit.
     for (uint32_t id = 1; id < 256; ++id) {
-        if (id == ids.knitIron) continue;
+        if (id == ids.knitIron || id == ids.ice || id == ids.floe || id == ids.knitIronRimed) continue;
         EXPECT_EQ(library.Get(kWorldPalette, static_cast<uint8_t>(id)).flags & MaterialFlag_Conjured, 0u) << id;
+    }
+}
+
+TEST(Materials, FrostIdsAreAppendedWithHalfTheirBasesHardness) {
+    MaterialLibrary library;
+    const WorldMaterials ids = RegisterDefaultWorldMaterials(library);
+    // Appended after knit iron, in magic.md's order (slag waits for its stage): no id is renumbered.
+    EXPECT_EQ(ids.ice, 45);
+    EXPECT_EQ(ids.floe, 46);
+    EXPECT_EQ(ids.knitIronRimed, 47);
+    EXPECT_EQ(ids.stoneRimed, 48);
+    EXPECT_EQ(ids.stoneDarkRimed, 49);
+    EXPECT_EQ(ids.brickRimed, 50);
+    EXPECT_EQ(ids.ironRimed, 51);
+    const auto M = [&library](uint8_t id) -> const Material& { return library.Get(kWorldPalette, id); };
+    EXPECT_EQ(M(ids.ice).flags, static_cast<uint32_t>(MaterialFlag_Conjured | MaterialFlag_Slick));
+    EXPECT_EQ(M(ids.floe).flags, static_cast<uint32_t>(MaterialFlag_Conjured | MaterialFlag_Slick | MaterialFlag_Indestructible));
+    for (const auto& [base, frosted] : {std::pair{ids.stone, ids.stoneRimed}, std::pair{ids.stoneDark, ids.stoneDarkRimed},
+                                        std::pair{ids.brick, ids.brickRimed}, std::pair{ids.iron, ids.ironRimed},
+                                        std::pair{ids.knitIron, ids.knitIronRimed}}) {
+        EXPECT_EQ(M(frosted).hardness * 2.0f, M(base).hardness) << library.Name(kWorldPalette, frosted);
+        EXPECT_EQ(M(frosted).hardness * 16.0f, std::floor(M(frosted).hardness * 16.0f)) << "a multiple of 1/16";
+        for (int i = 0; i < 3; ++i) EXPECT_EQ(M(frosted).strength[i], M(base).strength[i]) << "rime is hardness only";
+    }
+    // Only ice and floe are slick.
+    for (uint32_t id = 1; id < 256; ++id) {
+        if (id == ids.ice || id == ids.floe) continue;
+        EXPECT_EQ(M(static_cast<uint8_t>(id)).flags & MaterialFlag_Slick, 0u) << id;
     }
 }
 

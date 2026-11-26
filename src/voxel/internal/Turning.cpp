@@ -1,6 +1,7 @@
 module;
 
 #include <cstdint>
+#include <utility>
 
 module vortex.voxel;
 
@@ -13,8 +14,30 @@ namespace vortex::voxel {
         }
         // Maps without an entry here stay the identity until the ids they name exist.
         table.maps[Map_Knit][0] = ids.knitIron;
-        table.maps[Map_Unknit][ids.knitIron] = 0;
         table.maps[Map_Ablate][ids.knitIron] = 0;
+        // Every conjuring's expiry: knit (plain or rimed) and ice go, floe turns back into water.
+        TurningMap& unknit = table.maps[Map_Unknit];
+        unknit[ids.knitIron] = 0;
+        unknit[ids.knitIronRimed] = 0;
+        unknit[ids.ice] = 0;
+        unknit[ids.floe] = ids.water;
+        // Rime and its Thaw: each rimeable id and its rimed twin; Shatter breaks every rimed id.
+        const std::pair<uint8_t, uint8_t> rimed[] = {{ids.stone, ids.stoneRimed},
+                                                     {ids.stoneDark, ids.stoneDarkRimed},
+                                                     {ids.brick, ids.brickRimed},
+                                                     {ids.iron, ids.ironRimed},
+                                                     {ids.knitIron, ids.knitIronRimed}};
+        for (const auto& [base, frosted] : rimed) {
+            table.maps[Map_Rime][base] = frosted;
+            table.maps[Map_Thaw][frosted] = base;
+            table.maps[Map_Shatter][frosted] = 0;
+        }
+        // Freeze: air into ice and water into floe; FreezeWater leaves the air alone.
+        table.maps[Map_Freeze][0] = ids.ice;
+        table.maps[Map_Freeze][ids.water] = ids.floe;
+        table.maps[Map_FreezeWater][ids.water] = ids.floe;
+        table.maps[Map_Shatter][ids.ice] = 0;
+        table.maps[Map_Shatter][ids.floe] = ids.water;
         return table;
     }
 

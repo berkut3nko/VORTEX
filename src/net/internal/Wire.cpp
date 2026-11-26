@@ -294,6 +294,17 @@ namespace vortex::net {
         }
     }
 
+    namespace {
+        bool ValidCapsule(const voxel::ShapeQ& shape) {
+            if (shape.radiusQ > kMaxCapsuleRadiusQ) return false;
+            const glm::i64vec3 d = glm::i64vec3(shape.b) - glm::i64vec3(shape.a);
+            const int64_t max = kMaxCapsuleLengthQ;
+            for (int a = 0; a < 3; ++a)
+                if (d[a] > max || d[a] < -max) return false;
+            return d.x * d.x + d.y * d.y + d.z * d.z <= max * max;
+        }
+    }
+
     bool ReadShape(ByteReader& in, voxel::ShapeQ& shape) {
         shape = voxel::ShapeQ{};
         shape.kind = in.U8();
@@ -306,12 +317,7 @@ namespace vortex::net {
                 shape.a = ReadIvec3(in);
                 shape.b = ReadIvec3(in);
                 shape.radiusQ = in.U16();
-                if (in.Failed() || shape.radiusQ > kMaxCapsuleRadiusQ) return false;
-                const glm::i64vec3 d = glm::i64vec3(shape.b) - glm::i64vec3(shape.a);
-                const int64_t max = kMaxCapsuleLengthQ;
-                for (int a = 0; a < 3; ++a)
-                    if (d[a] > max || d[a] < -max) return false;
-                return d.x * d.x + d.y * d.y + d.z * d.z <= max * max;
+                return !in.Failed() && ValidCapsule(shape);
             }
             case voxel::kShapeBox: {
                 shape.a = ReadIvec3(in);
@@ -413,6 +419,13 @@ namespace vortex::net {
                     WriteAxisRuns(out, op.mask, op.axis);
                     break;
                 }
+                case sim::WorldOpKind::CarveCapsule:
+                    // A capsule without its shape byte: A, B (q), radius, then the power.
+                    WriteIvec3(out, op.shape.a);
+                    WriteIvec3(out, op.shape.b);
+                    out.U16(op.shape.radiusQ);
+                    out.U16(op.power);
+                    break;
             }
         }
 
@@ -468,6 +481,14 @@ namespace vortex::net {
                     size.z = in.U16();
                     if (in.Failed() || !ValidMap(op.map)) return false;
                     return ReadAxisRuns(in, size, op.axis, op.mask, maskVoxelBudget);
+                }
+                case sim::WorldOpKind::CarveCapsule: {
+                    op.shape.kind = voxel::kShapeCapsule;
+                    op.shape.a = ReadIvec3(in);
+                    op.shape.b = ReadIvec3(in);
+                    op.shape.radiusQ = in.U16();
+                    op.power = in.U16();
+                    return !in.Failed() && ValidCapsule(op.shape);
                 }
             }
             return false;
@@ -689,7 +710,7 @@ namespace vortex::net {
     bool ReadEvent(ByteReader& in, Event& event, uint64_t* maskVoxelBudget) {
         const uint8_t kind = in.U8();
         if (in.Failed()) return false;
-        if (kind >= 1 && kind <= static_cast<uint8_t>(sim::WorldOpKind::MapMask)) {
+        if (kind >= 1 && kind <= static_cast<uint8_t>(sim::WorldOpKind::CarveCapsule)) {
             sim::WorldOp op;
             if (!ReadOp(in, kind, op, maskVoxelBudget)) return false;
             event = std::move(op);

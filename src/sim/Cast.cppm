@@ -87,13 +87,14 @@ export namespace vortex::sim {
     struct ZoneOwner {
         TeamId casterTeam = kNoTeam;
         uint8_t caster = 0;                   ///< slot + 1; 0 a script
-        bool dispellable = false;             ///< a kind that lasts (Updraft's Lift): a Punch ends it
+        bool dispellable = false;             ///< a kind that lasts (Updraft's Lift, a Chill): a Punch ends it
     };
 
     enum class ScheduledKind : uint8_t {
         Band = 0,       ///< a band of conjured matter: its MapMask, less the cells players and bodies take at its tick
         ZoneTick = 1,   ///< a zone's start tick: its damage and its body impulses
         Blow = 2,       ///< a Punch's blast at the fist point
+        Shatter = 3,    ///< the Shatter flood in `op.sphere` (its radius) at the zone tick: one MapMask(Shatter)
     };
     /// @brief A follow-up, run by RunScheduled in (tick, seq) order.
     struct ScheduledAction {
@@ -103,6 +104,7 @@ export namespace vortex::sim {
         uint32_t owner = 0;                   ///< Band: the registry owner
         WorldOp op;                           ///< Band: its MapMask; Blow: its CarveSphere
         uint16_t zoneId = 0;                  ///< ZoneTick
+        uint16_t damage = 0;                  ///< ZoneTick: to the targets inside the zone at its tick
         SpellId spell = 0;
         TeamId casterTeam = kNoTeam;
         uint8_t caster = 0;
@@ -130,12 +132,14 @@ export namespace vortex::sim {
     struct SpellStats {
         uint32_t visits = 0;
         uint32_t chunksRead = 0;
-        uint32_t planned = 0;                 ///< conjured voxels planned (Barricade Wave)
+        uint32_t planned = 0;                 ///< conjured voxels planned (Barricade Wave, the ice of Frost)
         uint32_t ops = 0;                     ///< ops applied now and scheduled
         uint32_t bytes = 0;                   ///< wire bytes of the ops, the zone starts, the cancels and the cast's fx
-        uint32_t dashSteps = 0;               ///< Dash: path steps the trace kept
-        uint32_t path = 0;                    ///< operator `Path` cells (Updraft: the rise; Dash: the kept steps)
+        uint32_t path = 0;                    ///< operator `Path` cells (Updraft: the rise; Dash: the kept steps; Shatter Spike: the paid voxels)
         uint32_t front = 0;                   ///< operator `Front` cells (Updraft: the column's top; Barricade Wave: the strip)
+        uint32_t boreSlices = 0;              ///< Shatter Spike: the slices the bore paid for
+        uint32_t released = 0;                ///< Detach operations of the bore's island search
+        uint32_t dashSteps = 0;               ///< Dash: path steps the trace kept
     };
 
     struct CastSpellResult {
@@ -180,7 +184,14 @@ export namespace vortex::sim {
      * capsule along it for enemies. Punch: the fist point (the first terrain or enemy capsule within
      * fistRangeQ of the eye, else that far out), a blow at T_z, a Shove capsule for enemies at T_z,
      * and the dispel of enemy dispellable zones live at T_z whose centre (a capsule's segment, a
-     * cylinder's axis) is within dispelRadiusQ of the fist. Barricade Wave: a Burst strip extruded into knit bands at their ticks; no band cell
+     * cylinder's axis) is within dispelRadiusQ of the fist, an ally Release of the Shove's capsule and the Shatter flood
+     * round the fist at T_z. Shatter Spike: a Pierce bore (its island search and load check run now, on the cast's
+     * work), a Rime capsule from the hit to the bore's end (Thaw at its lifetime), a Chill round the hit; a
+     * direct hit on an enemy in front of the terrain bores nothing. Flash Freeze: a Burst disc; water under the hit
+     * becomes a floe slab (FreezeWater over a y-cylinder, two voxels deep), the disc's Path cells over dry ground an
+     * ice film (Freeze); Root, then Chill over the disc. Permafrost Climb: the full Plume; ice on its Rise cells
+     * near support and its Front cells that are skin or join the ice, a Rime box over the face; Root, then Chill
+     * over the plume's box. Barricade Wave: a Burst strip extruded into knit bands at their ticks; no band cell
      * in a player's capsule grown by one voxel, a rigid body's box or a spawn area (a cell in an
      * enemy's refuses the cast). Work: operator visits and chunks read, and every op now or
      * scheduled, charged at T_run.

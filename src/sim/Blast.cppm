@@ -405,6 +405,13 @@ export namespace vortex::sim {
     /// island box [32 c - 24, 32 c + 56), flood box 32 c + 16 +- kFloodHalfExtent, radius 0.
     BlastSite ChunkSite(const voxel::World& world, const glm::ivec3& chunk);
     /**
+     * @brief A bore's site (docs/design/magic.md "Inputs every operator shares (server only,
+     * quantised once, R3)", a bore's boxes): the carve is `WorldOp::Bore(capsule, power)`, the island box the capsule's voxel box grown by kIslandSearchMargin, the flood box
+     * centred on the middle of the hit-to-end segment (`floor((hitQ + capsule.b) / 32)`) +-
+     * kFloodHalfExtent, the centre the capsule's middle in metres, radius 0 (no objects, no push).
+     */
+    BlastSite CapsuleSite(const voxel::World& world, const voxel::ShapeQ& capsule, uint16_t power, const glm::ivec3& hitQ);
+    /**
      * @brief Blast steps 1-5 on a site. `Blast(simulation, sphere, power)` is
      * `Blast(simulation, SphereSite(world, sphere, power))`: the same operations bit for bit.
      * Steps 3 and 4 (objects and push) reach only as far as `site.radius`.

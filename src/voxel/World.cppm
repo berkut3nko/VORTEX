@@ -337,6 +337,8 @@ export namespace vortex::voxel {
 
         const WorldConfig& Config() const { return m_Config; }
         float VoxelSize() const { return m_Config.voxelSize; }
+        /// @brief The library whose world palette the edits read (hardness, flags); may be null.
+        const MaterialLibrary* Materials() const { return m_Materials; }
 
         // --- streaming -------------------------------------------------------------------
         /// @brief Recentres the window on `focus` (world metres) and advances loading. Call every frame.
@@ -469,6 +471,15 @@ export namespace vortex::voxel {
         /// are those of the shape's box (conservative). Returns the number of voxels changed.
         uint32_t MapShapeQ(const ShapeQ& shape, const TurningMap& map, std::vector<VoxelEdit>* edits = nullptr,
                            EditReport* report = nullptr, const ChunkClip* clip = nullptr);
+        /**
+         * @brief Removes every voxel of a capsule shape that CarveSphereQ's rule lets `power` carve
+         * (not Indestructible, `hardness * 16 <= power`): Pierce's bore (docs/design/magic.md
+         * "Pierce (Solid): a bore that pays for every voxel it adds"). Another shape kind changes
+         * nothing. The chunks it touches are those of the capsule's box (conservative). Returns the
+         * number of voxels changed.
+         */
+        uint32_t CarveCapsuleQ(const ShapeQ& capsule, uint16_t power, std::vector<VoxelEdit>* removed = nullptr, EditReport* report = nullptr,
+                               const ChunkClip* clip = nullptr);
         /// @brief id = map[old] for every voxel `origin + p` whose mask bit p is set. Air is mapped
         /// too (Knit turns air into a solid). Returns the number of voxels changed.
         uint32_t MapMaskQ(const glm::ivec3& origin, const VoxelMask& mask, const TurningMap& map,

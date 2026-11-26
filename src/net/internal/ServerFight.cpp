@@ -268,6 +268,7 @@ namespace vortex::net {
         pl.state = sim::PlayerState{};
         pl.state.position = glm::vec3(feet);
         pl.state.lastButtons = sim::kPlayerButtonMask;
+        sim::StartFreshLife(pl.state);   // magic.md: no root, pin or push for the guard's length
         pl.lateJump = false;
         sim::RestorePlayer(simulation->Physics(), pl.character, pl.state);
         tickFlushCooks += simulation->Terrain().FlushBox(sim::PlayerReach(pl.state.position, settings.player));

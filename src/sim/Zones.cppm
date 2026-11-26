@@ -18,7 +18,11 @@ export namespace vortex::sim {
         None = 0,
         Impulse = 1,   ///< on its start tick: a push away from its centre (a capsule: from the nearest point of its axis) and up
         Lift = 2,      ///< while live: a lower bound on the vertical speed, ramped at the rim, eased to a hover at the top
-        Pin = 3, Chill = 4, Root = 5, Release = 6, Block = 7,   ///< reserved: no behaviour yet
+        Pin = 3,       ///< reserved: no behaviour yet
+        Chill = 4,     ///< while live and inside: slowed (strength {slowQ in sixteenths, tail ticks})
+        Root = 5,      ///< on its start tick, inside: rooted for its duration (not during the control guard)
+        Release = 6,   ///< on its start tick, inside: root, pin and chill end (the control guard starts)
+        Block = 7,     ///< reserved: no behaviour yet
         Shove = 8,     ///< on its start tick: a push along the capsule's axis plus a lift, both falling to 0 at the rim
         Rune = 9,      ///< reserved: no behaviour yet
     };
@@ -44,6 +48,12 @@ export namespace vortex::sim {
 
     /// @brief The box of a zone's shape in q, [minQ, maxQ] inclusive. A box shape covers voxels [a, b).
     void ZoneBoundsQ(const Zone& zone, glm::ivec3& minQ, glm::ivec3& maxQ);
+    /**
+     * @brief Feet at `feetQ` (q) inside the zone's shape, the membership of the kinds that do not push
+     * (Chill, Root, Release, Rune): a sphere or a capsule closer than its radius (the integer root of
+     * the squared distance), a y-cylinder within its radius and half height, a box by the feet's voxel.
+     */
+    bool ZoneShapeHolds(const Zone& zone, const glm::ivec3& feetQ);
 
     /**
      * @brief The zones of a simulation, sorted by (startTick, zoneId).

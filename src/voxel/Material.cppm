@@ -21,6 +21,8 @@ export namespace vortex::voxel {
         MaterialFlag_Foliage        = 1u << 3,   ///< Soft: no debris bodies, only particles.
         /// Made by a spell (knit iron): the absorb rule, the caps and the piece rule read it; the editor hides it.
         MaterialFlag_Conjured       = 1u << 4,
+        /// Ice: a player standing on it keeps momentum (sim::StepPlayer's slick rule).
+        MaterialFlag_Slick          = 1u << 5,
     };
 
     /**
@@ -127,6 +129,10 @@ export namespace vortex::voxel {
         uint8_t wattleDaub = 0;   ///< plastered wattle infill of timber frames (Tier 3)
         uint8_t soot = 0, graniteDamp = 0;   ///< weathering: ashlar blackened by smoke, granite stained by damp (their stone's strength)
         uint8_t knitIron = 0;   ///< conjured matter (magic.md "Conjured matter"): Barricade Wave's walls
+        /// Frost (magic.md "New world-palette ids"): ice and floe (conjured and slick; floe is an anchor, as water
+        /// is), and the rimed ids: their base at half the hardness with the same bonds, until a Thaw turns them back.
+        uint8_t ice = 0, floe = 0, knitIronRimed = 0;
+        uint8_t stoneRimed = 0, stoneDarkRimed = 0, brickRimed = 0, ironRimed = 0;
     };
 
     /// @brief Fills the world palette with a starter set of natural and building materials.

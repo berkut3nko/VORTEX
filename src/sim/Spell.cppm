@@ -24,9 +24,15 @@ export namespace vortex::sim {
     constexpr Element ElementOf(SpellId s) { return static_cast<Element>(s % 4); }
 
     inline constexpr SpellId kUpdraft = MakeSpell(Form::Plume, Element::Pressure);       // 6
+    inline constexpr SpellId kPermafrostClimb = MakeSpell(Form::Plume, Element::Frost);  // 7
     inline constexpr SpellId kDash = MakeSpell(Form::Pierce, Element::Pressure);         // 10
+    inline constexpr SpellId kShatterSpike = MakeSpell(Form::Pierce, Element::Frost);    // 11
     inline constexpr SpellId kBarricadeWave = MakeSpell(Form::Burst, Element::Metal);    // 12
     inline constexpr SpellId kPunch = MakeSpell(Form::Burst, Element::Pressure);         // 14
+    inline constexpr SpellId kFlashFreeze = MakeSpell(Form::Burst, Element::Frost);      // 15
+
+    /// @brief SpellTable::boreCost of an id a bore never passes (indestructible and not a liquid).
+    inline constexpr uint16_t kBoreStop = 0xFFFF;
 
     /// @brief Where a spell puts its zone.
     enum class ZonePlace : uint8_t {
@@ -34,6 +40,9 @@ export namespace vortex::sim {
         UpdraftColumn = 1,   ///< a y-cylinder over the Plume column
         DashPath = 2,        ///< a capsule along the traced dash path
         PunchShove = 3,      ///< a capsule along the aim, from `nearQ` to `farQ` out of the eye
+        HitCylinder = 4,     ///< a y-cylinder of `radiusQ` and `halfHeightQ` round the hit (Shatter Spike)
+        DiscCylinder = 5,    ///< a y-cylinder of `radiusQ` and `halfHeightQ` over the Burst disc's seed
+        PlumeBox = 6,        ///< the Plume's cells' box, grown by `radiusQ` (voxels) sideways and `halfHeightQ` (voxels) down
     };
     /// @brief Which players a zone acts on, seen from the caster's team.
     enum class ZoneTarget : uint8_t { Enemies = 0, Everyone = 1, Allies = 2 };
@@ -55,6 +64,7 @@ export namespace vortex::sim {
         uint16_t farQ = 0;              ///< PunchShove: the capsule's end, out of the eye
         uint16_t rampQ = 0;             ///< Lift: the rim's ramp width (the strength falls to 0 over it)
         uint16_t hoverQ = 0;            ///< Lift: the ease below the top
+        uint16_t halfHeightQ = 0;       ///< DiscCylinder: the cylinder's half height (PlumeBox: voxels down)
     };
 
     /// @brief Every number of one spell at the session's voxel size (0 where it has no use).
@@ -69,8 +79,19 @@ export namespace vortex::sim {
         uint16_t burstPlane = 0;           ///< the box's in-plane half extent, voxels
         int16_t burstNormalMin = 0;        ///< the box along the normal, voxels
         int16_t burstNormalMax = 0;
-        // Plume (the single column)
+        uint16_t burstDiscRadius = 0;      ///< voxels: a disc footprint (0: the strip)
+        // Plume (the single column, or the full operator when plumeSeedRadius > 0)
         uint16_t riseMax = 0;              ///< voxels
+        uint8_t plumeSeedRadius = 0;       ///< voxels: the seed disc
+        uint16_t plumeRunPops = 0;
+        uint16_t plumeLateral = 0;         ///< voxels from the hit column
+        uint16_t plumeVisitCap = 0;
+        uint8_t supportReach = 0;          ///< voxels: a Rise cell this close to support takes the fill
+        // Pierce (magic.md "Pierce (Solid): a bore that pays for every voxel it adds")
+        uint16_t pierceRadiusQ = 0;
+        uint16_t piercePower = 0;          ///< 1/16 hardness
+        uint32_t pierceBudget = 0;         ///< bore cost units (SpellTable::boreCost)
+        uint16_t pierceMaxSlices = 0;
         // the caster's dash
         uint8_t dashTicks = 0;
         uint16_t dashSpeedCmS = 0;
@@ -89,7 +110,19 @@ export namespace vortex::sim {
         uint8_t bandSpacingTicks = 0;
         uint16_t lifetimeTicks = 0;        ///< of the conjured matter
         uint8_t expiryMap = 0;             ///< a voxel::TurningMapId
+        // Frost's verbs
+        uint16_t floeLifetimeTicks = 0;    ///< Flash Freeze's floe slab on water
+        uint16_t floeRadiusQ = 0;
+        uint16_t rimeRadiusQ = 0;          ///< Shatter Spike's Rime capsule around the bore
+        uint8_t rimeDepth = 0;             ///< Permafrost Climb's Rime box: voxels into the face
+        uint16_t rimeLifetimeTicks = 0;    ///< until the Thaw
+        // the Shatter flood (Punch's, at the zone tick)
+        uint16_t shatterRadiusQ = 0;
+        uint8_t shatterDepth = 0;          ///< voxels from an exposed face
+        uint16_t shatterVisitCap = 0;
         ZoneDef zone;
+        ZoneDef zone2;                     ///< a second zone of the same place (a Chill after a Root)
+        ZoneDef release;                   ///< an ally Release of the same place (Punch)
         // the server only
         uint16_t directDamage = 0;
         uint16_t zoneDamage = 0;
@@ -105,14 +138,20 @@ export namespace vortex::sim {
         std::array<SpellDef, kSpellCount> spells{};
         uint16_t ablateRadiusQ = 0;        ///< the absorb rule's patch (0.25 m)
         uint32_t zoneLeadTicks = 24;
+        /// What a bore pays per voxel of each world id: `round(hardness * 16)`, authored in code; 0 for air
+        /// and liquids, kBoreStop for the indestructible ids that are not liquids (bedrock, floe).
+        std::array<uint16_t, 256> boreCost{};
     };
 
     /**
      * @brief The table at `voxelSize`: metres become voxels (`lround(m / vs)`) and q
      * (`lround(m / vs * 16)`) once, in double from the float voxel size, so both sides of a
-     * session hold the same integers. Only Updraft, Dash, Barricade Wave and Punch are built.
+     * session hold the same integers. Built: Updraft, Permafrost Climb, Dash, Shatter Spike, Barricade
+     * Wave, Punch and Flash Freeze.
      */
     SpellTable BuildSpellTable(float voxelSize);
+    /// @brief The bore cost of every id of the default world palette (SpellTable::boreCost).
+    std::array<uint16_t, 256> BoreCostTable();
     /// @brief A hash of every field of the table.
     uint64_t SpellTableHash(const SpellTable& table);
 }

@@ -159,8 +159,9 @@ export namespace vortex::sim {
      * ferns, flowers) has no terrain collision: players walk through plants (land.md "Nature", 2026-11-25).
      * 3: push, the Impulse, Lift and Shove zones, the dash and the vertical parameter of
      * UpdateCharacter (magic.md "PlayerState, StepPlayer and the physics call", 2026-11-26).
+     * 4: Chill, Root and Release zones, the control guard, Fresh and slick ground (magic.md, 2026-11-26).
      */
-    inline constexpr uint32_t kPlayerRuleRevision = 3;
+    inline constexpr uint32_t kPlayerRuleRevision = 4;
 
     /// @brief Each axis of PlayerState::push stays within +- this (cm/s).
     inline constexpr int32_t kPushLimitCmS = 1500;
@@ -169,6 +170,17 @@ export namespace vortex::sim {
     inline constexpr uint8_t kDashTicks = 18;
     inline constexpr uint16_t kDashSpeedCmS = 2670;
     inline constexpr uint16_t kDashEndPushCmS = 400;
+    /// @brief The control guard (magic.md "PlayerState, StepPlayer and the physics call"): after a root or a
+    /// pin ends, and after a respawn (with Fresh), Root and Pin zones do not apply for this many ticks.
+    inline constexpr uint8_t kControlGuardTicks = 90;
+    inline constexpr uint8_t kFreshGuardTicks = 120;
+    /// @brief Slick ground: the wish is scaled by kSlickWishNum / 16 and the horizontal velocity moves
+    /// toward it by at most kSlickAccelCmS2 (cm/s^2), its speed capped at kSlickTopSpeedNum / 16 of the
+    /// run speed; a push decays by kPushDecaySlick (cm/s per tick) there.
+    inline constexpr int32_t kSlickWishNum = 21;        // 1.3
+    inline constexpr int32_t kSlickAccelCmS2 = 300;     // 3 m/s^2
+    inline constexpr int32_t kSlickTopSpeedNum = 22;    // 1.4
+    inline constexpr uint16_t kPushDecaySlick = 6;
 
     /// @brief What a step reads besides the player: the zones live at the stepped tick.
     struct PlayerZones {
@@ -236,6 +248,18 @@ export namespace vortex::sim {
      * own move, or one the state refuses.
      */
     bool StartSpellMove(PlayerState& state, SpellId spell, const glm::vec3& aim);
+    /// @brief A respawn's state (the server's teleport keeps it): Fresh, and the control guard for
+    /// kFreshGuardTicks. While Fresh, Root, Pin, Impulse and Shove do not apply; a cast ends Fresh.
+    void StartFreshLife(PlayerState& state);
+
+    /**
+     * @brief The voxel under a player (magic.md "PlayerState, StepPlayer and the physics call", step
+     * 5): the voxel that holds the feet quantised to q, less half a voxel (8 q) in y; never the float
+     * feet's floor, which flips at a surface.
+     */
+    glm::ivec3 GroundVoxel(const glm::vec3& feet, float voxelSize);
+    /// @brief The ground voxel of `feet` holds a MaterialFlag_Slick id (false without a world or materials).
+    bool OnSlickGround(const voxel::World* world, const glm::vec3& feet);
 
     /**
      * @brief The zones' part of a step (StepPlayer calls it after the gate), from the feet quantised
@@ -248,7 +272,11 @@ export namespace vortex::sim {
      * y-cylinder): a vertical speed target ramped to 0 over the outer 0.25 m and eased linearly to
      * 0 at the top over 0.5 m or the coasting height of its strength under `gravity` (m/s^2, down),
      * whichever is longer, so a lifted player stops at the top and hovers; sets
-     * PlayerStatus_Lifted. Integers in cm/s; `push` is clamped to +-kPushLimitCmS per axis.
+     * PlayerStatus_Lifted. Chill (while live, inside): `slowLeft = max(slowLeft, strength1)`,
+     * `slowQ = max(slowQ, strength0)`. Root (start tick, inside, no guard running): `rootLeft =
+     * max(rootLeft, duration)`. Release (start tick, inside): root, pin and chill end, and the control
+     * guard starts if a root or a pin did. While Fresh, Impulse and Shove do not apply either.
+     * Integers in cm/s; `push` is clamped to +-kPushLimitCmS per axis.
      * @return The Lift's vertical target in m/s (the highest of the zones), or nothing.
      */
     std::optional<float> ApplyZones(PlayerState& state, const PlayerZones& zones, const PlayerTuning& tuning, float gravity = 9.81f);
@@ -279,7 +307,13 @@ export namespace vortex::sim {
      * loses its push; a positive vertical push and a Lift become UpdateCharacter's `vertical`. After
      * the physics call: a dash whose horizontal move was cut to under half its length ends, and a
      * dash's last tick leaves kDashEndPushCmS of push along it; on the ground PlayerStatus_Lifted is
-     * cleared; the horizontal push decays toward 0 (pushDecayGround or pushDecayAir).
+     * cleared; the horizontal push decays toward 0 (pushDecayGround, kPushDecaySlick or pushDecayAir).
+     * Statuses: a rooted player has no wish, no jump and no dash (a root ends one); a pinned player
+     * 6/16 of the wish and no jump; a chilled one `(16 - slowQ) / 16` of it. On slick ground
+     * (OnSlickGround, the state on the ground before the step) the horizontal velocity moves from the
+     * last one toward the wish x 1.3 (plus the push) by at most 3 m/s^2, capped at 1.4 x the run speed.
+     * Then the counters count down: a chill ends with slowQ 0; when the last of root and pin ends, the
+     * control guard starts (kControlGuardTicks); Fresh ends with the guard or a cast.
      */
     PlayerStepResult StepPlayer(physics::PhysicsWorld& physics, const physics::TerrainColliders& terrain, physics::CharacterId character,
                                 PlayerState& state, const PlayerInput& input, const PlayerTuning& tuning, const PlayArea& area,

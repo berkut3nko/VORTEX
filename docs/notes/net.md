@@ -175,8 +175,9 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
   `FillSphere`, 3 `SwapSphere`, 4 `FillBox`, 5 `Detach`, 6 `ClearMask`), 32 `EntitySpawn`, 33 `EntityDespawn`, 34
   `EntityRest`, 35 `ObjectModel`, 36 `EntityWake` [net-6]; 37 `MechanismMove`, 41 `EntityHold`, 42 `EntityRelease`
   [mech-1]; 38 `ZoneStart`, 39 `ZoneCancel`, 40 `CastFx` [mag-2]. `sim::WorldOpKind` 7 `MapShape` and 8 `MapMask` landed
-  with [mag-1] as sim values and are on the wire since protocol 14 ([mag-2]); 9 `CarveCapsule` is reserved by protocol 14
-  with its layout ("Magic" below) for [mag-3], and this build's decoder refuses it. A new `WorldOpKind` takes the next
+  with [mag-1] as sim values and are on the wire since protocol 14 ([mag-2]); 9 `CarveCapsule` was reserved by protocol 14
+  with its layout ("Magic" below) and is decoded since [mag-3] (no protocol bump: the layout and the value were the
+  bump's). A new `WorldOpKind` takes the next
   free value (10: spread's `SpreadStep`), a new event the next free one after 42 (`RopeCut` with the session part of [mech-2]).
 - **This list is the registry** (magic.md amendment 4, 2026-11-21): every new `WorldOpKind`, event kind, message type,
   refusal, rejection, template, generator and `PlayerButton` value takes the **next free value when it lands** and is
@@ -221,7 +222,8 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
     radius u16 q; capsule A, B i32 x 3 q, radius u16 q; box min, max i32 x 3 voxels; cylinder centre i32 x 3 q, radius u16
     q, half height u16 q: 17 / 29 / 27 / 19 B. `MapMask` 8: map u8, axis u8 (the run order: 0 x, 1 y, 2 z), origin i32 x
     3, dims u16 x 3, then `voxel::MaskRuns(mask, axis)` as LEB128 (the first run clear, may be 0): 21 B + runs.
-    `CarveCapsule` 9 (reserved for [mag-3]): A, B i32 x 3 q, radius u16 q, power u16: 29 B.
+    `CarveCapsule` 9 ([mag-3]): A, B i32 x 3 q, radius u16 q, power u16: 29 B; refused with a radius over 1024 q or A-B
+    over 64 m (8 192 q, per axis and in length), as a capsule shape is.
   - Events: `ZoneStart` 38: zoneId u16, zone kind u8, teamMask u8, startTick u32, duration u16, strength i16 x 2, the
     shape as `MapShape`'s: 30 / 42 / 40 / 32 B. `ZoneCancel` 39: zoneId u16, endTick u32: 7 B. `CastFx` 40: slot + 1 u8 (0 a
     server script), spell u8, originQ i32 x 3, hitQ i32 x 3, face u8 (axis * 2 + (sign < 0)), tick u32 (T_run): 32 B.

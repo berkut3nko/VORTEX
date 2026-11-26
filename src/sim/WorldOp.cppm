@@ -28,6 +28,9 @@ export namespace vortex::sim {
         /// `map`, `min` = origin, `mask`: id = map[old] for every masked voxel. `axis` is the run order of the
         /// mask's encoding only, never which voxels change.
         MapMask = 8,
+        /// `shape` (a capsule), `power`: every voxel of the capsule that the power may carve becomes air
+        /// (Pierce's bore, magic.md "Pierce (Solid): a bore that pays for every voxel it adds").
+        CarveCapsule = 9,
     };
 
     /**
@@ -43,7 +46,7 @@ export namespace vortex::sim {
     struct WorldOp {
         WorldOpKind kind = WorldOpKind::CarveSphere;
         voxel::SphereQ sphere;                 ///< Carve / Fill / Swap: centre and radius in 1/16 voxel.
-        uint16_t power = 0;                    ///< Carve: in 1/16 hardness units (voxel::QuantizePower).
+        uint16_t power = 0;                    ///< Carve, CarveCapsule: in 1/16 hardness units (voxel::QuantizePower).
         uint8_t id = 0;                        ///< Fill, FillBox: material written; Swap: the replacement.
         uint8_t from = 0;                      ///< Swap: the material replaced.
         glm::ivec3 min{0};                     ///< FillBox: minimum voxel; Detach, ClearMask: world voxel of mask (0, 0, 0).
@@ -55,7 +58,7 @@ export namespace vortex::sim {
         /// Detach: initial velocity of the piece in m/s (the blast's push). Not used by ApplyOp.
         glm::vec3 velocity{0.0f};
         uint8_t map = 0;                       ///< MapShape, MapMask: a voxel::TurningMapId (1..15).
-        voxel::ShapeQ shape;                   ///< MapShape: the shape.
+        voxel::ShapeQ shape;                   ///< MapShape: the shape; CarveCapsule: its capsule.
         uint8_t axis = 0;                      ///< MapMask: the run axis of its mask's encoding (0 x, 1 y, 2 z).
 
         static WorldOp Carve(const voxel::SphereQ& sphere, uint16_t power);
@@ -70,6 +73,8 @@ export namespace vortex::sim {
         /// @brief A MapMask: the voxels `origin + p` of every set bit `p` take `map`'s new id; `axis` is
         /// voxel::ShortestRunAxis(mask).
         static WorldOp MapMasked(uint8_t map, const glm::ivec3& origin, voxel::VoxelMask mask);
+        /// @brief A CarveCapsule: the voxels of `capsule` (kind voxel::kShapeCapsule) that `power` may carve.
+        static WorldOp Bore(const voxel::ShapeQ& capsule, uint16_t power);
 
         /// @brief Voxel box [min, max) the operation can change (empty for an empty sphere / box).
         void Bounds(glm::ivec3& outMin, glm::ivec3& outMax) const;
@@ -101,15 +106,15 @@ export namespace vortex::sim {
                      const voxel::ChunkClip* clip = nullptr);
 
     /// @brief Bytes the operation takes as an event on the wire, its kind byte included (kinds 1-6 as
-    /// net::WriteEvent writes them; MapShape and MapMask in the layout of magic.md "Wire values").
+    /// net::WriteEvent writes them; MapShape, MapMask and CarveCapsule in the layout of magic.md "Wire values").
     size_t OpWireBytes(const WorldOp& op);
 
     /// @brief The chunk box [minChunk, maxChunk] (inclusive) of `op.Bounds()`; false when the
     /// operation's box is empty.
     bool OpChunkRange(const WorldOp& op, glm::ivec3& minChunk, glm::ivec3& maxChunk);
     /// @brief True if the operation can change a voxel of `chunk` (the sphere, box and mask tests
-    /// World's edits use to decide whether they touch a chunk: exact, except MapShape, which touches
-    /// every chunk of its box). A chunk it does not touch is never changed by it, whatever its content.
+    /// World's edits use to decide whether they touch a chunk: exact, except MapShape and CarveCapsule,
+    /// which touch every chunk of their box). A chunk it does not touch is never changed by it, whatever its content.
     bool OpTouchesChunk(const WorldOp& op, const glm::ivec3& chunk);
 
     /**

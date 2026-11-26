@@ -25,6 +25,15 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
   the game plays steps by ground material, jumps, landings, casts, use refusals, throws, the menus and ambience beds
   by biome, water, cover and height. Five volume settings on the settings page. Headless runs mix offline and log
   `Audio:` lines. [design/audio.md](design/audio.md). The owner listens: owner check 30. First listen (2026-11-26): steps like hooves, no gate heard, water slurping. Fixed in code and the tool: steps at a person's cadence (1.5 m a step walking), one hit per footstep file, -4 dBTP (mechanism files clipped), river water plays the stream bed, the portcullis plays its tension first, mechanisms 3 dB louder. The takes themselves need making again: 21 prompts rewritten (the game's `docs/product/sound-list.md` section 3.1), and the generator must set `seconds_total`.
+- **[mag-3] Frost, the bore and the Shatter combo: built, not reviewed** (2026-11-26). Shatter Spike (Pierce x Frost),
+  Flash Freeze (Burst x Frost) and Permafrost Climb (Plume x Frost) through the shared cast path (offline hand casting
+  and the server): the Pierce operator and `CarveCapsule` (op kind 9, decoded with its reserved layout; no protocol
+  bump), the full Plume and the Burst disc, ids 45-51 (`ice`, `floe`, `knit_iron_rimed` and the four rimed stones and
+  iron, the `Slick` flag), the Rime, Thaw, Freeze, FreezeWater and Shatter maps, the Shatter flood (Punch's, with its
+  ally Release), Chill, Root and Release zones, the control guard, Fresh and slick ground (`kPlayerRuleRevision` 4).
+  `--spell-demo shatter-spike,flash-freeze,permafrost-climb`. Not built: the net test of a walk on an ice film,
+  the matrix rows for Frost, the attune menu's Frost and the session presentation.
+  [As built](history/magic/mag-3-as-built.md). Not run: `verify.sh full --ci` and the soak.
 - **[mag-1] Siege core in sim, headless: built, not reviewed** (2026-11-26). The first four spells of
   [design/magic.md](design/magic.md), re-scoped by the owner (Pressure is movement): Updraft, Dash, Punch and Barricade
   Wave, cast through `sim::CastSpell` and `sim::RunScheduled` (`vortex.sim:cast`) with no wire change. Built: the spell
@@ -307,7 +316,7 @@ never been measured.
 
 ## State
 
-Tests: **1090** in ctest: 1082 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
+Tests: **1115** in ctest: 1107 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
 game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts), `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
 `Tools.DocCheck`, `Tools.DocCheckSelftest`, `Tools.SessionCheckVerdict` and `Tools.VerifyAssertions` (WP2's checks
 and their self-tests), `Tools.RendezvousWorker` (the rendezvous Worker under `node --test`, registered when `node` is

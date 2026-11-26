@@ -375,7 +375,9 @@ TEST(Magic, PunchTruncatesLiveEnemyZones) {
     EXPECT_EQ(yard.simulation.Zones().Find(enemyId)->EndTick(), punch.zoneTick);
     EXPECT_EQ(yard.simulation.Zones().Find(ownId)->EndTick(), ownLift.zonesStarted[0].EndTick()) << "an own-team zone stays";
     EXPECT_EQ(yard.simulation.Zones().Find(farId)->EndTick(), farLift.zonesStarted[0].EndTick()) << "out of reach";
-    EXPECT_EQ(punch.stats.bytes, 42u + 7u + 32u + static_cast<uint32_t>(sim::OpWireBytes(sim::WorldOp::Carve({}, 0))));
+    // The Shove and the ally Release (capsules), the cancel, the CastFx and the blow; the Shatter flood's mask is
+    // counted when it runs at T_z.
+    EXPECT_EQ(punch.stats.bytes, 42u + 42u + 7u + 32u + static_cast<uint32_t>(sim::OpWireBytes(sim::WorldOp::Carve({}, 0))));
 
     // A truncated zone that ends at T_z is not live then: a second Punch cancels nothing.
     const sim::CastSpellResult again = yard.Cast(sim::kPunch, 0, 1, eye, eye + glm::dvec3(1.0, 0.0, 0.0));

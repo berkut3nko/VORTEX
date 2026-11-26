@@ -53,7 +53,8 @@ export namespace vortex::sim {
     public:
         /// @brief A new owner; ids count up from 1.
         uint32_t NewOwner(const KnitOwnerInfo& info);
-        /// @brief Records the voxels an op of `owner` changed into a conjured id (the edits of ApplyOp).
+        /// @brief Records the voxels an op of `owner` changed (the edits of ApplyOp): into a conjured id for
+    /// the conjure layer, any change for the turn layer.
         void Record(uint32_t owner, std::span<const voxel::VoxelEdit> edits, const voxel::MaterialLibrary& materials);
         /// @brief Due owners in (dueTick, owner) order: one expiry op each, applied. The applied ops
         /// in order (an owner with nothing left gives none).

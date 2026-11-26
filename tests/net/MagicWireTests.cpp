@@ -1,4 +1,4 @@
-// docs/design/magic.md "Wire values" ([mag-2], protocol 14): the magic ops (MapShape 7, MapMask 8), the zone events
+// docs/design/magic.md "Wire values" ([mag-2], protocol 14): the magic ops (MapShape 7, MapMask 8, CarveCapsule 9), the zone events
 // (ZoneStart 38, ZoneCancel 39), CastFx 40, the input's spell byte and the Spell edge, the owner block's magic state,
 // the remote record's status bits, the roster's elements, Attune, Welcome's zone lead and push decays, BaselineEnd's
 // zones, the spell rejections and the build hash's magic tables. Every value round-trips at its designed size and
@@ -182,10 +182,34 @@ TEST(Wire, MagicOpsRefuseLimitsAndTrailingBytes) {
     EXPECT_TRUE(DecodesWhole(bytes, out, &budget));
     EXPECT_EQ(budget, 0u);
 
-    // Kind 9 (CarveCapsule) is reserved for [mag-3]: this build refuses it.
-    bytes.assign(29, 0);
-    bytes[0] = 9;
-    EXPECT_FALSE(DecodesWhole(bytes, out));
+}
+
+// CarveCapsule (9): kind, A and B (i32 x 3 each), radius u16, power u16 = 29 B; a capsule over 64 m or with a radius over
+// 1024 q is refused, as are a byte too few and a byte too many.
+TEST(Wire, CarveCapsuleRoundTripsAndRefusesItsLimits) {
+    const sim::WorldOp bore = sim::WorldOp::Bore(TestShape(voxel::kShapeCapsule), 64);
+    const std::vector<uint8_t> bytes = EventBytesOf(bore);
+    ASSERT_EQ(bytes.size(), 29u);
+    EXPECT_EQ(bytes[0], 9);
+    EXPECT_EQ(sim::OpWireBytes(bore), 29u);
+    net::Event out;
+    ASSERT_TRUE(DecodesWhole(bytes, out));
+    ASSERT_TRUE(std::holds_alternative<sim::WorldOp>(out));
+    EXPECT_EQ(std::get<sim::WorldOp>(out), bore);
+    RefusesShortAndLong(bore);
+
+    sim::WorldOp wide = bore;
+    wide.shape.radiusQ = 1025;
+    EXPECT_FALSE(Decodes(wide)) << "radius over 1024 q";
+    wide.shape.radiusQ = 1024;
+    EXPECT_TRUE(Decodes(wide));
+    sim::WorldOp longer = bore;
+    longer.shape.b = longer.shape.a + glm::ivec3(8193, 0, 0);
+    EXPECT_FALSE(Decodes(longer)) << "over 64 m on an axis";
+    longer.shape.b = longer.shape.a + glm::ivec3(6000, 6000, 0);
+    EXPECT_FALSE(Decodes(longer)) << "over 64 m along the diagonal";
+    longer.shape.b = longer.shape.a + glm::ivec3(8192, 0, 0);
+    EXPECT_TRUE(Decodes(longer));
 }
 
 TEST(Wire, OpWireBytesEqualsEventBytes) {
@@ -199,6 +223,7 @@ TEST(Wire, OpWireBytesEqualsEventBytes) {
     }
     ops.push_back(sim::WorldOp::Carve({glm::ivec3(10, 20, 30), 40}, 96));
     ops.push_back(sim::WorldOp::Clear({1, 2, 3}, TestMask()));
+    ops.push_back(sim::WorldOp::Bore(TestShape(voxel::kShapeCapsule), 64));
     for (const sim::WorldOp& op : ops) EXPECT_EQ(sim::OpWireBytes(op), net::EventBytes(op)) << int(op.kind) << " axis " << int(op.axis);
 }
 

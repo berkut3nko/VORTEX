@@ -46,12 +46,12 @@ namespace vortex::sim {
         const auto found = m_Owners.find(ownerId);
         if (found == m_Owners.end()) return;
         Owner& owner = found->second;
-        const size_t layer = owner.info.layer;
-        // Only the conjure layer is recorded: the turned ids (rime, heat) do not exist yet.
-        if (layer != 0) return;
+        const size_t layer = owner.info.layer < 2 ? owner.info.layer : 1;
         bool recorded = false;
         for (const voxel::VoxelEdit& edit : edits) {
-            if ((materials.Get(voxel::kWorldPalette, edit.newId).flags & voxel::MaterialFlag_Conjured) == 0) continue;
+            // The conjure layer records what became conjured matter, the turn layer every voxel the op turned.
+            if (layer == 0 && (materials.Get(voxel::kWorldPalette, edit.newId).flags & voxel::MaterialFlag_Conjured) == 0) continue;
+            if (layer == 1 && edit.newId == edit.oldId) continue;
             const glm::ivec3 c = voxel::VoxelToChunk(edit.voxel);
             std::vector<Entry>& entries = m_Chunks[ChunkKey(c.x, c.y, c.z)][layer];
             const uint16_t index = LocalIndex(edit.voxel);
