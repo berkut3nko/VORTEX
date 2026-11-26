@@ -10,7 +10,9 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <map>
 #include <memory>
+#include <tuple>
 #include <set>
 #include <vector>
 
@@ -82,7 +84,8 @@ namespace {
         const glm::ivec3 v(int(std::floor(world.x / voxelSize)), int(std::floor(world.y / voxelSize)), int(std::floor(world.z / voxelSize)));
         const glm::ivec3 c(v.x >> 5, v.y >> 5, v.z >> 5);
         auto chunk = std::make_unique<Chunk>();
-        generator.Generate(c, *chunk);
+        const ChunkContent content = generator.Generate(c, *chunk);
+        if (content.kind != ChunkKind::Dense) return content.uniformId;   // an empty or uniform chunk leaves its ids unset
         return chunk->Get(v.x - c.x * kChunkSize, v.y - c.y * kChunkSize, v.z - c.z * kChunkSize);
     }
 
@@ -152,7 +155,10 @@ TEST(Fort, WallsStandOnBatteredGraniteFoundationsWithAshlarFacesAndARubbleCore) 
     };
     EXPECT_EQ(at(0.0f, g - 1.0f), m.granite) << "the foundation reaches under the ground";
     const glm::vec2 foot = p + n * (run.half + 0.5f);
-    EXPECT_EQ(at(run.half + 0.5f, LandHeight(*w.map, w.land, foot.x, foot.y) + 0.4f), m.granite) << "the batter flares at the foot";
+    {
+        const uint8_t flare = at(run.half + 0.5f, LandHeight(*w.map, w.land, foot.x, foot.y) + 0.4f);
+        EXPECT_TRUE(flare == m.granite || flare == m.graniteDamp) << "the batter flares at the foot (damp on a shaded face)";
+    }
     EXPECT_NE(at(run.half + 0.5f, walk - 3.0f), m.granite) << "the batter stops above the foot";
     EXPECT_EQ(at(run.half - 0.3f, walk - 3.0f), m.ashlar) << "the outer face";
     EXPECT_EQ(at(0.0f, walk - 3.0f), m.rubbleCore) << "the core";
@@ -663,4 +669,169 @@ TEST(Fort, TheUnfinishedTowerHasARaggedTopAndNoRoof) {
 }
 
 
+
+
+namespace {
+    /// Generated voxels with the chunks kept, for tests that read many voxels near each other.
+    struct CachedVoxels {
+        const FortWorld& w;
+        std::map<std::tuple<int, int, int>, std::pair<std::unique_ptr<Chunk>, ChunkContent>> chunks;
+        uint8_t At(glm::vec3 world) {
+            const float vs = w.land.voxelSize;
+            const glm::ivec3 v(int(std::floor(world.x / vs)), int(std::floor(world.y / vs)), int(std::floor(world.z / vs)));
+            const glm::ivec3 c(v.x >> 5, v.y >> 5, v.z >> 5);
+            auto& [chunk, content] = chunks[{c.x, c.y, c.z}];
+            if (!chunk) {
+                chunk = std::make_unique<Chunk>();
+                content = w.generator->Generate(c, *chunk);
+            }
+            if (content.kind != ChunkKind::Dense) return content.uniformId;
+            return chunk->Get(v.x - c.x * kChunkSize, v.y - c.y * kChunkSize, v.z - c.z * kChunkSize);
+        }
+    };
+}
+
+TEST(Fort, AStoneStairClimbsToTheGuardroomOverTheGate) {
+    // The guardroom (fortress.md "Vignettes and room kits"): a stair against the gatehouse's bailey face, a door, the
+    // winch drum over the portcullis slot, the lever's spot on the floor clear to the ceiling.
+    const FortWorld& w = FortSetup();
+    const WorldMaterials& m = w.land.materials;
+    CachedVoxels voxels{w, {}};
+    // The room's kit is on the side of the gate the stair fits on: the lever's side.
+    const glm::vec2 lever(w.plan.guardLever.x, w.plan.guardLever.z);
+    const float side = glm::dot(lever - w.plan.gatePoint, w.plan.across) > 0.0f ? 1.0f : -1.0f;
+    const glm::vec2 o = w.plan.gatePoint, u = w.plan.axis, v = w.plan.across * side;
+    const float floor = w.plan.gateGround + 5.0f;
+    const auto at = [&](float a, float b, float y) {
+        const glm::vec2 p = o + u * a + v * b;
+        return voxels.At(glm::vec3(p.x, y, p.y));
+    };
+    for (int k = 0; k < 20; ++k) {
+        // A step's top is rounded down to the voxel grid; the lowest may lie under the bailey's ground.
+        const float b = 9.25f - 0.25f * float(k) - 0.125f, top = w.plan.gateGround + 0.25f * float(k + 1);
+        const glm::vec2 p = o + u * -4.75f + v * b;
+        if (top < LandHeight(*w.map, w.land, p.x, p.y) + 0.25f) continue;
+        EXPECT_EQ(at(-4.75f, b, top - 0.1875f), m.ashlar) << "step " << k;
+        for (float y = top + 0.0625f; y < top + 1.85f; y += 0.125f) EXPECT_EQ(at(-4.75f, b, y), 0) << "headroom over step " << k << " at " << y - top;
+    }
+    // The floor and the door's head are rounded down to the voxel grid, as the lever's spawn voxel is.
+    for (float y = floor + 0.0625f; y < floor + 2.0f; y += 0.125f) {
+        EXPECT_EQ(at(-3.5f, 3.625f, y), 0) << "the door through the bailey wall at " << y - floor;
+        EXPECT_EQ(at(-1.25f, 2.5f, y), 0) << "the lever's spot at " << y - floor;
+    }
+    EXPECT_EQ(at(-1.25f, 2.5f, floor - 0.1875f), m.planks) << "the guardroom's floor";
+    EXPECT_EQ(at(1.75f, 0.0f, floor + 1.0f), m.wood) << "the winch drum";
+    EXPECT_EQ(w.plan.guardLever.y, floor);
+}
+
+TEST(Fort, TheGreatHallHasAFireplaceAndTables) {
+    const FortWorld& w = FortSetup();
+    const WorldMaterials& m = w.land.materials;
+    CachedVoxels voxels{w, {}};
+    const glm::vec2 o = w.plan.keep, u = w.plan.axis, v(-u.y, u.x);
+    const float floor = w.plan.keepGround + 11.25f;
+    const auto at = [&](float a, float b, float y) {
+        const glm::vec2 p = o + u * a + v * b;
+        return voxels.At(glm::vec3(p.x, y, p.y));
+    };
+    EXPECT_EQ(at(-5.5f, 0.0f, floor - 0.0625f), m.brick) << "the hearth";
+    EXPECT_EQ(at(-5.6875f, 0.0f, floor + 0.0625f), m.torch) << "its embers";
+    EXPECT_EQ(at(-5.5f, 0.0f, floor + 1.875f), m.ashlar) << "the hood";
+    EXPECT_EQ(at(-5.5f, 0.0f, floor + 0.75f), 0) << "the fireplace's mouth";
+    EXPECT_NE(at(-6.5f, 0.0f, floor + 1.0f), 0) << "no window behind it";
+    EXPECT_EQ(at(-6.125f, 0.0f, floor + 4.0f), m.soot) << "soot on the wall over the hood";
+    for (const float side : {-2.0f, 2.0f}) EXPECT_EQ(at(1.0f, side + 0.8125f, floor + 0.25f), m.planks) << "a bench by the table at " << side;
+    EXPECT_EQ(at(1.0f, 2.0f, floor + 1.0f), 0) << "room for a table";
+}
+
+TEST(Fort, EveryLightHangsInTheOpenBesideItsFlame) {
+    // worldgen.md C8: each light's flame is a torch voxel; the light itself is in the air, not inside a wall.
+    const FortWorld& w = FortSetup();
+    const WorldMaterials& m = w.land.materials;
+    const float vs = w.land.voxelSize;
+    CachedVoxels voxels{w, {}};
+    ASSERT_GE(w.plan.lights.size(), 8u);
+    for (const FortLight& l : w.plan.lights) {
+        EXPECT_EQ(voxels.At(l.at), 0) << "the light at " << l.at.x << " " << l.at.y << " " << l.at.z;
+        bool flame = false;
+        for (float dy = -1.0f; dy <= 0.25f && !flame; dy += vs)
+            for (float dz = -0.5f; dz <= 0.5f && !flame; dz += vs)
+                for (float dx = -0.5f; dx <= 0.5f && !flame; dx += vs) flame = voxels.At(l.at + glm::vec3(dx, dy, dz)) == m.torch;
+        EXPECT_TRUE(flame) << "a flame under the light at " << l.at.x << " " << l.at.y << " " << l.at.z;
+    }
+}
+
+TEST(Fort, TheLeanTosHoldTheirKits) {
+    const FortWorld& w = FortSetup();
+    const WorldMaterials& m = w.land.materials;
+    CachedVoxels voxels{w, {}};
+    int kits = 0;
+    for (const FortRecord& r : w.plan.records) {
+        if (r.shape != FortShape::LeanTo) continue;
+        const glm::vec2 d = glm::normalize(r.b - r.a);
+        // An oblique piece holds the voxels whose middles lie in it: look a voxel around the point.
+        const auto at = [&](float t, float wd, float y) {
+            uint8_t found = 0;
+            for (const float dy : {0.0f, -0.0625f, 0.0625f, -0.125f, 0.125f})
+                for (const float dt : {0.0f, -0.0625f, 0.0625f})
+                    for (const float dw : {0.0f, -0.0625f, 0.0625f}) {
+                        const glm::vec2 p = r.a + d * (t + dt) + r.out * (wd + dw);
+                        const uint8_t id = voxels.At(glm::vec3(p.x, r.lo + y + dy, p.y));
+                        if (id != 0 && (found == 0 || id == m.iron || id == m.torch)) found = id;
+                    }
+            return found;
+        };
+        switch (r.building) {
+        case FortBuilding::Forge:
+            EXPECT_EQ(at(3.0f, 1.25f, 0.625f), m.iron) << "the anvil";
+            EXPECT_EQ(at(1.0f, 1.25f, 0.8125f), m.torch) << "embers on the hearth";
+            ++kits;
+            break;
+        case FortBuilding::Stables:
+            EXPECT_EQ(at(2.0f, 1.0f, 0.5f), m.planks) << "a stall's partition";
+            EXPECT_EQ(at(0.75f, 0.5f, 0.375f), m.thatch) << "hay";
+            ++kits;
+            break;
+        case FortBuilding::Workshop:
+            EXPECT_EQ(at(0.5f, 1.5f, 0.8125f), m.planks) << "the bench across the end wall";
+            ++kits;
+            break;
+        default:
+            break;
+        }
+    }
+    EXPECT_GE(kits, 2);
+}
+
+TEST(Fort, DampStainsOnlyTheShadedBatters) {
+    // Faces turned from the sun take damp low on their batter; faces toward it stay granite.
+    const FortWorld& w = FortSetup();
+    const WorldMaterials& m = w.land.materials;
+    CachedVoxels voxels{w, {}};
+    const glm::vec2 shade(-0.78935f, -0.61394f);
+    int shaded = 0, sunny = 0;
+    for (const FortRecord& r : w.plan.records) {
+        if (r.shape != FortShape::Wall || r.half < 1.2f || r.gapHi >= r.gapLo || r.patchHi > r.patchLo) continue;
+        const float len = glm::length(r.b - r.a);
+        const glm::vec2 d = (r.b - r.a) / len;
+        glm::vec2 n(d.y, -d.x);
+        if (glm::dot(n, (r.a + r.b) * 0.5f - w.plan.keep) < 0.0f) n = -n;
+        const float facing = glm::dot(n, shade);
+        if (std::abs(facing) < 0.5f) continue;
+        for (float t = 4.5f; t < len - 4.5f; t += 0.5f) {   // clear of the towers' batters at the ends
+            // The batter's outer voxel, 0.25 m over the ground.
+            const glm::vec2 foot = r.a + d * t + n * (r.half + 0.5f);
+            const float y = LandHeight(*w.map, w.land, foot.x, foot.y) + 0.25f;
+            for (float s = r.half + 1.5f; s > r.half; s -= 0.0625f) {
+                const glm::vec2 p = r.a + d * t + n * s;
+                const uint8_t id = voxels.At(glm::vec3(p.x, y, p.y));
+                if (id == 0) continue;
+                if (id == m.graniteDamp) (facing > 0.0f ? shaded : sunny)++;
+                break;
+            }
+        }
+    }
+    EXPECT_GT(shaded, 0) << "damp on the shaded batters";
+    EXPECT_EQ(sunny, 0) << "none on the sunny ones";
+}
 

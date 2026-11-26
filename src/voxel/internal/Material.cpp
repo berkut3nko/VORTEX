@@ -179,6 +179,8 @@ namespace vortex::voxel {
         ids.roofTile     = add("roof_tile",    Srgb(176, 92, 60),     0.75f,  600.0f,  0.8f, 0.12f);
         ids.thatch       = add("thatch",       Srgb(196, 164, 92),    0.95f,  250.0f,  0.3f, 0.18f, MaterialFlag_Flammable);
         ids.wattleDaub   = add("wattle_daub",  Srgb(222, 212, 186),   0.95f,  900.0f,  0.6f, 0.08f, MaterialFlag_Flammable);
+        ids.soot         = add("soot",         Srgb(66, 60, 56),      0.95f, 2400.0f,  3.0f, 0.10f);
+        ids.graniteDamp  = add("granite_damp", Srgb(62, 74, 66),      0.9f,  2700.0f,  7.5f, 0.14f);
 
         // Bond strengths, kg/m^2: compression / shear / tension (docs/design/shred.md Part 4b,
         // "Material strengths"). A free column of height h holds while density x h <= C, a
@@ -227,6 +229,8 @@ namespace vortex::voxel {
         strength(ids.roofTile, 25000, 8000, 6000);
         strength(ids.thatch, 2000, 1000, 1000);
         strength(ids.wattleDaub, 10000, 4000, 3000);
+        strength(ids.soot, 100000, 40000, 15000);
+        strength(ids.graniteDamp, 200000, 80000, 25000);
         for (const uint8_t soft : {ids.needles, ids.reed, ids.fern, ids.flowerYellow, ids.flowerViolet, ids.mushroom}) strength(soft, 10000, 5000, 5000);
         return ids;
     }

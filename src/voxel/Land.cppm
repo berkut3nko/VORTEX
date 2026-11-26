@@ -68,7 +68,7 @@ export namespace vortex::voxel {
     inline constexpr uint64_t kLandStarterGoldenHash = 0x3518dcab484973e2ull;
     inline constexpr uint64_t kLandSamplingGoldenHash = 0xc013c33ac06d6983ull;
     /// @brief Pins Hollowkeep's plan and its stamped voxels on `Fort.GoldenHash`'s test map (vortex.voxel:fort, fortress.md).
-    inline constexpr uint64_t kFortGoldenHash = 0xed2f382ac10146d2ull;
+    inline constexpr uint64_t kFortGoldenHash = 0xff46a8f8610ec0f2ull;
     inline constexpr uint64_t kLandGoldenHash =
         kLandBakeGoldenHash ^ (kLandStarterGoldenHash * 3) ^ (kLandSamplingGoldenHash * 5) ^ (kFortGoldenHash * 7);
 

@@ -89,6 +89,25 @@ export namespace vortex::voxel {
         glm::ivec3 max{0};
     };
 
+    /// @brief The movable props of the castle (fortress.md "Movable props").
+    enum class FortProp : uint8_t { Plank = 0, Beam = 1, Ladder = 2, Crate = 3, Barrel = 4, Cart = 5, Table = 6, HayWagon = 7 };
+
+    /// @brief Where a prop goes: the template drops it onto what stands under `at` (world metres), its long side along
+    /// x or z.
+    struct FortPropSpot {
+        FortProp kind = FortProp::Crate;
+        glm::vec3 at{0.0f};
+        bool alongX = true;
+    };
+
+    /// @brief A point light of the castle: a torch, a brazier, a hearth (world metres; the colour is linear).
+    struct FortLight {
+        glm::vec3 at{0.0f};
+        glm::vec3 color{1.0f};
+        float intensity = 4.0f;
+        float radius = 6.0f;
+    };
+
     /// @brief The castle's plan: its records in stamp order and what the template needs (the gate, the keep).
     struct FortPlan {
         bool placed = false;
@@ -109,6 +128,9 @@ export namespace vortex::voxel {
         glm::vec2 walkwayStrut{0.0f};        ///< the middle between its 2 struts (world metres)
         float walkwayGround = 0.0f;          ///< the struts' foot
         float walkwayDeck = 0.0f;            ///< the deck's top over the struts
+        glm::vec3 guardLever{0.0f};          ///< the guardroom's floor where the portcullis lever stands (its middle)
+        std::vector<FortLight> lights;       ///< torches, braziers and hearths
+        std::vector<FortPropSpot> props;     ///< the movable props, at most 40
     };
 
     /// @brief Plans the castle on the map's site (none when the bake placed no site).

@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| Status | `[fort-1]`-`[fort-4]` built: the land generator stamps Hollowkeep's skeleton, openings, interiors, the low route, roofs and crowns, the bailey's buildings, scaffolds and walkway from `voxel::PlanFort` ("The skeleton as built", "Openings and interiors as built", "Roofs and crowns as built", "The bailey as built"). `[fort-5]` designed. |
+| Status | `[fort-1]`-`[fort-5]` built: the land generator stamps Hollowkeep's skeleton, openings, interiors, the low route, roofs and crowns, the bailey's buildings, scaffolds and walkway, and the rooms' furniture from `voxel::PlanFort`; `sim::HollowkeepTemplate` adds the lights, the movable props and the guardroom's lever ("The skeleton as built", "Openings and interiors as built", "Roofs and crowns as built", "The bailey as built", "Rooms, lights and props as built"). |
 | Decided | The owner, 2026-11-25: the brief in "The brief" (a detailed medieval fortress as a destructible siege and route-making playground); the answers in the castle draft's section 10 (no trapdoor mechanism, fire spread is in the demo, furniture, medieval construction scaffolding and interactable elements). Us (this design, 2026-11-25): "Decision" items 1-10. |
-| Next | The owner walks the stamped castle (owner check 29) and answers "Open questions". Then `[fort-5]`. |
+| Next | The owner walks the stamped castle (owner check 29) and answers "Open questions". What stays open is listed in "Rooms, lights and props as built" (the crane, doors, fire, the session). |
 | Open | "Open questions (with the answer we recommend)". |
 | History | - |
 | Marks | (e) is an estimate. Every size is a design target until a stage measures it. 1 voxel = 0.125 m; "v" after a number is voxels. |
@@ -466,6 +466,48 @@ to `[fort-5]` with the siege yard's props), walkways between lean-to upper floor
 that check the way a released part tips (the engine's load check releases the walkway; its fall is the owner's
 check 29), the reachability walk on the worn plan (it waits for the bot's path code).
 
+## Rooms, lights and props as built
+
+`[fort-5]`, 2026-11-26 (`FortPlan::lights`, `FortPlan::props`, `FortPlan::guardLever`, `FortProp`; the template
+`sim::HollowkeepTemplate` makes the lights, the props and the lever; the game creates them offline):
+- **The guardroom** over the gate passage (the gatehouse's upper room, 10 x 6 m, its floor 5 m up): a stone stair of
+  20 steps against the gatehouse's bailey face, 1 m wide, up to a door at its side (on the side of the gate where the
+  stair stays clear of the curtain and the inner wall; the room's kit is mirrored with it); the winch drum on 2 posts over the
+  portcullis slot; a weapon rack (2 rails, 4 iron spears) and 2 arrow barrels by the back wall; a bench; 2 iron
+  braziers of embers in the front corners. The portcullis lever stands on its floor (3.6 m from the portcullis'
+  plane: `sim::CheckMechanismAuthoring`); the lever post in the bailey is gone.
+- **The great hall** (the keep's second storey): a stone fireplace in the middle of the back wall (jambs, a hood, a
+  brick hearth, embers), soot on the wall over the hood, 2 movable tables with fixed benches, a torch in the middle of
+  each side wall (the windows are 2.5 m either side of a face's middle). Soot on the chimney's top.
+- **The lean-tos' kits:** forge (embers on the hearth, an anvil on its block, a quench tub of water), stables (stall
+  partitions, hay, a trough in each stall), barracks (2-berth bunks, a chest), kitchen (embers in the oven, a long
+  table, casks), workshop (a bench across the end wall, timber), granary (sacks). Each piece keeps clear of the door's
+  way in, the stair and the hearth; the props inside take the first free spot from the far end.
+- **Lights** (`TemplateLight`; each flame is a torch voxel in its own cell, worldgen.md C8): 2 torches in the gate
+  passage, 2 braziers, the hall's fireplace and 2 torches, a light over the forge's and the kitchen's embers (7-9 per
+  castle).
+- **Movable props** (planks, beams, ladders, crates, barrels, a cart, tables, a hay wagon; at most 40): on floors (the
+  guardroom, the hall, the lean-tos) and at the work sites in front of the keep's scaffold (clear of the way from the
+  inner gate to the door) and behind the unfinished tower. Each kind there is a stack on timber skids: a level block of
+  planks under its footprint where the ground slopes; none where it would need more than 1 m, or where its footprint
+  would reach the curtain or the inner wall. The template drops each
+  prop from 1.5 m over its spot onto the generated voxels and the props placed before it, and keeps it only when its
+  box is clear, it falls 1.5 m at most and each corner stands on something (23 props on the world map). The cart
+  and the hay wagon stand on their wheels and a leg.
+- **Weathering** (`soot` and `granite_damp`: their stone's strength, so a blast reads them as the stone): damp on the
+  outer 0.25 m of a battered base turned from the sun (0.45, 0.7, 0.35), up to 1-1.5 m over the ground with a ragged
+  top; soot over the hall's hood and on the chimney.
+
+Measured: the plan has 328 records in 3 ms; the chunks around the keep cost 85 us each with the castle and 71 us
+without it (`vortex_land --chunk-cost`, 2026-11-26); the template's prop drop adds no measurable time to Hollowkeep's
+start-up (1.4-1.5 s with the surface load, `Hollowkeep: built ...`). Tests: `Fort.AStoneStairClimbsToTheGuardroomOverTheGate`,
+`Fort.TheGreatHallHasAFireplaceAndTables`, `Fort.EveryLightHangsInTheOpenBesideItsFlame`, `Fort.TheLeanTosHoldTheirKits`,
+`Fort.DampStainsOnlyTheShadedBatters`, `Hollowkeep.TheGuardroomsLeverLightsAndPropsStayUnderTheCaps`,
+`Hollowkeep.ThePropsAtTheKeepsWorkSiteRestWhereTheyAreDropped`. Not yet: the crane, dormers, doors as mechanisms
+(the keep's and the guardroom's doors are open), hanging cloths, hammer-beam trusses and the hall's gallery, the
+undercroft's casks, the scaffold's hoist; fire (spread.md is designed, nothing burns yet); the props and lights in a
+session (the server does not use this template).
+
 ## Budgets
 
 | Item | Budget | How it is measured |
@@ -495,7 +537,7 @@ check 29), the reachability walk on the worn plan (it waits for the bot's path c
 | `[fort-2]` | Openings and interiors: arrow slits, doors, windows, murder holes, putlog holes; joists and floors; spiral stairs; vaults and undercrofts; the culvert and grate (L1); oak_iron. Acceptance: the stairs climb every storey with headroom (done: `Fort.TowersHaveSplayedSlitsAndASpiralStairToTheRoof`; a bot walk waits for the bot's path code); L1 leads from its grate to the bailey and a siege shot opens it (done: `Fort.TheCulvertLeadsFromItsGrateToTheBailey`, `Hollowkeep.ASiegeShotOpensTheCulvertGrate`); the vaulted passage (done: `Fort.TheGatePassageIsVaultedWithMurderHoles`); every tower opens onto both walks (done: `Fort.EveryFlankTowerOpensOntoBothWallWalks`); 0 releases (done: the blast tests) | Built | - | - |
 | `[fort-3]` | Roofs and crowns: conical, pyramidal, hipped and gabled roofs on trusses; dormers, chimneys, the bell turret; machicolations and hoardings; slate, roof_tile, thatch. Acceptance: C5 shells hold (done: `Fort.RoofShellsAreThickEnoughForTheirPitch`); roofs on trusses, machicolations, hoardings, the gatehouse's roof and bell (done: `Fort.TowersCarryRoofsOnTrussesOverAnOpenTopFloor`, `Fort.MachicolationsHaveDropHolesBetweenTheirCorbels`, `Fort.HoardingsHangOnTheCurtainByTheGate`, `Fort.TheGatehouseHasAGableRoofAndABell`); 0 releases (done); the GPU cost at fixed cameras (the owner, check 29); dormers wait for `[fort-5]` | Built | - | - |
 | `[fort-4]` | The bailey: lean-tos (stables, forge, barracks, kitchen, granary, workshop), wattle_daub; the construction scaffolding kit at its 3-4 sites, walkways, crane; the set pieces as designed necks; M1 and H1. Acceptance: lean-tos and scaffolds (done: `Fort.LeanTosStandAgainstTheCurtainOnTimberFrames`, `Fort.ScaffoldsClimbFromTheGroundToTheirTopDeck`, `Fort.TheUnfinishedTowerHasARaggedTopAndNoRoof`); M1 and H1 (done: `Fort.TheWorkshopsRoofReachesUnderTheWallWalk`, `Fort.TheRepairPatchOpensTheParapetOverItsScaffold`); the walkway releases within limits (done: `Hollowkeep.CuttingTheWalkwaysStrutsDropsItsDeck`); the way it tips (the owner, check 29); the crane moves to `[fort-5]`; reachability on the worn plan waits for the bot's path code | Built | - | - |
-| `[fort-5]` | Props and vignettes: room kits, movable props, lights, weathering, soot; fire-ready materials with spread.md. Acceptance: the object count under the cap; the guardroom's lever drives the portcullis; owner check of the look | Designed | - | - |
+| `[fort-5]` | Props and vignettes: room kits, movable props, lights, weathering, soot; fire-ready materials with spread.md. Acceptance: the object count under the cap (done: `Hollowkeep.TheGuardroomsLeverLightsAndPropsStayUnderTheCaps`, `Hollowkeep.ThePropsAtTheKeepsWorkSiteRestWhereTheyAreDropped`); the guardroom's lever drives the portcullis (its place and link: `Hollowkeep.ThePortcullisAndItsLeverPassTheAuthoringRule`, `Fort.AStoneStairClimbsToTheGuardroomOverTheGate`; using it: the owner, check 29); the kits, lights and weathering (done: `Fort.TheGreatHallHasAFireplaceAndTables`, `Fort.EveryLightHangsInTheOpenBesideItsFlame`, `Fort.TheLeanTosHoldTheirKits`, `Fort.DampStainsOnlyTheShadedBatters`); owner check of the look (check 29); fire waits for spread.md's stages; the crane and dormers are not built | Built | - | - |
 
 The order relative to the ROADMAP (`[wg-W1]`, `[mech-3]`, `[spread-S2]`, the demo work) is the owner's call.
 `[fort-1]` needs nothing new from other designs.

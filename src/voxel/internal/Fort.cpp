@@ -71,6 +71,9 @@ namespace vortex::voxel {
         /// 1 m wide at the inner face.
         bool Slit(float lateral, float depthIn, float shell) { return lateral < 0.07f + 0.43f * std::clamp(depthIn / shell, 0.0f, 1.0f); }
 
+        /// The ground-plane direction away from the game's sun (0.45, 0.7, 0.35): faces turned this way take damp.
+        constexpr float kShadeX = -0.78935f, kShadeZ = -0.61394f;
+
         /// A number in [0, 1) from 2 integers (ragged edges: repair patches, unfinished tops).
         float Ragged(int a, int b) {
             uint32_t h = uint32_t(a) * 0x9e3779b1u ^ (uint32_t(b) + 0x7f4a7c15u) * 0x85ebca77u;
@@ -78,6 +81,26 @@ namespace vortex::voxel {
             h *= 0x2c1b3c6du;
             h ^= h >> 12;
             return float(h >> 8) * (1.0f / 16777216.0f);
+        }
+
+        /// Damp on a battered base: the outer 0.25 m of a face turned from the sun, up to 1-1.5 m over the ground.
+        bool Damp(float outward, float depthIn, float aboveGround, int along) {
+            return outward > 0.25f && depthIn < 0.25f && aboveGround < 1.5f - 0.5f * Ragged(along, 7);
+        }
+
+        /// A prop's size (long, wide, high; metres) as sim::HollowkeepTemplate builds it.
+        glm::vec3 PropSize(FortProp kind) {
+            switch (kind) {
+            case FortProp::Plank: return {2.0f, 0.25f, 0.125f};
+            case FortProp::Beam: return {2.5f, 0.25f, 0.25f};
+            case FortProp::Ladder: return {3.0f, 0.5f, 0.125f};
+            case FortProp::Crate: return {0.75f, 0.75f, 0.75f};
+            case FortProp::Barrel: return {0.625f, 0.625f, 0.875f};
+            case FortProp::Cart: return {2.0f, 1.25f, 0.875f};
+            case FortProp::Table: return {2.5f, 0.875f, 0.8f};
+            case FortProp::HayWagon: return {2.0f, 1.25f, 1.75f};
+            }
+            return glm::vec3(1.0f);
         }
 
         uint64_t Mix(uint64_t x) {
@@ -506,10 +529,6 @@ namespace vortex::voxel {
             box(glm::vec3(slot.x - sext.x, gateGround + 4.5f, slot.y - sext.y), glm::vec3(slot.x + sext.x, gateGround + 8.5f, slot.y + sext.y), 0);
             // The murder holes, after the upper room's floor.
             for (const float at : {-2.5f, -1.0f, 0.5f}) column(gatePoint + axis * at, 0.25f, gateGround + 4.0f, gateGround + 5.0f, 0);
-            // The lever's post, 6 m inside the gate beside the passage.
-            const glm::vec2 post = gatePoint - axis * 6.0f + across * 3.0f;
-            const float postGround = ground(post);
-            column(post, 0.15f, postGround - 0.5f, postGround + 1.0f, m.wood);
         }
 
         // 6. The low route (fortress.md L1): a culvert through a curtain run with no tower at either end, at least 5
@@ -865,6 +884,283 @@ namespace vortex::voxel {
             const glm::vec2 side(-axis.y, axis.x), face = keep + axis * 8.0f;
             scaffold(face - side * 5.25f, face + side * 5.25f, axis, site.keepGround + 18.0f, site.keepGround, 2);
         }
+
+        // 11. Room kits, lights and props (fortress.md "Vignettes and room kits", "Movable props"): furniture as stamped
+        // voxels, each light's flame in its own voxel (worldgen.md C8), and the spots where the template drops the movable
+        // props. A frame (o, u, v) is a room's middle and its 2 horizontal axes; uv() and uvBox() place in it.
+        {
+            const glm::vec3 kFlame(1.0f, 0.6f, 0.28f), kEmbers(1.0f, 0.42f, 0.16f);
+            const auto cell = [&](glm::vec3 at, uint8_t id) { box(at, at, id); };   // the one voxel holding `at`
+            const auto uv = [](glm::vec2 o, glm::vec2 u, glm::vec2 v, float a, float b) { return o + u * a + v * b; };
+            const auto uvBox = [&](glm::vec2 o, glm::vec2 u, glm::vec2 v, float u0, float u1, float v0, float v1, float y0, float y1, uint8_t id) {
+                const glm::vec2 p0 = uv(o, u, v, u0, v0), p1 = uv(o, u, v, u1, v1);
+                box(glm::vec3(std::min(p0.x, p1.x), y0, std::min(p0.y, p1.y)), glm::vec3(std::max(p0.x, p1.x), y1, std::max(p0.y, p1.y)), id);
+            };
+            // A torch on an iron bracket 2 voxels out of a face (n: out of it, along x or z), its flame a voxel over the
+            // bracket's end at y.
+            const auto torch = [&](glm::vec2 face, glm::vec2 n, float y) {
+                const glm::vec2 p1 = face + n * (0.5f * vs), p2 = face + n * (1.5f * vs);
+                cell(glm::vec3(p1.x, y - vs * 0.5f, p1.y), m.iron);
+                cell(glm::vec3(p2.x, y - vs * 0.5f, p2.y), m.iron);
+                cell(glm::vec3(p2.x, y + vs * 0.5f, p2.y), m.torch);
+                const glm::vec2 l = p2 + n * 0.3f;
+                plan.lights.push_back({glm::vec3(l.x, y + 0.35f, l.y), kFlame, 3.0f, 6.0f});
+            };
+            const auto prop = [&](FortProp kind, glm::vec2 at, float y, bool alongX) {
+                if (plan.props.size() < 40) plan.props.push_back({kind, glm::vec3(at.x, y, at.y), alongX});
+            };
+            const bool axisX = std::abs(axis.x) > 0.5f;
+            // Clear of the walls: the curtain's inner face and the inner wall's outer batter, by the site's radii in the
+            // nearest direction (a margin for the polygon's chords).
+            const auto radius = [&](const std::array<float, kSiteDirections>& radii, glm::vec2 p) {
+                const glm::vec2 d = p - keep;
+                return radii[size_t(LandSiteNearestDirection(d.x, d.y))];
+            };
+            const auto inOuterBailey = [&](glm::vec2 p) {
+                const float r = Length(p - keep);
+                return r <= radius(site.curtain, p) - 2.5f && r >= radius(site.inner, p) + 1.25f + kBatterMax + 0.75f;
+            };
+            const auto inInnerBailey = [&](glm::vec2 p) { return Length(p - keep) <= radius(site.inner, p) - 1.25f - kBatterMax - 0.75f; };
+
+            // The guardroom over the gate passage: the room holds u in [-3, 3] (u out of the castle) and v in [-5, 5],
+            // its floor 5 m up; the portcullis rises through the slot at u = 2.5. A stone stair against the gatehouse's
+            // bailey face climbs to a door at v = 3-4.25, on the side of the gate where it stays clear of the curtain and
+            // the inner wall (the room's kit is mirrored with it).
+            {
+                float side = 1.0f;
+                for (const float s : {1.0f, -1.0f}) {
+                    bool fits = true;
+                    for (const float a : {-5.25f, -4.25f})
+                        for (const float b : {3.0f, 6.0f, 9.25f}) fits = fits && inOuterBailey(gatePoint + axis * a + across * (b * s));
+                    if (fits) {
+                        side = s;
+                        break;
+                    }
+                }
+                const glm::vec2 o = gatePoint, u = axis, v = across * side;
+                const float floor = gateGround + 5.0f;
+                float sLo = 0.0f, sHi = 0.0f;
+                groundRange(glm::min(uv(o, u, v, -5.25f, 3.0f), uv(o, u, v, -4.25f, 9.25f)), glm::max(uv(o, u, v, -5.25f, 3.0f), uv(o, u, v, -4.25f, 9.25f)), sLo,
+                            sHi);
+                for (int k = 0; k < 20; ++k)
+                    uvBox(o, u, v, -5.25f, -4.25f, 9.25f - 0.25f * float(k + 1), 9.25f - 0.25f * float(k), sLo - 0.5f, gateGround + 0.25f * float(k + 1),
+                          m.ashlar);
+                uvBox(o, u, v, -5.25f, -4.25f, 3.0f, 4.25f, sLo - 0.5f, floor, m.ashlar);   // the landing
+                uvBox(o, u, v, -4.25f, -2.875f, 3.0f, 4.25f, floor, floor + 2.25f, 0);       // the door
+                // The winch drum over the slot's inner side, on 2 posts.
+                uvBox(o, u, v, 1.5f, 2.0f, -2.0f, 2.0f, floor + 0.75f, floor + 1.25f, m.wood);
+                for (const float side : {-2.375f, 2.125f}) uvBox(o, u, v, 1.5f, 2.0f, side, side + 0.25f, floor, floor + 1.5f, m.wood);
+                // A weapon rack on the back wall: 2 rails and 4 spears.
+                for (const float y : {floor + 0.5f, floor + 1.375f}) uvBox(o, u, v, -3.0f, -2.75f, -4.5f, -2.5f, y, y + 0.125f, m.wood);
+                for (const float b : {-4.25f, -3.75f, -3.25f, -2.75f}) {
+                    const glm::vec2 q = uv(o, u, v, -2.875f, b);
+                    box(glm::vec3(q.x, floor, q.y), glm::vec3(q.x, floor + 1.875f, q.y), m.iron);
+                }
+                // 2 arrow barrels by the rack, a bench along the side wall.
+                uvBox(o, u, v, -1.875f, -1.25f, -4.75f, -4.125f, floor, floor + 0.75f, m.wood);
+                uvBox(o, u, v, -0.875f, -0.25f, -4.75f, -4.125f, floor, floor + 0.75f, m.wood);
+                uvBox(o, u, v, -2.0f, 0.0f, 4.375f, 4.75f, floor, floor + 0.5f, m.planks);
+                // 2 braziers in the front corners: an iron bowl of embers on a leg.
+                for (const float b : {-4.25f, 4.25f}) {
+                    uvBox(o, u, v, 1.875f, 2.125f, b - 0.125f, b + 0.125f, floor, floor + 0.5f, m.iron);
+                    uvBox(o, u, v, 1.75f, 2.25f, b - 0.25f, b + 0.25f, floor + 0.5f, floor + 0.75f, m.iron);
+                    uvBox(o, u, v, 1.875f, 2.125f, b - 0.125f, b + 0.125f, floor + 0.75f, floor + 0.875f, m.torch);
+                    const glm::vec2 l = uv(o, u, v, 2.0f, b);
+                    plan.lights.push_back({glm::vec3(l.x, floor + 1.4f, l.y), kEmbers, 3.5f, 7.0f});
+                }
+                const glm::vec2 lever = uv(o, u, v, -1.25f, 2.5f);   // 3 m and more from the portcullis (the authoring rule)
+                plan.guardLever = glm::vec3(lever.x, floor, lever.y);
+                // 2 barrels by the back wall.
+                for (const float b : {-2.0f, -1.25f}) prop(FortProp::Barrel, uv(o, u, v, -2.25f, b), floor, axisX);
+                // Torches in the passage, on its walls inside the portcullis.
+                for (const float side : {-1.0f, 1.0f}) torch(uv(o, u, v, -3.5f, 2.0f * side), -v * side, gateGround + 2.25f);
+            }
+
+            // The great hall: the keep's second storey (u toward the gate, its inner faces at 6 m), 2 tables with
+            // benches, a stone fireplace in the middle of the back wall and a torch in the middle of each side wall (the
+            // windows are 2.5 m either side of a face's middle), soot.
+            {
+                const glm::vec2 o = keep, u = axis, v(-axis.y, axis.x);
+                const float floor = site.keepGround + 11.25f;
+                uvBox(o, u, v, -6.0f, -5.25f, -1.25f, -0.875f, floor, floor + 1.5f, m.ashlar);   // the jambs
+                uvBox(o, u, v, -6.0f, -5.25f, 0.875f, 1.25f, floor, floor + 1.5f, m.ashlar);
+                uvBox(o, u, v, -6.0f, -5.25f, -1.25f, 1.25f, floor + 1.5f, floor + 2.25f, m.ashlar);   // the hood
+                uvBox(o, u, v, -6.0f, -5.625f, -1.0f, 1.0f, floor + 2.25f, floor + 3.5f, m.ashlar);
+                uvBox(o, u, v, -6.0f, -5.0f, -1.25f, 1.25f, floor - 0.25f, floor, m.brick);      // the hearth
+                uvBox(o, u, v, -5.875f, -5.5f, -0.5f, 0.5f, floor, floor + 0.125f, m.torch);     // its embers
+                uvBox(o, u, v, -6.25f, -6.0f, -1.0f, 1.0f, floor + 3.5f, floor + 5.25f, m.soot);  // soot over the hood
+                {
+                    const glm::vec2 l = uv(o, u, v, -5.1f, 0.0f);
+                    plan.lights.push_back({glm::vec3(l.x, floor + 0.75f, l.y), kEmbers, 4.0f, 8.0f});
+                }
+                for (const float side : {-2.0f, 2.0f}) {
+                    for (const float bench : {-0.8125f, 0.8125f})
+                        uvBox(o, u, v, -0.5f, 2.5f, side + bench - 0.1875f, side + bench + 0.1875f, floor, floor + 0.4375f, m.planks);
+                    prop(FortProp::Table, uv(o, u, v, 1.0f, side), floor, axisX);
+                }
+                for (const float side : {-1.0f, 1.0f}) torch(uv(o, u, v, 0.0f, 6.0f * side), -v * side, floor + 2.0f);
+                // Soot on the chimney's top, its flue left open.
+                const float top = site.keepGround + 22.0f;
+                const glm::vec2 flue = keep - axis * 3.5f + v * 2.0f;
+                column(flue, 0.5f, top + 6.0f, top + 6.5f, m.soot);
+                column(flue, 0.25f, top + 6.0f, top + 6.5f, 0);
+            }
+
+            // The lean-tos' kits by kind, clear of the door, the stair and the hearth.
+            std::vector<FortRecord> leanTos;
+            for (const FortRecord& r : plan.records)
+                if (r.shape == FortShape::LeanTo) leanTos.push_back(r);
+            for (const FortRecord& r : leanTos) {
+                const float len = Length(r.b - r.a);
+                const glm::vec2 d = (r.b - r.a) / len, in = r.out;
+                const float depth = r.half;
+                const float floor = r.lo + (r.building == FortBuilding::Granary ? 0.75f : 0.0f);
+                const int storeys = int(r.height);
+                const float doorT = 2.0f * std::floor(len / 4.0f);
+                const auto at = [&](float t, float w) { return r.a + d * t + in * w; };
+                const bool hearth = r.building == FortBuilding::Forge || r.building == FortBuilding::Kitchen;
+                std::vector<glm::vec4> used;   // (t0, t1, w0, w1) of every kit piece and prop
+                const auto fits = [&](float t0, float t1, float w0, float w1) {
+                    if (t0 < 0.25f || t1 > len - 0.25f || w0 < 0.25f || w1 > depth - 0.25f) return false;
+                    if (storeys > 1 && t1 > len - 4.25f && w0 < 1.25f) return false;                  // the stair
+                    if (w1 > depth - 1.5f && t1 > doorT - 0.25f && t0 < doorT + 2.25f) return false;   // the door's way in
+                    return !(hearth && t0 < 1.75f && w0 < 1.5f);                                       // the hearth
+                };
+                const auto free = [&](float t0, float t1, float w0, float w1) {
+                    if (!fits(t0, t1, w0, w1)) return false;
+                    for (const glm::vec4& q : used)
+                        if (t0 < q.y && t1 > q.x && w0 < q.w && w1 > q.z) return false;
+                    return true;
+                };
+                // A kit piece (pieces of one kit may stand on each other: a berth over a berth, an anvil on its block).
+                const auto piece = [&](float t0, float t1, float w0, float w1, float y0, float y1, uint8_t id) {
+                    const bool onHearth = hearth && id == m.torch;   // the embers lie on it
+                    if (!onHearth && !fits(t0, t1, w0, w1)) return;
+                    beam(at(t0, (w0 + w1) * 0.5f), at(t1, (w0 + w1) * 0.5f), (w1 - w0) * 0.5f, y0, y1, id);
+                    used.emplace_back(t0, t1, w0, w1);
+                };
+                // A prop on the floor: the first free spot from the far end, its footprint taken as the circle round it
+                // (the props stand square to the world, the building may not).
+                const auto place = [&](FortProp kind, int count) {
+                    const glm::vec3 size = PropSize(kind);
+                    const float rad = 0.5f * std::sqrt(size.x * size.x + size.y * size.y) + 0.0625f;
+                    for (int k = 0; k < count; ++k)
+                        for (float t = len - 0.25f - rad; t >= 0.25f + rad; t -= 0.25f) {
+                            bool done = false;
+                            for (float w = 0.25f + rad; w <= depth - 0.25f - rad && !done; w += 0.25f)
+                                if (free(t - rad, t + rad, w - rad, w + rad)) {
+                                    prop(kind, at(t, w), floor, axisX);
+                                    used.emplace_back(t - rad, t + rad, w - rad, w + rad);
+                                    done = true;
+                                }
+                            if (done) break;
+                        }
+                };
+                switch (r.building) {
+                case FortBuilding::Forge:
+                    piece(0.375f, 1.625f, 1.125f, 1.375f, floor + 0.75f, floor + 0.875f, m.torch);   // embers on the hearth
+                    piece(2.75f, 3.25f, 1.0f, 1.5f, floor, floor + 0.5f, m.wood);                    // the anvil's block
+                    piece(2.5f, 3.5f, 1.125f, 1.375f, floor + 0.5f, floor + 0.75f, m.iron);          // the anvil
+                    piece(3.75f, 4.5f, 0.5f, 1.25f, floor, floor + 0.625f, m.planks);                // the quench tub
+                    piece(3.875f, 4.375f, 0.625f, 1.125f, floor + 0.125f, floor + 0.5f, m.water);
+                    {
+                        const glm::vec2 l = at(1.0f, 1.75f);
+                        plan.lights.push_back({glm::vec3(l.x, floor + 1.25f, l.y), kEmbers, 4.0f, 7.0f});
+                    }
+                    place(FortProp::Barrel, 2);
+                    break;
+                case FortBuilding::Kitchen: {
+                    const float end = std::min(len - 0.75f, 5.25f);
+                    piece(0.375f, 1.625f, 1.125f, 1.375f, floor + 0.75f, floor + 0.875f, m.torch);   // embers in the oven's mouth
+                    piece(2.25f, end, depth * 0.5f - 0.375f, depth * 0.5f + 0.375f, floor + 0.75f, floor + 0.875f, m.planks);   // the table
+                    piece(2.25f, 2.5f, depth * 0.5f - 0.375f, depth * 0.5f + 0.375f, floor, floor + 0.75f, m.wood);
+                    piece(end - 0.25f, end, depth * 0.5f - 0.375f, depth * 0.5f + 0.375f, floor, floor + 0.75f, m.wood);
+                    for (float t = 2.25f; t + 0.625f <= len - 0.5f; t += 0.875f) piece(t, t + 0.625f, 0.25f, 0.875f, floor, floor + 0.75f, m.wood);   // casks
+                    const glm::vec2 l = at(1.0f, 1.75f);
+                    plan.lights.push_back({glm::vec3(l.x, floor + 1.25f, l.y), kEmbers, 3.0f, 6.0f});
+                    break;
+                }
+                case FortBuilding::Stables:
+                    for (float t = 2.0f; t < len - 0.5f; t += 2.0f) {   // stall partitions from the back wall
+                        beam(at(t, 0.25f), at(t, depth - 1.5f), 0.125f, floor, floor + 1.25f, m.planks);
+                        used.emplace_back(t - 0.125f, t + 0.125f, 0.25f, depth - 1.5f);
+                    }
+                    piece(0.25f, 1.25f, 0.25f, 1.0f, floor, floor + 0.75f, m.thatch);               // hay
+                    for (float t = 2.5f; t + 1.0f <= len - 0.25f; t += 2.0f) {                       // a trough in each stall
+                        piece(t, t + 1.0f, 0.25f, 0.625f, floor, floor + 0.5f, m.planks);
+                        piece(t + 0.125f, t + 0.875f, 0.25f, 0.5f, floor + 0.25f, floor + 0.5f, m.thatch);
+                    }
+                    place(FortProp::Barrel, 2);
+                    break;
+                case FortBuilding::Barracks:
+                    for (float t = 0.25f; t + 1.5f <= len - 0.25f; t += 2.0f) {   // bunks of 2 berths along the back wall
+                        for (const float y : {floor + 0.375f, floor + 1.375f}) piece(t, t + 1.5f, 0.25f, 1.0f, y, y + 0.125f, m.planks);
+                        for (const float e : {0.0f, 1.25f}) piece(t + e, t + e + 0.25f, 0.75f, 1.0f, floor, floor + 1.5f, m.wood);
+                    }
+                    piece(1.0f, 2.0f, depth - 1.25f, depth - 0.75f, floor, floor + 0.5f, m.wood);   // a chest
+                    break;
+                case FortBuilding::Workshop: {
+                    // The bench across the end wall (the stair runs along the back wall at the other end).
+                    piece(0.25f, 0.875f, 0.5f, 2.5f, floor + 0.75f, floor + 0.875f, m.planks);
+                    for (const float e : {0.5f, 2.25f}) piece(0.25f, 0.875f, e, e + 0.25f, floor, floor + 0.75f, m.wood);
+                    piece(3.0f, 4.5f, 1.25f, 1.75f, floor, floor + 0.25f, m.wood);                  // timber
+                    piece(3.0f, 4.5f, 1.25f, 1.75f, floor + 0.25f, floor + 0.5f, m.wood);
+                    place(FortProp::Crate, 2);
+                    break;
+                }
+                case FortBuilding::Granary:
+                    for (float t = 0.5f; t + 0.625f <= len - 0.5f; t += 0.875f) piece(t, t + 0.625f, 0.375f, 1.0f, floor, floor + 0.5f, m.thatch);   // sacks
+                    break;
+                }
+            }
+
+            // At the work sites: planks, beams, ladders, crates, a cart and the hay wagon in front of the keep's scaffold,
+            // clear of the way from the inner gate to the keep's door (its middle 2.5 m); planks, beams and ladders behind
+            // the unfinished tower. Each kind is a stack on timber skids: a level block of planks under its footprint where the
+            // ground slopes (none where the slope would need more than 1 m), so the template drops each piece onto the one
+            // before and it rests.
+            for (size_t j = 0; j < plan.records.size(); ++j) {
+                const FortRecord r = plan.records[j];
+                if (r.shape != FortShape::Scaffold || r.id == 0) continue;
+                const float len = Length(r.b - r.a);
+                const glm::vec2 d = (r.b - r.a) / len;
+                const auto at = [&](float t, float out) { return r.a + d * t + r.out * out; };
+                const bool along = std::abs(d.x) > 0.5f;
+                const auto stack = [&](FortProp kind, float t, float out, int count) {
+                    const glm::vec2 c = at(t, out);
+                    const glm::vec3 size = PropSize(kind);
+                    const glm::vec2 half = (along ? glm::vec2(size.x, size.y) : glm::vec2(size.y, size.x)) * 0.5f + 0.125f;
+                    for (const float sx : {-1.0f, 1.0f})
+                        for (const float sz : {-1.0f, 1.0f}) {
+                            const glm::vec2 corner = c + glm::vec2(half.x * sx, half.y * sz);
+                            if (r.id == 2 ? !inInnerBailey(corner) : !inOuterBailey(corner)) return;   // clear of the walls
+                        }
+                    float gLo = 0.0f, gHi = 0.0f;
+                    groundRange(c - half, c + half, gLo, gHi);
+                    if (gHi - gLo > 1.0f) return;   // too steep for skids under it
+                    float base = gHi;
+                    if (gHi - gLo > 0.125f) {
+                        base = gHi + 0.125f;
+                        box(glm::vec3(c.x - half.x, gLo - 0.25f, c.y - half.y), glm::vec3(c.x + half.x, base, c.y + half.y), m.planks);
+                    }
+                    for (int k = 0; k < count; ++k) prop(kind, c, base + size.z * float(k), along);
+                };
+                if (r.id == 2) {
+                    stack(FortProp::Plank, 1.75f, 6.0f, 7);
+                    stack(FortProp::Beam, 9.0f, 6.0f, 3);
+                    stack(FortProp::Ladder, 9.0f, 7.25f, 2);
+                    stack(FortProp::Crate, 1.0f, 7.75f, 3);
+                    stack(FortProp::Crate, 2.25f, 7.75f, 3);
+                    stack(FortProp::Cart, 1.75f, 10.0f, 1);
+                    stack(FortProp::HayWagon, 9.0f, 10.0f, 1);
+                } else {
+                    stack(FortProp::Plank, 1.5f, 6.0f, 3);
+                    stack(FortProp::Beam, 3.0f, 6.75f, 3);
+                    stack(FortProp::Ladder, 3.0f, 7.5f, 2);
+                }
+            }
+        }
+
         return plan;
     }
 
@@ -882,6 +1178,13 @@ namespace vortex::voxel {
             put(uint64_t(uint32_t(r.min.x)) | uint64_t(uint32_t(r.min.y)) << 32);
             put(uint64_t(uint32_t(r.min.z)) | uint64_t(uint32_t(r.max.x)) << 32);
             put(uint64_t(uint32_t(r.max.y)) | uint64_t(uint32_t(r.max.z)) << 32);
+        }
+        for (const float f : {plan.guardLever.x, plan.guardLever.y, plan.guardLever.z}) putf(f);
+        for (const FortLight& l : plan.lights)
+            for (const float f : {l.at.x, l.at.y, l.at.z, l.color.x, l.color.y, l.color.z, l.intensity, l.radius}) putf(f);
+        for (const FortPropSpot& o : plan.props) {
+            put(uint64_t(o.kind) | uint64_t(o.alongX) << 8);
+            for (const float f : {o.at.x, o.at.y, o.at.z}) putf(f);
         }
         return h;
     }
@@ -1005,7 +1308,8 @@ namespace vortex::voxel {
                                     set(x, y, z, m.brick);
                                     continue;
                                 }
-                                if (ym < batterTop || s > r.half) id = m.granite;
+                                if (ym < batterTop || s > r.half)
+                                    id = Damp(n.x * kShadeX + n.y * kShadeZ, outer - s, ym - g, int(std::floor(t * 2.0f))) ? m.graniteDamp : m.granite;
                                 else if (s > r.half - 0.75f || s < -r.half + 0.75f || ym >= walk - 0.5f) id = m.ashlar;
                                 set(x, y, z, id);
                             } else if (s >= r.half - 0.5f && s <= r.half && (ym < walk + kParapet || (ym < walk + kParapet + kMerlon && Merlon(t + 50.0f)))) {
@@ -1379,6 +1683,10 @@ namespace vortex::voxel {
                         // An unfinished tower: its shell stops raggedly in its top 2 m; no roof slab, no crown.
                         const bool unfinished = (r.trim & FortTrim_Unfinished) != 0;
                         const float builtTo = unfinished ? r.hi - 2.0f + 1.75f * Ragged(x >> 2, z >> 2) : r.hi;
+                        // How far this column's face turns from the sun (damp on the batter), once per column.
+                        const glm::vec2 radial = o * u + side * v;
+                        const float shadeFacing = (radial.x * kShadeX + radial.y * kShadeZ) / std::max(Length(radial), 1.0e-3f);
+                        const int dampAlong = int(std::floor((u + v) * 2.0f));
                         for (int y = y0; y < hi.y; ++y) {
                             const float ym = (float(y) + 0.5f) * vs;
                             // Inside, the top storey is open from 2 m under the top; the shell stops at its ragged height.
@@ -1455,7 +1763,9 @@ namespace vortex::voxel {
                                 continue;
                             }
                             uint8_t id = m.ashlar;
-                            if (ym < batterTop || dist > R || (isKeep && ym < r.lo + 8.0f)) id = m.granite;
+                            if (ym < batterTop || dist > R || (isKeep && ym < r.lo + 8.0f)) {
+                                id = Damp(shadeFacing, outer - dist, ym - g, dampAlong) ? m.graniteDamp : m.granite;
+                            }
                             else if (squareCorner && Quoin(R - au, R - av, ym - r.lo)) id = m.graniteQuoin;
                             set(x, y, z, id);
                         }

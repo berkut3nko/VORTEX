@@ -4,8 +4,10 @@
 #include <gtest/gtest.h>
 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -14,6 +16,7 @@
 
 import vortex.voxel;
 import vortex.sim;
+import vortex.scene;
 
 using namespace vortex;
 
@@ -241,3 +244,63 @@ TEST(Hollowkeep, CuttingTheWalkwaysStrutsDropsItsDeck) {
     EXPECT_GT(largest, 1000u) << "the deck falls free as one piece";
     EXPECT_LT(largest, 45000u) << "within the designed-neck limit (worldgen.md)";
 }
+
+TEST(Hollowkeep, TheGuardroomsLeverLightsAndPropsStayUnderTheCaps) {
+    // fortress.md "Movable props" and "Vignettes and room kits": at most 40 props, the plan's lights, the lever on the
+    // guardroom's floor.
+    const Baked& b = Castle();
+    const voxel::FortPlan plan = voxel::PlanFort(b.map, b.land);
+    const float vs = b.land.voxelSize;
+    EXPECT_GE(b.castle.objects.size(), 20u) << "most spots take their prop (a spot too steep or inside a wall stays empty)";
+    EXPECT_LE(b.castle.objects.size(), plan.props.size());
+    EXPECT_LE(plan.props.size(), 40u) << "the props' cap (fortress.md 'Movable props')";
+    EXPECT_GE(b.castle.lights.size(), 7u);
+    EXPECT_LE(b.castle.lights.size(), 16u) << "a light budget for the UHD 620";
+    ASSERT_EQ(b.castle.mechanisms.size(), 2u);
+    EXPECT_EQ(b.castle.mechanisms[1].spawnVoxel.y, int(std::floor((plan.gateGround + 5.0f) / vs))) << "the lever stands on the guardroom's floor";
+}
+
+TEST(Hollowkeep, ThePropsAtTheKeepsWorkSiteRestWhereTheyAreDropped) {
+    // A prop dropped onto the generated voxels neither sinks into them nor is thrown out: after 2 s each one at the keep's
+    // work site (in front of its scaffold) is within 0.3 m of where it was made.
+    const Baked& b = Castle();
+    const auto map = std::make_shared<const voxel::LandMap>(b.map);
+    const voxel::FortPlan plan = voxel::PlanFort(b.map, b.land);
+    sim::SimulationConfig config;
+    config.chunkCapacity = 1536;
+    config.maxParticles = 4096;
+    config.jobThreads = 3;
+    config.world.voxelSize = b.land.voxelSize;
+    config.world.windowSize = glm::ivec3(8, 8, 8);
+    config.physics.maxBodies = 2048;
+    config.physics.maxBodyPairs = 4096;
+    config.physics.maxContactConstraints = 4096;
+    config.physics.threads = 1;
+    sim::Simulation simulation(config);
+    ASSERT_TRUE(simulation.Initialize(voxel::CreateLandGenerator(map, b.land)));
+    const glm::vec2 yard = plan.keep + plan.axis * 15.0f;
+    const glm::dvec3 focus(yard.x, plan.gateGround + 2.0f, yard.y);
+    simulation.World().LoadBlocking(focus);
+    sim::RegionTemplate near;
+    for (const sim::TemplateObject& o : b.castle.objects)
+        if (glm::length(glm::vec2(float(o.position.x), float(o.position.z)) - yard) < 9.0f)
+            // A model of its own: the static template's models outlive this simulation.
+            near.objects.push_back({std::make_shared<voxel::VoxelModel>(o.model->Volume(), voxel::kWorldPalette, "prop"), o.position});
+    ASSERT_GE(near.objects.size(), 10u) << "the work site's props";
+    const std::vector<scene::Entity> props = sim::CreateTemplateObjects(simulation, near);
+    ASSERT_EQ(props.size(), near.objects.size());
+    std::vector<glm::vec3> start;
+    std::vector<glm::quat> turn;
+    for (const scene::Entity e : props) {
+        start.push_back(simulation.Scene().TryGet<scene::Transform>(e)->current.position);
+        turn.push_back(simulation.Scene().TryGet<scene::Transform>(e)->current.rotation);
+    }
+    const std::array<glm::dvec3, 1> focusPoints = {focus};
+    for (int i = 0; i < 120; ++i) simulation.Step(focusPoints);
+    for (size_t i = 0; i < props.size(); ++i) {
+        const glm::vec3 now = simulation.Scene().TryGet<scene::Transform>(props[i])->current.position;
+        EXPECT_LT(glm::length(now - start[i]), 0.3f) << "prop " << i << " moved from " << start[i].x << " " << start[i].y << " " << start[i].z;
+        EXPECT_GT(std::abs(glm::dot(simulation.Scene().TryGet<scene::Transform>(props[i])->current.rotation, turn[i])), 0.996f) << "prop " << i << " tipped (over 10 degrees)";
+    }
+}
+
