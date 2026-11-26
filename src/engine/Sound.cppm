@@ -96,7 +96,7 @@ export namespace vortex {
         audio::SoundId m_Settle = audio::kNoSound, m_CrateImpact = audio::kNoSound, m_CrateBreak = audio::kNoSound;
         audio::SoundId m_DoorOpen = audio::kNoSound, m_DoorClose = audio::kNoSound, m_DoorUnlatch = audio::kNoSound;
         audio::SoundId m_DoorFreed = audio::kNoSound, m_DoorJammed = audio::kNoSound;
-        audio::SoundId m_PortRaise = audio::kNoSound, m_PortDrop = audio::kNoSound, m_PortLand = audio::kNoSound;
+        audio::SoundId m_PortRaise = audio::kNoSound, m_PortDrop = audio::kNoSound, m_PortLand = audio::kNoSound, m_PortTension = audio::kNoSound;
         audio::SoundId m_LeverThrow = audio::kNoSound, m_LeverReturn = audio::kNoSound, m_LeverBreak = audio::kNoSound;
         audio::SoundId m_RopeSnap = audio::kNoSound, m_ChainSnap = audio::kNoSound, m_Pickup = audio::kNoSound;
 

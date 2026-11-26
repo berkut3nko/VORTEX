@@ -148,6 +148,7 @@ namespace vortex {
         m_DoorFreed = find("sfx.mech.door.freed");
         m_DoorJammed = find("sfx.mech.door.jammed");
         m_PortRaise = find("sfx.mech.portcullis.raise");
+        m_PortTension = find("sfx.mech.portcullis.tension");
         m_PortDrop = find("sfx.mech.portcullis.drop");
         m_PortLand = find("sfx.mech.portcullis.land");
         m_LeverThrow = find("sfx.mech.lever.throw");
@@ -371,7 +372,10 @@ namespace vortex {
                             if (opening) Play(m_DoorUnlatch, at);
                             Play(opening ? m_DoorOpen : m_DoorClose, at);
                             break;
-                        case scene::MechanismKind::Portcullis: Play(opening ? m_PortRaise : m_PortDrop, at); break;
+                        case scene::MechanismKind::Portcullis:
+                            if (opening) Play(m_PortTension, at);   // the chains take the weight, then the grid rises
+                            Play(opening ? m_PortRaise : m_PortDrop, at);
+                            break;
                         case scene::MechanismKind::Lever: Play(opening ? m_LeverThrow : m_LeverReturn, at); break;
                     }
                     ++m_Stats.mechanisms;

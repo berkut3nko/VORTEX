@@ -578,7 +578,12 @@ namespace vortex {
         // Every run, windowed included, leaves its numbers (docs/verify.md "Game (offline, headless)", the `Perf:` line).
         Log::Info("{}", FormatPerfLine(s.perf, s.renderer.PresentModeLabel()));
         if (s.fx.blasts > 0) Log::Info("{}", FormatFxLine(s.fx));
-        if (s.audio.Output() != audio::AudioOutput::Off) Log::Info("{}", s.audio.SummaryLine());
+        if (s.audio.Output() != audio::AudioOutput::Off) {
+            Log::Info("{}", s.audio.SummaryLine());
+            const SoundEffects::Stats& e = s.sounds.Counters();
+            Log::Info("Audio: events: {} blasts, {} breaks, {} islands, {} impacts, {} mechanism moves, {} rope cuts, {} pick-ups", e.blasts,
+                      e.breaks, e.islands, e.impacts, e.mechanisms, e.ropes, e.holds);
+        }
         if (s.gpuClock.Count() > 0) {
             const std::optional<long> maxMhz = ReadInteger(s.gpuClockFile.parent_path() / "gt_max_freq_mhz");
             Log::Info("GPU clock: {} samples, p50 {:.0f} MHz, min {:.0f}, max {:.0f}{}", s.gpuClock.Count(), s.gpuClock.Percentile(50),

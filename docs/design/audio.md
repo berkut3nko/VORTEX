@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| Status | `[audio-1]` built (2026-11-26): the `vortex.audio` module (manifest, mixer, miniaudio output), the shipped sound set (`assets/audio`, 16.97 MB from 1694.5 MB of WAV takes), the engine's sound presentation (`vortex::SoundEffects`) and the game's own sounds (`src/GameAudio.cpp`). Only headless runs are verified; the owner listens (docs/owner-checks.md check 30). |
+| Status | `[audio-1]` built (2026-11-26): the `vortex.audio` module (manifest, mixer, miniaudio output), the shipped sound set (`assets/audio`, 16.53 MB from 1694.5 MB of WAV takes), the engine's sound presentation (`vortex::SoundEffects`) and the game's own sounds (`src/GameAudio.cpp`). Only headless runs are verified; the owner listens (docs/owner-checks.md check 30). |
 | Decided | Us, 2026-11-26 (the owner may veto): every answer in "Decision" and the open questions of the brief (library, module, buses, voices, budgets, variation, settings). The owner, 2026-11-25 (sound-list.md header): variants with runtime variation. |
 | Next | `[audio-2]`: the fight's sounds in a session (remote steps, hurts, kills, round stingers). |
 | Open | "Open questions" |
@@ -70,8 +70,20 @@ It writes `assets/audio/<kind>/<category>/<id>_v<N>.ogg` (variants numbered 1..n
 model, licence, date, seed, prompt; one row per kept file). It prints the size before and after, and exits 1 over the
 budget. The game's build copies `assets/audio` to `<exe dir>/assets/audio`.
 
-Measured on 2026-11-26: 256 sounds, 636 files, 1578 s of sound. 1694.5 MB of WAV takes (1272) became
-16.97 MB: beds and ambience 7.96, effects 7.46, music 1.23, UI 0.32. The manifest is 24.7 kB.
+Measured on 2026-11-26 (after the owner's first listen): 256 sounds, 636 files, 1528 s of sound. 1694.5 MB of WAV
+takes (1272) became 16.53 MB: beds and ambience 7.94, effects 7.04, music 1.22, UI 0.32. The manifest is 24.4 kB.
+
+Two rules came from the owner's first listen (footsteps "like hooves"):
+- **One hit for one event.** For a footstep (`sfx.foot.*` but the ice slide) the tool finds the separate hits of each
+  take (a 5 ms peak envelope: a rise of 12 dB within 30 ms to within 20 dB of the peak; a hit within 120 ms of the first
+  is the same step, heel and sole). It prefers a take with one step, and keeps only the first step: from 10 ms before
+  its hit to 1.3 x the listed length, never into the next step.
+- **Headroom for the encoder.** Ogg Vorbis at these qualities overshoots transients by up to 3 dB: with a -1 dBTP
+  target, mechanism files decoded to +2 dBFS and clipped. One-shots now aim at -4 dBTP and music at -3 dBTP; no
+  shipped file decodes over 0 dBFS.
+
+The takes themselves are the larger fault: the generator gave footsteps 2-5 hits and the gate raise two bursts with
+silence between them. sound-list.md section 3.1 has the reasons and the rewritten prompts.
 
 ### The manifest
 
@@ -90,7 +102,7 @@ comment line. `bus` and `variants` are required; an unknown key is refused (a ty
 | `priority` | 0-3, for voice stealing: 0 footsteps, patter, spots; 1 breaks, impacts, mechanisms; 2 blasts, casts, collapses, the player, beds; 3 UI and music |
 
 The level table (`BASE_GAIN` in the tool) is the mix: footsteps -12 dB, blasts 0, breaks -5, impacts -7, collapses -1,
-mechanisms -5, UI -8, music -6, beds -8, wind -10.
+mechanisms -2, UI -8, music -6, beds -8, wind -10.
 
 ## Mixer
 
@@ -149,10 +161,10 @@ Sounds play where pictures are made. `vortex.sim` calls nothing.
 |---|---|---|
 | A presented blast | `Engine::PresentBlast` -> `SoundEffects::Blast` | `sfx.blast.core.small/medium/large` by radius (under 1 m, under 2 m, else); the break of the carved voxels' main material (`small` under 2 m^3, `large` above, with Size); `sfx.chaff.patter` 0.35 s later from 0.3 m^3; for the 3 largest islands a crack (`sfx.collapse.crack.stone/wood`, `slump` for soil), from 8 m^3 also `groan` and, 0.8 s later, `rumble`; `sfx.obj.crate.break` when objects lost voxels |
 | A body stops | `SoundEffects::Watch` (every frame, from the pose at each tick; a held body, a tick gap over 4 or a tick that went back is skipped, and so is a replicated copy whose pose did not change: no sample came) | `sfx.impact.<material>.light/heavy` (crates: `sfx.obj.crate.impact`) with Speed; from 2 m^3 `sfx.collapse.land`; from 0.25 m^3 `sfx.rubble.settle` 0.3 s later |
-| A mechanism moves or changes | `SoundEffects::Watch` (its newest segment) | door `unlatch` + `open` / `close`; portcullis `raise` / `drop`, and `land` at the end of a drop; lever `throw` / `return`; flags: `freed`, `jammed`, lever `break` |
+| A mechanism moves or changes | `SoundEffects::Watch` (its newest segment) | door `unlatch` + `open` / `close`; portcullis `tension` + `raise` / `drop`, and `land` at the end of a drop; lever `throw` / `return`; flags: `freed`, `jammed`, lever `break` |
 | A rope is cut | `SoundEffects::Watch` | `sfx.rope.snap`, chains `sfx.rope.chain.snap` |
 | A body is picked up | `SoundEffects::Watch` (a new `scene::Held`) | `sfx.obj.pickup` (a client's predicted pick-up that the server refuses still sounded: `[audio-2]`) |
-| The own player steps | the game (`GameAudio::PlayerStep`, after `sim::StepPlayer`) | `sfx.foot.<material>` every 0.75 m (running: 1 m, +2 dB, +0.5 semitone); `sfx.player.jump`; landing `land.soft` from 3 m/s, `land.hard` from 9 m/s |
+| The own player steps | the game (`GameAudio::PlayerStep`, after `sim::StepPlayer`) | `sfx.foot.<material>` at a person's cadence: `clamp(1.6 + 0.23 x speed, 1.8, 3.2)` steps a second, so one step per 1.5 m at the 3.8 m/s walk and per 2.2 m at the 7 m/s run (running: +2 dB, +0.5 semitone); `sfx.player.jump`; landing `land.soft` from 3 m/s, `land.hard` from 9 m/s |
 | The own cast | the game | `sfx.cast.blast`; `sfx.blast.miss` into the sky |
 | The use key | the game | a refusal `ui.use.refused`, a locked door `sfx.mech.door.locked`; a throw `sfx.obj.throw`; a hold lost `ui.hold.dropped` |
 | The menus | the game | `ui.menu.open/close/move/select/back/value` |
@@ -169,8 +181,8 @@ pick-ups from the replicated events as the offline game. Audio never travels ove
 `audio::Ambience` fades beds in and out over 2.5 s (equal power); a bed starts when its weight leaves 0 and stops when
 it returns there. Twice a second the game chooses the targets from where the camera is: under cover (rock or a roof
 within 10 m overhead) `amb.cave.bed` and the outdoor beds at 0.2; the world map's biome at the camera (grassland,
-forest, dark forest, desert, mountain, snow above 90 m, rock isle); sea or lake within 40 m (`amb.coast.waves`,
-`amb.lake.lap`); and wind by the height above the ground (`low`, `mid` above 20 m, `high` above 60 m). Without a world
+forest, dark forest, desert, mountain, snow above 90 m, rock isle); sea, lake or river within 40 m (`amb.coast.waves`,
+`amb.lake.lap`, `amb.river.stream`); and wind by the height above the ground (`low`, `mid` above 20 m, `high` above 60 m). Without a world
 map (the playground) the bed is grassland. Every 5-14 s a spot of a bed at weight 0.5 or more plays 8-20 m away. A
 bed that cannot start (a missing file, no voice) is tried again after 2 s.
 
