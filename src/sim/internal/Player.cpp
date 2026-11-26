@@ -7,6 +7,7 @@ module;
 #include <cstdint>
 #include <limits>
 #include <numbers>
+#include <optional>
 #include <string>
 
 module vortex.sim;
@@ -14,6 +15,7 @@ module vortex.sim;
 import vortex.core;
 import vortex.math;
 import vortex.physics;
+import vortex.voxel;
 
 namespace vortex::sim {
 
@@ -33,6 +35,35 @@ namespace vortex::sim {
             if (wish > 0.0f) return std::min(wish, std::max(0.0f, (hi - p) / dt));
             if (wish < 0.0f) return std::max(wish, std::min(0.0f, (lo - p) / dt));
             return wish;
+        }
+
+        int16_t ClampPush(int64_t v) { return static_cast<int16_t>(std::clamp<int64_t>(v, -kPushLimitCmS, kPushLimitCmS)); }
+
+        void AddPush(PlayerState& state, int axis, int64_t v) { state.push[axis] = ClampPush(int64_t{state.push[axis]} + v); }
+
+        int16_t Decay(int16_t v, uint16_t by) {
+            if (v > 0) return static_cast<int16_t>(std::max<int32_t>(0, v - by));
+            if (v < 0) return static_cast<int16_t>(std::min<int32_t>(0, v + by));
+            return 0;
+        }
+
+        int64_t Dot(const glm::i64vec3& a, const glm::i64vec3& b) { return a.x * b.x + a.y * b.y + a.z * b.z; }
+
+        int64_t Length(const glm::i64vec3& d) { return static_cast<int64_t>(math::ISqrt64(static_cast<uint64_t>(Dot(d, d)))); }
+
+        /// The feet minus the nearest point of the segment a-b (q; the point truncated toward zero).
+        glm::i64vec3 FromSegment(const glm::i64vec3& feet, const glm::i64vec3& a, const glm::i64vec3& b) {
+            const glm::i64vec3 u = b - a;
+            const int64_t uu = Dot(u, u);
+            if (uu == 0) return feet - a;
+            const int64_t t = std::clamp<int64_t>(Dot(feet - a, u), 0, uu);
+            return feet - (a + u * t / uu);
+        }
+
+        glm::vec2 DashDirection(const PlayerState& state) {
+            const glm::vec2 d(static_cast<float>(state.dashDir[0]), static_cast<float>(state.dashDir[1]));
+            const float len = std::sqrt(d.x * d.x + d.y * d.y);
+            return len > 0.0f ? d / len : glm::vec2(0.0f);
         }
 
         /// Where a move from `from` to `to` along one axis may end: `to`, or the bound it passed
@@ -136,8 +167,104 @@ namespace vortex::sim {
 
     bool TakeCast(PlayerState& state, uint8_t pressed, const PlayerTuning& tuning) {
         if ((pressed & PlayerButton_Cast) == 0 || state.cooldownTicks > 0) return false;
-        state.cooldownTicks = tuning.castCooldownTicks;
+        state.cooldownTicks = CastCooldownFor(state, tuning);
         return true;
+    }
+
+    uint8_t CastCooldownFor(const PlayerState& state, const PlayerTuning& tuning) {
+        const uint32_t ticks = uint32_t{tuning.castCooldownTicks} * (16u + state.slowQ / 2u) / 16u;
+        return static_cast<uint8_t>(std::min<uint32_t>(ticks, 255u));
+    }
+
+    bool StartDash(PlayerState& state, const glm::vec3& aim) {
+        if (state.rootLeft > 0 || state.pinLeft > 0 || (state.status & (PlayerStatus_Rooted | PlayerStatus_Pinned)) != 0) return false;
+        if (!Finite(aim.x) || !Finite(aim.z)) return false;
+        const double x = aim.x, z = aim.z, len = std::sqrt(x * x + z * z);
+        if (!(len > 1.0e-6)) return false;
+        state.dashLeft = kDashTicks;
+        state.dashDir[0] = static_cast<int8_t>(std::lround(x / len * 127.0));
+        state.dashDir[1] = static_cast<int8_t>(std::lround(z / len * 127.0));
+        return true;
+    }
+
+    std::optional<float> ApplyZones(PlayerState& state, const PlayerZones& zones, const PlayerTuning& tuning, float gravity) {
+        std::optional<float> vertical;
+        if (zones.zones == nullptr || zones.zones->Size() == 0) return vertical;
+        const double q = 16.0 / static_cast<double>(zones.world ? zones.world->VoxelSize() : 0.125f);
+        const glm::i64vec3 feet(std::llround(static_cast<double>(state.position.x) * q), std::llround(static_cast<double>(state.position.y) * q),
+                                std::llround(static_cast<double>(state.position.z) * q));
+        const math::AABB reach = PlayerReach(state.position, tuning);
+        const auto lo = [q](float v) { return static_cast<int>(std::clamp(std::floor(static_cast<double>(v) * q), -2147483648.0, 2147483647.0)); };
+        const auto hi = [q](float v) { return static_cast<int>(std::clamp(std::ceil(static_cast<double>(v) * q), -2147483648.0, 2147483647.0)); };
+        const glm::ivec3 reachMin(lo(reach.min.x), lo(reach.min.y), lo(reach.min.z));
+        const glm::ivec3 reachMax(hi(reach.max.x), hi(reach.max.y), hi(reach.max.z));
+        const int64_t rampQ = std::llround(0.25 * q), hoverQ = std::llround(0.5 * q);
+        const int64_t gravityCmS2 = Finite(gravity) ? std::max<int64_t>(std::llround(static_cast<double>(gravity) * 100.0), 1) : 981;
+
+        zones.zones->ForEachLive(zones.tick, reachMin, reachMax, [&](const Zone& z) {
+            if ((z.teamMask & zones.teamBit) == 0) return;
+            const voxel::ShapeQ& sh = z.shape;
+            const glm::i64vec3 a(sh.a), b(sh.b);
+            const int64_t R = sh.radiusQ;
+            if (R <= 0) return;
+            switch (z.kind) {
+            case ZoneKind::Impulse:
+            case ZoneKind::Shove: {
+                if (zones.tick != z.startTick) return;
+                if (z.kind == ZoneKind::Shove && sh.kind != voxel::kShapeCapsule) return;
+                glm::i64vec3 d;
+                if (sh.kind == voxel::kShapeSphere) {
+                    d = feet - a;
+                } else if (sh.kind == voxel::kShapeCylinder) {
+                    if (std::abs(feet.y - a.y) > int64_t{sh.halfHeightQ}) return;
+                    d = glm::i64vec3(feet.x - a.x, 0, feet.z - a.z);
+                } else if (sh.kind == voxel::kShapeCapsule) {
+                    d = FromSegment(feet, a, b);
+                } else {
+                    return;
+                }
+                const int64_t len = Length(d);
+                if (len >= R) return;
+                const int64_t f = int64_t{z.strength[0]} * (R - len) / R;
+                if (z.kind == ZoneKind::Impulse) {
+                    // The dead radius keeps the push continuous through the centre: 0 there, never reversed by a millimetre.
+                    const int64_t over = std::max<int64_t>(len, std::max<int64_t>(R / 8, 1));
+                    AddPush(state, 0, d.x * f / over);
+                    AddPush(state, 2, d.z * f / over);
+                } else {
+                    const glm::i64vec3 u = b - a;
+                    const int64_t ul = static_cast<int64_t>(math::ISqrt64(static_cast<uint64_t>(u.x * u.x + u.z * u.z)));
+                    if (ul > 0) {
+                        AddPush(state, 0, u.x * f / ul);
+                        AddPush(state, 2, u.z * f / ul);
+                    }
+                }
+                AddPush(state, 1, int64_t{z.strength[1]} * (R - len) / R);
+                return;
+            }
+            case ZoneKind::Lift: {
+                if (sh.kind != voxel::kShapeCylinder) return;
+                const int64_t dx = feet.x - a.x, dz = feet.z - a.z;
+                const int64_t dist = static_cast<int64_t>(math::ISqrt64(static_cast<uint64_t>(dx * dx + dz * dz)));
+                const int64_t bottom = a.y - int64_t{sh.halfHeightQ}, top = a.y + int64_t{sh.halfHeightQ};
+                if (dist > R || feet.y < bottom || feet.y > top) return;
+                // The target is a lower bound, so a player lifted at full strength coasts on: the ease starts at
+                // least the coasting height (v^2 / 2g) below the top, and the player stops there and hovers.
+                const int64_t s0 = std::max<int64_t>(z.strength[0], 0);
+                const int64_t coastQ = std::llround(static_cast<double>(s0 * s0) / static_cast<double>(2 * gravityCmS2) / 100.0 * q);
+                const int64_t easeQ = std::max(hoverQ, coastQ);
+                const int64_t ramp = std::min(R - dist, rampQ), ease = std::min(std::max<int64_t>(top - feet.y, 0), easeQ);
+                const int64_t target = rampQ > 0 && easeQ > 0 ? s0 * ramp * ease / (rampQ * easeQ) : s0;
+                const float v = static_cast<float>(target) / 100.0f;
+                vertical = vertical ? std::max(*vertical, v) : v;
+                state.status = static_cast<uint8_t>(state.status | PlayerStatus_Lifted);
+                return;
+            }
+            default:
+                return;
+            }
+        });
+        return vertical;
     }
 
     void SetPlayAreaWalls(physics::PhysicsWorld& physics, const PlayArea& area, const PlayerTuning& tuning) {
@@ -150,6 +277,12 @@ namespace vortex::sim {
 
     PlayerStepResult StepPlayer(physics::PhysicsWorld& physics, const physics::TerrainColliders& terrain, physics::CharacterId character,
                                 PlayerState& state, const PlayerInput& input, const PlayerTuning& tuning, const PlayArea& area, float dt) {
+        return StepPlayer(physics, terrain, character, state, input, tuning, area, PlayerZones{}, dt);
+    }
+
+    PlayerStepResult StepPlayer(physics::PhysicsWorld& physics, const physics::TerrainColliders& terrain, physics::CharacterId character,
+                                PlayerState& state, const PlayerInput& input, const PlayerTuning& tuning, const PlayArea& area,
+                                const PlayerZones& zones, float dt) {
         PlayerStepResult r;
         r.pressed = PressButtons(state, input.buttons);
         if (state.cooldownTicks > 0) --state.cooldownTicks;
@@ -161,17 +294,38 @@ namespace vortex::sim {
             r.held = true;
             return r;
         }
+        std::optional<float> vertical = ApplyZones(state, zones, tuning, -physics.Gravity().y);
+
         const bool run = (input.buttons & PlayerButton_Run) != 0;
         glm::vec3 wish = MoveDirection(input) * (run ? tuning.runSpeed : tuning.walkSpeed);
+        const bool dashing = state.dashLeft > 0;
+        const glm::vec2 dashDir = DashDirection(state);
+        const float dashSpeed = static_cast<float>(kDashSpeedCmS) / 100.0f * static_cast<float>(16 - std::min<int>(state.slowQ, 16)) / 16.0f;
+        if (dashing) wish = glm::vec3(dashDir.x, 0.0f, dashDir.y) * dashSpeed;
+        // Only a push that is there changes the wish: a step without one stays bit for bit as before.
+        if (state.push[0] != 0) wish.x += static_cast<float>(state.push[0]) / 100.0f;
+        if (state.push[2] != 0) wish.z += static_cast<float>(state.push[2]) / 100.0f;
         const bool bounded = area.Bounded() && dt > 0.0f;
         if (bounded) {
-            // The play area: the outward wish stops at its edge, before the character moves.
+            // The play area: the outward wish stops at its edge, before the character moves. A push cut
+            // there is spent: a knockback never carries a player past the play bounds.
+            const glm::vec3 uncut = wish;
             wish.x = LimitToArea(state.position.x, wish.x, area.min.x, area.max.x, dt);
             wish.z = LimitToArea(state.position.z, wish.z, area.min.y, area.max.y, dt);
+            if (wish.x != uncut.x) state.push[0] = 0;
+            if (wish.z != uncut.z) state.push[2] = 0;
+        }
+        if (state.push[1] != 0) {
+            if (state.push[1] > 0) {
+                const float kick = static_cast<float>(state.push[1]) / 100.0f;
+                vertical = vertical ? std::max(*vertical, kick) : kick;
+            }
+            state.push[1] = 0;
         }
         const bool jump = (r.pressed & PlayerButton_Jump) != 0;
         r.jumped = jump && state.OnGround();
-        physics.UpdateCharacter(character, dt, wish, jump ? tuning.jumpSpeed : 0.0f);
+        const glm::vec3 before = state.position;
+        physics.UpdateCharacter(character, dt, wish, jump ? tuning.jumpSpeed : 0.0f, vertical);
         physics::CharacterState cs = physics.GetCharacterState(character);
         if (bounded) {
             // The walls (SetPlayAreaWalls) stop the capsule at the edge; what float rounding leaves
@@ -190,6 +344,24 @@ namespace vortex::sim {
         state.position = cs.position;
         state.velocity = cs.velocity;
         state.flags = cs.onGround ? PlayerFlag_OnGround : 0;
+
+        if (cs.onGround) state.status = static_cast<uint8_t>(state.status & ~PlayerStatus_Lifted);
+        const uint16_t decay = cs.onGround ? tuning.pushDecayGround : tuning.pushDecayAir;
+        state.push[0] = Decay(state.push[0], decay);
+        state.push[2] = Decay(state.push[2], decay);
+        if (dashing) {
+            // A wall (or a Barricade) that cuts the move to under half its length ends the dash.
+            const float dx = state.position.x - before.x, dz = state.position.z - before.z;
+            const float moved = std::sqrt(dx * dx + dz * dz), planned = dashSpeed * dt;
+            if (moved < 0.5f * planned)
+                state.dashLeft = 0;
+            else
+                --state.dashLeft;
+            if (state.dashLeft == 0) {
+                AddPush(state, 0, std::lround(dashDir.x * static_cast<float>(kDashEndPushCmS)));
+                AddPush(state, 2, std::lround(dashDir.y * static_cast<float>(kDashEndPushCmS)));
+            }
+        }
         return r;
     }
 

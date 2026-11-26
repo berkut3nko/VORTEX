@@ -1086,7 +1086,9 @@ arguments: `const voxel::World&` for the ground id, `const sim::ZoneSet&` and th
      axis (its unit direction in q, integer), `push.xz += axisDir.xz * f`, with `f` from the distance to the axis
      (`strength * max(0, R - len) / R`), so it is continuous and 0 at the rim; `strength2 * (R - len) / R` up.
    - **Lift** (while live): the vertical target is `max(vy, strength * ramp)` cm/s, `ramp` rising from 0 at the rim
-     to 1 at 0.25 m inside it, eased to 0 over the last 0.5 m below the zone's top (a hover); sets `Lifted`.
+     to 1 at 0.25 m inside it, eased linearly to 0 at the zone's top over 0.5 m or the coasting height of the
+     strength (`strength^2 / 2g`, 4.1 m for 9 m/s), whichever is longer: the target is a lower bound, so a shorter
+     ease would let the player coast 4 m past the top; with it the player stops at the top and hovers. Sets `Lifted`.
    - **Pin** (while live and the player is inside; not while `ccGuardLeft > 0`): `pinLeft = max(pinLeft, strength2)`,
      a fixed tail (30 ticks): a pinned player stays pinned 0.5 s after leaving the ring or after the zone ends. The
      tail never reads the zone's remaining duration, so a truncation changes only ticks from its `endTick` on.
@@ -1115,9 +1117,9 @@ arguments: `const voxel::World&` for the ground id, `const sim::ZoneSet&` and th
 
 - **`PlayerTuning` gains** (travels in `Welcome`): the decay rates, `a_ice`, the slope acceleration and cap, the slick
   top speed, the guard lengths; the lead travels beside it.
-- **`kPlayerRuleRevision` goes up in every stage that changes what `StepPlayer` returns:** 2 in [mag-1] (`push`,
-  Impulse, Lift, Shove, the dash, the `vertical` parameter), 3 in [mag-3] (Chill, Root, Release, the control guard,
-  `Fresh` and slick ground), 4 in [mag-7] (Pin and Meteor Leap's launch). Each stage changes `buildHash` through its tables anyway, so a bump per
+- **`kPlayerRuleRevision` goes up in every stage that changes what `StepPlayer` returns:** 3 in [mag-1] (`push`,
+  Impulse, Lift, Shove, the dash, the `vertical` parameter; 2 was taken by land.md's foliage), 4 in [mag-3] (Chill,
+  Root, Release, the control guard, `Fresh` and slick ground), 5 in [mag-7] (Pin and Meteor Leap's launch). Each stage changes `buildHash` through its tables anyway, so a bump per
   stage costs nothing and keeps every rule change visible (`SessionFile.BuildHashSeesThePlayerRuleRevision`). The
   owner block's bytes are all reserved in [mag-2]'s protocol bump.
 - The movement rule stays float, the same on both sides of one build, as today.

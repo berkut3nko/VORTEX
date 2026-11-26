@@ -16,6 +16,7 @@ import vortex.fx;
 import vortex.physics;
 import vortex.scene;
 import :worldop;
+import :zones;
 
 export namespace vortex::sim {
 
@@ -262,6 +263,10 @@ export namespace vortex::sim {
         /// @brief NetIds and the piece budgets (SimulationConfig::replication; sim::AllocateNetId).
         ReplicationState& Replication();
         const ReplicationState& Replication() const;
+        /// @brief The zones every peer evaluates inside sim::StepPlayer (docs/design/magic.md
+        /// "sim::ZoneSet"). Whoever fills it prunes it (ZoneSet::PruneEndedBefore).
+        ZoneSet& Zones();
+        const ZoneSet& Zones() const;
 
         /**
          * @brief Simulates one tick: streaming, physics, lifetimes; then `Tick()` is one higher.

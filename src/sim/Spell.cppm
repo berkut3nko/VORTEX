@@ -5,6 +5,7 @@ module;
 
 export module vortex.sim:spell;
 
+import :zones;
 
 export namespace vortex::sim {
 
@@ -27,12 +28,6 @@ export namespace vortex::sim {
     inline constexpr SpellId kBarricadeWave = MakeSpell(Form::Burst, Element::Metal);    // 12
     inline constexpr SpellId kPunch = MakeSpell(Form::Burst, Element::Pressure);         // 14
 
-    /// @brief What a zone does to the players in it (magic.md "sim::ZoneSet"). Wire values.
-    enum class ZoneKind : uint8_t {
-        None = 0, Impulse = 1, Lift = 2, Pin = 3, Chill = 4, Root = 5, Release = 6, Block = 7,
-        Shove = 8,   ///< a push along the capsule's axis plus a lift, both falling to 0 at the rim
-        Rune = 9,    ///< reserved: no behaviour yet
-    };
     /// @brief Where a spell puts its zone.
     enum class ZonePlace : uint8_t {
         None = 0,

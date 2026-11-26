@@ -364,6 +364,8 @@ namespace vortex::net {
         void PoseMechanismCopy(const Copy& c, uint32_t tick);
         /// FlushBox, the mechanisms' pose at `tick` and the push-out: before every StepPlayer (the server's order).
         void PrepareStep(uint32_t tick);
+        /// The zones a StepPlayer of `tick` reads: the predicted tick, or a replayed entry's own tick.
+        sim::PlayerZones ZonesAt(uint32_t tick) const;
         uint32_t NetIdOfEntity(scene::Entity entity) const;
         /// The server's hold of a copy (EntityHold, or a spawn / baseline with kObjectHeld).
         void ApplyHold(uint32_t netId, uint8_t holder, uint16_t relYaw, uint32_t tick);

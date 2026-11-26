@@ -82,6 +82,18 @@ namespace {
             return r;
         }
 
+        /// The same tick with the simulation's zones, looked up at the tick being stepped.
+        sim::PlayerStepResult ZoneTick(const sim::PlayerInput& input, uint8_t teamBit = 1) {
+            const std::array<glm::dvec3, 1> focus = {glm::dvec3(state.position)};
+            simulation.UpdateStreaming(focus);
+            const sim::PlayerZones zones{&simulation.Zones(), &simulation.World(), simulation.Tick(), teamBit};
+            const sim::PlayerStepResult r = sim::StepPlayer(simulation.Physics(), simulation.Terrain(), character, state, input, tuning, area,
+                                                            zones, simulation.FixedTimeStep());
+            simulation.StepPhysics();
+            if (simulation.Terrain().Stats().pending != 0) simulation.Jobs().WaitIdle();
+            return r;
+        }
+
         sim::Simulation simulation;
         sim::PlayerTuning tuning;
         sim::PlayArea area;                       // unbounded: the offline game
@@ -526,4 +538,326 @@ TEST(Player, DistanceToThePlayAreaEdge) {
     EXPECT_FLOAT_EQ(sim::DistanceToPlayAreaEdge(a, {11.0f, 0.0f}), -1.0f);
     EXPECT_FLOAT_EQ(sim::DistanceToPlayAreaEdge(a, {0.0f, -25.0f}), -5.0f);
     EXPECT_TRUE(std::isinf(sim::DistanceToPlayAreaEdge(sim::PlayArea{}, {0.0f, 0.0f})));
+}
+
+// Zones, push and the dash (docs/design/magic.md "PlayerState, StepPlayer and the physics call"):
+// integers from feet quantised to q, at the tick being stepped.
+namespace {
+    constexpr double kQPerMetre = 16.0 / kVoxel;
+
+    glm::ivec3 MetresToQ(const glm::vec3& m) {
+        return {static_cast<int>(std::llround(m.x * kQPerMetre)), static_cast<int>(std::llround(m.y * kQPerMetre)),
+                static_cast<int>(std::llround(m.z * kQPerMetre))};
+    }
+
+    sim::Zone SphereImpulse(uint16_t id, const glm::ivec3& centreQ, uint16_t radiusQ, int16_t out, int16_t up, uint32_t start) {
+        sim::Zone z;
+        z.zoneId = id;
+        z.kind = sim::ZoneKind::Impulse;
+        z.shape.kind = voxel::kShapeSphere;
+        z.shape.a = centreQ;
+        z.shape.radiusQ = radiusQ;
+        z.startTick = start;
+        z.strength[0] = out;
+        z.strength[1] = up;
+        return z;
+    }
+
+    /// The push one ApplyZones gives a player standing at `feet` (metres) at `tick`.
+    std::array<int16_t, 3> PushAt(const sim::ZoneSet& set, const glm::vec3& feet, uint32_t tick, uint8_t teamBit = 1) {
+        sim::PlayerState s;
+        s.position = feet;
+        sim::ApplyZones(s, sim::PlayerZones{&set, nullptr, tick, teamBit}, sim::PlayerTuning{});
+        return {s.push[0], s.push[1], s.push[2]};
+    }
+
+    void Settle(Field& f) {
+        f.Cook();
+        for (int i = 0; i < 10; ++i) f.Tick(sim::PlayerInput{});
+    }
+}
+
+TEST(Player, PushDecaysToZeroInBoundedTicks) {
+    Field f;
+    ASSERT_TRUE(f.initialized);
+    Settle(f);
+    ASSERT_TRUE(f.state.OnGround());
+    f.state.push[0] = 1500;
+    const float x0 = f.state.position.x;
+    int ticks = 0;
+    while (f.state.push[0] != 0 && ticks < 100) {
+        f.Tick(sim::PlayerInput{});   // no zones: the push still decays
+        ++ticks;
+    }
+    EXPECT_LE(ticks, 34) << "1500 / 45 rounded up";
+    const float moved = f.state.position.x - x0;
+    EXPECT_GT(moved, 1.5f);
+    EXPECT_LT(moved, 4.5f);   // (15 m/s)^2 / (2 * 27 m/s^2) = 4.2 m
+    EXPECT_EQ(f.state.push[1], 0);
+    EXPECT_EQ(f.state.push[2], 0);
+}
+
+TEST(Player, ZonesAreEvaluatedInZoneOrderFromQuantisedFeet) {
+    sim::ZoneSet set;
+    // Inserted in reverse id order; both start at tick 50.
+    ASSERT_TRUE(set.Insert(SphereImpulse(7, {1408, 1600, 1280}, 256, 900, 0, 50)));
+    ASSERT_TRUE(set.Insert(SphereImpulse(4, {1280, 1536, 1280}, 256, 600, 200, 50)));
+    ASSERT_EQ(set.All()[0].zoneId, 4);
+    // Feet (10.3, 12, 10.2) m = (1318, 1536, 1306) q. By hand, in id order:
+    // zone 4: d = (38, 0, 26), len 46, f = 600 * 210 / 256 = 492: x 38 * 492 / 46 = 406, z 26 * 492 / 46 = 278, up 200 * 210 / 256 = 164.
+    // zone 7: d = (-90, -64, 26), len 113, f = 900 * 143 / 256 = 502: x -90 * 502 / 113 = -399, z 26 * 502 / 113 = 115.
+    const std::array<int16_t, 3> push = PushAt(set, {10.3f, 12.0f, 10.2f}, 50);
+    EXPECT_EQ(push, (std::array<int16_t, 3>{7, 164, 393}));
+    // Feet 0.1 mm away quantise to the same q: the same push.
+    EXPECT_EQ(PushAt(set, {10.3001f, 12.0f, 10.2001f}, 50), push);
+}
+
+TEST(Player, ZoneEdgeAndCentreAreContinuous) {
+    sim::ZoneSet set;
+    const glm::ivec3 c(1280, 1536, 1280);
+    const int R = 256;   // 2 m: the dead radius is 32 q
+    ASSERT_TRUE(set.Insert(SphereImpulse(1, c, static_cast<uint16_t>(R), 600, 0, 10)));
+    const auto feetAt = [&c](int k) {
+        return glm::vec3(static_cast<float>((c.x + k) / kQPerMetre), static_cast<float>(c.y / kQPerMetre), static_cast<float>(c.z / kQPerMetre));
+    };
+    std::array<int16_t, 3> last = PushAt(set, feetAt(-48), 10);
+    int worst = 0;
+    for (int k = -47; k <= 48; ++k) {
+        const std::array<int16_t, 3> p = PushAt(set, feetAt(k), 10);
+        worst = std::max(worst, std::abs(p[0] - last[0]) + std::abs(p[2] - last[2]));
+        last = p;
+    }
+    EXPECT_LE(worst, 30) << "across the dead radius, 1 q steps";
+    EXPECT_EQ(PushAt(set, feetAt(0), 10)[0], 0) << "nothing at the centre";
+    EXPECT_GT(PushAt(set, feetAt(1), 10)[0], 0);
+    EXPECT_LT(PushAt(set, feetAt(-1), 10)[0], 0);
+    // At the rim it falls to 0.
+    EXPECT_LE(std::abs(PushAt(set, feetAt(R - 1), 10)[0]), 10);
+    EXPECT_EQ(PushAt(set, feetAt(R), 10)[0], 0);
+    for (int k = R - 20; k < R; ++k) EXPECT_LE(std::abs(PushAt(set, feetAt(k + 1), 10)[0] - PushAt(set, feetAt(k), 10)[0]), 30);
+}
+
+TEST(Player, ImpulseActsOnlyOnItsStartTickAndOnlyOnItsTeams) {
+    sim::ZoneSet set;
+    sim::Zone z = SphereImpulse(1, {1280, 1536, 1280}, 256, 900, 300, 20);
+    z.teamMask = 0b10;
+    ASSERT_TRUE(set.Insert(z));
+    const glm::vec3 feet(10.5f, 12.0f, 10.0f);
+    EXPECT_EQ(PushAt(set, feet, 20, 1u << 0), (std::array<int16_t, 3>{0, 0, 0})) << "team 0 untouched";
+    const std::array<int16_t, 3> hit = PushAt(set, feet, 20, 1u << 1);
+    EXPECT_GT(hit[0], 0);
+    EXPECT_GT(hit[1], 0);
+    EXPECT_EQ(hit[2], 0);
+    EXPECT_EQ(PushAt(set, feet, 21, 1u << 1), (std::array<int16_t, 3>{0, 0, 0})) << "the tick after its start adds nothing";
+    EXPECT_EQ(PushAt(set, feet, 19, 1u << 1), (std::array<int16_t, 3>{0, 0, 0}));
+}
+
+TEST(Player, AShovePushesAlongItsAxis) {
+    // A capsule from (10, 12.5, 10) to (13, 12.5, 10) m, r 1 m; the feet (11, 12, 10.4) m are 0.5 m below
+    // and 0.4 m beside its axis. Nearest axis point (1408, 1600, 1280), d = (0, -64, 51), len 81.
+    sim::Zone z;
+    z.zoneId = 1;
+    z.shape.kind = voxel::kShapeCapsule;
+    z.shape.a = MetresToQ({10.0f, 12.5f, 10.0f});
+    z.shape.b = MetresToQ({13.0f, 12.5f, 10.0f});
+    z.shape.radiusQ = 128;
+    z.startTick = 5;
+    z.strength[0] = 1200;
+    z.strength[1] = 300;
+    const glm::vec3 feet(11.0f, 12.0f, 10.4f);
+
+    z.kind = sim::ZoneKind::Shove;
+    sim::ZoneSet shove;
+    ASSERT_TRUE(shove.Insert(z));
+    // Along the axis: 1200 * 47 / 128 = 440, up 300 * 47 / 128 = 110, nothing across it.
+    EXPECT_EQ(PushAt(shove, feet, 5), (std::array<int16_t, 3>{440, 110, 0}));
+
+    // The same capsule as an Impulse pushes away from its axis instead (the shove of a dash).
+    z.kind = sim::ZoneKind::Impulse;
+    sim::ZoneSet impulse;
+    ASSERT_TRUE(impulse.Insert(z));
+    const std::array<int16_t, 3> aside = PushAt(impulse, feet, 5);
+    EXPECT_EQ(aside[0], 0);
+    EXPECT_GT(aside[2], 0);
+    EXPECT_EQ(aside[1], 110);
+
+    // A player stepped through the Shove moves along +x.
+    Field f({11.0f, kGround, 10.4f});
+    ASSERT_TRUE(f.initialized);
+    Settle(f);
+    z.kind = sim::ZoneKind::Shove;
+    z.shape.a = MetresToQ({10.0f, kGround + 0.5f, 10.0f});
+    z.shape.b = MetresToQ({13.0f, kGround + 0.5f, 10.0f});
+    z.startTick = f.simulation.Tick();
+    ASSERT_TRUE(f.simulation.Zones().Insert(z));
+    const glm::vec3 start = f.state.position;
+    for (int i = 0; i < 30; ++i) f.ZoneTick(sim::PlayerInput{});
+    EXPECT_GT(f.state.position.x - start.x, 0.5f);
+    EXPECT_NEAR(f.state.position.z, start.z, 1.0e-3f);
+}
+
+TEST(Player, LiftCarriesAPlayerToTheTopAndHovers) {
+    Field f;
+    ASSERT_TRUE(f.initialized);
+    Settle(f);
+    ASSERT_TRUE(f.state.OnGround());
+    const glm::vec3 start = f.state.position;
+    // An Updraft column: r 1 m, 6 m tall from the hit voxel (the top voxel of the ground, so the
+    // standing feet, a hair under the surface, are inside it), 9 m/s, 90 ticks.
+    sim::Zone z;
+    z.zoneId = 3;
+    z.kind = sim::ZoneKind::Lift;
+    z.shape.kind = voxel::kShapeCylinder;
+    z.shape.a = MetresToQ({start.x, kGround - kVoxel + 3.0f, start.z});
+    z.shape.radiusQ = 128;
+    z.shape.halfHeightQ = 384;
+    z.startTick = f.simulation.Tick();
+    z.duration = 90;
+    z.strength[0] = 900;
+    ASSERT_TRUE(f.simulation.Zones().Insert(z));
+    bool lifted = false;
+    for (int i = 0; i < 90; ++i) {
+        f.ZoneTick(sim::PlayerInput{});
+        lifted = lifted || (f.state.status & sim::PlayerStatus_Lifted) != 0;
+    }
+    EXPECT_TRUE(lifted);
+    EXPECT_TRUE(f.state.status & sim::PlayerStatus_Lifted);
+    const float height = f.state.position.y - start.y;
+    EXPECT_GT(height, 5.0f);
+    EXPECT_LT(height, 6.2f);
+    // The zone has ended: the player falls and lands, and Lifted is cleared on the ground.
+    for (int i = 0; i < 150; ++i) f.ZoneTick(sim::PlayerInput{});
+    EXPECT_TRUE(f.state.OnGround());
+    EXPECT_NEAR(f.state.position.y, kGround, 0.03f);
+    EXPECT_FALSE(f.state.status & sim::PlayerStatus_Lifted);
+}
+
+TEST(Player, KnockbackStopsAtThePlayArea) {
+    Field f({1.7f, kGround, 0.3f});
+    ASSERT_TRUE(f.initialized);
+    f.Bound(glm::vec2(-2.0f), glm::vec2(2.0f));
+    Settle(f);
+    ASSERT_TRUE(f.state.OnGround());
+    // An outward (+x) Impulse 0.7 m behind the player: 900 * (256 - 90) / 256 = 583 cm/s.
+    ASSERT_TRUE(f.simulation.Zones().Insert(SphereImpulse(1, MetresToQ({1.0f, kGround, 0.3f}), 256, 900, 0, f.simulation.Tick())));
+    bool cut = false;
+    for (int i = 0; i < 60; ++i) {
+        const int16_t before = f.state.push[0];
+        f.ZoneTick(sim::PlayerInput{});
+        EXPECT_LE(f.state.position.x, 2.0f + 1.0e-6f) << i;
+        if (i == 0) EXPECT_GT(f.state.push[0], 500);
+        // A push that reaches 0 from above the ground decay was cut at the edge.
+        if (before > f.tuning.pushDecayGround && f.state.push[0] == 0) cut = true;
+    }
+    EXPECT_TRUE(cut);
+    EXPECT_EQ(f.state.push[0], 0);
+    EXPECT_NEAR(f.state.position.x, 2.0f, 2.0e-3f);
+}
+
+TEST(Player, ADashOnFlatGroundCoversEightMetresIn18Ticks) {
+    Field f({-4.0f, kGround, 0.3f});
+    ASSERT_TRUE(f.initialized);
+    Settle(f);
+    ASSERT_TRUE(f.state.OnGround());
+
+    sim::PlayerState rooted = f.state;
+    rooted.rootLeft = 3;
+    EXPECT_FALSE(sim::StartDash(rooted, {1.0f, 0.0f, 0.0f}));
+    EXPECT_EQ(rooted.dashLeft, 0);
+    sim::PlayerState straightUp = f.state;
+    EXPECT_FALSE(sim::StartDash(straightUp, {0.0f, 1.0f, 0.0f})) << "no horizontal direction";
+
+    ASSERT_TRUE(sim::StartDash(f.state, {2.0f, -0.7f, 0.0f}));   // the pitch is ignored
+    EXPECT_EQ(f.state.dashLeft, sim::kDashTicks);
+    EXPECT_EQ(f.state.dashDir[0], 127);
+    EXPECT_EQ(f.state.dashDir[1], 0);
+    const glm::vec3 start = f.state.position;
+    for (int i = 0; i < sim::kDashTicks; ++i) {
+        EXPECT_GT(f.state.dashLeft, 0) << i;
+        f.ZoneTick(sim::PlayerInput{});
+    }
+    EXPECT_EQ(f.state.dashLeft, 0);
+    EXPECT_NEAR(f.state.position.x - start.x, 8.0f, 0.5f);
+    EXPECT_NEAR(f.state.position.z, start.z, 1.0e-3f);
+    EXPECT_NEAR(f.state.position.y, kGround, 0.03f);
+    // The carry: 4 m/s along the dash, decaying as a knockback does.
+    EXPECT_EQ(f.state.push[0], sim::kDashEndPushCmS);
+    EXPECT_EQ(f.state.push[2], 0);
+    for (int i = 0; i < 20; ++i) f.ZoneTick(sim::PlayerInput{});
+    EXPECT_EQ(f.state.push[0], 0);
+}
+
+TEST(Player, ADashStopsAtAWallAndKeepsItsCarry) {
+    Field f({-1.0f, kGround, 0.3f});
+    ASSERT_TRUE(f.initialized);
+    // A stone wall with its face at x = 3 m, 3 m tall, 6 m wide.
+    f.simulation.World().FillBox({24, kGroundVoxels, -24}, {28, kGroundVoxels + 24, 24}, f.simulation.WorldMaterialIds().stone);
+    Settle(f);
+    ASSERT_TRUE(f.state.OnGround());
+    ASSERT_TRUE(sim::StartDash(f.state, {1.0f, 0.0f, 0.0f}));
+    int ticks = 0;
+    while (f.state.dashLeft > 0 && ticks < 30) {
+        f.ZoneTick(sim::PlayerInput{});
+        ++ticks;
+    }
+    EXPECT_LT(ticks, sim::kDashTicks) << "the wall ended the dash";
+    EXPECT_LT(f.state.position.x, 3.0f - f.tuning.radius + 0.02f);
+    EXPECT_GT(f.state.position.x, 3.0f - f.tuning.radius - 0.1f);
+    EXPECT_EQ(f.state.push[0], sim::kDashEndPushCmS) << "the carry is kept";
+    // It presses on the wall and decays; nothing passes the wall.
+    for (int i = 0; i < 15; ++i) {
+        f.ZoneTick(sim::PlayerInput{});
+        EXPECT_LT(f.state.position.x, 3.0f - f.tuning.radius + 0.02f);
+    }
+    EXPECT_EQ(f.state.push[0], 0);
+}
+
+// The replay rule: a dash and a zone stepped again from a restored state, each step with its own tick,
+// give the same states bit for bit.
+TEST(Player, ADashAndAZoneReplayedGiveTheSameStates) {
+    Field f({-4.0f, kGround, 0.3f});
+    ASSERT_TRUE(f.initialized);
+    Settle(f);
+    const std::array<glm::dvec3, 2> focus = {glm::dvec3(-4.0, kGround, 0.3), glm::dvec3(4.0, kGround, 0.3)};
+    f.simulation.Terrain().Update(focus, 12.0f);
+    f.simulation.Terrain().Flush();
+
+    const uint32_t base = 1000;
+    // A shove beside the path, on the 9th tick of the dash.
+    ASSERT_TRUE(f.simulation.Zones().Insert(SphereImpulse(9, MetresToQ({-0.5f, kGround, -0.5f}), 256, 700, 150, base + 8)));
+    const auto step = [&f](uint32_t tick) {
+        f.simulation.Terrain().FlushBox(sim::PlayerReach(f.state.position, f.tuning));
+        const sim::PlayerZones zones{&f.simulation.Zones(), &f.simulation.World(), tick, 1};
+        sim::StepPlayer(f.simulation.Physics(), f.simulation.Terrain(), f.character, f.state, sim::PlayerInput{}, f.tuning, f.area, zones,
+                        f.simulation.FixedTimeStep());
+        f.simulation.StepPhysics();
+    };
+    ASSERT_TRUE(sim::StartDash(f.state, {1.0f, 0.0f, 0.0f}));
+    std::vector<sim::PlayerState> recorded(30);
+    for (uint32_t k = 0; k < 30; ++k) {
+        step(base + k);
+        recorded[k] = f.state;
+    }
+    EXPECT_NE(recorded[8].push[2], 0) << "the zone acted";
+    EXPECT_EQ(recorded[17].dashLeft, 0);
+
+    f.state = recorded[3];
+    sim::RestorePlayer(f.simulation.Physics(), f.character, f.state);
+    for (uint32_t k = 4; k < 30; ++k) {
+        step(base + k);
+        EXPECT_EQ(f.state, recorded[k]) << "replayed tick " << k;
+    }
+}
+
+TEST(Player, CastCooldownFollowsTheSlow) {
+    sim::PlayerTuning t;
+    sim::PlayerState s;
+    EXPECT_EQ(sim::CastCooldownFor(s, t), t.castCooldownTicks);
+    s.slowQ = 6;
+    EXPECT_EQ(sim::CastCooldownFor(s, t), t.castCooldownTicks * 19 / 16);
+    EXPECT_TRUE(sim::TakeCast(s, sim::PlayerButton_Cast, t));
+    EXPECT_EQ(s.cooldownTicks, t.castCooldownTicks * 19 / 16);
+    t.castCooldownTicks = 250;
+    s.slowQ = 255;
+    EXPECT_EQ(sim::CastCooldownFor(s, t), 255);
 }

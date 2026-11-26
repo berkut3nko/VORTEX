@@ -209,8 +209,10 @@ namespace vortex::net {
                 input.buttons = static_cast<uint8_t>(input.buttons | sim::PlayerButton_Jump);
                 pl.lateJump = false;
             }
+            const sim::PlayerZones zones{&simulation->Zones(), &simulation->World(), now,
+                                         static_cast<uint8_t>(1u << fighters[peer->slot].team)};
             const sim::PlayerStepResult r = sim::StepPlayer(simulation->Physics(), simulation->Terrain(), pl.character, pl.state, input,
-                                                            settings.player, playArea, dt);
+                                                            settings.player, playArea, zones, dt);
             if (lateJump) pl.state.lastButtons = static_cast<uint8_t>(levels & sim::kPlayerButtonMask);
             stats.heldTicks += r.held ? 1u : 0u;
             EnvironmentDamage(peer->slot, before, pl.state);   // [wp-7] falls, lava, the void (Live only)

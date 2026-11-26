@@ -101,9 +101,9 @@ namespace vortex::sim {
         {   // Dash: the caster moves; an Impulse capsule along the traced path shoves enemies aside.
             SpellDef& s = t.spells[kDash];
             s.built = true;
-            s.dashTicks = 18;
-            s.dashSpeedCmS = 2670;
-            s.dashEndPushCmS = 400;
+            s.dashTicks = kDashTicks;
+            s.dashSpeedCmS = kDashSpeedCmS;
+            s.dashEndPushCmS = kDashEndPushCmS;
             s.dashRangeQ = Q(8.0);
             s.dashStepQ = Q(0.125);
             s.zone.kind = ZoneKind::Impulse;

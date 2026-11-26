@@ -2,6 +2,7 @@ module;
 
 export module vortex.sim;
 
+export import :zones;
 export import :simulation;
 export import :replication;
 export import :worldop;

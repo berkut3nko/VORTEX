@@ -77,7 +77,7 @@ namespace vortex::net {
         input.tick = nextTick;
         PrepareStep(nextTick);
         const sim::PlayerStepResult r = sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, input,
-                                                        welcome.player, playArea, Dt());
+                                                        welcome.player, playArea, ZonesAt(nextTick), Dt());
         history[nextTick % kHistoryTicks] = {true, nextTick, input, player};
         ++nextTick;
         return r;
@@ -192,7 +192,7 @@ namespace vortex::net {
                     HistoryEntry& e = history[k % kHistoryTicks];
                     if (!e.valid || e.tick != k) continue;
                     PrepareStep(k);
-                    sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, e.input, welcome.player, playArea, Dt());
+                    sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, e.input, welcome.player, playArea, ZonesAt(e.tick), Dt());
                     e.state = player;
                 }
             }
@@ -265,7 +265,7 @@ namespace vortex::net {
         for (uint32_t k = t + 1; k < nextTick; ++k) {
             HistoryEntry& e = history[k % kHistoryTicks];
             PrepareStep(k);
-            sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, e.input, welcome.player, playArea, Dt());
+            sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, e.input, welcome.player, playArea, ZonesAt(k), Dt());
             e.state = player;
             ++replayed;
         }

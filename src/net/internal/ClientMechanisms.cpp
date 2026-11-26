@@ -96,6 +96,13 @@ namespace vortex::net {
         simulation->Physics().SetLayer(body, sim::MechanismLayer(*m, tick));
     }
 
+    sim::PlayerZones Client::Impl::ZonesAt(uint32_t tick) const {
+        sim::TeamId team = sim::kNoTeam;
+        for (const RosterEntry& e : roster.players)
+            if (e.slot == welcome.slot) team = e.team;
+        return {&simulation->Zones(), &simulation->World(), tick, static_cast<uint8_t>(1u << team)};
+    }
+
     void Client::Impl::PrepareStep(uint32_t tick) {
         FreshColliders();
         sim::PoseMechanisms(*simulation, tick, sim::PlayerReach(player.position, welcome.player));

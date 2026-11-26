@@ -95,6 +95,7 @@ namespace vortex::sim {
         voxel::TerrainGraphCache graphs;
         IslandSearchChecks checks;
         ReplicationState replication;
+        ZoneSet zones;
     };
 
     Simulation::Simulation(const SimulationConfig& config) : m_Impl(std::make_unique<Impl>(config)) {}
@@ -150,6 +151,9 @@ namespace vortex::sim {
     fx::ParticleSystem& Simulation::Particles() { return m_Impl->particles; }
     scene::Scene& Simulation::Scene() { return m_Impl->scene; }
     const scene::Scene& Simulation::Scene() const { return m_Impl->scene; }
+
+    ZoneSet& Simulation::Zones() { return m_Impl->zones; }
+    const ZoneSet& Simulation::Zones() const { return m_Impl->zones; }
 
     uint32_t Simulation::Tick() const { return m_Impl->tick; }
 

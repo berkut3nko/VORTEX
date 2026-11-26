@@ -382,7 +382,8 @@ namespace vortex::net {
                     HistoryEntry& e = s.history[k % kHistoryTicks];
                     if (!e.valid || e.tick != k) continue;
                     s.PrepareStep(k);
-                    sim::StepPlayer(s.simulation->Physics(), s.simulation->Terrain(), s.character, s.player, e.input, s.welcome.player, s.playArea, s.Dt());
+                    sim::StepPlayer(s.simulation->Physics(), s.simulation->Terrain(), s.character, s.player, e.input, s.welcome.player, s.playArea,
+                                    s.ZonesAt(e.tick), s.Dt());
                     e.state = s.player;
                 }
             }

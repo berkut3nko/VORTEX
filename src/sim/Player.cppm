@@ -4,6 +4,7 @@ module;
 
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <string>
 
 export module vortex.sim:player;
@@ -11,6 +12,8 @@ export module vortex.sim:player;
 import vortex.core;
 import vortex.math;
 import vortex.physics;
+import vortex.voxel;
+import :zones;
 
 export namespace vortex::sim {
 
@@ -45,6 +48,16 @@ export namespace vortex::sim {
         }
     };
 
+    /// @brief PlayerState::status bits (docs/design/magic.md "PlayerState, StepPlayer and the physics call").
+    enum PlayerStatus : uint8_t {
+        PlayerStatus_Rooted = 1,
+        PlayerStatus_Pinned = 2,
+        PlayerStatus_Chilled = 4,
+        PlayerStatus_Lifted = 8,   ///< set while in a Lift, cleared on the first step that ends on the ground
+        PlayerStatus_Free = 16,
+        PlayerStatus_Fresh = 32,
+    };
+
     enum PlayerFlag : uint8_t {
         PlayerFlag_OnGround = 1,
         PlayerFlag_Held = 2,     ///< The last step was held: its terrain had no collider (StepPlayer's gate).
@@ -60,6 +73,14 @@ export namespace vortex::sim {
         uint8_t flags = 0;           ///< PlayerFlag
         uint8_t cooldownTicks = 0;   ///< Ticks until the next cast is accepted.
         uint8_t lastButtons = 0;     ///< Button levels of the last input: edges are derived against them.
+        /// External velocity in cm/s (knockback, a dash's carry). x and z are added to the wish and
+        /// decay; y is a one-shot upward kick taken by the next step. Each axis within +-kPushLimitCmS.
+        int16_t push[3] = {0, 0, 0};
+        uint8_t status = 0;          ///< PlayerStatus bits
+        uint8_t slowQ = 0;           ///< speed cut in sixteenths while slowLeft > 0
+        uint8_t slowLeft = 0, rootLeft = 0, pinLeft = 0, ccGuardLeft = 0;   ///< ticks
+        uint8_t dashLeft = 0;        ///< ticks of a dash still to run (StartDash)
+        int8_t dashDir[2] = {0, 0};  ///< the dash's horizontal direction (x, z) in 1/127 units
         bool OnGround() const { return (flags & PlayerFlag_OnGround) != 0; }
         friend bool operator==(const PlayerState&, const PlayerState&) = default;
     };
@@ -81,6 +102,8 @@ export namespace vortex::sim {
         float castRadius = 1.2f;         ///< metres (the game's left-click blast)
         float castPower = 6.0f;          ///< Material::hardness units
         float castRange = 60.0f;         ///< metres from the eye to the terrain it hits
+        uint16_t pushDecayGround = 45;   ///< cm/s per tick: PlayerState::push x and z toward 0 on the ground
+        uint16_t pushDecayAir = 1;       ///< cm/s per tick in the air
         friend bool operator==(const PlayerTuning&, const PlayerTuning&) = default;
     };
     /**
@@ -129,8 +152,26 @@ export namespace vortex::sim {
      * and a server of different revisions refuse each other ("another build") instead of
      * correcting each other. 1: the play area (WP1, 2026-11-19). 2: foliage (leaves, needles, reeds,
      * ferns, flowers) has no terrain collision: players walk through plants (land.md "Nature", 2026-11-25).
+     * 3: push, the Impulse, Lift and Shove zones, the dash and the vertical parameter of
+     * UpdateCharacter (magic.md "PlayerState, StepPlayer and the physics call", 2026-11-26).
      */
-    inline constexpr uint32_t kPlayerRuleRevision = 2;
+    inline constexpr uint32_t kPlayerRuleRevision = 3;
+
+    /// @brief Each axis of PlayerState::push stays within +- this (cm/s).
+    inline constexpr int32_t kPushLimitCmS = 1500;
+    /// @brief A dash (docs/design/magic.md, spell 11): its length in ticks, its speed and the push it
+    /// leaves along its direction on its last tick. The spell table takes these values.
+    inline constexpr uint8_t kDashTicks = 18;
+    inline constexpr uint16_t kDashSpeedCmS = 2670;
+    inline constexpr uint16_t kDashEndPushCmS = 400;
+
+    /// @brief What a step reads besides the player: the zones live at the stepped tick.
+    struct PlayerZones {
+        const ZoneSet* zones = nullptr;          ///< nullptr: no zones
+        const voxel::World* world = nullptr;     ///< its voxel size gives q (nullptr: 0.125 m)
+        uint32_t tick = 0;                       ///< the tick being stepped (a replay: that entry's own tick)
+        uint8_t teamBit = 1;                     ///< 1u << the player's team (no team: team 0)
+    };
 
     /// @brief What one StepPlayer did.
     struct PlayerStepResult {
@@ -168,6 +209,31 @@ export namespace vortex::sim {
     /// @brief A cast edge in `pressed` that the cooldown accepts: the cooldown restarts. Used by
     /// StepPlayer and by a server that receives a cast in an input for a tick it already simulated.
     bool TakeCast(PlayerState& state, uint8_t pressed, const PlayerTuning& tuning);
+    /// @brief The cooldown a cast restarts: `castCooldownTicks * (16 + slowQ / 2) / 16` (at most 255).
+    uint8_t CastCooldownFor(const PlayerState& state, const PlayerTuning& tuning);
+
+    /**
+     * @brief Starts a dash along the horizontal part of `aim`: `dashLeft` = kDashTicks and `dashDir`
+     * its direction in 1/127 units. Refused (false, nothing changes) while rooted or pinned, or when
+     * `aim` has no finite horizontal part.
+     */
+    bool StartDash(PlayerState& state, const glm::vec3& aim);
+
+    /**
+     * @brief The zones' part of a step (StepPlayer calls it after the gate), from the feet quantised
+     * to q (round to nearest) at `zones.tick`, in (startTick, zoneId) order, for the zones whose
+     * team mask has `zones.teamBit`.
+     * @details Impulse (start tick only): away from the centre (a capsule: from the nearest point of
+     * its axis; a cylinder: horizontally), `f = strength0 * (R - len) / R`, the horizontal part
+     * `d * f / max(len, R / 8)`, plus `strength1 * (R - len) / R` up. Shove (start tick only, a
+     * capsule): `f` along the axis's horizontal direction, the same lift. Lift (while live, a
+     * y-cylinder): a vertical speed target ramped to 0 over the outer 0.25 m and eased linearly to
+     * 0 at the top over 0.5 m or the coasting height of its strength under `gravity` (m/s^2, down),
+     * whichever is longer, so a lifted player stops at the top and hovers; sets
+     * PlayerStatus_Lifted. Integers in cm/s; `push` is clamped to +-kPushLimitCmS per axis.
+     * @return The Lift's vertical target in m/s (the highest of the zones), or nothing.
+     */
+    std::optional<float> ApplyZones(PlayerState& state, const PlayerZones& zones, const PlayerTuning& tuning, float gravity = 9.81f);
 
     /**
      * @brief One tick of a player: the single movement rule of the server, the predicting client
@@ -188,7 +254,18 @@ export namespace vortex::sim {
      * stays a chunk inside it).
      * Integer inputs, fixed tick: what does not repeat bit for bit is Jolt's contact order, which
      * the reconciliation threshold absorbs.
+     * Zones and push (docs/design/magic.md "PlayerState, StepPlayer and the physics call"): after the
+     * gate, ApplyZones. A dash (`dashLeft > 0`) replaces the input's wish with its own; the
+     * horizontal push is added to the wish before the play-area cut, and an axis the cut reduced
+     * loses its push; a positive vertical push and a Lift become UpdateCharacter's `vertical`. After
+     * the physics call: a dash whose horizontal move was cut to under half its length ends, and a
+     * dash's last tick leaves kDashEndPushCmS of push along it; on the ground PlayerStatus_Lifted is
+     * cleared; the horizontal push decays toward 0 (pushDecayGround or pushDecayAir).
      */
+    PlayerStepResult StepPlayer(physics::PhysicsWorld& physics, const physics::TerrainColliders& terrain, physics::CharacterId character,
+                                PlayerState& state, const PlayerInput& input, const PlayerTuning& tuning, const PlayArea& area,
+                                const PlayerZones& zones, float dt);
+    /// @brief The same step with no zones.
     PlayerStepResult StepPlayer(physics::PhysicsWorld& physics, const physics::TerrainColliders& terrain, physics::CharacterId character,
                                 PlayerState& state, const PlayerInput& input, const PlayerTuning& tuning, const PlayArea& area, float dt);
 
