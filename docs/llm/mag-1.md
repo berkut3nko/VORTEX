@@ -4,6 +4,7 @@
 
 | | |
 |---|---|
+| State | **Out of date:** the owner replaced 4 spells on 2026-11-26 ([magic.md](../design/magic.md) "The sixteen spells" 9, 11, 12, 13); [mag-1] now builds Updraft, Dash, Punch and Barricade Wave. Rewrite cards 4, 5, 6, 10 and 11 (Siege Cannon, Shockwave; the Pierce operator of card 5 moves to [mag-3]) before starting |
 | Stage | `[mag-1]`: four spells in sim, offline and headless: Siege Cannon (breach), Barricade Wave (cover), Shockwave (knock off), Updraft (climb) |
 | Design | [magic.md](../design/magic.md) "Decision in brief", "The two axes as data", "The four operators (exact)" (Pierce, Burst, Plume's column), "The element verbs", "Conjured matter", "Players: zones, statuses and the movement rule", "Determinism and replication" ("Apply", "Determinism traps"), "Tests", "Headless flags and gates", "Stages" row `[mag-1]` |
 | Code read at | engine `bafca16`, game `0e27ea7` (before `[wp-4]`..`[mech-1]`: where a card builds on what those stages add, it names the symbol and says "read the built interface") |

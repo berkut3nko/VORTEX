@@ -4,6 +4,7 @@
 
 | | |
 |---|---|
+| State | **Out of date:** the owner replaced 4 spells on 2026-11-26 ([magic.md](../design/magic.md) "The sixteen spells" 9, 11, 12, 13); [mag-1] now builds Updraft, Dash, Punch and Barricade Wave. Rewrite every card that names Siege Cannon or Shockwave before starting |
 | Stage | `[mag-2]`: the four `[mag-1]` spells (Siege Cannon, Barricade Wave, Shockwave, Updraft) in offline practice and in sessions: the one magic protocol bump, zone events with a lead, `CastFx`, the Spell edge, the owner block, `Attune`, the spell HUD |
 | Design | [magic.md](../design/magic.md) "Stages" row `[mag-2]`; "Wire values (one protocol bump, in [mag-2])"; "`sim::ZoneSet`" (retention, late zones, joiners); "What can still cause a correction"; "Input and HUD"; "Where every effect lives"; "Follow-ups (`RunScheduled`)"; "Caps"; "Presentation"; "Tests" (VortexNetTests); "Headless flags and gates". ROADMAP "Next" item 7 |
 | Code read at | engine `ea41341`, game `58d7b87` (before `[wp-4]`..`[mag-1]`: where a card builds on them it names the symbol and says "read the built interface") |

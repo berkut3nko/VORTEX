@@ -4,10 +4,10 @@
 
 | | |
 |---|---|
-| Status | Designed and reviewed, nothing built or measured for it. Merged from three proposals by a judge's synthesis brief; reviewed by two critics on 2026-11-21 (29 findings on 27 issues, all taken, three only in part: [design-review-2026-11-21.md](../history/magic/design-review-2026-11-21.md)). |
-| Decided | - Owner's concept (2026-11-21), verbatim in [owner-concept-2026-11-21.md](../history/magic/owner-concept-2026-11-21.md), not reopened here: every spell is a **Cast Type** (Liquid: down and pooling; Flame: up and rising; Solid: linear penetration that spends structural health per voxel; Torrent: lateral or radial burst) x an **Element** (Metal: create and reinforce voxels; Thermal: damage over time, ignition, heats metal; Pressure: impulse, knockback, launch, bonus damage to brittle voxels, no residue; Frost, the owner's recommended 4th: slow, freeze liquid into walkable ice, brittleness 2x against Pressure and Solid). All 16 named siege spells and their tactical roles.<br>- Owner, standing rules: fun gameplay with few bugs first; realistic synced simulation is unnecessary; we settle open design questions ourselves with a recommended answer; every feature has a cheap path and a measured cost; replicated world edits are integer-exact and no float decides which voxel changes; no randomness in replicated rules; everything stays original.<br>- Owner (2026-11-17, [spread.md](spread.md)): fire is lockstep, a simple spread operation, no randomness; Claude implements it. Owner (2026-11-10, ROADMAP "Direction"): building only in fights, created matter is temporary; magic means create matter, move matter, change materials, spreading fire and summoning.<br>- Us (this design, 2026-11-21): items 1-16 of "Decision in brief" and every answer in "Open questions", as amended by the design review. Base: proposal 3 (8.2 of 10), with proposal 2's player design (7.2) and proposal 1's exact operators (7.0) ([proposal-scores-2026-11-21.md](../history/magic/proposal-scores-2026-11-21.md)).<br>- Owner (2026-11-21, "Doors first"): [mag-1] and [mag-2] right after [mech-1] ("ROADMAP placement"); our proposal to put them before it was vetoed. |
-| Next | [mag-1] the siege core in sim, headless only, in ROADMAP "Next" after [mech-1] (owner, 2026-11-21). |
-| Open | "Open questions" 1-29, each with the recommended answer. For the owner: the in-world name for "Napalm" (question 19), the keys, colours and feel of slick ground and launches (windowed, question 23), the reorder of ROADMAP "Next" (question 24), and the damage split between Thermal and Pressure (question 27). |
+| Status | Designed and reviewed, nothing built or measured for it. Merged from three proposals by a judge's synthesis brief; reviewed by two critics on 2026-11-21 (29 findings on 27 issues, all taken, three only in part: [design-review-2026-11-21.md](../history/magic/design-review-2026-11-21.md)). Four spells replaced by the owner on 2026-11-26 (below). |
+| Decided | - Owner's concept (2026-11-21), verbatim in [owner-concept-2026-11-21.md](../history/magic/owner-concept-2026-11-21.md), not reopened here: every spell is a **Cast Type** (Liquid: down and pooling; Flame: up and rising; Solid: linear penetration that spends structural health per voxel; Torrent: lateral or radial burst) x an **Element** (Metal: create and reinforce voxels; Thermal: damage over time, ignition, heats metal; Pressure: impulse, knockback, launch, bonus damage to brittle voxels, no residue; Frost, the owner's recommended 4th: slow, freeze liquid into walkable ice, brittleness 2x against Pressure and Solid). All 16 named siege spells and their tactical roles.<br>- Owner, 2026-11-26: Pressure is mostly movement on the map (high jumps, dashes, punches): Meteor Leap, Updraft, Dash and Punch replace Crushing Weight, Siege Cannon and Shockwave; Flow x Frost is a static Rune Trap instead of Glacier Slide; the other 12 spells are unchanged. [mag-1] builds Updraft, Dash, Punch and Barricade Wave.<br>- Owner, standing rules: fun gameplay with few bugs first; realistic synced simulation is unnecessary; we settle open design questions ourselves with a recommended answer; every feature has a cheap path and a measured cost; replicated world edits are integer-exact and no float decides which voxel changes; no randomness in replicated rules; everything stays original.<br>- Owner (2026-11-17, [spread.md](spread.md)): fire is lockstep, a simple spread operation, no randomness; Claude implements it. Owner (2026-11-10, ROADMAP "Direction"): building only in fights, created matter is temporary; magic means create matter, move matter, change materials, spreading fire and summoning.<br>- Us (this design, 2026-11-21): items 1-16 of "Decision in brief" and every answer in "Open questions", as amended by the design review. Base: proposal 3 (8.2 of 10), with proposal 2's player design (7.2) and proposal 1's exact operators (7.0) ([proposal-scores-2026-11-21.md](../history/magic/proposal-scores-2026-11-21.md)).<br>- Owner (2026-11-21, "Doors first"): [mag-1] and [mag-2] right after [mech-1] ("ROADMAP placement"); our proposal to put them before it was vetoed. |
+| Next | The owner reviews the 4 new spells (9, 11, 12, 13 in "The sixteen spells"). Then [mag-1], headless only, in ROADMAP "Next" after [mech-1] (owner, 2026-11-21). |
+| Open | "Open questions" 1-31, each with the recommended answer. For the owner: who sees a Rune Trap and how far Dash and Meteor Leap go (questions 30, 31), the in-world name for "Napalm" (question 19), the keys, colours and feel of slick ground and launches (windowed, question 23), the reorder of ROADMAP "Next" (question 24), and the damage split between Thermal and Pressure (question 27). |
 | History | [owner-concept-2026-11-21.md](../history/magic/owner-concept-2026-11-21.md): the owner's concept, verbatim<br>[proposal-scores-2026-11-21.md](../history/magic/proposal-scores-2026-11-21.md): the scores of the three proposals, what the merged design takes from each, and the conflicts settled<br>[design-review-2026-11-21.md](../history/magic/design-review-2026-11-21.md): the two critics' findings and what was done with each |
 | Marks | **(m)** measured (quoted from ROADMAP), **(c)** computed from sizes, **(e)** estimate; every (e) names the measurement that replaces it. Voxel counts are at 0.125 m. Work units are `sim::CastWorkOf` units (about 0.11 us each on the UHD 620 laptop: 10 000 units = 1.09 ms). Code read at engine `58f2650`. |
 
@@ -58,11 +58,12 @@ Related:
    or pin is followed by 1.5 s in which no root or pin applies, so control never chains into a lock.
    `kPlayerRuleRevision` goes up in each stage that adds a zone kind or the slick rule (2 in [mag-1]).
 7. **Casts stay hitscan** with the server's eye-rewound capture (`StateAt`), as blasts are today. Flow is lobbed: an
-   instant integer arc trace at capture, not a flying bolt. Projectile flight is presentation only. Shockwave's
-   "deflect" becomes a dispel: it cuts short the live enemy zones near it (lifts, pins, chills) from its own zone
-   tick, and frees rooted or pinned allies.
+   instant integer arc trace at capture, not a flying bolt. Projectile flight is presentation only. The owner's
+   "deflect" is Punch's dispel: it cuts short the live enemy zones near its fist (lifts, pins, chills, runes) from its
+   own zone tick, and frees rooted or pinned allies. Meteor Leap and Dash move the caster from its own cast input,
+   predicted like a jump; what they do to others goes through zones.
 8. **Fresh knit iron holds against the basic blast, but wears**: hardness 7.0 against power 6.0, and a blast whose ray
-   hits it is absorbed and chips a 0.25 m patch off the plate instead of carving. Explicit counters: Siege Cannon bores
+   hits it is absorbed and chips a 0.25 m patch off the plate instead of carving. Explicit counters: Meltdown Beam bores
    it, Thermal heats it soft, Frost rimes it brittle, blasts wear it down, and it crumbles on schedule. Its bonds equal
    stone's, so plating replaces a cut neck but never makes it stronger.
 9. **Brittleness is hardness only.** Frost turns stone, dark stone, brick, iron and knit iron into rimed ids at half
@@ -71,7 +72,7 @@ Related:
 10. **A knit fill never runs the load check** (the spirit of "never after `FillBox`": no surprise collapse under your
     own wall). Any op that turns a collider into a non-collider (air, a liquid, a film) runs a site check, whatever
     its map: expiries, shatters, ablation, Heat on ice and floe. Bores run the island search and load check like a
-    blast; Crushing Weight runs one on purpose with an integer `extraLoad`, on the structure credit.
+    blast; Meteor Leap's slam runs one on purpose with an integer `extraLoad`, on the structure credit.
 11. **Players are attuned to 2 elements per life** (8 spells), chosen on the respawn screen. LMB stays the M2a blast,
     RMB casts the selected spell, keys 1-4 pick the form, R swaps the element. Each spell costs one M2a charge, and
     each form has its own cooldown. No single spell kills from full health.
@@ -80,8 +81,8 @@ Related:
 13. **Caps that refuse, never silent loss** (R7): 6 000 live conjured voxels per player (the oldest conjuring crumbles
     early), 60 000 per region, 32 zones, 8 bodies woken per Pressure cast, spread's fire caps; work counted in
     `sim::CastWorkOf`.
-14. **Smallest fun slice first:** [mag-1] builds Siege Cannon, Barricade Wave, Shockwave and Updraft (breach, cover,
-    knock off, climb) in sim, headless only, with only the operators, maps and zone kinds those four use; [mag-2] puts
+14. **Smallest fun slice first:** [mag-1] builds Updraft, Dash, Punch and Barricade Wave (jump, dash, punch, cover;
+    the owner, 2026-11-26) in sim, headless only, with only the operators, maps and zone kinds those four use; [mag-2] puts
     them on the wire with the one protocol bump that reserves every value the later stages need, and makes them
     playable; [mag-3] Frost (Shatter Spike, Flash Freeze, Permafrost Climb) makes the top-ranked Shatter combo playable
     next.
@@ -114,19 +115,20 @@ in-world one (question 19).
 
 ### The two axes, as a player sees them
 
-| Form (owner's name) | HUD word | How it travels (presentation) | Where it lands | Reads as |
-|---|---|---|---|---|
-| Liquid | **FLOW** | A lobbed blob on a visible arc | Runs down from the impact, coats wall faces as it falls, pools at the lowest point | "It runs downhill" |
-| Flame | **PLUME** | A rising wisp | Climbs from the impact, coats faces, pools under ceilings and arches | "It climbs" |
-| Solid | **PIERCE** | A thin straight streak | Bores along the line and spends its budget per voxel | "It goes through" |
-| Torrent | **BURST** | A spinning disc | Spreads across the surface it hits, as a disc, or a strip across your aim | "It spreads flat" |
+| Form (owner's name) | HUD word   | How it travels (presentation)  | Where it lands                                                                     | Reads as           |
+| ------------------- | ---------- | ------------------------------ | ---------------------------------------------------------------------------------- | ------------------ |
+| Liquid              | **FLOW**   | A lobbed blob on a visible arc | Runs down from the impact, coats wall faces as it falls, pools at the lowest point | "It runs downhill" |
+| Flame               | **PLUME**  | A rising wisp                  | Climbs from the impact, coats faces, pools under ceilings and arches               | "It climbs"        |
+| Solid               | **PIERCE** | A thin straight streak         | Bores along the line and spends its budget per voxel                               | "It goes through"  |
+| Torrent             | **BURST**  | A spinning disc                | Spreads across the surface it hits, as a disc, or a strip across your aim          | "It spreads flat"  |
 
-| Element | Setting craft | Colour + particle shape | Signature world state | Signature player effect |
-|---|---|---|---|---|
-| Metal | Knitting | Violet-grey with violet seams; angular sparks | **knit iron**: the blast cannot cut through it, only chip it; lasts 15-25 s, cracks for its last 2 s | none (cover, climbing) |
-| Thermal | Kindling | Orange; embers | **pitch** (a burning film that lights timber and burns players), **hot** metal (soft, burns on contact) | burning damage |
-| Pressure | Drawing | White; expanding rings | none (no residue); shatters rimed matter and ice | knockback, launch, pin |
-| Frost | Turning | Cyan; hexagonal shards | **rimed** (pale, frost-veined, half hardness), **ice** (walkable, slick), **floe** (a frozen moat) | chill (slow), root |
+| Element  | Setting craft | Colour + particle shape                       | Signature world state                                                                                   | Signature player effect |
+| -------- | ------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------- |
+| Metal    | Knitting      | Violet-grey with violet seams; angular sparks | **knit iron**: the blast cannot cut through it, only chip it; lasts 15-25 s, cracks for its last 2 s    | none (cover, climbing)  |
+| Thermal  | Kindling      | Orange; embers                                | **pitch** (a burning film that lights timber and burns players), **hot** metal (soft, burns on contact) | burning damage          |
+| Pressure | Drawing       | White; expanding rings                        | none (no residue); shatters rimed matter and ice                                                        | knockback, launch, pin  |
+| Frost    | Turning       | Cyan; hexagonal shards                        | **rimed** (pale, frost-veined, half hardness), **ice** (walkable, slick), **floe** (a frozen moat)      | chill (slow), root      |
+|          |               |                                               |                                                                                                         |                         |
 
 The four colours differ in hue and in lightness, and each element has its own particle shape, for colour-blind
 players. The HUD words are the engine names, so one name set serves code, documents and players; "PLUME + FROST"
@@ -152,19 +154,20 @@ Every combination is one respawn away.
 | Resource | Value | Shown as | Why |
 |---|---|---|---|
 | Charges (M2a) | 3 at most, 1 back every 1.2 s; the 15-tick cooldown is the burst limit. The blast and every spell cost 1 | 3 pips under the crosshair | One pool keeps the sustained rate at about 0.83 casts/s per player (c), so 10 players make about 8.3 casts/s, inside the 10 casts/s design case. Shooting and weaving compete for the same pips |
-| Form cooldown | Pierce 300 ticks (5 s), Burst 420 (7 s), Flow 540 (9 s), Plume 540 (9 s); shared by both elements of a form | A shrinking fill on each slot of the spell bar, with the seconds left | A big spell is a decision with a readable window ("his BURST is down"); it stops chaining Barricade Wave into Shockwave |
+| Form cooldown | Pierce 300 ticks (5 s), Burst 420 (7 s), Flow 540 (9 s), Plume 540 (9 s); shared by both elements of a form | A shrinking fill on each slot of the spell bar, with the seconds left | A big spell is a decision with a readable window ("his BURST is down"); it stops chaining Barricade Wave into Punch |
 | Conjured matter | 6 000 live conjured voxels per player (about four walls) | `KNIT 1840/6000` above the element panel while above 0 | Over it, the player's oldest conjuring crumbles at once (an info line, not a refusal) |
 
 Rejected: a mana bar (a second meter beside the charges), per-spell cooldowns (8 timers), costs that differ per spell
-(players misjudge them). The first knob if the heavy breachers feel cheap: Siege Cannon, Meltdown Beam and Crushing
-Weight cost 2 charges (question 11).
+(players misjudge them). The first knob if the heavy spells feel cheap: Meltdown Beam and Meteor Leap cost 2 charges
+(question 11).
 
 ### Readability rules (they bind every spell)
 
 1. **The form is the silhouette and the motion; the element is the colour and the material.** A cyan streak is a
    Shatter Spike; an orange arc is a Pitchfall.
 2. **Everything that moves or roots a player arms 0.4 s after it appears**, with a contracting ring on the ground or a
-   ghost of the zone. Only direct damage acts at once, and the streak or arc was the warning.
+   ghost of the zone. Only direct damage acts at once, and the streak or arc was the warning. The caster's own Meteor
+   Leap and Dash move it at once: they are its own input, as a jump is.
 3. **Matter that rises out of the ground in front of players shows a 0.3 s ghost first** (Barricade Wave, Rising
    Spire, Permafrost Climb's ledges). Matter that follows a visible projectile (a Flow's arc, a Pierce's streak)
    appears where it lands.
@@ -174,8 +177,8 @@ Weight cost 2 charges (question 11).
 5. **Nothing conjured lasts**: knit 15-25 s, ice 10-12 s, floe 15 s, rime 8 s, hot 4 s, pitch 3-4 s. All of it is gone
    at the Settle by construction.
 6. **No single spell kills from full health.** Thermal carries the direct damage, as the owner's concept says ("high
-   direct damage on contact"): the largest direct hit is 45 (Meltdown Beam), 69 with its burn. Pressure is
-   structure-first: Siege Cannon hits for 30. A kill takes at least two casts, so the victim sees why.
+   direct damage on contact"): the largest direct hit is 45 (Meltdown Beam), 69 with its burn. Pressure moves
+   players: Punch hits for 25, and its knockback is the point. A kill takes at least two casts, so the victim sees why.
 7. **Hazards do not stack within an element.** At most one Thermal hazard tick and one status of each kind apply at a
    time; the strongest wins.
 8. **Friendly fire stays off (M2a).** Damage, roots, pins, chill and knockback hit enemies only. Updraft and Rising
@@ -194,27 +197,29 @@ The combos are not scripted. Each state is an id, and each element's maps say wh
 |---|---|---|---|---|---|---|
 | knit iron (7.0), slag (7.0) | Metal | **absorbed**: no carve; chips a 0.25 m patch of the plate (Ablate) | 112 | - | becomes **hot** (3.5) | becomes **rimed** (3.5) |
 | hot (knit 3.5, iron 4.0) | Thermal on metal | carves | 56 / 64 | - | stays hot | **quench**: back to plain (knit, iron) |
-| rimed (half hardness, same bonds) | Frost on stone, dark stone, brick, iron, knit | carves, even rimed iron | half: **2x depth** | **shatters to air** (Shockwave, Crushing Weight), up to 0.5 m deep from an exposed face | thaws to its base | stays rimed (refreshed) |
+| rimed (half hardness, same bonds) | Frost on stone, dark stone, brick, iron, knit | carves, even rimed iron | half: **2x depth** | **shatters to air** (Punch, Meteor Leap's slam), up to 0.5 m deep from an exposed face | thaws to its base | stays rimed (refreshed) |
 | ice (1.0) | Frost on air or pitch | carves | 16 | shatters (exposed, 0.5 m deep) | melts | - |
 | floe (frozen water, an anchor) | Frost on water | indestructible | stops a bore | shatters back to water | melts back to water | - |
 | pitch (a burning film) | Thermal | not solid | - | - | - | **frozen into ice** |
 | burning timber (spread.md) | Thermal's Heat map | as spread.md | - | - | - | quenched (spread's Douse rows) |
 
 Ranked by how much fun they are:
-1. **Shatter.** Shatter Spike, then Siege Cannon through about 3.3 m instead of 2, or Shockwave peeling the rimed face
-   0.5 m deep. The owner's "shatter combos with teammates". Plating over the rime protects it: Shatter reaches only
+1. **Shatter.** Shatter Spike, then a blast that cuts rimed iron and knit and goes twice as deep in rimed stone, or
+   Meltdown Beam through about 6 m instead of 3, or a Punch peeling the rimed face 0.5 m deep. The owner's "shatter combos with teammates". Plating over the rime protects it: Shatter reaches only
    rime it can see.
 2. **Bridge and trap.** Flash Freeze over the moat makes a bridge; a defender's Wildfire or Meltdown melts it under
-   the attackers; a Shockwave shatters it.
+   the attackers; a Punch shatters it.
 3. **Heat beats metal.** A Barricade or a Molten Pour plating that the blast can only chip becomes blast-able for 4 s
    after a Thermal hit. That is the counter-build loop.
 4. **Quench.** Frost on hot metal makes it plain again; Frost on pitch makes walkable ice; Frost on fire puts it out.
-5. **Vertical play.** Updraft onto a Rising Spire's top; a Rebar peg ladder up to a ledge (three lances, six pegs:
-   about 6.4 m in 10 s); Permafrost Climb against Wildfire on the same wall face.
-6. **Displacement.** Shockwave into your own Barricade (the enemy stops against it and eats a blast); Crushing Weight
-   on a plank bridge drops it; Glacier Slide plus Shockwave off a battlement (a fall of 4 m or more hurts, M2a).
-7. **Felling.** Siege Cannon through a tower's outer wall cuts its neck from range; Crushing Weight on a weak upper
-   floor; defenders plate the neck with Molten Pour (knit bonds equal stone's, so a plate carries what a cut took
+5. **Vertical play and movement.** Updraft onto a Rising Spire's top; a Rebar peg ladder up to a ledge (three lances,
+   six pegs: about 6.4 m in 10 s); Meteor Leap over the ditch onto the wall walk, then a Dash along it; Permafrost
+   Climb against Wildfire on the same wall face.
+6. **Displacement and traps.** A Punch into your own Barricade (the enemy stops against it and eats a blast); Meteor
+   Leap's slam on a plank bridge drops it; a Rune Trap at a stair's head, then a Punch off the battlement while the
+   target is rooted (a fall of 4 m or more hurts, M2a).
+7. **Felling.** Shatter Spike, then Meltdown Beam or blasts through a tower's outer wall, cuts its neck; Meteor
+   Leap's slam on a weak upper floor; defenders plate the neck with Molten Pour (knit bonds equal stone's, so a plate carries what a cut took
    away), attackers chip the plate with blasts, and the plating's crack 2 s before it crumbles is their cue.
 
 ### Time to kill, against M2a
@@ -228,7 +233,7 @@ M2a: 100 HP; a blast does 60 at its centre and 0 at 1.2 m (a near miss at 0.4 m 
 | Shatter Spike, then 2 blasts | 25 + 40 + 40 | about 0.6 s; the chill (speed x 0.625) makes the blasts land |
 | Flash Freeze root, then Meltdown Beam and a blast (two players) | 10 + 45 + 60 (a rooted target takes the blast at its centre) | the 0.4 s ring plus 0.25 s; a rooted target cannot dodge: **the team payoff** |
 | Meltdown Beam, then a blast | 45 + 40 + 24 (burn) | about 2 s with the burn; 0.5 s with a second blast |
-| Siege Cannon, then 2 blasts | 30 + 40 + 40 | about 0.5 s; the Cannon is a structure tool that also hurts |
+| Punch, then 2 blasts | 25 + 40 + 40 | about 0.9 s with the 0.4 s wind-up; the knockback may throw the target out of reach |
 | Pitchfall carpet alone | 20 + 15/s | about 5.3 s standing in it: denial, not a kill |
 | Updraft juggle | 0 + 2-3 blasts at an airborne target on a known path | about 1 s |
 
@@ -244,15 +249,15 @@ colours ("ANNA [M][F]").
 | Pair | Role | Typical play |
 |---|---|---|
 | Metal + Frost | Warden | Barricades on the bridge, Flash Freeze roots, plating the neck |
-| Pressure + Frost | Breacher | Shatter Spike, then Siege Cannon on the neck; Shockwave on rimed walls |
-| Metal + Pressure | Scaler | Rising Spire, Updraft, Rebar ladders: puts the team on the wall |
+| Pressure + Frost | Raider | Rune Traps on the stairs; Dash and Meteor Leap past the line; Punch on rimed walls and ice |
+| Metal + Pressure | Scaler | Rising Spire, Updraft, Meteor Leap, Rebar ladders: puts the team on the wall |
 | Thermal + Metal | Burner | Pitchfall on stairs, Meltdown Beam through knit iron, Molten patches |
-| Thermal + Pressure | Skirmisher | Firestorm and Shockwave clear battlements; Updraft juggles |
-| Thermal + Frost | Controller | Ice bridges and melt traps; Wildfire against climbers |
+| Thermal + Pressure | Skirmisher | Firestorm clears battlements; Punch knocks defenders off; Dash in and out; Updraft juggles |
+| Thermal + Frost | Breacher | Shatter Spike, then Meltdown Beam on the neck; ice bridges and melt traps |
 
-**A Felling duel on the playground** (M2a's mode): attacking Breachers rime and cannon the neck from behind
+**A Felling duel on the playground** (M2a's mode): attacking Breachers rime and bore the neck from behind
 Barricades while Scalers put two players on the enemy wall with Spire and Updraft. Defenders plate the neck with
-Molten Pour, burn the climbers with Wildfire (it melts their ice), and knock the scalers off with Shockwave. The
+Molten Pour, burn the climbers with Wildfire (it melts their ice), and knock the scalers off with Punch. The
 plating's 25 s life and its 2 s crack set the rhythm: a breach window opens every time a plating fades.
 
 ### Input and HUD (game-ui.md: `HudCanvas` quads and the 5 x 9 font, no ImGui)
@@ -335,7 +340,7 @@ dequeue T_run (cast queue, cast credit):
          schedule; registry entries
   damage and statuses (server), CastFx (presentation)
 every tick: RunScheduled emits due bands, Set, Shatter-at-arm, Cool / Thaw / Unknit expiries; site checks (and
-            Crushing Weight's extraLoad check) wait in the structure credit's queue
+            Meteor Leap's extraLoad check) wait in the structure credit's queue
 ```
 
 `sim::CastSpell` is the whole pipeline in Sim (GPU-free), used by the server and by M2a's in-process offline server;
@@ -377,7 +382,7 @@ every tick: RunScheduled emits due bands, Set, Shatter-at-arm, Cool / Thaw / Unk
   `static_assert(kMaxBoreVoxels / 2 + 3 * kMaxPierceRadiusVoxels + kIslandSearchMargin + kBoreProofMargin <=
   kFloodHalfExtent)` with `kBoreProofMargin` 24 (32 + 12 + 24 + 24 = 92 <= 96): structure past the bore's end is
   seen for at least 24 voxels before the flood box's face counts as anchored, so a bore cuts a neck from range at
-  every voxel size (`Pierce.BoreStaysInsideItsFloodBox`; `--spell-demo siege-cannon` at G6's 0.1 and 0.15 m).
+  every voxel size (`Pierce.BoreStaysInsideItsFloodBox`; `--spell-demo shatter-spike` at G6's 0.1 and 0.15 m).
 
 ## The four operators (exact)
 
@@ -482,8 +487,8 @@ under the planks.
   next wall.
 - **Visits** are `sum |N_k|`, the new member voxels, a count that does not depend on how `N_k` is found; the visit cap
   (3 000) and the work count it. Finding `N_k` scans at most the slice's box (`(2r + 3)^2 x 3` voxels per slice, about
-  25 000 tests for a 64-slice Siege Cannon), bounded by `maxSlices` and charged as `slices x kPierceSliceWork` (100).
-  A 64-slice Siege Cannon has about 2 100 members, so the cap never cuts the depths below.
+  25 000 tests for a 64-slice bore of r 3.2, the operator's widest), bounded by `maxSlices` and charged as `slices x kPierceSliceWork` (100).
+  A 64-slice bore of r 3.2 has about 2 100 members (Meltdown Beam's r 2 about 800), so the cap never cuts the depths below.
 - **The result** is `B = B_last` and one op, `CarveCapsule(A, B, r, power)`, which carves every voxel of the capsule
   that is carvable with `hardness * 16 <= power`. By construction the op carves exactly the voxels the walk paid for
   (`Pierce.WalkAndCapsuleAgree`): nothing past `B`, nothing harder than `power`, nothing unpaid. A voxel's fate
@@ -548,14 +553,14 @@ Players are never entombed: a fill never takes a cell a player's capsule holds a
 emitted later re-excludes the capsules of that tick. A fill never takes a cell inside any team's spawn area (the
 spawn guard, "Caps").
 
-**The Shatter flood** (Pressure on rime and ice; Shockwave and Crushing Weight, at their zone tick). Shatter is not a
+**The Shatter flood** (Pressure on rime and ice; Punch and Meteor Leap's slam, at their zone tick). Shatter is not a
 plain sphere, which would reach rime behind a knit plate and blow a breach over 2 m wide and deep through rimed iron
 in two casts. It is a
 bounded server search, like the operators: the seeds are the shatterable voxels (any `_rimed` id, `ice`, `floe`)
 inside the spell's sphere (r 2 m) that have an open face neighbour (exposed); a breadth-first flood keyed by
 `(depth, z, y, x)` goes through face-connected shatterable voxels inside the sphere, at most 4 voxels (0.5 m) deep,
-at most 4 000 visits. The result goes out as one `MapMask(Shatter)`. Plating over rime blocks it; each Shockwave peels
-one layer; Siege Cannon through rime stays the deep breach. Its work is charged at `T_run` at its cap (4 000 visits
+at most 4 000 visits. The result goes out as one `MapMask(Shatter)`. Plating over rime blocks it; each Punch peels
+one layer; a bore or blasts through rime stay the deep breach. Its work is charged at `T_run` at its cap (4 000 visits
 plus the chunks of its box), a bound from the table, so the cast's work is known when it is dequeued.
 
 ### The Turning table (`voxel::TurningTable`, Core, integers authored in code)
@@ -578,7 +583,7 @@ not name, and no map names bedrock (`TurningTable.NeverNameBedrockAndIdentityEls
 | 10 Thaw | every `_rimed` -> its base (`knit_iron_rimed` -> `knit_iron`) | Frost expiry |
 | 11 Freeze | air, `pitch_*` -> `ice`; water -> `floe`; Douse's rows | Frost [mag-3] |
 | 12 FreezeWater | water -> `floe` (air untouched) | Flash Freeze [mag-3] |
-| 13 Shatter | every `_rimed` (base and knit), `ice` -> air; `floe` -> water | Shockwave, Crushing Weight, always through the Shatter flood's mask (rows active from [mag-3]) |
+| 13 Shatter | every `_rimed` (base and knit), `ice` -> air; `floe` -> water | Punch, Meteor Leap's slam, always through the Shatter flood's mask (rows active from [mag-3]) |
 | 14 Unknit | `knit_iron`, `knit_iron_hot`, `knit_iron_rimed`, `slag`, `ice` -> air; `floe` -> water | every conjuring's expiry [mag-1] |
 | 15 Ablate | `knit_iron`, `slag` -> air | an absorbed blast [mag-1] |
 
@@ -679,7 +684,7 @@ which op to emit, so no op rule changes.
 | Rising Spire | 15 s | Long enough to climb off onto a wall |
 | Molten Pour shell | 25 s | Repair is the defenders' slow tool |
 | Rebar pegs | 20 s | A climbing route, briefly: three lances (six pegs) live at once |
-| Ice (Glacier Slide, Permafrost Climb, Flash Freeze film) | 12 s / 10 s / 12 s | Control, not terrain |
+| Ice (Rune Trap's patch, Permafrost Climb, Flash Freeze film) | 12 s / 10 s / 12 s | Control, not terrain |
 | Floe (Flash Freeze bridge) | 15 s | Crossing a moat under fire |
 | Rime | 8 s | A combo window for a teammate |
 | Hot metal | 4 s, then Cool | A short punish |
@@ -693,10 +698,10 @@ which op to emit, so no op rule changes.
 
 ### Follow-ups (`RunScheduled`)
 
-Bands, Slag's Set, a Shockwave's or Crushing Weight's Shatter flood at the zone tick, and the registry's expiries go
+Bands, Slag's Set, a Punch's or a Meteor Leap slam's Shatter flood at the zone tick, and the registry's expiries go
 out on their tick, unconditionally: a lift's hover is timed against its bands. Bands, Set and expiries are computed
 at `T_run` (or are bounded by their owner's voxel count) and charged whole to the cast's work there; the Shatter flood
-is charged at its cap. Work that cannot be known at `T_run`, a site check or Crushing Weight's `extraLoad` check, is
+is charged at its cap. Work that cannot be known at `T_run`, a site check or Meteor Leap's `extraLoad` check, is
 never a follow-up: it goes to the structure credit's queue when its tick comes and is charged by its own counters
 when it runs. Follow-up bytes go to the event credit, which may go negative and then delays the next queued cast,
 never a follow-up. A band re-excludes the player capsules of its own tick. At most 6 bands per spell.
@@ -759,7 +764,7 @@ owner overlaps; the upper figure assumes it does and sends the mask.
 - Players: 20 splash within 1 m of the landing; slag burns 10 HP/s on contact (hazard scan) for its first second.
 - About 450-900 voxels; bytes: slag 0.15 KB aligned to 0.6 KB on a diagonal face, Set 27, Unknit 27 B (cheap) to
   0.6 KB, `CastFx` 32: **0.25-1.3 KB**; work about 4-8 k (**0.4-0.9 ms**), no island search (a fill).
-- Counter: Siege Cannon (112 per voxel), Meltdown Beam (heats, then bores), Frost then a blast, blasts chipping it
+- Counter: Meltdown Beam (heats, then bores), Frost then a blast, blasts chipping it
   (each takes a 0.5 m patch, "The absorb rule, ablative"), or wait 25 s.
 
 **2. Rising Spire (Plume x Metal): an instant scaling tower; sealing an arrow slit.**
@@ -780,7 +785,7 @@ owner overlaps; the upper figure assumes it does and sends the mask.
   or meets a ceiling, gets a gap round the capsule, as any fill leaves. Unknit at 15 s.
 - About 1 400 + 6 x 48 = **1 700 voxels**; bytes: 6 bands of 0.12-0.15 KB, `ZoneStart` 32, Unknit 27 B to 0.45 KB,
   `CastFx` 32: **0.8-1.4 KB**; work **1.5-3 k**.
-- Counter: Siege Cannon through the core (0.86 m of knit per shot), heat or rime then blasts, Shockwave on the rider.
+- Counter: Meltdown Beam through the core, heat or rime then blasts, a Punch on the rider.
 
 **3. Rebar Lance (Pierce x Metal): footholds; impaling.**
 - Pierce with the aim made horizontal (yaw only, so pegs are steps): `r` 1.5 (0.375 m), `power` 64 (4.0: stone,
@@ -795,7 +800,7 @@ owner overlaps; the upper figure assumes it does and sends the mask.
   5 m, plus a jump and a step) for one player (the `--spell-demo rebar-lance` line records the height); bytes 2 x 29 +
   knit 0.08 KB aligned to 0.3 KB at 45 degrees + `ZoneStart` 30 + Unknit 27 B to 0.3 KB + `CastFx` 32 + small island
   ops: **0.25-0.8 KB**; work 4-10 k, up to 20 k at a neck (**0.4-2 ms**).
-- Counter: a blast at a peg's root (the stone around it carves, the peg falls as rubble), Shockwave knocks climbers
+- Counter: a blast at a peg's root (the stone around it carves, the peg falls as rubble), a Punch knocks climbers
   off.
 
 **4. Barricade Wave (Burst x Metal): instant chest-high cover across a street or a bridge.**
@@ -808,7 +813,7 @@ owner overlaps; the upper figure assumes it does and sends the mask.
   (`Movement.BarricadeAcrossAWalkerCountsCorrectionsByCause`; "What can still cause a correction").
 - About **1 300 voxels**; bytes: 4 bands of 0.04-0.1 KB (x- or z-runs aligned, y-runs at 45 degrees), Unknit 27 B to
   0.35 KB, `CastFx` 32: **0.2-0.8 KB**; work about **2 k** (0.2 ms).
-- Counter: Siege Cannon (through 0.375 m of knit, then on), two blasts on one spot hole it, Thermal heat then blasts,
+- Counter: Meltdown Beam (through 0.375 m of knit, then on), two blasts on one spot hole it, Thermal heat then blasts,
   Frost then blasts, its foot undermined by blasts, or 20 s. You can shoot over it.
 
 ### Thermal (Kindling): direct damage, area denial, anti-metal (needs spread S1; sessions S2 and S3)
@@ -853,23 +858,29 @@ owner overlaps; the upper figure assumes it does and sends the mask.
   `ZoneStart` 32, `CastFx` 32: **0.35-0.65 KB**, plus spread; work about **0.6 ms**.
 - Counter: leave the ring; Frost.
 
-### Pressure (Drawing): mobility, crowd control, demolition; no residue
+### Pressure (Drawing): movement, shoves and blows; no residue
 
-**9. Crushing Weight (Flow x Pressure): pins players; collapses weak floors under them.**
-- Lobbed. Flow's fall phase from the hit's single seed (`fallMax` 64) gives the landing.
-- Zone: **Pin**, y-cylinder r 2.5 m, 3 m above the landing, `T_z`, 2.0 s, enemies; 15 damage at `T_z`.
-- At `T_z`: the Shatter flood (sphere r 2 m round the landing floor; rimed matter and ice break where exposed), then
-  **the load check with an `extraLoad`**: 600 kg/m^2 of the disc's floor area added, as integer weight, to the top
-  floor cell of each column in the disc, the check seeded there (shred.md Part 4b gains this optional input; same
-  max-flow, same uniqueness). The check is queued at `T_z` on the **structure credit** as a site check and charged by
-  Part 4b's counters when it runs; its work cannot be known at `T_run`, so it is never a follow-up of the cast credit.
-  Under a busy credit it waits (counted), while the Pin and the damage happen at `T_z` regardless. A weakened plank
-  floor or a thin bridge goes. Natural rock never does: 600 kg/m^2 is about 0.23 m of stone, inside rock's 3x margin
-  (`Neck.ExtraLoadNeverFailsNaturalTerrain`).
-- Bytes `ZoneStart` 32 + Shatter 0-0.3 KB + `CastFx` 32 + any `Detach` (0-2 KB); work: the Shatter flood at its cap
-  at `T_run`, the load check **0.2-4 ms** on the structure credit.
-- Needs the [si-2] `NeckCheck` split. Counter: step out of the ring; do not stand on planks; a Shockwave frees pinned
-  allies and cuts the Pin short.
+The owner's direction (2026-11-26): Pressure is mostly movement on the map: high jumps, dashes, punches. Its two spells
+that move the caster (Meteor Leap, Dash) start from the caster's own cast input inside `sim::StepPlayer`, predicted
+like a jump with no lead; what they do to others (the slam, the shove) goes through zones with the lead, as every
+other effect on a player does ("Why zones, and why the lead").
+
+**9. Meteor Leap (Flow x Pressure): a long jump onto a wall or across a ditch, landing with a slam.**
+- Lobbed aim: the leap follows the lob's arc. At the cast edge `StepPlayer` launches the caster at 12 m/s along the
+  aim, its pitch clamped to 15-60 degrees up: the horizontal part goes into `push`, the vertical through the `vertical`
+  parameter. About 15 m on flat ground at 45 degrees (c, gravity 9.81 m/s^2); `Lifted` (no fall damage on this
+  landing). The air decay of `push` (1 cm/s per tick) keeps the arc. Refused while rooted or pinned.
+- The slam: at `T_run` the server traces the same arc through the world with the Flow operator's fine fixed-point arc
+  trace ("Flow (Liquid)") and finds the landing point and tick `T_land` (flight time about 1.0-1.6 s (c)). It announces
+  the slam there: **Pin**, a y-cylinder r 2.5 m, 2 m high, from `max(T_land, T_z)`, 1.0 s, enemies; 15 damage at that
+  tick; the Shatter flood (a sphere r 1.5 m; rimed matter and ice break where exposed); then **the load check with an
+  `extraLoad`** of 600 kg/m^2 over the ring's floor area (`Neck.ExtraLoadNeverFailsNaturalTerrain`),
+  queued on the structure credit. A caster knocked off the arc does not move the slam: it lands where it was announced
+  (the ring shows it from `T_run`).
+- Bytes `ZoneStart` 32 + Shatter 0-0.3 KB + `CastFx` 32 + any `Detach` (0-2 KB); work: the trace about 0.05 ms, the
+  load check 0.2-4 ms on the structure credit.
+- Counter: Punch the caster in the air (a Shove still acts on a `Lifted` player); a Rune Trap at the landing; step out
+  of the ring; do not stand on planks.
 
 **10. Updraft (Plume x Pressure): launches allies onto walls; juggles enemies.**
 - Plume single-seed column from the hit to the ceiling or 80 voxels (10 m); the zone's radius 1 m, its strength
@@ -878,52 +889,60 @@ owner overlaps; the upper figure assumes it does and sends the mask.
   player is marked `Lifted`: no fall damage until they land. Bodies in the column: one upward impulse at `T_z`.
 - Bytes `ZoneStart` 32 + `CastFx` 32 = **about 65 B**; work about 0.01 ms. The cheapest spell, and the most
   movement-sensitive: the reference case of `Movement.ZonesPredictedWithoutCorrection`.
-- Counter: avoid the column; Shockwave cuts the lift short and knocks the lifted away; shoot the known path.
+- Counter: avoid the column; Punch cuts the lift short and knocks the lifted away; shoot the known path.
 
-**11. Siege Cannon (Pierce x Pressure): deep holes through stone and metal, nothing left behind.**
-- Pierce `r` 3.2 (0.4 m), `power` 128 (8.0: iron and knit cut), budget 24 576, at most 64 voxels (8 m at 0.125 m).
-  Depths (c, about 32 voxels per slice): stone 2.0 m, brick 2.4 m, iron 0.75 m, knit 0.86 m, wholly rimed stone
-  4.0 m; through a Shatter Spike's 1 m bore and its 0.75 m of rime, about 3.3 m. Stops at bedrock and floe.
-- Ops: `CarveCapsule`; the island search and load check (as a blast's, on the cast credit, in the bore's own flood
-  box, "A bore's boxes"): it cuts a tower's neck from range through its outer wall.
-- Zone: **Impulse**, a capsule from the bore's exit 3 m onward along the aim, `T_z`, 9 m/s along the axis + 2 m/s up,
-  enemies: the pressure follows through. Bodies along the bore: impulses at `T_z` (at most 8). Direct hit: **30**
-  (structure first; Thermal carries the damage).
-- Bytes 29 + `ZoneStart` 42 + `CastFx` 32 + carve results (1-2 KB); work 0.5-4.5 ms at a neck.
-- Counter: a Barricade in its path costs it 0.375 m of knit; Molten plating (0.86 m of knit per shot); stand out of
-  the follow-through's line (an Impulse acts at its start tick only, so no dispel stops it).
+**11. Dash (Pierce x Pressure): 8 m along the aim in 0.3 s; it shoves enemies in the way aside.**
+- At the cast edge `StepPlayer` starts a dash: `dashLeft` 18 ticks, `dashDir` the aim's horizontal direction (the
+  pitch is ignored; 2 B). While `dashLeft > 0` the wish is replaced by `dashDir` x 26.7 m/s, gravity still acts, and a
+  blocked move ends the dash (a wall or a Barricade stops it; it carves nothing). After it, `push` keeps 4 m/s of it,
+  decaying as a knockback does. Refused while rooted or pinned; a Chill shortens it (the wish's `slowQ` cut applies).
+- The shove: at `T_run` the server traces the dash's path through the world (a capsule sweep at the capsule's radius,
+  from the feet at the input tick, stopped at the first collider) and announces **Shove**, a capsule zone along that
+  path, r 1 m, at `T_z`, enemies: 6 m/s away from the path's axis + 2 m/s up, falling to 0 at the rim (Impulse's
+  rule). No damage. Bodies along the path: impulses at `T_z` (at most 8).
+- Bytes `ZoneStart` 42 + `CastFx` 32 = **about 75 B**; work about 0.02 ms.
+- Counter: a Barricade Wave or any wall ends it; a Rune Trap on the line; Root or Pin before it.
 
-**12. Shockwave (Burst x Pressure): knocks defenders off walls and attackers off pegs; dispels.**
-- Burst's seed and plane only.
-- Zone: **Impulse**, radial (a y-cylinder r 4 m, 3 m high for a floor or ceiling hit; a sphere r 4 m for a wall hit),
-  9 m/s outward + 3 m/s up at the centre, falling to 0 at the edge and to a vertical push inside the dead radius,
-  `T_z`, enemies; 15 damage at `T_z`. Bodies in it: impulses (at most 8).
-- **Dispel** (the owner's "deflects incoming projectiles"), a **truncation**: at the cast, for every enemy zone of a
-  kind that lasts (Pin, Chill, and Updraft's Lift; never Rising Spire's) whose centre lies within 5 m of the hit and
-  that is still live at `T_z`, one `ZoneCancel{zoneId, endTick = T_z}`: the zone acts as before up to `T_z` and not
-  from `T_z` on. A pending Crushing Weight Pin or Updraft ends at `T_z`; a live one stops there. The cancel carries the
-  full lead by construction, so a client that holds zones in time holds the cancel in time too. Instant zones (an
-  Impulse, the start of a Root) at or before `T_z` cannot be dispelled; Siege Cannon's follow-through is one.
-- **Release** (from [mag-3], when roots and pins exist), an ally zone of the same shape at `T_z`: it clears
-  `rootLeft`, `pinLeft` and `slowLeft` of allies in it (their control guard then starts: `ccGuardLeft`). A Shockwave
-  frees a rooted or pinned teammate.
-- At `T_z`: the Shatter flood in a 2 m sphere (rimed matter and ice burst where exposed, at most 0.5 m deep; from
-  [mag-3]), then a site check if it changed anything.
-- Bytes `ZoneStart` 30-32 + Release 30-32 + 0-4 cancels x 7 + Shatter 0-0.5 KB + `CastFx` 32 = **0.1-0.65 KB**, plus
-  island results; work 0.2-2.3 ms.
-- Counter: be outside 4 m; stand against a wall (the push is radial, a wall behind you stops it).
+**12. Punch (Burst x Pressure): a blow of force 2.5 m in front of you: knockback, breaks light matter, dispels.**
+- The fist point is the first solid voxel or capsule within 2.5 m of the eye along the aim at `T_run`, else the point
+  2.5 m out. The blow lands at `T_z`: the 0.4 s of the lead is its wind-up, drawn as a glow on the hand.
+- Zone: **Shove** along the aim, a capsule from 0.5 m to 3 m out of the eye, r 1 m, `T_z`, enemies: 12 m/s along the aim
+  + 3 m/s up, falling to 0 at the rim; 25 damage at `T_z`. Bodies in it: impulses (at most 8).
+- At `T_z`: `CarveSphereQ` at the fist point, r 0.75 m, power 2.5: planks, wattle_daub, thatch, glass, ice and rimed
+  matter break; stone, iron and knit do not (they take the blast's absorb and ablate rules as any blast). A door in it
+  takes the blast's damage rule (mechanisms.md). Then the island search and a site check, as a blast's.
+- **Dispel**, a truncation: for every enemy zone of a kind that lasts (Pin, Chill, Updraft's Lift, a Rune; never Rising
+  Spire's Lift) whose centre lies within 2.5 m of the fist point and that is still live at `T_z`, one
+  `ZoneCancel{zoneId, endTick = T_z}` ("`sim::ZoneSet`"). Instant zones at or before `T_z` cannot be dispelled.
+- **Release** (from [mag-3]): an ally zone of the same capsule at `T_z` clears `rootLeft`, `pinLeft` and `slowLeft`
+  (their control guard then starts). A Punch frees a rooted or pinned teammate.
+- At `T_z` (from [mag-3]): the Shatter flood in a sphere r 1 m round the fist point.
+- Bytes `ZoneStart` 42 + Release 42 + 0-3 cancels x 7 + carve results 0.1-0.6 KB + `CastFx` 32: **0.2-0.8 KB**;
+  work 0.1-1 ms.
+- Counter: be more than 2.5 m away; side-step the wind-up; stand with a wall behind you (the shove stops there).
 
 ### Frost (Turning): control, bridges, combo setup
 
-**13. Glacier Slide (Flow x Frost): a slick lane down slopes and stairs.**
-- Lobbed. Flow `rf` 4, `fallMax` 64, `runPops` 1 600, `lateral` 32, `frontCount` 240.
-- Ops: one `MapMask(Freeze)` over the `Fall` and `Run` skin cells and the `Front` (air -> ice, at most 2 048) and the
-  `Contact` water and burning timber (water -> floe, fire quenched; a site check where burning foliage became air).
-  Unknit at 12 s.
-- The film is 0.125 m, under the step height. On it the slick rule applies: momentum carries, 1.3x top speed,
-  downhill acceleration on slopes. Attackers slide down fast; defenders on it cannot stop at once.
-- Bytes: ice 0.2-0.5 KB, Unknit 27 B to 0.5 KB, `CastFx` 32: **0.25-1.0 KB**; work **0.4-0.7 ms**.
-- Counter: Thermal melts it; blasts carve it (1.0).
+**13. Rune Trap (Flow x Frost): a static frost rune; it bursts under the first enemy who steps on it.**
+- Lobbed. Flow's fall phase from the hit's single seed (`fallMax` 64) gives the landing: a floor voxel. The rune lies
+  on its top face and does not move.
+- Zone: **Rune**, a y-cylinder r 1.5 m, 2 m high, from `T_run + 60` (armed after 1 s), 60 s, enemies. It acts on no
+  player's step: it is a trigger the server alone tests. Each tick the server tests the live runes against the enemy
+  feet; the first enemy whose feet lie inside fires it at that tick `t`:
+  - `ZoneCancel{rune, endTick = t}` (presentation only, so it needs no lead);
+  - **Root** 1.5 s and **Chill** 3 s, a y-cylinder r 2 m round the rune, from `t + lead` (the 0.4 s fuse: the rune
+    flares), enemies; 15 damage at `t + lead`;
+  - `MapMask(Freeze)` at `t + lead`: the floor's skin cells within 2 m (air -> ice, a 1-voxel film, slick; water ->
+    floe; burning `Contact` quenched), at most 400 voxels; Unknit at 12 s.
+- **One rune per caster:** a new Rune Trap cancels the caster's old rune (`ZoneCancel`); the server keeps the owner,
+  the wire does not. Runes count in the server's 32 live zones.
+- **It breaks** (cancelled, no burst) when a carve removes the voxel under its middle, when Heat or pitch reaches that
+  voxel, or under a Punch's dispel.
+- **Seen by enemies only within 4 m** (presentation, "Readability rules"): a faint frost mark; allies see it always,
+  with its ring. Every client holds the zone, so a modified client could draw it from afar (question 30).
+- Bytes: cast `ZoneStart` 32 + `CastFx` 32; the burst `ZoneCancel` 7 + 2 zones 64 + ice 0.05-0.2 KB + Unknit 27 B:
+  **0.15-0.35 KB**; work: the trigger test about 0.001 ms per rune per tick, the burst about 0.1 ms.
+- Counter: look for the mark; Punch it; blast it or burn it; walk round it; wait 60 s.
 
 **14. Permafrost Climb (Plume x Frost): encases ladders, archers and murder holes.**
 - Plume `rf` 3, `riseMax` 48. Ice over the `Rise` cells within 2 voxels of support and the `Front` cells that are
@@ -936,15 +955,15 @@ owner overlaps; the upper figure assumes it does and sends the mask.
   excluded from the ice, and presentation draws an encasing shell for the root.
 - Bytes: ice 0.25-0.6 KB (a face sheet runs along its plane), Rime 27, Thaw 27, Unknit 27 B to 0.6 KB, 2 zones 80,
   `CastFx` 32: **0.45-1.4 KB**; work about **0.3 ms**.
-- Counter: Wildfire melts it (and whoever stands on it); blasts; Shockwave shatters the ledges.
+- Counter: Wildfire melts it (and whoever stands on it); blasts; a Punch shatters the ledges.
 
 **15. Shatter Spike (Pierce x Frost): pierces and primes a wall for a teammate.**
 - Pierce `r` 1.5, `power` 64, budget 2 688 (c: 1 m of stone), at most 3 m.
 - Ops: `CarveCapsule`; `MapShape(Rime, capsule entry..B, r 6)` (0.75 m around the bore and past its end); only
   rimeable ids change. Registry: Thaw at 8 s (the cheap form: the same capsule).
 - Zone: **Chill** r 1 m at the hit, `T_z`, 3 s, enemies. Direct hit: 25.
-- The combo: rimed stone costs half, so Siege Cannon goes about 3.3 m instead of 2; a blast (power 6) cuts rimed iron
-  and rimed knit; Shockwave's Shatter flood peels the exposed rime 0.5 m deep.
+- The combo: rimed stone costs half, so Meltdown Beam goes about 6 m instead of 3; a blast (power 6) cuts rimed iron
+  and rimed knit and goes twice as deep in rimed stone; a Punch's Shatter flood peels the exposed rime 0.5 m deep.
 - Bytes 29 + 29 + Thaw 29 B (1.2 KB as a mask if another rime overlaps) + `ZoneStart` 30 + `CastFx` 32 + small island
   ops: **0.15-1.3 KB**; work 0.3-2 ms.
 - Counter: Thermal thaws it; Metal plating over it (Shatter reaches only exposed rime).
@@ -959,16 +978,16 @@ owner overlaps; the upper figure assumes it does and sends the mask.
 - Zones: **Root** 1.0 s, then **Chill** 3 s, the disc, `T_z`, enemies; 10 damage.
 - Bytes 19 + ice 0.1-0.3 KB + Unknit 19-27 B to 0.3 KB + 2 zones 64 + `CastFx` 32 = **0.25-0.75 KB**; work about
   **0.15 ms**; the floe re-cooks the 2-4 water chunks it covers.
-- Counter: Thermal melts the bridge, with whoever stands on it; Shockwave shatters it.
+- Counter: Thermal melts the bridge, with whoever stands on it; a Punch shatters it.
 
 ### The matrix at a glance
 
 | | Metal | Thermal | Pressure | Frost |
 |---|---|---|---|---|
-| **Flow** | Molten Pour: slag shell and pool, sets in 1 s, 25 s | Pitchfall: burning carpet, fire climbs | Crushing Weight: Pin zone, Shatter, load check with `extraLoad` | Glacier Slide: slick ice lane, 12 s |
+| **Flow** | Molten Pour: slag shell and pool, sets in 1 s, 25 s | Pitchfall: burning carpet, fire climbs | Meteor Leap: the caster's long jump on the lob's arc, a slam: Pin, Shatter, load check with `extraLoad` | Rune Trap: a static rune, 60 s; Root, Chill and an ice patch when an enemy steps on it |
 | **Plume** | Rising Spire: pillar, ledges, ride-up Lift, 15 s | Wildfire: pitch up the face, Heat on contact | Updraft: Lift zone 1.5 s | Permafrost Climb: ice plugs and ledges, rime, Root |
-| **Pierce** | Rebar Lance: two sockets + horizontal pegs, Root | Meltdown Beam: Heat, bore, Burning | Siege Cannon: power 8 bore, follow-through Impulse | Shatter Spike: bore, Rime capsule, Chill |
-| **Burst** | Barricade Wave: 4.5 x 1.5 m wall, 20 s | Firestorm Sweep: fire curtain, Heat, ring damage | Shockwave: radial Impulse, Shatter flood, dispel and release | Flash Freeze: floe bridge, ice, Root + Chill |
+| **Pierce** | Rebar Lance: two sockets + horizontal pegs, Root | Meltdown Beam: Heat, bore, Burning | Dash: the caster 8 m along the aim in 0.3 s, a Shove along the path | Shatter Spike: bore, Rime capsule, Chill |
+| **Burst** | Barricade Wave: 4.5 x 1.5 m wall, 20 s | Firestorm Sweep: fire curtain, Heat, ring damage | Punch: a 2.5 m blow, Shove, a light carve, dispel and release | Flash Freeze: floe bridge, ice, Root + Chill |
 
 Interactions fall out of the tables, with no extra code: Thermal melts ice and thaws rime (Heat); Frost quenches hot
 metal and freezes pitch; Pressure and Solid exploit rime (hardness); Metal plates against Solid (knit 7.0) and absorbs
@@ -996,7 +1015,7 @@ conjured matter its power allows.
 - **Membership, not hits.** Every peer runs `StepPlayer` for a tick with the zones live at that tick and tests them
   against its own `PlayerState`, from feet quantised to q. The two sides' feet can differ by millimetres (up to 2 cm
   on flat ground), so an effect must not jump there. **Impulse** falls to 0 at its rim and its horizontal push shrinks
-  to 0 inside a dead radius `R / 8` round its centre, so a millimetre never reverses a 9 m/s push (a Shockwave aimed
+  to 0 inside a dead radius `R / 8` round its centre, so a millimetre never reverses a 9 m/s push (a blow aimed
   at the floor under an enemy's feet is the usual case). **Lift** ramps its strength to 0 over its outer 0.25 m.
   **Pin, Chill and Root** are all-or-nothing: the two sides can disagree only for feet within their difference of the
   rim; that correction is counted under the cause `zone edge` and accepted. `Player.ZoneEdgeAndCentreAreContinuous`.
@@ -1004,12 +1023,14 @@ conjured matter its power allows.
 ### `sim::ZoneSet` (in the `Simulation`, on every peer)
 
 - A zone: `{zoneId u16, kind u8, teamMask u8, shape, startTick u32, duration u16, strength i16 x 2}`. Kinds: Impulse
-  1, Lift 2, Pin 3, Chill 4, Root 5, Release 6, and Block 7 (reserved, "What can still cause a correction"). Shapes as
-  `MapShape`'s: sphere, capsule, box, y-cylinder, in q.
+  1, Lift 2, Pin 3, Chill 4, Root 5, Release 6, Block 7 (reserved, "What can still cause a correction"), Shove 8 (a
+  capsule's push along its axis: Dash, Punch) and Rune 9 (a trigger the server alone tests; no effect on a step). Shapes
+  as `MapShape`'s: sphere, capsule, box, y-cylinder, in q.
 - Filled by `ZoneStart` events at their opSeq. A zone acts on the ticks `[startTick, startTick + duration)`.
   `ZoneCancel{zoneId, endTick}` is a **truncation**: `duration = min(duration, endTick - startTick)`; the ticks before
-  `endTick` are unchanged. The server issues it only at a Shockwave's `T_run` with `endTick = T_run + lead`, so it has
-  the full lead by construction; under loss it is late like any event, and counted as `zone late`.
+  `endTick` are unchanged. The server issues it at a Punch's `T_run` with `endTick = T_run + lead`, so it has the full
+  lead by construction (under loss it is late like any event, and counted as `zone late`), and to end a Rune, which acts
+  on no step and needs none.
 - **Retention for replays.** A zone's record is kept while any tick that may still be stepped can see it. The server
   prunes a zone once its own tick passes `startTick + duration`. A client keeps it until its oldest replayable tick,
   `max(nextTick - kHistoryTicks, last compared snapshot tick)`, passes `startTick + duration`: a correction replays
@@ -1039,11 +1060,16 @@ conjured matter its power allows.
 | `status` | u8 bits | Rooted, Pinned, Chilled, Lifted, Free (the control guard), Fresh (just respawned) | from the counters; Lifted cleared on landing; Fresh cleared when the guard ends or the player casts |
 | `slowQ` | u8, sixteenths | Speed cut while `slowLeft > 0` | - |
 | `slowLeft`, `rootLeft`, `pinLeft` | u8 ticks | Remaining duration (at most 255 = 4.25 s) | count down by 1 |
+| `dashLeft`, `dashDir` | u8 ticks, i8 x 2 | A Dash: ticks left, and its horizontal direction in 1/127 units | count down by 1 |
 | `ccGuardLeft` | u8 ticks | **The control guard.** Set to 90 (1.5 s) when `rootLeft` or `pinLeft` reaches 0 and neither is left, and to 120 (2 s) with `Fresh` at a respawn. While above 0, Root and Pin zones do not apply (Chill and Impulse still do); while `Fresh`, Impulse does not apply either | count down by 1 |
 
 **Order inside `StepPlayer(physics, terrain, world, zones, character, state, input, tuning, area, tick, dt)`** (new
 arguments: `const voxel::World&` for the ground id, `const sim::ZoneSet&` and the tick):
-1. Button edges, the cooldown and the cast and spell edges, as today. **Chill** stretches the cooldown ("slows cast
+1. Button edges, the cooldown and the cast and spell edges, as today. **A cast edge of Meteor Leap or Dash** starts
+   the caster's own move here (the leap's `push` and `Lifted`, or `dashLeft` and `dashDir`), at the input's tick,
+   when the cast is not refused by the state the client holds (rooted, pinned, dead, no charge as the owner block last
+   said). A server refusal the client did not foresee (a charge it had not seen spent) is a correction, counted under
+   `cast refused`. **Chill** stretches the cooldown ("slows cast
    speed") through one function, `sim::CastCooldownFor(state, tuning)` = `castCooldownTicks * (16 + slowQ / 2) / 16`
    with the `slowQ` of the state at that tick. `TakeCast` restarts the cooldown with it; `Server::LateCast` sets it
    from the state at the input's tick (`StateAt(in.tick)`), never from the plain `settings.player.castCooldownTicks`
@@ -1057,6 +1083,9 @@ arguments: `const voxel::World&` for the ground id, `const sim::ZoneSet&` and th
      nearest point of its axis), `len = isqrt64(|d|^2)`, `f = strength * max(0, R - len) / R`;
      `push.xz += d.xz * f / max(len, R / 8)` (integer, cm/s; continuous, 0 at the centre), plus
      `strength2 * (R - len) / R` up.
+   - **Shove** (`startTick` only; skipped while `Fresh`): as Impulse, but the horizontal push is along the capsule's
+     axis (its unit direction in q, integer), `push.xz += axisDir.xz * f`, with `f` from the distance to the axis
+     (`strength * max(0, R - len) / R`), so it is continuous and 0 at the rim; `strength2 * (R - len) / R` up.
    - **Lift** (while live): the vertical target is `max(vy, strength * ramp)` cm/s, `ramp` rising from 0 at the rim
      to 1 at 0.25 m inside it, eased to 0 over the last 0.5 m below the zone's top (a hover); sets `Lifted`.
    - **Pin** (while live and the player is inside; not while `ccGuardLeft > 0`): `pinLeft = max(pinLeft, strength2)`,
@@ -1066,6 +1095,9 @@ arguments: `const voxel::World&` for the ground id, `const sim::ZoneSet&` and th
    - **Root** (`startTick` only; not while `ccGuardLeft > 0`): `rootLeft = max(rootLeft, duration)`.
    - **Release** (`startTick` only; allies): `rootLeft = pinLeft = slowLeft = 0`, `slowQ = 0`.
 4. **Wish**: `wish * (16 - slowQ) / 16`; 0 while rooted; `x 6 / 16` while pinned; no jump while rooted or pinned.
+   While `dashLeft > 0` the wish is `dashDir` x the dash speed (26.7 m/s) x `(16 - slowQ) / 16`; a move the physics
+   call blocks to under half its length ends the dash (`dashLeft = 0`), and on its last tick `push` takes 4 m/s along
+   `dashDir`.
 5. **Slick ground.** The ground voxel is the voxel holding `feetQ - 8` q, half a voxel under the quantised feet. It is
    never `floor(y / voxelSize) - 1` from the float feet: Jolt rests the feet at `k * voxelSize` plus or minus about
    1e-5, so that test flips between the surface voxel and the one under it, and the server and the predicting client
@@ -1085,8 +1117,8 @@ arguments: `const voxel::World&` for the ground id, `const sim::ZoneSet&` and th
 - **`PlayerTuning` gains** (travels in `Welcome`): the decay rates, `a_ice`, the slope acceleration and cap, the slick
   top speed, the guard lengths; the lead travels beside it.
 - **`kPlayerRuleRevision` goes up in every stage that changes what `StepPlayer` returns:** 2 in [mag-1] (`push`,
-  Impulse, Lift, the `vertical` parameter), 3 in [mag-3] (Chill, Root, Release, the control guard and `Fresh`), 4 in
-  [mag-4] (slick ground), 5 in [mag-7] (Pin). Each stage changes `buildHash` through its tables anyway, so a bump per
+  Impulse, Lift, Shove, the dash, the `vertical` parameter), 3 in [mag-3] (Chill, Root, Release, the control guard,
+  `Fresh` and slick ground), 4 in [mag-7] (Pin and Meteor Leap's launch). Each stage changes `buildHash` through its tables anyway, so a bump per
   stage costs nothing and keeps every rule change visible (`SessionFile.BuildHashSeesThePlayerRuleRevision`). The
   owner block's bytes are all reserved in [mag-2]'s protocol bump.
 - The movement rule stays float, the same on both sides of one build, as today.
@@ -1099,7 +1131,8 @@ arguments: `const voxel::World&` for the ground id, `const sim::ZoneSet&` and th
 | Terrain changing under the feet | Any world op (knit, ice, carve) applies on the client about RTT/2 after the server | Existing behaviour ("a step at a crater rim"). Slick changes only acceleration, so a player who does not change input on new ice shows no error |
 | A fill where a predicted capsule stands | Bands (Barricade Wave, Rising Spire) are not announced ahead. The server skips every capsule (grown by 1 voxel) at the band's tick, but an enemy whose predicted path enters the band's cells in the RTT + Target + 2 ticks before the op arrives meets the knit in a replay | **Expected** for players charging through a Barricade line, not rare. Jolt depenetration, a correction counted under `terrain`; `Movement.BarricadeAcrossAWalkerCountsCorrectionsByCause` measures it. If [mag-2]'s session-check shows it often, the next step is the reserved **Block** zone: announced with the lead, it cuts the wish into the band's box from its start tick, and the band op goes out at that tick |
 | A zone's rim | Pin, Chill or Root with feet within the two sides' difference of the rim | Counted under `zone edge`; rare (c) |
-| A zone whose world target moved | A Siege Cannon's follow-through zone was announced, then a wall rose in its path | The zone stays where announced (v1); counted |
+| A zone whose world target moved | A Dash's Shove or a Meteor Leap's slam was announced, then a wall rose in its path or the caster was knocked off the arc | The zone stays where announced (v1); counted |
+| A cast the server refused | The client predicted a Meteor Leap or a Dash, the server refused the cast (a charge spent that the owner block had not yet shown) | Counted under `cast refused`; rare (c) |
 
 **Acceptance:** `Movement.ZonesPredictedWithoutCorrection` (net, in-process, 40 ms + 0-30 ms each way, no loss, 10
 zones of every kind across two clients, a truncation among them) gives **0 corrections**;
@@ -1123,7 +1156,7 @@ zones of every kind across two clients, a truncation among them) gives **0 corre
   the Douse rows) runs a site check over its changed chunks on the structure credit ("Expiry and structure").
 - **Fills never run one.** Ops whose changed voxels all stay colliders (Rime, Thaw, Cool, Set) change no support and
   run none.
-- **`extraLoad`** (Crushing Weight only): an optional, server-only input to Part 4b's check: integer kg added to the
+- **`extraLoad`** (Meteor Leap's slam only): an optional, server-only input to Part 4b's check: integer kg added to the
   load of the top floor node of each column in a box, for this one check, run as a site check on the structure
   credit and charged by Part 4b's counters when it runs. The max-flow and its uniqueness are
   unchanged. `Neck.ExtraLoadNeverFailsNaturalTerrain`, `Neck.ExtraLoadReleasesAWeakFloor`, calibrated by
@@ -1254,7 +1287,7 @@ expiries due) -> `RunSpread` -> `RunSiteChecks` (structure credit) -> physics ->
 chunks of its box) at `T_run`, a bound from the table; the island search and load check of a bore as for a blast;
 `ops` = `OpWork` of every op the spell emits **including its follow-ups**, charged whole at `T_run` (`MapShape`:
 `kOpWork` + box voxels / 16; `MapMask`: `kOpWork` + mask voxels / 128, as `ClearMask`; `CarveCapsule`: `kOpWork` + box
-voxels / 16). Site checks (expiries, shatters, ablation, Heat on ice) and Crushing Weight's `extraLoad` check are not
+voxels / 16). Site checks (expiries, shatters, ablation, Heat on ice) and Meteor Leap's `extraLoad` check are not
 cast work: they run on the structure credit when their tick comes and are charged by Part 4b's counters there. Never
 `graphsBuilt`, `chunksDecoded`, registry sizes or time. `CastBudget.SpellWorkIsEqualColdAndWarm` and
 `CastBudget.ScheduleFollowsCountsNotTimeOrCache` (extended) pin it. Spells share the cast queue, `kCastWorkPerTick`
@@ -1272,11 +1305,11 @@ Bytes are (c) from "How the bytes are counted" (aligned / worst aim with an over
 | Wildfire | 2 (+ Cool), spread after | 250-750 | 2 k | 0.2 |
 | Meltdown Beam | 2 + island ops (+ Cool) | 600-1 600 | 3-40 k | 0.3-4.5 |
 | Firestorm Sweep | 2 (+ Cool), 1 zone, spread after | 350-650 | 5 k | 0.6 |
-| Crushing Weight | 0 (+ Shatter; the load check on the structure credit), 1 zone | 60-2 400 | 5 k (+ 2-40 k structure) | 0.5 (+ 0.2-4) |
+| Meteor Leap | 0 (+ Shatter; the load check on the structure credit), 1 zone | 60-2 400 | 5.5 k (the arc trace + Shatter; + 2-40 k structure) | 0.55 (+ 0.2-4) |
 | Updraft | 0, 1 zone | 65 | 0.1 k | 0.01 |
-| Siege Cannon | 1 + island ops, 1 zone | 1 100-2 100 | 5-45 k | 0.5-4.5 |
-| Shockwave | 0-4 cancels (+ Shatter), 2 zones | 100-650 | 5 k (+ site check on the structure credit) | 0.5 |
-| Glacier Slide | 1 (+ Unknit) | 250-1 000 | 4-7 k | 0.4-0.7 |
+| Dash | 0, 1 zone | 75 | 0.2 k (the path trace) | 0.02 |
+| Punch | 1 carve + island ops, 0-3 cancels (+ Shatter), 2 zones | 200-800 | 1-9 k (+ site check on the structure credit) | 0.1-1 |
+| Rune Trap | 0, 1 zone (+ at the burst: 1 cancel, 2 zones, 1 mask, Unknit) | 150-350 | 0.3 k (+ 1 k at the burst; the trigger test about 10 units per rune per tick) | 0.03 (+ 0.1) |
 | Permafrost Climb | 2 (+ Thaw, Unknit), 2 zones | 450-1 400 | 3 k | 0.3 |
 | Shatter Spike | 2 + island ops (+ Thaw), 1 zone | 150-1 300 | 3-20 k | 0.3-2 |
 | Flash Freeze | 2 (+ Unknit), 2 zones | 250-750 | 1.5 k | 0.15 |
@@ -1349,12 +1382,13 @@ it wraps in about 25-30 s (c); spread adds about 10 parts/s. L12 holds: no fallb
   `Magic.ABlastOnFreshKnitIsAbsorbed`, `Magic.AnAbsorbedBlastAblatesThePlate`, `Magic.ConjuredPiecesNeverTakeASlot`,
   `Magic.ConjuredMatterIsGoneWithinItsLifetime`, `Magic.FloeThawsBackToWater`, `Magic.HeatMeltsTheIceBridge`,
   `Magic.NoSpellReachesAnEnemySpawn` (refused with `NearSpawn`; no fill cell in any spawn area),
-  `Magic.RebarLanceSetsTwoPegs`.
+  `Magic.RebarLanceSetsTwoPegs`, `Magic.ARuneBurstsOnceUnderTheFirstEnemy`, `Magic.ANewRuneCancelsTheCastersOld`,
+  `Magic.ACarveOrHeatUnderARuneBreaksIt`.
 - Registry: `KnitRegistry.ExpiryRemovesOnlyItsOwnMatter` (carve and re-knit by another cast),
   `KnitRegistry.ReplayGivesTheSameOps`, `KnitRegistry.PlayerCapExpiresTheOldestFirst`,
   `KnitRegistry.FillRunsNoLoadCheckAndExpiryRunsASiteCheck`, `KnitRegistry.ShapeExpiryOnlyWithoutOverlap`.
-- Combos: `Combo.ShatterSpikeDeepensSiegeCannon` (at least 1.5x), `Combo.RimedIronIsCarvedByABlast`,
-  `Combo.HeatMakesKnitBlastable`, `Combo.FrostTurnsPitchToIce`, `Combo.ShockwaveShattersTheFloeBridge`.
+- Combos: `Combo.ShatterSpikeDeepensABlast` (at least 1.5x, and Meltdown Beam in [mag-5]), `Combo.RimedIronIsCarvedByABlast`,
+  `Combo.HeatMakesKnitBlastable`, `Combo.FrostTurnsPitchToIce`, `Combo.PunchShattersTheFloeBridge`.
 - Structure: `Neck.ExtraLoadNeverFailsNaturalTerrain`, `Neck.ExtraLoadReleasesAWeakFloor`,
   `Magic.ExpiryUnderABridgeReleasesIt`, `Magic.HeatUnderAFloeBridgeReleasesWhatItCarried`,
   `Neck.ExtraLoadWaitsOnTheStructureCredit`; the stage-1 arenas still release nothing.
@@ -1363,7 +1397,9 @@ it wraps in about 25-30 s (c); spread adds about 10 parts/s. L12 holds: no fallb
   `Player.LiftedPlayerTakesNoFallDamageOnLanding`, `Player.ZoneEdgeAndCentreAreContinuous`,
   `Player.SlickGroundReadsTheSameVoxelAtASurface`, `Player.RootAndPinCannotChainPastTheGuard`,
   `Player.ARespawnedPlayerIgnoresRootPinAndImpulse`, `Player.ReleaseFreesARootedAlly`,
-  `SessionFile.BuildHashSeesThePlayerRuleRevision` (revisions 2-5),
+  `Player.ADashStopsAtAWallAndKeepsItsCarry`, `Player.AShovePushesAlongItsAxis`, `Player.ARootedPlayerCannotDashOrLeap`,
+  `Player.AMeteorLeapLandsWhereTheServerTracedIt`,
+  `SessionFile.BuildHashSeesThePlayerRuleRevision` (revisions 2-4),
   `SessionFile.BuildHashSeesTheSpellAndTurningTables`.
 - Spread: `Spread.PhaseGatedContentAdvancesWithNothingElseAwake` (the amendment below); `Spread.*` unchanged with
   Ignite and Douse as `MapShape` maps.
@@ -1373,13 +1409,14 @@ it wraps in about 25-30 s (c); spread adds about 10 parts/s. L12 holds: no fallb
 - `Wire.*` round trips and decoder refusals for the three op kinds, `ZoneStart`, `ZoneCancel`, `CastFx`, `Attune`, the
   new `PlayerInput`, owner block and rejections; trailing and missing bytes refused.
 - `Movement.ZonesPredictedWithoutCorrection` (0), `Movement.LateZoneCorrectsOnceAndIsCounted`,
-  `Movement.NoCorrectionAbove2cmOnFlatGround` still 0, `Movement.IceSlideNoCorrectionAbove2cm`,
+  `Movement.NoCorrectionAbove2cmOnFlatGround` still 0, `Movement.IceFilmNoCorrectionAbove2cm`,
+  `Movement.ADashIsPredictedWithoutCorrection` (the caster and the shoved),
   `Movement.ZoneSurvivesAReplayAcrossItsEnd`, `Movement.LateCastWhileChilledIsJudgedAsPredicted`,
   `Movement.SpireRiderNoCorrection` (G16's link), `Movement.BarricadeAcrossAWalkerCountsCorrectionsByCause`.
 - `Magic.ClientsAgreeAfterEverySpell` (a drill with `--bot-spells`: `hashes equal`, 0 `Checks:` mismatches, entities
   agree), `Magic.JoinerGetsLiveZonesAndConjuredMatter`, `Magic.WindowedClientAgreesOverExpiries` (a client window of
   48 on arena250; matter expires outside and at the window edge; 0 `HashCheck` mismatches),
-  `Magic.ShockwaveTruncatesLiveEnemyZones` (a live Pin and a live Lift end at the Shockwave's `T_z` on the server and
+  `Magic.PunchTruncatesLiveEnemyZones` (a live Pin and a live Lift end at the Punch's `T_z` on the server and
   on both clients, with 0 corrections), `Magic.CastRejectedOverTheCaps`, `Replication.PressureWakesAtMostEightBodies`.
 
 ## Headless flags and gates
@@ -1387,15 +1424,16 @@ it wraps in about 25-30 s (c); spread adds about 10 parts/s. L12 holds: no fallb
 - **`--spell-demo NAME`** (game, offline, its own yard east of the plaza, like `--probe`): one spell at a fixed target
   at frame 30; logs `Magic: <spell>: path P, front F, contact C, ops N, bytes B, work W, ms M, players hit H,
   released R` and the spell's check line, for example `Spire: rider on top at y = ...`,
-  `Cannon: bore 2.0 m stone, 4.0 m rimed`, `Freeze: floe anchored, 0 islands`, `Rebar: ledge reached at 6.4 m`.
-  `--spell-demo siege-cannon` also runs at G6's `--voxel-size 0.1` and `0.15` and must fell the yard's tower.
+  `Dash: 8.0 m in 18 ticks, stopped by wall at X m`, `Punch: planks broken N, shoved H`, `Freeze: floe anchored, 0 islands`,
+  `Rebar: ledge reached at 6.4 m`, `Rune: burst under bot N`. `--spell-demo dash` and `--spell-demo punch` also run at
+  G6's `--voxel-size 0.1` and `0.15`; `--spell-demo shatter-spike` (from [mag-3]) must fell the yard's tower with blasts.
 - **`--siege-matrix`**: all built spells in a stamped yard (a stone curtain wall with slits and a timber walkway, a gate,
   a 4 m plank walkway, a stone arch, a moat, a stair, a timber tower), at fixed frames from fixed positions. It
-  requires every check line, the combo lines (`Combo: cannon depth X m (rimed Y m)`, `Combo: knit blasted after
+  requires every check line, the combo lines (`Combo: blast depth X m (rimed Y m)`, `Combo: knit blasted after
   heat`, `Combo: bridge melted`), `Magic: N spells, 0 failed`, and after `--frames 2400`
   `Magic: all conjured matter gone`. `--camera siege-matrix` frames it; its screenshot is looked at. Refused in a
   session.
-- **`--crush-demo`**: the `extraLoad` calibration yard.
+- **`--crush-demo`**: the `extraLoad` calibration yard (Meteor Leap's slam).
 - **`--stress-spells N`** (with fx-budget's `--stress-fx`): N bots' worth of spells in view; frame cost lines.
 - **`vortex_server --bot-spells N`**: bots cast a fixed, scripted rotation (no randomness) through their attunement every
   N ticks; with the drill and the arena walk it must log `hashes equal`, 0 `Checks:` mismatches, `Entities: ... agree`,
@@ -1413,13 +1451,13 @@ it wraps in about 25-30 s (c); spread adds about 10 parts/s. L12 holds: no fallb
 
 | ID | Stage | Depends on | Acceptance | Effort (e) | State |
 |---|---|---|---|---|---|
-| [mag-1] | **Siege core in sim, headless only** (no wire). Only what its four spells use: `SpellTable` + hash, `sim::CastSpell`, the Pierce operator (bore boxes, `kMaxBoreVoxels`), the Burst strip and seed plane, Plume's single-seed column, `CarveCapsule`, `MapMask` (with its axis order) and `MapShape` as sim ops, `TurningTable` (Knit, Unknit, Ablate), `knit_iron` and the `Conjured` flag, the ablative absorb rule, the `KnitRegistry` with mask and cheap expiries and site checks by what changed (`noCarve` and the minimal structure credit if SI has not built them), the conjured-piece rule, the spawn guard, the `ZoneSet` with Impulse and Lift, truncation and replay retention, `PlayerState` (`push`, status) and `StepPlayer` revision 2, the `UpdateCharacter` `vertical` parameter, server damage hooks. Spells: **Siege Cannon, Barricade Wave, Shockwave, Updraft** (breach, cover, knock off, climb). `--spell-demo`, `--siege-matrix` (4 rows) | [wp-6] (rules seam), [wp-7] (health, teams, charges, spawns), [wp-8] (the fight baseline) | Operator, op, registry, player and determinism tests above for what it builds; G1-G10 unchanged; `--spell-demo siege-cannon` at G6's voxel sizes; demo and matrix lines and screenshot; `Magic:` cost lines after fill | 6-9 d | Designed |
+| [mag-1] | **Siege core in sim, headless only** (no wire). Only what its four spells use: `SpellTable` + hash, `sim::CastSpell`, the Burst strip and seed plane, Plume's single-seed column, `MapMask` (with its axis order) and `MapShape` as sim ops, `TurningTable` (Knit, Unknit, Ablate), `knit_iron` and the `Conjured` flag, the ablative absorb rule, the `KnitRegistry` with mask and cheap expiries and site checks by what changed (`noCarve` and the minimal structure credit if SI has not built them), the conjured-piece rule, the spawn guard, the `ZoneSet` with Impulse, Lift and Shove, truncation and replay retention, `PlayerState` (`push`, status, the dash) and `StepPlayer` revision 2 (the cast edge's own moves), the `UpdateCharacter` `vertical` parameter, server damage hooks, the dash's path trace. Spells: **Updraft, Dash, Punch, Barricade Wave** (jump, dash, punch, cover; owner, 2026-11-26). `--spell-demo`, `--siege-matrix` (4 rows) | [wp-6] (rules seam), [wp-7] (health, teams, charges, spawns), [wp-8] (the fight baseline) | Operator, op, registry, player and determinism tests above for what it builds; G1-G10 unchanged; `--spell-demo dash` and `--spell-demo punch` at G6's voxel sizes; demo and matrix lines and screenshot; `Magic:` cost lines after fill | 6-9 d | Designed (re-scoped 2026-11-26) |
 | [mag-2] | **First playable.** The one protocol bump (every value in "Wire values" reserved, the whole owner block included), `CastFx`, zone events with the lead and `ZoneCancel`, the join baseline, `PlayerInput::spell` and the Spell edge, the owner block, `Attune`, rejections, `buildHash` additions, `RunScheduled` on the server, caps. Offline through M2a's in-process server and in sessions. HUD: the spell bar, element panel, form crosshairs, statuses, refusals, the attune menu (Metal and Pressure only). `PresentSpell` basics. `--bot-spells`, `--check-spells`, session-check with spells and corrections by cause | [mag-1] | `Movement.ZonesPredictedWithoutCorrection` at 0; `Movement.BarricadeAcrossAWalkerCountsCorrectionsByCause` measured (decides on the Block zone); G11-G17 and G22 with `--bot-spells` (`hashes equal`, 0 check mismatches, tick p99 < 16 ms); G16's bound held; the owner's Felling-duel taste check with 4 spells and the two-PC run (owner) | 6-9 d | Designed |
-| [mag-3] | **Frost, and the Shatter combo.** `ice`, `floe`, the rimed ids, `knit_iron_rimed`; maps Rime, Thaw, Freeze, FreezeWater, Shatter and the Shatter flood (Shockwave's Shatter becomes live); Chill, Root and Release zones, the control guard and `Fresh` (`kPlayerRuleRevision` 3); the full Plume operator with its `Front` rule (Permafrost Climb) and the Burst disc (Flash Freeze); `shapeChanged` per voxel if spread S1 has not built it; the attune menu gains Frost. Spells: **Shatter Spike, Flash Freeze, Permafrost Climb**. No protocol bump | [mag-2] | Frost, combo and guard tests and lines; `Combo.ShatterSpikeDeepensSiegeCannon`; drills agree | 5-7 d | Designed |
-| [mag-4] | **Flow, climbing and the rest of Metal.** The Flow operator and its fine fixed-point arc trace; `slag`, the Slag and Set maps, the hazard scan (slag); Plume's bands and ledges with the band timing rule and the lead-tied hover; Rebar Lance's two sockets; the slick rule (`kPlayerRuleRevision` 4). Spells: **Molten Pour, Rising Spire, Rebar Lance, Glacier Slide**. No protocol bump | [mag-3] (ice for Glacier Slide, Root for Rebar Lance) | Their tests and demo lines (`Spire: rider on top`, `Rebar: ledge reached`); `Movement.SpireRiderNoCorrection` and `Movement.IceSlideNoCorrectionAbove2cm`; drills agree | 6-8 d | Designed |
+| [mag-3] | **Frost, the bore and the Shatter combo.** The Pierce operator (bore boxes, `kMaxBoreVoxels`) and `CarveCapsule`; `ice`, `floe`, the rimed ids, `knit_iron_rimed`; maps Rime, Thaw, Freeze, FreezeWater, Shatter and the Shatter flood (Punch's Shatter and Release become live); Chill, Root and Release zones, the control guard, `Fresh` and the slick rule (`kPlayerRuleRevision` 3); the full Plume operator with its `Front` rule (Permafrost Climb) and the Burst disc (Flash Freeze); `shapeChanged` per voxel if spread S1 has not built it; the attune menu gains Frost. Spells: **Shatter Spike, Flash Freeze, Permafrost Climb**. No protocol bump | [mag-2] | Frost, combo and guard tests and lines; `Combo.ShatterSpikeDeepensABlast`; `Movement.IceFilmNoCorrectionAbove2cm`; drills agree | 5-7 d | Designed |
+| [mag-4] | **Flow, climbing, the rune and the rest of Metal.** The Flow operator and its fine fixed-point arc trace; `slag`, the Slag and Set maps, the hazard scan (slag); Plume's bands and ledges with the band timing rule and the lead-tied hover; Rebar Lance's two sockets; the Rune zone and the server's trigger test, one rune per caster. Spells: **Molten Pour, Rising Spire, Rebar Lance, Rune Trap**. No protocol bump | [mag-3] (the bore for Rebar Lance; ice, Root and Chill for Rune Trap) | Their tests and demo lines (`Spire: rider on top`, `Rebar: ledge reached`, `Rune: burst under bot N`); `Movement.SpireRiderNoCorrection`; `Magic.ARuneBurstsOnceUnderTheFirstEnemy`; drills agree | 6-8 d | Designed |
 | [mag-5] | **Thermal.** The pitch class in `SpreadTable`, `knit_iron_hot`, `iron_hot`, the Pitch, Heat and Cool maps, the hazard scan for pitch and hot metal, Burning. Spells: **Pitchfall, Wildfire, Meltdown Beam, Firestorm Sweep** | [spread-S1] (headless and scripts); [spread-S2] / [spread-S3] for play (offline practice and sessions both run the server path); rides S2's bump if they land together | spread.md's gates plus the Thermal lines; `Magic.HeatUnderAFloeBridgeReleasesWhatItCarried`; the ten-fires case with Thermal spells inside the spread credit | 4-6 d | Designed |
 | [mag-6] | **Presentation and tuning.** `FxDirector` effects per element, rings, ghosts, crumble warnings, steam and frost mist (fog when built), the landing marker, team panel letters, audio hooks once audio exists; a 10-bot spell fight measured; lifetimes, strengths, charges and cooldowns after the owner's taste check | [fx-1], [fx-2] ([wp-8]) | G23 (`--stress-spells` inside 4 ms CPU / 4 ms GPU); fight frame within [wp-8]'s margin on the UHD 620; server p99 < 16.7 ms; the owner's windowed checks | 4-6 d + owner | Designed |
-| [mag-7] | **Crushing Weight.** `extraLoad` in Part 4b's check, run as a site check on the structure credit; the Pin zone (`kPlayerRuleRevision` 5). Spell: **Crushing Weight**. No protocol bump. It can land before [mag-5] once [si-2] is done | [si-2] (the `NeckCheck` split), [mag-4] (Flow) | `--crush-demo`; `Neck.ExtraLoad*`; `--neck-blast`, `--tower-blast` and the castle case unchanged; drills agree | 2-3 d | Designed |
+| [mag-7] | **Meteor Leap.** `extraLoad` in Part 4b's check, run as a site check on the structure credit; the Pin zone and the leap's launch at the cast edge (`kPlayerRuleRevision` 4); the slam's arc trace (Flow's). Spell: **Meteor Leap**. No protocol bump. It can land before [mag-5] once [si-2] is done | [si-2] (the `NeckCheck` split), [mag-4] (Flow) | `--crush-demo`; `Neck.ExtraLoad*`; `--neck-blast`, `--tower-blast` and the castle case unchanged; drills agree | 2-3 d | Designed |
 | later | Knit tiers from progression (the 3 reserved ids), M7 | M7 | - | - | Not started |
 
 Commits (engine / game) and history files are added to each row as its stage lands.
@@ -1459,7 +1497,7 @@ New rows for CLAUDE.md section 5 (with their pinning tests):
   `KnitRegistry.ReplayGivesTheSameOps`, `KnitRegistry.ExpiryRemovesOnlyItsOwnMatter`.
 - **No load check after a knit fill**; any op that turns a collider into a non-collider (or removes an anchor) runs a
   site check over its changed chunks, decided per voxel; bores run the island search and load check in their own
-  flood box; `extraLoad` is a server-only input used only by Crushing Weight, on the structure credit.
+  flood box; `extraLoad` is a server-only input used only by Meteor Leap's slam, on the structure credit.
   `KnitRegistry.FillRunsNoLoadCheckAndExpiryRunsASiteCheck`, `Magic.HeatUnderAFloeBridgeReleasesWhatItCarried`,
   `Pierce.BoreStaysInsideItsFloodBox`, `Neck.ExtraLoadNeverFailsNaturalTerrain`.
 - **Conjured pieces take no slot.** A piece holding a `Conjured` id never asks `TakePieceSlot`.
@@ -1547,8 +1585,9 @@ become `MapShape` maps.
 | Teams on voxels ("enemy metal") | A byte per voxel or ids per team; terrain has no owner. Statuses and damage respect teams, matter does not |
 | Shatter as a plain `MapShape` sphere | Reaches rime behind a knit plate and deletes a 2 m ball of rimed iron in two casts; the flood reaches only exposed rime, 0.5 m deep (design review) |
 | An absorb with no ablation | A one-voxel film made a whole face blast-proof (design review); a patch per blast keeps cover worth casting and Fellings possible |
-| `ZoneCancel` of pending zones only | A zone pending at a Shockwave's `T_run` always starts at or before its `T_z`, so such a dispel never cancelled anything (design review); a truncation from `T_z` works and keeps the full lead |
-| Siege Cannon costing 2 charges from [mag-2] | Per-spell costs were rejected for readability; cutting its direct hit to 30 removes its dominance as a damage spell; 2 charges stays the first knob after the taste check |
+| `ZoneCancel` of pending zones only | A zone pending at a Punch's `T_run` always starts at or before its `T_z`, so such a dispel never cancelled anything (design review); a truncation from `T_z` works and keeps the full lead |
+| Siege Cannon, Shockwave, Crushing Weight, Glacier Slide (the merged design's Pierce, Burst and Flow x Pressure and Flow x Frost) | The owner (2026-11-26): Pressure is mostly movement on the map (high jumps, dashes, punches), and Flow x Frost is a static rune trap. They became Dash, Punch, Meteor Leap and Rune Trap; the long-range breach falls to Meltdown Beam and to Shatter Spike's rime under blasts; the slick lane's rule stays with Flash Freeze's film |
+| A Dash or Meteor Leap through a zone with the lead | The caster's own move would start 0.4 s after the key: it would not feel like a jump. Its own input is predicted at once; only what it does to others waits for the lead |
 | A Block zone for every band from the start | One more zone kind and lead for a correction cause not yet measured; reserved in [mag-2], built only if the counted terrain corrections ask for it |
 
 ## Open questions (with the recommended answer; settled by us under the owner's rules, the owner may veto)
@@ -1565,21 +1604,21 @@ become `MapShape` maps.
 6. **How do forced movements reach players?** Zones with a 24-tick lead (a session setting), evaluated in
    `StepPlayer`; late zones replayed and counted.
 7. **Projectiles or hitscan?** Hitscan with the rewound capture; Flow's instant arc trace; streaks are presentation.
-   Shockwave's "deflect" becomes a dispel: it truncates live enemy Pin, Chill and Updraft zones within 5 m from its own
-   zone tick, and its Release frees rooted or pinned allies. Instant effects cannot be dispelled.
+   The owner's "deflect" is Punch's dispel: it truncates live enemy Pin, Chill, Updraft and Rune zones within 2.5 m of
+   its fist from its own zone tick, and its Release frees rooted or pinned allies. Instant effects cannot be dispelled.
 8. **How are lifetimes kept?** The server's `KnitRegistry`, as exact `MapMask` expiries, one id per conjured kind.
-9. **Does a knit fill run the load check?** No. Expiries, shatters and bores do; Crushing Weight on purpose.
+9. **Does a knit fill run the load check?** No. Expiries, shatters and bores do; Meteor Leap's slam on purpose.
 10. **"Enemy" metal and stone?** Any metal and stone: voxels have no team.
 11. **Charges and cooldowns?** One M2a charge per spell plus a per-form cooldown (Pierce 5 s, Burst 7 s, Flow and Plume
-    9 s), shown from the owner block. First knob: Siege Cannon, Meltdown Beam and Crushing Weight cost 2.
+    9 s), shown from the owner block. First knob: Meltdown Beam and Meteor Leap cost 2.
 12. **How brittle is rimed matter?** Hardness x 0.5, bonds unchanged: the owner's 2x exactly. If play wants
     chill-fellings, shear and tension x 0.5 next (with site checks after Rime).
-13. **Crushing Weight's force?** An integer `extraLoad` of 600 kg/m^2 (e) in Part 4b's check at the zone tick, run on
+13. **Meteor Leap's slam force?** An integer `extraLoad` of 600 kg/m^2 (e) in Part 4b's check at the zone tick, run on
     the structure credit, plus the Shatter flood on rimed matter and ice; calibrated by `--crush-demo`; [mag-7], after
     [si-2].
 14. **Is fresh knit iron blast-proof?** Against a carve, yes: hardness 7.0 against power 6.0, and a blast that hits it
     is absorbed. But it wears: each absorbed blast chips a 0.25 m patch (Ablate), so a 1-voxel plate costs one blast
-    per spot and a Barricade two per hole. Its bonds equal stone's. Counters: Siege Cannon, Thermal, Frost, blasts,
+    per spot and a Barricade two per hole. Its bonds equal stone's. Counters: Meltdown Beam, Thermal, Frost, blasts,
     the lifetime. Cover must hold to be fun, and must not be a wall that never yields.
 15. **Progression ("levelling raises HP")?** Not in v1, for PvP fairness. Later (M7) thickness and lifetime first, then
     hardness tiers as table rows with the 3 reserved ids.
@@ -1606,10 +1645,17 @@ become `MapShape` maps.
 26. **Mechanisms?** Conjured matter blocks gates as terrain does: a closing gate stops at it (mechanisms' blocked rule);
     no new rule.
 27. **Which element carries the direct damage?** Thermal, as the owner's concept says: Meltdown Beam 45 (+24 burn) is
-    the hardest hit; Siege Cannon 30 and Rebar Lance 30 are structure and utility first. For the owner's taste check.
+    the hardest hit; Punch 25 and Rebar Lance 30 are knockback and utility first. For the owner's taste check.
 28. **How long is the control guard?** 1.5 s after a root or pin ends, in which neither applies again; chill and
     knockback still do. Long enough to step out of the next ring at run speed (about 6 m (c)); the first knob if
     Frost feels weak is 1.0 s.
 29. **How big is a spawn area, and how long is respawn immunity?** 6 m round each team spawn point, full height,
     and 2 s (or until the player casts) of immunity to roots, pins and knockback. M2a's spawn points set the centres;
     W-stage maps keep spawn areas of stone so spread's fire cannot burn into them.
+30. **Who sees a Rune Trap?** Allies always, with its ring; enemies only within 4 m, as a faint frost mark
+    (presentation). Every client holds the zone, so a modified client could draw it from afar; sending runes only to
+    the caster's team and to enemies within 4 m would need per-peer zone visibility, and is the next step if cheating
+    on runes shows. One rune per caster, 60 s; the first knob if traps feel oppressive is 30 s.
+31. **How far do Dash and Meteor Leap go?** Dash 8 m in 0.3 s; Meteor Leap about 15 m on flat ground at its best
+    pitch (12 m/s along an aim of 45 degrees). Both cost a charge and the form's cooldown (Pierce 5 s, Flow 9 s). For the owner's
+    windowed taste check after [mag-2] ([mag-7] for the leap).

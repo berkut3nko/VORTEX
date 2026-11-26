@@ -67,7 +67,7 @@ demo; add furniture, medieval construction scaffolding and interactable elements
    integrity matrix"). Castle masonry is no longer the terrain's `stone`, which also settles the draft's "magic is bad
    at breaking terrain" item: terrain keeps its hardness, castle masonry gets its own.
 7. **Tier 1 is very hard, not indestructible.** The basic blast (power 6.0) does not carve granite (hardness 7.5);
-   Siege Cannon bores it slowly. Bedrock stays only where worldgen.md allows it: the sanctum's keel floor and spine
+   Meltdown Beam bores it slowly. Bedrock stays only where worldgen.md allows it: the sanctum's keel floor and spine
    cores (C10).
 8. **Every pristine part stands with a 2x margin** (worldgen.md C1-C6), and every set piece is a designed neck with
    worldgen.md's limits (at most 45 000 voxels per part, 60 000 per cast, within 84 v of its cut volume). The load
@@ -219,7 +219,7 @@ C5). Soot and the darker quoin are deco ids with the same strength as their base
 
 | Part | Tier | Material | Collapse behaviour |
 |---|---|---|---|
-| Batter, foundation, tower corner piers, vault ribs, the keep's lower shell, buttresses | 1 | granite | stands under blasts; Siege Cannon bores it slowly; carries everything above |
+| Batter, foundation, tower corner piers, vault ribs, the keep's lower shell, buttresses | 1 | granite | stands under blasts; Meltdown Beam bores it slowly; carries everything above |
 | Curtain faces above the batter, inner wall faces, partition walls, the keep's upper shell, gate tower shells | 2 | ashlar | 2 cannon shots open a face; the rubble core behind slumps outward into a ramp (N6) |
 | Wall cores | 2 | rubble_core | slumps when a face is cut |
 | Repair patches, chimneys, the forge hearth | 2 | brick | opens in 2-3 cannon shots (the draft's R2) |

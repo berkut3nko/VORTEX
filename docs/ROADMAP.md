@@ -198,11 +198,13 @@ In this order:
    auto-drops (pinned) by carrying bots, and `tools/session-check.sh` fails with or without the yard (two bodies still
    moving at its end, 1-5 m apart: the same at card 9's commit, so not caused by this stage). Not run: `verify.sh full
    --ci`, the soak, the owner's windowed check 25.
-3. **[mag-1] Siege core in sim, headless only.** The spell system's first four spells, Siege Cannon, Barricade Wave,
-   Shockwave and Updraft (breach, cover, knock off, climb), with only what they use: the Pierce operator, the Burst
-   strip, Plume's single column, `CarveCapsule` / `MapMask` / `MapShape` as sim ops, knit iron that blasts chip, with
-   server-scheduled expiries, the spawn guard, Impulse and Lift zones in `sim::StepPlayer` (`kPlayerRuleRevision` 2);
-   no wire change. [design/magic.md](design/magic.md), "Stages". 6-9 d (e).
+3. **[mag-1] Siege core in sim, headless only.** The spell system's first four spells, re-scoped by the owner
+   (2026-11-26, Pressure is movement): Updraft, Dash, Punch and Barricade Wave (jump, dash, punch, cover), with only
+   what they use: the Burst strip and seed plane, Plume's single column, `MapMask` / `MapShape` as sim ops, knit iron
+   that blasts chip, with server-scheduled expiries, the spawn guard, Impulse, Lift and Shove zones and the caster's own
+   dash in `sim::StepPlayer` (`kPlayerRuleRevision` 2), Punch's light carve and dispel; no wire change. The owner
+   reviews the 4 new spells first (magic.md "The sixteen spells" 9, 11, 12, 13).
+   [design/magic.md](design/magic.md), "Stages". 6-9 d (e).
 4. **[mag-2] First playable spells.** The same four spells in offline practice and in sessions: the one magic
     protocol bump (it reserves every value the later magic stages need), zone events with a 0.4 s lead, the spell bar
     and the attune menu on the HUD; the owner's Felling-duel taste check. [design/magic.md](design/magic.md), "Stages".
@@ -233,9 +235,9 @@ golden-test output; about 30 owner-minutes), a `windows-clang64` preset, `.gitat
 
 In rough order:
 - The rest of magic ([design/magic.md](design/magic.md), "Stages"; it follows [mag-2] and [si-2], not W1): [mag-3]
-  Frost and the Shatter combo (Shatter Spike, Flash Freeze, Permafrost Climb) right after [mag-2], [mag-4] Flow,
-  climbing and the rest of Metal (Molten Pour, Rising Spire, Rebar Lance, Glacier Slide) after [mag-3], [mag-7]
-  Crushing Weight after [si-2] and [mag-4], [mag-5] Thermal (after [spread-S1] headless, [spread-S2] / [spread-S3]
+  Frost, the bore and the Shatter combo (Shatter Spike, Flash Freeze, Permafrost Climb) right after [mag-2], [mag-4]
+  Flow, climbing, the rune and the rest of Metal (Molten Pour, Rising Spire, Rebar Lance, Rune Trap) after [mag-3],
+  [mag-7] Meteor Leap after [si-2] and [mag-4], [mag-5] Thermal (after [spread-S1] headless, [spread-S2] / [spread-S3]
   for play), [mag-6] presentation and tuning. None needs spread S4.
 - [si-1] objects break under their own weight and [si-3] re-checks away from casts, after W1 (shred.md SI plan).
 - [mech-2]..[mech-4] ropes, siege kit, placement (mechanisms.md; the offline part of [mech-2] is built: load ropes,
