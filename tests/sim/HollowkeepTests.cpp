@@ -100,7 +100,7 @@ TEST(Hollowkeep, ThePortcullisAndItsLeverPassTheAuthoringRule) {
 
 TEST(Hollowkeep, TheBasicBlastBreachesTheCastleWithoutReleasingIt) {
     // Tier 2 ashlar breaks under the basic blast (power 6.0), and the load check releases nothing from a 1.2 m hole in a
-    // curtain face, a tower's shell or the keep's upper shell (fortress.md "Material and structural integrity matrix").
+    // curtain face, a tower's shell, the keep's upper shell or a tower's roof (fortress.md "Material and structural integrity matrix").
     const Baked& b = Castle();
     const auto map = std::make_shared<const voxel::LandMap>(b.map);
     const voxel::FortPlan plan = voxel::PlanFort(b.map, b.land);
@@ -126,8 +126,15 @@ TEST(Hollowkeep, TheBasicBlastBreachesTheCastleWithoutReleasingIt) {
             shots.push_back(glm::vec3(p.x, r.lo + 15.0f, p.y));
         }
     }
-    ASSERT_EQ(shots.size(), 3u);
-    for (const glm::vec3& shot : shots) {
+    // And a tower's slate roof, half way up its slope.
+    for (const voxel::FortRecord& r : plan.records)
+        if (r.shape == voxel::FortShape::Roof && shots.size() == 3) {
+            const glm::vec2 p = r.a + glm::vec2(-r.b.y, r.b.x) * (r.half * 0.5f);
+            shots.push_back(glm::vec3(p.x, r.lo + r.height * r.half * 0.5f - 0.2f, p.y));
+        }
+    ASSERT_EQ(shots.size(), 4u);
+    for (size_t i = 0; i < shots.size(); ++i) {
+        const glm::vec3 shot = shots[i];
         sim::SimulationConfig config;
         config.chunkCapacity = 1536;
         config.maxParticles = 4096;
@@ -145,7 +152,8 @@ TEST(Hollowkeep, TheBasicBlastBreachesTheCastleWithoutReleasingIt) {
         const sim::BlastResult blast = sim::Blast(simulation, sphere, voxel::QuantizePower(6.0f));
         ASSERT_FALSE(blast.ops.empty());
         EXPECT_TRUE(blast.islandsSearched) << "at (" << shot.x << ", " << shot.y << ", " << shot.z << ")";
-        EXPECT_GT(blast.ops[0].edits.size(), 500u) << "the blast breaks the ashlar at (" << shot.x << ", " << shot.y << ", " << shot.z << ")";
+        // Masonry is solid; a roof is a shell 3 voxels thick, so the same blast meets fewer voxels there.
+        EXPECT_GT(blast.ops[0].edits.size(), i == 3 ? 100u : 500u) << "the blast breaks through at (" << shot.x << ", " << shot.y << ", " << shot.z << ")";
         EXPECT_EQ(simulation.IslandSearchCheck().neckReleases, 0u) << "at (" << shot.x << ", " << shot.y << ", " << shot.z << ")";
         // The load check judged the network: nothing skipped or cut short by a budget (the ring of walls running out of
         // the window is support, as in the game's window).

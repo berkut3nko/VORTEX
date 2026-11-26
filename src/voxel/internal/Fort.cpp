@@ -137,6 +137,25 @@ namespace vortex::voxel {
                 }
         };
 
+        // A pitched roof record (fortress.md "Roofs"): its bounds cover the eaves' overhang and the apex.
+        const auto roof = [&](FortRoof kind, FortBlock footprint, glm::vec2 c, glm::vec2 dir, float half, float length, float eave, float pitch, uint8_t cover) {
+            FortRecord r;
+            r.shape = FortShape::Roof;
+            r.roof = kind;
+            r.block = footprint;
+            r.a = c;
+            r.b = dir;
+            r.half = half;
+            r.length = length;
+            r.lo = eave;
+            r.height = pitch;
+            r.id = cover;
+            const float extent = kind == FortRoof::Gable ? std::max(half, length + 0.25f) : half;
+            const float reach = extent * (std::abs(dir.x) + std::abs(dir.y)) + 0.5f + vs;
+            setBounds(r, c - reach, c + reach, eave - 0.5f, eave + pitch * half + vs);
+            plan.records.push_back(r);
+        };
+
         // 1. The ditch across the neck (land.md "Hollowkeep's greybox").
         {
             FortRecord r;
@@ -271,6 +290,14 @@ namespace vortex::voxel {
         };
         walls(site.curtain, 1.25f, kCurtainWalk, gatePoint, 7.5f);
         walls(site.inner, 1.0f, kInnerWalk, plan.innerGate, 1.6f);
+        // Hoardings on the 4 curtain runs by the gate (fortress.md "Walls"): their bounds rise to the gallery's roof.
+        for (int k = site.gate - 2; k <= site.gate + 1; ++k) {
+            const int i = curtainRecord[size_t(((k % kSiteDirections) + kSiteDirections) % kSiteDirections)];
+            if (i < 0) continue;
+            FortRecord& r = plan.records[size_t(i)];
+            r.trim = FortTrim_Hoarding;
+            r.max.y = std::max(r.max.y, V(std::max(r.lo, r.hi) + 3.0f) + 1);
+        }
 
         // 4. Blocks: the flank towers, the gate towers, the keep.
         const auto block = [&](FortBlock kind, glm::vec2 c, glm::vec2 out, float half, float floor, float top) {
@@ -329,12 +356,18 @@ namespace vortex::voxel {
             tower.walkRight = rightWalk;
             tower.walkLeftU = leftU;
             tower.walkRightU = rightU;
+            // A slate roof over the battlements: the tower's own D shape, 2 in 1, its eaves 0.25 m out.
+            const float towerTop = tower.hi;
+            roof(FortRoof::Cone, FortBlock::Tower, c, out, 3.75f, 0.0f, towerTop + kParapet + kMerlon, 2.0f, m.slate);
         }
         for (const float side : {-1.0f, 1.0f}) {
             const glm::vec2 c = gatePoint + across * (10.0f * side) + axis * 1.0f;
             float gLo = 0.0f, gHi = 0.0f;
             groundRange(c - 3.0f, c + 3.0f, gLo, gHi);
             block(FortBlock::GateTower, c, axis, 3.0f, gateGround, std::max(gHi, gateGround) + 15.0f);
+            plan.records.back().trim = FortTrim_Machicolations;
+            const float top = plan.records.back().hi;
+            roof(FortRoof::Cone, FortBlock::GateTower, c, axis, 4.0f, 0.0f, top + kParapet + kMerlon, 2.0f, m.slate);
         }
 
         // 5. The gatehouse on its pad: a battered granite base, ashlar above, the passage, the timber upper room (N3),
@@ -350,20 +383,43 @@ namespace vortex::voxel {
             box(glm::vec3(lo.x, gateGround, lo.y), glm::vec3(hi.x, gateGround + 4.0f, hi.y), m.granite);
             box(glm::vec3(lo.x - 0.125f, gateGround + 4.0f, lo.y - 0.125f), glm::vec3(hi.x + 0.125f, gateGround + 4.25f, hi.y + 0.125f), m.granite);
             box(glm::vec3(lo.x, gateGround + 4.25f, lo.y), glm::vec3(hi.x, gateGround + 14.0f, hi.y), m.ashlar);
-            // The parapet and merlons along all 4 edges.
+            // Machicolations on all 4 sides (fortress.md "Walls"): corbels of 3 stepped stones every 1.5 m under a
+            // parapet that stands 0.25-0.75 m out from the faces; between the corbels the gallery's floor is open (drop
+            // holes).
             const float t0 = gateGround + 14.0f;
             for (int side = 0; side < 4; ++side) {
                 const bool alongXEdge = side < 2;
-                const float fixed = alongXEdge ? (side == 0 ? lo.y : hi.y - 0.5f) : (side == 2 ? lo.x : hi.x - 0.5f);
-                const float from = alongXEdge ? lo.x : lo.y, to = alongXEdge ? hi.x : hi.y;
-                const auto edge = [&](float a0, float a1, float y0, float y1) {
+                const float sign = (side % 2 == 0) ? -1.0f : 1.0f;
+                const float face = alongXEdge ? (side == 0 ? lo.y : hi.y) : (side == 2 ? lo.x : hi.x);
+                const float from = (alongXEdge ? lo.x : lo.y) - 0.75f, to = (alongXEdge ? hi.x : hi.y) + 0.75f;
+                // A box from `out0` to `out1` metres out of the face, from a0 to a1 along it.
+                const auto edge = [&](float a0, float a1, float out0, float out1, float y0, float y1) {
+                    const float f0 = face + sign * out0, f1 = face + sign * out1;
+                    const float n0 = std::min(f0, f1), n1 = std::max(f0, f1);
                     if (alongXEdge)
-                        box(glm::vec3(a0, y0, fixed), glm::vec3(a1, y1, fixed + 0.5f), m.ashlar);
+                        box(glm::vec3(a0, y0, n0), glm::vec3(a1, y1, n1), m.ashlar);
                     else
-                        box(glm::vec3(fixed, y0, a0), glm::vec3(fixed + 0.5f, y1, a1), m.ashlar);
+                        box(glm::vec3(n0, y0, a0), glm::vec3(n1, y1, a1), m.ashlar);
                 };
-                edge(from, to, t0, t0 + kParapet);
-                for (float a = from; a < to; a += 2.75f) edge(a, std::min(to, a + 2.0f), t0 + kParapet, t0 + kParapet + kMerlon);
+                for (float a = from + 0.75f; a + 0.75f <= to - 0.75f; a += 1.5f) {
+                    edge(a, a + 0.75f, 0.0f, 0.25f, t0 - 1.125f, t0 - 0.75f);
+                    edge(a, a + 0.75f, 0.0f, 0.5f, t0 - 0.75f, t0 - 0.375f);
+                    edge(a, a + 0.75f, 0.0f, 0.75f, t0 - 0.375f, t0);
+                }
+                edge(from, to, 0.25f, 0.75f, t0, t0 + kParapet);
+                for (float a = from; a < to; a += 2.75f) edge(a, std::min(to, a + 2.0f), 0.25f, 0.75f, t0 + kParapet, t0 + kParapet + kMerlon);
+            }
+            // A tiled gable roof across the passage, its ridge along the gatehouse's 14 m (a 1 m walk all round under
+            // the parapet), stone gable ends; a bell turret on the ridge's middle.
+            roof(FortRoof::Gable, FortBlock::Tower, gatePoint, glm::abs(across), 3.0f, 6.0f, t0, 1.0f, m.roofTile);
+            {
+                const float ridge = t0 + 3.0f;
+                for (const float du : {-0.75f, 0.75f})
+                    for (const float dv : {-0.75f, 0.75f}) column(gatePoint + glm::abs(across) * du + glm::abs(axis) * dv, 0.125f, ridge - 1.0f, ridge + 2.0f, m.wood);
+                column(gatePoint, 1.0f, ridge - 0.25f, ridge, m.planks);
+                column(gatePoint, 0.35f, ridge + 0.9f, ridge + 1.6f, m.iron);   // the bell
+                column(gatePoint, 0.125f, ridge + 1.6f, ridge + 2.0f, m.wood);  // its stock
+                roof(FortRoof::Cone, FortBlock::Keep, gatePoint, glm::abs(axis), 1.25f, 0.0f, ridge + 2.0f, 1.5f, m.roofTile);
             }
             // The passage: walls to 2.5 m, a barrel vault to 4.5 m, a straight groove where the portcullis runs, 3 murder
             // holes from the upper room through the vault's crown.
@@ -494,6 +550,20 @@ namespace vortex::voxel {
 
         // 7. The keep on its pad: 16 x 16 m, 22 m high, its door towards the gate.
         block(FortBlock::Keep, keep, axis, 8.0f, site.keepGround, site.keepGround + 22.0f);
+        plan.records.back().trim = FortTrim_Machicolations;
+        {
+            const float top = site.keepGround + 22.0f;
+            const glm::vec2 side(-axis.y, axis.x);
+            // A slate pyramid inside the parapet's walk (1 in 1), small cones on the 4 corner turrets, and the great
+            // hall's chimney through the roof's back slope.
+            roof(FortRoof::Cone, FortBlock::Keep, keep, axis, 5.25f, 0.0f, top, 1.0f, m.slate);
+            for (const float du : {-6.75f, 6.75f})
+                for (const float dv : {-6.75f, 6.75f})
+                    roof(FortRoof::Cone, FortBlock::Keep, keep + axis * du + side * dv, axis, 1.5f, 0.0f, top + 2.5f + kMerlon, 2.0f, m.slate);
+            const glm::vec2 flue = keep - axis * 3.5f + side * 2.0f;
+            column(flue, 0.5f, top - 0.5f, top + 6.5f, m.brick);
+            column(flue, 0.25f, top + 3.0f, top + 6.5f, 0);
+        }
         return plan;
     }
 
@@ -506,7 +576,8 @@ namespace vortex::voxel {
             for (const float f : {r.a.x, r.a.y, r.b.x, r.b.y, r.lo, r.hi, r.half, r.gapLo, r.gapHi, r.walkLeft, r.walkRight, r.walkLeftU, r.walkRightU,
                                   r.clearAt, r.flatA, r.flatB, r.height, r.grateTo, r.bulkheadAt})
                 putf(f);
-            put(r.caps);
+            put(uint64_t(r.caps) | uint64_t(r.trim) << 8 | uint64_t(r.roof) << 16);
+            putf(r.length);
             put(uint64_t(uint32_t(r.min.x)) | uint64_t(uint32_t(r.min.y)) << 32);
             put(uint64_t(uint32_t(r.min.z)) | uint64_t(uint32_t(r.max.x)) << 32);
             put(uint64_t(uint32_t(r.max.y)) | uint64_t(uint32_t(r.max.z)) << 32);
@@ -582,8 +653,33 @@ namespace vortex::voxel {
                                                !(r.gapHi >= r.gapLo && tb > r.gapLo - 3.0f && tb < r.gapHi + 3.0f) && std::abs(tb - r.clearAt) > 3.0f;
                         const float walk = FortWalk(r, t);
                         const int y0 = std::max(lo.y, int(std::floor((g - kFoundation) / vs)));
+                        const bool hoard = (r.trim & FortTrim_Hoarding) != 0;
+                        const float beat = t + 50.0f - 2.0f * std::floor((t + 50.0f) / 2.0f);
                         for (int y = y0; y < hi.y; ++y) {
                             const float ym = (float(y) + 0.5f) * vs;
+                            // The hoarding: putlog beams through the holes, a plank floor level with the walk (a drop slot
+                            // by the face every 2 m), an outer plank wall with slits, posts on the parapet and a pent roof
+                            // of planks falling 0.6 per metre outward.
+                            if (hoard && s > r.half - 0.5f && ym >= walk - 0.5f) {
+                                const float out = s - r.half, roofY = walk + 2.6f - std::max(0.0f, out) * 0.6f;
+                                uint8_t id = 255;
+                                if (out > 1.75f) id = 255;
+                                else if (ym >= roofY - 0.25f && ym < roofY) id = m.planks;
+                                else if (out <= 0.0f) {
+                                    if (ym >= walk + kParapet && ym < roofY && beat < 0.25f) id = m.wood;   // posts
+                                } else if (out <= 1.5f) {
+                                    if (ym < walk - 0.25f) id = beat >= 1.0f && beat < 1.25f ? m.wood : 255;
+                                    else if (ym < walk) id = out <= 0.375f && beat < 0.5f ? 0 : m.planks;
+                                    else if (out > 1.25f && ym < walk + 1.75f)
+                                        id = beat >= 0.9f && beat < 1.0f && ym >= walk + 0.5f && ym < walk + 1.5f ? 0 : m.planks;
+                                    else if (ym < roofY - 0.25f) id = 0;
+                                }
+                                if (id != 255) {
+                                    set(x, y, z, id);
+                                    continue;
+                                }
+                                if (out > 0.0f) continue;
+                            }
                             if (ym < walk) {
                                 const float flare = Batter(ym, batterTop);
                                 const bool band = ym >= walk - 0.25f || (ym >= batterTop && ym < batterTop + 0.25f);
@@ -593,10 +689,11 @@ namespace vortex::voxel {
                                     outer = std::max(outer, r.half + depth);
                                 }
                                 if (s > outer) continue;
-                                // Putlog holes (0.25 m square, every 2 m) 1.5 m under the curtain's walk, for hoardings
-                                // and scaffolds.
-                                if (r.half > 1.2f && s > r.half - 0.25f && s <= r.half && ym >= walk - 1.5f && ym < walk - 1.25f &&
-                                    t + 50.0f - 2.0f * std::floor((t + 50.0f) / 2.0f) < 0.25f) {
+                                // Putlog holes (0.25 m square, every 2 m) just under the curtain's walk, for hoardings and
+                                // scaffolds.
+                                const float beat = t + 50.0f - 2.0f * std::floor((t + 50.0f) / 2.0f);
+                                if (r.half > 1.2f && s > r.half - 0.25f && s <= r.half && ym >= walk - 0.5f && ym < walk - 0.25f && beat >= 1.0f &&
+                                    beat < 1.25f) {
                                     set(x, y, z, 0);
                                     continue;
                                 }
@@ -609,7 +706,10 @@ namespace vortex::voxel {
                                 const float along = t + 50.0f, merlon = std::floor(along / 2.75f);
                                 const bool slit = int(merlon) % 2 == 0 && std::abs(along - (merlon * 2.75f + 1.0f)) < 0.07f && ym >= walk + 0.5f &&
                                                   ym < walk + kParapet + kMerlon - 0.25f;
-                                set(x, y, z, slit ? 0 : m.ashlar);
+                                // A doorway through the parapet onto the hoarding every 4 m.
+                                const float door = t + 50.0f - 4.0f * std::floor((t + 50.0f) / 4.0f);
+                                const bool doorway = hoard && door >= 1.75f && door < 2.5f && ym < walk + 2.0f;
+                                set(x, y, z, slit || doorway ? 0 : m.ashlar);
                             }
                         }
                     }
@@ -684,6 +784,48 @@ namespace vortex::voxel {
                     }
                 break;
 
+            case FortShape::Roof: {
+                const glm::vec2 o = r.b, side(-o.y, o.x);
+                const float shell = (std::ceil(r.height) + 1.0f) * vs;   // worldgen.md C5: rise per voxel of run, plus one
+                for (int z = lo.z; z < hi.z; ++z)
+                    for (int x = lo.x; x < hi.x; ++x) {
+                        const glm::vec2 q = glm::vec2((float(x) + 0.5f) * vs, (float(z) + 0.5f) * vs) - r.a;
+                        const float u = Dot(q, o), v = Dot(q, side), au = std::abs(u), av = std::abs(v);
+                        float d = 0.0f;
+                        bool rafter = false, tie = false, king = false, gableEnd = false;
+                        if (r.roof == FortRoof::Gable) {
+                            if (au > r.length + 0.25f) continue;
+                            d = av;
+                            const float beat = u + 50.0f - std::floor(u + 50.0f);
+                            rafter = beat < 0.25f || d < 0.125f;
+                            tie = u + 50.0f - 2.0f * std::floor((u + 50.0f) / 2.0f) < 0.25f;
+                            king = tie && d < 0.125f;
+                            gableEnd = au >= r.length - 0.25f && au <= r.length;
+                        } else {
+                            const bool square = r.block == FortBlock::Keep;
+                            d = square || u <= 0.0f ? std::max(au, av) : std::max(std::max(u, av), (u + av) * 0.70710678f);
+                            for (int k = 0; k < 12 && !rafter; ++k) {
+                                const glm::vec2 dir(kTurn[k][0], kTurn[k][1]);
+                                rafter = Dot(dir, q) > 0.0f && std::abs(Cross(dir, q)) < 0.125f;
+                            }
+                            tie = au < 0.125f || av < 0.125f;
+                            king = Dot(q, q) < 0.0625f;
+                        }
+                        if (d > r.half) continue;
+                        const float surface = r.lo + r.height * (r.half - d);
+                        for (int y = lo.y; y < hi.y; ++y) {
+                            const float ym = (float(y) + 0.5f) * vs;
+                            if (ym >= surface || ym < r.lo) continue;
+                            if (ym >= surface - shell) set(x, y, z, r.id);
+                            else if (gableEnd) set(x, y, z, m.ashlar);
+                            else if (ym >= surface - shell - 0.25f && rafter) set(x, y, z, m.wood);
+                            else if (ym < r.lo + 0.25f && tie && d < r.half - 0.25f) set(x, y, z, m.wood);
+                            else if (king) set(x, y, z, m.wood);
+                        }
+                    }
+                break;
+            }
+
             case FortShape::Block: {
                 const glm::vec2 o = r.b, side(-o.y, o.x);
                 const bool isKeep = r.block == FortBlock::Keep;
@@ -712,6 +854,9 @@ namespace vortex::voxel {
                         const bool turret = isKeep && R - au < 2.5f && R - av < 2.5f;
                         const bool squareCorner = isKeep || u < 0.0f;
                         const float along = au >= av ? v : u;
+                        const bool machi = (r.trim & FortTrim_Machicolations) != 0 && !turret;
+                        const bool corbel = machi && (along + 50.0f) - 1.5f * std::floor((along + 50.0f) / 1.5f) < 0.75f;
+                        const float parapetIn = machi ? R + 0.25f : R - 0.5f, parapetOut = machi ? R + 0.75f : R;
                         const bool joistColumn = u + 50.0f - std::floor(u + 50.0f) < 0.25f;
                         const bool frontDoor = av < (isKeep ? 1.0f : 0.5f) && (isKeep ? u > 0.0f : u < 0.0f);
                         const bool leftDoor = !isKeep && std::abs(u - r.walkLeftU) < 0.5f && v > 0.0f;
@@ -747,7 +892,7 @@ namespace vortex::voxel {
                                 const float crown = turret ? r.hi + 2.5f : r.hi;
                                 if (turret && ym < crown && dist <= R) {
                                     set(x, y, z, m.ashlar);
-                                } else if (dist <= R && dist >= R - 0.5f && ym >= crown &&
+                                } else if (dist <= parapetOut && dist >= parapetIn && ym >= crown &&
                                            (ym < crown + (turret ? 0.0f : kParapet) || (ym < crown + (turret ? 0.0f : kParapet) + kMerlon && Merlon(along + 50.0f)))) {
                                     set(x, y, z, m.ashlar);
                                 }
@@ -766,6 +911,15 @@ namespace vortex::voxel {
                             if (frontDoor && ym >= r.lo && ym < r.lo + (isKeep ? 2.4f : 2.25f) && dist >= R - (isKeep ? 3.0f : towerShell)) {
                                 set(x, y, z, 0);
                                 continue;
+                            }
+                            // Machicolations: 3 stepped corbels (0.25, 0.5, 0.75 m out) in the top 1.125 m; nothing
+                            // between them, so the gallery behind the parapet has drop holes.
+                            if (corbel && dist > R && ym >= r.hi - 1.125f) {
+                                const float out = ym < r.hi - 0.75f ? 0.25f : (ym < r.hi - 0.375f ? 0.5f : 0.75f);
+                                if (dist <= R + out) {
+                                    set(x, y, z, m.ashlar);
+                                    continue;
+                                }
                             }
                             const float outer = R + std::max(Batter(ym, batterTop), band && ym >= batterTop ? 0.125f : 0.0f);
                             if (dist > outer) continue;

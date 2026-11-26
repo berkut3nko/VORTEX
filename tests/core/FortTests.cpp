@@ -395,3 +395,127 @@ TEST(Fort, EveryRecordsBoundsHoldAllItWrites) {
 
 
 
+
+TEST(Fort, RoofShellsAreThickEnoughForTheirPitch) {
+    // worldgen.md C5: a stepped shell's vertical thickness is at least its rise per voxel of run plus one voxel, so each
+    // step overlaps the next and the shell holds together.
+    const FortWorld& w = FortSetup();
+    const float vs = w.land.voxelSize;
+    int roofs = 0;
+    for (const FortRecord& r : w.plan.records) {
+        if (r.shape != FortShape::Roof) continue;
+        const glm::vec2 side(-r.b.y, r.b.x);
+        const glm::vec2 q = r.roof == FortRoof::Gable ? r.a + r.b * (r.length * 0.5f) + side * (r.half * 0.5f) : r.a + side * (r.half * 0.5f);
+        const float d = r.roof == FortRoof::Gable ? r.half * 0.5f : r.half * 0.5f;
+        const float surface = r.lo + r.height * (r.half - d);
+        // From above the surface, find the first cover voxel of the column, then count the cover under it.
+        float y = surface + 0.5f;
+        while (y > surface - 1.0f && VoxelAt(*w.generator, vs, glm::vec3(q.x, y, q.y)) != r.id) y -= vs;
+        int thick = 0;
+        for (; y > surface - 2.0f && VoxelAt(*w.generator, vs, glm::vec3(q.x, y, q.y)) == r.id; y -= vs) ++thick;
+        EXPECT_GE(thick, int(std::ceil(r.height)) + 1) << "the roof at (" << r.a.x << ", " << r.a.y << ")";
+        ++roofs;
+    }
+    EXPECT_GE(roofs, 10);
+}
+
+TEST(Fort, TowersCarryRoofsOnTrussesOverAnOpenTopFloor) {
+    const FortWorld& w = FortSetup();
+    const WorldMaterials& m = w.land.materials;
+    const float vs = w.land.voxelSize;
+    const FortRecord* tower = nullptr;
+    const FortRecord* roof = nullptr;
+    for (size_t i = 0; i + 1 < w.plan.records.size() && tower == nullptr; ++i)
+        if (w.plan.records[i].shape == FortShape::Block && w.plan.records[i].block == FortBlock::Tower) {
+            tower = &w.plan.records[i];
+            roof = &w.plan.records[i + 1];
+        }
+    ASSERT_NE(tower, nullptr);
+    ASSERT_EQ(roof->shape, FortShape::Roof);
+    const glm::vec2 o = tower->b, side(-o.y, o.x);
+    const auto at = [&](float u, float v, float y) {
+        const glm::vec2 p = tower->a + o * u + side * v;
+        return VoxelAt(*w.generator, vs, glm::vec3(p.x, y, p.y));
+    };
+    EXPECT_EQ(at(0.0f, 1.0f, roof->lo + roof->height * (roof->half - 1.0f) - 0.2f), m.slate) << "the slate cone";
+    EXPECT_EQ(at(1.0f, 0.0f, roof->lo + 0.125f), m.wood) << "a tie beam";
+    for (float h = 0.125f; h < 1.8f; h += 0.25f) EXPECT_EQ(at(-1.5f, 1.5f, tower->hi + h), 0) << "headroom on the top floor at " << h << " m";
+}
+
+TEST(Fort, MachicolationsHaveDropHolesBetweenTheirCorbels) {
+    const FortWorld& w = FortSetup();
+    const WorldMaterials& m = w.land.materials;
+    const float vs = w.land.voxelSize;
+    const FortRecord* keep = nullptr;
+    for (const FortRecord& r : w.plan.records)
+        if (r.shape == FortShape::Block && r.block == FortBlock::Keep) keep = &r;
+    ASSERT_NE(keep, nullptr);
+    const glm::vec2 o = keep->b, side(-o.y, o.x);
+    const auto at = [&](float u, float v, float y) {
+        const glm::vec2 p = keep->a + o * u + side * v;
+        return VoxelAt(*w.generator, vs, glm::vec3(p.x, y, p.y));
+    };
+    // On the face along +side, a corbel at u = -0.125 and a drop hole at u = 0.625 (corbels 0.75 m wide every 1.5 m).
+    EXPECT_EQ(at(-0.125f, keep->half + 0.125f, keep->hi - 0.25f), m.ashlar) << "a corbel";
+    for (float y = keep->hi - 1.5f; y < keep->hi; y += 0.25f) EXPECT_EQ(at(0.625f, keep->half + 0.125f, y), 0) << "the drop hole at " << y;
+    EXPECT_EQ(at(0.625f, keep->half + 0.5f, keep->hi + 0.5f), m.ashlar) << "the parapet out on the corbels";
+}
+
+TEST(Fort, HoardingsHangOnTheCurtainByTheGate) {
+    const FortWorld& w = FortSetup();
+    const WorldMaterials& m = w.land.materials;
+    const float vs = w.land.voxelSize;
+    // The hoarded run with the longest stretch clear of the gatehouse's gap.
+    const FortRecord* run = nullptr;
+    float freeFrom = 0.0f, freeTo = 0.0f;
+    int hoarded = 0;
+    for (const FortRecord& r : w.plan.records) {
+        if (r.shape != FortShape::Wall || (r.trim & FortTrim_Hoarding) == 0) continue;
+        ++hoarded;
+        const float l = glm::length(r.b - r.a);
+        float a0 = 0.0f, a1 = l;
+        if (r.gapHi >= r.gapLo) {
+            if (r.gapLo - 0.0f > l - r.gapHi) a1 = std::min(l, r.gapLo);
+            else a0 = std::max(0.0f, r.gapHi);
+        }
+        if (a1 - a0 > freeTo - freeFrom) {
+            run = &r;
+            freeFrom = a0;
+            freeTo = a1;
+        }
+    }
+    EXPECT_EQ(hoarded, 4);
+    ASSERT_NE(run, nullptr);
+    ASSERT_GT(freeTo - freeFrom, 3.0f);
+    const float len = glm::length(run->b - run->a);
+    const glm::vec2 d = (run->b - run->a) / len;
+    glm::vec2 n(d.y, -d.x);
+    if (glm::dot(n, (run->a + run->b) * 0.5f - w.plan.keep) < 0.0f) n = -n;
+    const auto at = [&](float t, float s, float overWalk) {
+        const glm::vec2 p = run->a + d * t + n * s;
+        return VoxelAt(*w.generator, vs, glm::vec3(p.x, FortWalk(*run, t) + overWalk, p.y));
+    };
+    // A point along the run where the 2 m pattern is at 0.7 m (floor, no slot, no slit), and one at 1.1 m (a beam).
+    const float mid = (freeFrom + freeTo) * 0.5f;
+    const float floorT = mid - (mid + 50.0f - 2.0f * std::floor((mid + 50.0f) / 2.0f)) + 0.7f;
+    const float beamT = floorT + 0.4f;
+    EXPECT_EQ(at(floorT, run->half + 0.75f, -0.125f), m.planks) << "the gallery's floor";
+    EXPECT_EQ(at(floorT, run->half + 0.75f, 1.0f), 0) << "inside the gallery";
+    EXPECT_EQ(at(floorT, run->half + 1.375f, 1.0f), m.planks) << "its outer wall";
+    EXPECT_EQ(at(floorT, run->half + 0.75f, 2.6f - 0.75f * 0.6f - 0.125f), m.planks) << "its pent roof";
+    EXPECT_EQ(at(beamT, run->half + 0.5f, -0.375f), m.wood) << "a putlog beam";
+}
+
+TEST(Fort, TheGatehouseHasAGableRoofAndABell) {
+    const FortWorld& w = FortSetup();
+    const WorldMaterials& m = w.land.materials;
+    const float vs = w.land.voxelSize, t0 = w.plan.gateGround + 14.0f;
+    const glm::vec2 ridge = glm::abs(w.plan.across);
+    const auto at = [&](float along, float y) {
+        const glm::vec2 p = w.plan.gatePoint + ridge * along;
+        return VoxelAt(*w.generator, vs, glm::vec3(p.x, y, p.y));
+    };
+    EXPECT_EQ(at(3.0f, t0 + 3.0f - 0.0625f), m.roofTile) << "the ridge";
+    EXPECT_EQ(at(5.875f, t0 + 1.0f), m.ashlar) << "a stone gable end";
+    EXPECT_EQ(at(0.0f, t0 + 4.25f), m.iron) << "the bell";
+}

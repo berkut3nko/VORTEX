@@ -26,6 +26,19 @@ export namespace vortex::voxel {
         Vault = 4,    ///< a barrel vault's air: a half circle over the footprint [a, b] from `lo`, along x (id 0) or z (id 1)
         Tunnel = 5,   ///< a lined passage from a to b, its floor rising from `lo` to `hi`: the culvert's crawl and room
         Spiral = 6,   ///< a lined spiral stair in a 1 m shaft around a, from `lo` up to the ground at `hi`; open below `lo + height`
+        Roof = 7,     ///< a pitched roof from its eaves at `lo`: a cone or pyramid (`roof` Cone, the footprint of `block`) or a gable
+    };
+
+    /// @brief The kinds of Roof records.
+    enum class FortRoof : uint8_t {
+        Cone = 0,     ///< rising `height` per metre in from the eave at `half` over the footprint of `block` around a, facing b
+        Gable = 1,    ///< a ridge along b through a, `length` either side; the slopes fall `height` per metre to `half`
+    };
+
+    /// @brief Bits of FortRecord::trim.
+    enum FortTrim : uint8_t {
+        FortTrim_Machicolations = 1,   ///< Block: the parapet stands 0.75 m out on stepped corbels, with drop holes between
+        FortTrim_Hoarding = 2,         ///< Wall: a timber gallery outside the parapet at the walk's level
     };
 
     /// @brief The kinds of Block records.
@@ -55,6 +68,9 @@ export namespace vortex::voxel {
         float flatA = 0.0f;          ///< Wall: the walk stays level this far from a and from b (beside a tower), ramping
         float flatB = 0.0f;          ///<       between
         uint8_t caps = 0;            ///< Tunnel: 1 a wall at a with a crawl-sized doorway, 2 a wall at b
+        uint8_t trim = 0;            ///< FortTrim bits
+        FortRoof roof = FortRoof::Cone;
+        float length = 0.0f;         ///< Roof (Gable): half the ridge's length
         float height = 0.0f;         ///< Tunnel: the clear height over its floor
         float grateTo = 0.0f;        ///< Tunnel: an iron grate in its first metres from a; a granite frame to twice that
         float bulkheadAt = -1.0f;    ///< Tunnel: an iron-bound oak bulkhead 0.25 m thick at this distance from a
