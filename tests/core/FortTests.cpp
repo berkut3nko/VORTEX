@@ -519,3 +519,148 @@ TEST(Fort, TheGatehouseHasAGableRoofAndABell) {
     EXPECT_EQ(at(5.875f, t0 + 1.0f), m.ashlar) << "a stone gable end";
     EXPECT_EQ(at(0.0f, t0 + 4.25f), m.iron) << "the bell";
 }
+
+TEST(Fort, LeanTosStandAgainstTheCurtainOnTimberFrames) {
+    const FortWorld& w = FortSetup();
+    const WorldMaterials& m = w.land.materials;
+    const float vs = w.land.voxelSize;
+    int buildings = 0;
+    for (const FortRecord& r : w.plan.records) {
+        if (r.shape != FortShape::LeanTo) continue;
+        ++buildings;
+        const float len = glm::length(r.b - r.a);
+        const glm::vec2 d = (r.b - r.a) / len;
+        const float floorTop = r.lo + (r.building == FortBuilding::Granary ? 0.75f : 0.0f);
+        const auto at = [&](float t, float across, float overFloor) {
+            const glm::vec2 p = r.a + d * t + r.out * across;
+            return VoxelAt(*w.generator, vs, glm::vec3(p.x, floorTop + overFloor, p.y));
+        };
+        const int doorBay = int(std::floor(len / 4.0f));
+        EXPECT_EQ(at(2.0f + 0.1f, r.half - 0.125f, 1.0f), m.wood) << "a post of the front wall";
+        int infill = 0;
+        for (float t = 0.0f; t < len; t += 0.125f) infill += at(t, r.half - 0.125f, 0.5f) == m.wattleDaub ? 1 : 0;
+        EXPECT_GT(infill, 4) << "wattle-and-daub between the frame's timbers";
+        EXPECT_EQ(at(2.0f * float(doorBay) + 1.0f, r.half - 0.125f, 1.0f), 0) << "the door";
+        bool roofed = false;
+        for (float y = r.hi - floorTop + 0.25f; y > 0.0f && !roofed; y -= 0.125f) roofed = at(len * 0.5f, r.half * 0.5f, y) == r.id;
+        EXPECT_TRUE(roofed) << "the roof over the middle";
+    }
+    EXPECT_GE(buildings, 3);   // the workshop first (the mid route), then as the runs clear of the towers allow
+}
+
+TEST(Fort, TheWorkshopsRoofReachesUnderTheWallWalk) {
+    // The mid route M1: from the workshop's roof against the curtain, 1 m up onto the walk.
+    const FortWorld& w = FortSetup();
+    const float vs = w.land.voxelSize;
+    const FortRecord* workshop = nullptr;
+    for (const FortRecord& r : w.plan.records)
+        if (r.shape == FortShape::LeanTo && r.building == FortBuilding::Workshop) workshop = &r;
+    ASSERT_NE(workshop, nullptr);
+    const glm::vec2 d = glm::normalize(workshop->b - workshop->a);
+    const glm::vec2 p = workshop->a + d * 1.5f + workshop->out * 0.25f;
+    EXPECT_EQ(VoxelAt(*w.generator, vs, glm::vec3(p.x, workshop->hi - 0.25f, p.y)), workshop->id) << "the roof's top edge";
+    // The walk over it: the wall's top 1-1.25 m above the roof's edge, nothing on the walk's inner side.
+    const glm::vec2 q = p - workshop->out * 1.5f;   // on the walk, inside the parapet
+    float top = workshop->hi;
+    while (top < workshop->hi + 3.0f && VoxelAt(*w.generator, vs, glm::vec3(q.x, top + 0.0625f, q.y)) != 0) top += vs;
+    EXPECT_LE(top - workshop->hi, 1.25f) << "the walk is a jump up from the roof";
+}
+
+TEST(Fort, ScaffoldsClimbFromTheGroundToTheirTopDeck) {
+    // A player (1.8 m) walks every deck and climbs every flight with headroom; the keep's and the tower's doors open
+    // under the lowest deck's ledgers.
+    const FortWorld& w = FortSetup();
+    const WorldMaterials& m = w.land.materials;
+    const float vs = w.land.voxelSize;
+    int scaffolds = 0;
+    for (const FortRecord& r : w.plan.records) {
+        if (r.shape != FortShape::Scaffold) continue;
+        ++scaffolds;
+        const float len = glm::length(r.b - r.a);
+        const glm::vec2 d = (r.b - r.a) / len;
+        const auto at = [&](float t, float s, float y) {
+            const glm::vec2 p = r.a + d * t + r.out * s;
+            return VoxelAt(*w.generator, vs, glm::vec3(p.x, y, p.y));
+        };
+        const auto clear = [&](float t, float s, float floor) {
+            for (float y = floor + 0.0625f; y < floor + 1.85f; y += vs)
+                if (at(t, s, y) != 0) return false;
+            return true;
+        };
+        const int lifts = int(std::lround((r.hi - r.lo) / 2.5f));
+        ASSERT_GE(lifts, 1);
+        for (int j = 0; j <= lifts; ++j) {
+            const float deck = r.lo + 2.5f * float(j);
+            // The lane beside the flights, along the whole deck.
+            for (float t = 0.5f; t <= len - 0.5f; t += 0.5f) {
+                EXPECT_EQ(at(t, 3.0f, deck + 0.125f), m.planks) << "site " << int(r.id) << " deck " << j << " at " << t;
+                EXPECT_TRUE(clear(t, 3.0f, deck + 0.25f)) << "site " << int(r.id) << " headroom on deck " << j << " at " << t;
+            }
+            if (j == lifts) break;
+            // The flight from this deck to the next: every step, with headroom over it.
+            for (int k = 0; k < 10; ++k) {
+                const float run = 0.125f + 0.25f * float(k), t = j % 2 == 0 ? 0.5f + run : len - 0.5f - run;
+                const float step = deck + 0.25f * float(k + 1);
+                EXPECT_EQ(at(t, 2.125f, step - 0.0625f), m.planks) << "site " << int(r.id) << " flight " << j << " step " << k;
+                EXPECT_TRUE(clear(t, 2.125f, step)) << "site " << int(r.id) << " headroom on flight " << j << " step " << k;
+            }
+        }
+        if (r.height > 0.0f) {
+            // The flight from the ground at b's end: solid at its foot, open over its top steps.
+            const float base = r.lo - r.height;
+            EXPECT_NE(at(len - 0.5f - 0.125f, 2.125f, base + 0.125f), 0) << "the ground flight's foot";
+            for (int k = int(std::lround(r.height / 0.25f)) - 4; k < int(std::lround(r.height / 0.25f)); ++k) {
+                if (k < 0) continue;
+                const float run = 0.125f + 0.25f * float(k), step = base + 0.25f * float(k + 1);
+                EXPECT_TRUE(clear(len - 0.5f - run, 2.125f, step)) << "site " << int(r.id) << " headroom on the ground flight step " << k;
+            }
+        } else if (r.height == 0.0f) {
+            EXPECT_NE(at(len * 0.5f, 3.0f, r.lo - 0.0625f), 0) << "site " << int(r.id) << ": the lowest deck stands on the ground";
+            // A door in the middle of the face: out from it across the scaffold's foot.
+            for (const float s : {0.5f, 1.0f, 2.125f, 3.0f})
+                EXPECT_TRUE(clear(len * 0.5f + (s > 2.0f ? 0.5f : 0.0f), s, r.lo + 0.25f)) << "site " << int(r.id) << " out of the door at " << s;
+        }
+    }
+    EXPECT_GE(scaffolds, 2);   // the keep's, the unfinished tower's and H1's where they fit
+}
+
+TEST(Fort, TheRepairPatchOpensTheParapetOverItsScaffold) {
+    const FortWorld& w = FortSetup();
+    const WorldMaterials& m = w.land.materials;
+    const float vs = w.land.voxelSize;
+    const FortRecord* run = nullptr;
+    for (const FortRecord& r : w.plan.records)
+        if (r.shape == FortShape::Wall && r.patchHi > r.patchLo) run = &r;
+    ASSERT_NE(run, nullptr);
+    const float len = glm::length(run->b - run->a), t = (run->patchLo + run->patchHi) * 0.5f;
+    const glm::vec2 d = (run->b - run->a) / len;
+    glm::vec2 n(d.y, -d.x);
+    if (glm::dot(n, (run->a + run->b) * 0.5f - w.plan.keep) < 0.0f) n = -n;
+    const glm::vec2 face = run->a + d * t + n * (run->half - 0.25f);
+    const float walk = FortWalk(*run, t);
+    EXPECT_EQ(VoxelAt(*w.generator, vs, glm::vec3(face.x, walk - 1.0f, face.y)), m.brick) << "the brick patch";
+    EXPECT_EQ(VoxelAt(*w.generator, vs, glm::vec3(face.x, walk + 0.5f, face.y)), 0) << "no parapet over it";
+}
+
+TEST(Fort, TheUnfinishedTowerHasARaggedTopAndNoRoof) {
+    const FortWorld& w = FortSetup();
+    const float vs = w.land.voxelSize;
+    for (size_t i = 0; i < w.plan.records.size(); ++i) {
+        const FortRecord& r = w.plan.records[i];
+        if (r.shape != FortShape::Block || (r.trim & FortTrim_Unfinished) == 0) continue;
+        ASSERT_TRUE(i + 1 == w.plan.records.size() || w.plan.records[i + 1].shape != FortShape::Roof) << "no roof";
+        EXPECT_EQ(VoxelAt(*w.generator, vs, glm::vec3(r.a.x - r.b.x * 3.0f, r.hi + 0.5f, r.a.y - r.b.y * 3.0f)), 0) << "no crown";
+        int built = 0, open = 0;
+        for (float v = -3.0f; v <= 3.0f; v += 0.5f) {
+            const glm::vec2 p = r.a - r.b * 3.0f + glm::vec2(-r.b.y, r.b.x) * v;
+            (VoxelAt(*w.generator, vs, glm::vec3(p.x, r.hi - 1.0f, p.y)) != 0 ? built : open)++;
+        }
+        EXPECT_GT(built, 0) << "some of the top storey stands";
+        EXPECT_GT(open, 0) << "and some is missing";
+        return;
+    }
+    FAIL() << "no unfinished tower";
+}
+
+
+

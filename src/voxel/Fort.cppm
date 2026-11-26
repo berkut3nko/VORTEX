@@ -27,7 +27,13 @@ export namespace vortex::voxel {
         Tunnel = 5,   ///< a lined passage from a to b, its floor rising from `lo` to `hi`: the culvert's crawl and room
         Spiral = 6,   ///< a lined spiral stair in a 1 m shaft around a, from `lo` up to the ground at `hi`; open below `lo + height`
         Roof = 7,     ///< a pitched roof from its eaves at `lo`: a cone or pyramid (`roof` Cone, the footprint of `block`) or a gable
+        LeanTo = 8,   ///< a timber-framed building against the curtain's inner face from a to b, `half` deep, its floor at `lo`
+        Scaffold = 9, ///< construction scaffolding along a face from a to b, standing out along `out`, decks every 2.5 m from `lo` up to `hi`; `height` the rise of a flight from the ground to `lo` (0: the lowest deck stands on the ground, solid under it; < 0: no flight from the ground)
+        Beam = 10,    ///< an oriented box of `id` (0: air) from a to b, `half` either side, from `lo` to `hi`, rising `height` from a to b
     };
+
+    /// @brief The kinds of LeanTo records (fortress.md "Lean-to buildings").
+    enum class FortBuilding : uint8_t { Stables = 0, Forge = 1, Barracks = 2, Kitchen = 3, Granary = 4, Workshop = 5 };
 
     /// @brief The kinds of Roof records.
     enum class FortRoof : uint8_t {
@@ -39,6 +45,7 @@ export namespace vortex::voxel {
     enum FortTrim : uint8_t {
         FortTrim_Machicolations = 1,   ///< Block: the parapet stands 0.75 m out on stepped corbels, with drop holes between
         FortTrim_Hoarding = 2,         ///< Wall: a timber gallery outside the parapet at the walk's level
+        FortTrim_Unfinished = 4,       ///< Block: the top 2 m of the shell ragged, no crown and no roof (under construction)
     };
 
     /// @brief The kinds of Block records.
@@ -69,6 +76,10 @@ export namespace vortex::voxel {
         float flatB = 0.0f;          ///<       between
         uint8_t caps = 0;            ///< Tunnel: 1 a wall at a with a crawl-sized doorway, 2 a wall at b
         uint8_t trim = 0;            ///< FortTrim bits
+        FortBuilding building = FortBuilding::Stables;   ///< LeanTo: its kind
+        glm::vec2 out{0.0f};         ///< LeanTo: into the bailey (away from the wall). Scaffold: away from the face
+        float patchLo = 0.0f;        ///< Wall: a brick repair patch and a gap in the parapet between these distances along
+        float patchHi = -1.0f;       ///<       the run
         FortRoof roof = FortRoof::Cone;
         float length = 0.0f;         ///< Roof (Gable): half the ridge's length
         float height = 0.0f;         ///< Tunnel: the clear height over its floor
@@ -94,6 +105,10 @@ export namespace vortex::voxel {
         float culvertFloor = 0.0f;           ///< the crawl's floor at the grate
         glm::vec2 culvertExit{0.0f};         ///< where its way out reaches the bailey (the spiral's middle or the ramp's end)
         float culvertExitHeight = 0.0f;      ///< the floor there
+        bool walkway = false;                ///< the walkway set piece (fortress.md "Collapse-to-ramp set pieces") was placed
+        glm::vec2 walkwayStrut{0.0f};        ///< the middle between its 2 struts (world metres)
+        float walkwayGround = 0.0f;          ///< the struts' foot
+        float walkwayDeck = 0.0f;            ///< the deck's top over the struts
     };
 
     /// @brief Plans the castle on the map's site (none when the bake placed no site).

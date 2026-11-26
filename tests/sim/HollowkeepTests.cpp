@@ -208,3 +208,36 @@ TEST(Hollowkeep, ASiegeShotOpensTheCulvertGrate) {
         EXPECT_EQ(simulation.IslandSearchCheck().neckReleases, 0u);
     }
 }
+
+TEST(Hollowkeep, CuttingTheWalkwaysStrutsDropsItsDeck) {
+    // The walkway set piece (fortress.md "Collapse-to-ramp set pieces"): the deck touches nothing but its 2 struts, so a
+    // blast that cuts both under the deck frees it as one piece (it falls, its far end on the inner wall's walk). A
+    // cut at their foot leaves a part out of the release reach (the struts stand about 9 m).
+    const Baked& b = Castle();
+    const auto map = std::make_shared<const voxel::LandMap>(b.map);
+    const voxel::FortPlan plan = voxel::PlanFort(b.map, b.land);
+    ASSERT_TRUE(plan.walkway);
+    const float vs = b.land.voxelSize;
+    sim::SimulationConfig config;
+    config.chunkCapacity = 1536;
+    config.maxParticles = 4096;
+    config.jobThreads = 3;
+    config.world.voxelSize = vs;
+    config.world.windowSize = glm::ivec3(8, 8, 8);
+    config.physics.maxBodies = 2048;
+    config.physics.maxBodyPairs = 4096;
+    config.physics.maxContactConstraints = 4096;
+    config.physics.threads = 1;
+    sim::Simulation simulation(config);
+    ASSERT_TRUE(simulation.Initialize(voxel::CreateLandGenerator(map, b.land)));
+    const glm::vec3 shot(plan.walkwayStrut.x, plan.walkwayDeck - 1.5f, plan.walkwayStrut.y);
+    simulation.World().LoadBlocking(glm::dvec3(shot));
+    const voxel::SphereQ sphere{glm::ivec3(glm::floor(shot / vs * 16.0f)), uint16_t(std::lround(1.2f / vs * 16.0f))};
+    const sim::BlastResult blast = sim::Blast(simulation, sphere, voxel::QuantizePower(6.0f));
+    ASSERT_TRUE(blast.islandsSearched);
+    size_t largest = 0;
+    for (size_t i = 1; i < blast.ops.size(); ++i)
+        if (blast.ops[i].op.kind == sim::WorldOpKind::Detach) largest = std::max(largest, blast.ops[i].edits.size());
+    EXPECT_GT(largest, 1000u) << "the deck falls free as one piece";
+    EXPECT_LT(largest, 45000u) << "within the designed-neck limit (worldgen.md)";
+}

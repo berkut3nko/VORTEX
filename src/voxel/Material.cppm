@@ -122,6 +122,7 @@ export namespace vortex::voxel {
         uint8_t granite = 0, graniteQuoin = 0, ashlar = 0, rubbleCore = 0;
         uint8_t oakIron = 0;    ///< iron-bound oak: bulkheads and gate leaves, holds against the basic blast
         uint8_t slate = 0, roofTile = 0, thatch = 0;   ///< roof covers (Tier 3), at an effective density
+        uint8_t wattleDaub = 0;   ///< plastered wattle infill of timber frames (Tier 3)
     };
 
     /// @brief Fills the world palette with a starter set of natural and building materials.

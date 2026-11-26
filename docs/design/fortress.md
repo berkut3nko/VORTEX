@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| Status | `[fort-1]`-`[fort-3]` built: the land generator stamps Hollowkeep's skeleton, openings, interiors, the low route, roofs and crowns from `voxel::PlanFort` ("The skeleton as built", "Openings and interiors as built", "Roofs and crowns as built"). `[fort-4]` and `[fort-5]` designed. |
+| Status | `[fort-1]`-`[fort-4]` built: the land generator stamps Hollowkeep's skeleton, openings, interiors, the low route, roofs and crowns, the bailey's buildings, scaffolds and walkway from `voxel::PlanFort` ("The skeleton as built", "Openings and interiors as built", "Roofs and crowns as built", "The bailey as built"). `[fort-5]` designed. |
 | Decided | The owner, 2026-11-25: the brief in "The brief" (a detailed medieval fortress as a destructible siege and route-making playground); the answers in the castle draft's section 10 (no trapdoor mechanism, fire spread is in the demo, furniture, medieval construction scaffolding and interactable elements). Us (this design, 2026-11-25): "Decision" items 1-10. |
-| Next | The owner walks the stamped castle (owner check 29) and answers "Open questions". Then `[fort-4]`. |
+| Next | The owner walks the stamped castle (owner check 29) and answers "Open questions". Then `[fort-5]`. |
 | Open | "Open questions (with the answer we recommend)". |
 | History | - |
 | Marks | (e) is an estimate. Every size is a design target until a stage measures it. 1 voxel = 0.125 m; "v" after a number is voxels. |
@@ -416,6 +416,56 @@ The basic blast opens a roof (more than 100 voxels) and releases nothing
 (`Hollowkeep.TheBasicBlastBreachesTheCastleWithoutReleasingIt`). Not yet: dormers (they wait for the keep's upper
 storeys, `[fort-5]`), the GPU cost at fixed cameras on the UHD 620 (the owner's check).
 
+## The bailey as built
+
+`[fort-4]`, 2026-11-26 (`FortShape::LeanTo`, `Scaffold`, `Beam`, `FortBuilding`, `FortTrim_Unfinished`,
+`FortRecord::patchLo` / `patchHi`, `FortPlan::walkway*`):
+- **Lean-tos:** against the curtain's inner face on the runs 3-9 directions from the gate (not the culvert's run),
+  clear of a tower's battered skirt (measured square to the tower, as the run meets it at an angle; 1.5 m from a
+  plain wall end), at least 3 m long. The depth is at most 5 m and leaves a 1 m lane before the inner wall's
+  batter; it is cut by 0.5 m while a tower makes it too short; under 2.5 m, no building (Hollowkeep has 3). The kinds go round workshop, stables, forge,
+  barracks, kitchen, granary, barracks, stables. A stone plinth levels the floor (earth in the stables, planks in
+  the others; the granary 0.75 m up on staddle stones). The frame is wood: posts every 2 m, a sill, a plate at
+  each storey and braces in the end bays, wattle_daub infill 0.25 m thick. A door in the middle bay, windows in
+  every other bay. Barracks and workshop have 2 storeys (a plank floor on joists, a straight stair along the end
+  wall). A brick hearth in the forge and an oven in the kitchen. The roof falls 1 in 2 from 1.75 m under the walk
+  (thatch on stables and granary, planks on the others), on rafters every metre.
+- **The mid route M1:** the workshop is placed first; its roof's top edge is 1 m under the wall walk, so a player
+  steps from the roof onto the walk (`Fort.TheWorkshopsRoofReachesUnderTheWallWalk`).
+- **The high route H1:** a curtain run with no tower at either end, 5-8 directions from the gate, where the outside
+  ground is highest. A brick repair patch with a ragged lower edge in its outer face, a gap in the parapet over it
+  and a scaffold outside along the whole run, its top deck level with the walk at the gap.
+- **Scaffolds** (up to 3: H1, the unfinished tower's back, the keep's gate face up to 18 m; at least 6 m long): wood
+  standards 0.25 m square every 2 m in 2 rows 1.25 m and 3.5 m off the face (clear of the batter), ledgers and
+  putlogs under each deck, plank decks every 2.5 m (2 m clear under the next deck's ledgers for the 1.8 m player),
+  the top deck out to the face, a top rail. A player cannot climb a ladder, so the lifts are joined by plank stairs
+  (0.25 m steps, 0.75 m wide) at alternate ends, with a 1 m lane beside each; the deck is open and no putlog
+  crosses over a flight. With a door under it (the keep, the tower) the decks are level with the door's floor:
+  on level ground the lowest lies on it, solid down to the ground; on a slope it stands 1.8 m clear of the highest
+  ground under its ledgers and a flight from the ground (solid under it) climbs to it where it fits (the tower's
+  6 m scaffold has none). H1 counts its decks down from the walk and always has the flight
+  from the ground, at the run's higher end. A stack of planks and a pile of cut ashlar in front of each.
+- **Flank tower floors:** a tower's floor is the bailey's ground outside its back door (1.25 m out); before, it was
+  the ground inside the tower, and where the bailey climbs behind a tower its door opened into a pit.
+- **The unfinished tower** (`FortTrim_Unfinished`): one flank tower 6-9 directions from the gate, on the side away
+  from H1. Its top 2 m of shell are ragged, it has no crown and no roof.
+- **The walkway** (a collapse-to-ramp set piece): the inner wall's walk stands 1-5 m over the curtain's, so the deck
+  (planks 1.5 m wide on 2 carrying beams; `FortShape::Beam` rises `height` along its length) leaves a flank tower's
+  back door at the wall walks' landing and climbs at most 1 in 1 to 2 m out of the inner wall, then runs level a
+  voxel over its walk through a gap in the parapet (a plank step a voxel high on the walk). It is 0.375 m clear of
+  the tower and stands on 2 wood struts (0.375 m square, under the beams) at a third of its span; the longest
+  span wins. A blast at the struts under the deck releases it as one part under the 45 000-voxel limit
+  (`Hollowkeep.CuttingTheWalkwaysStrutsDropsItsDeck`). The struts stand about 9 m: a test shot at their foot
+  released nothing (the part reaches about 11 m from the cut; worldgen.md limits a release to 84 v of it), so the
+  deck stays in the air.
+- **Materials:** wattle_daub (hardness 0.6, density 900, flammable; strength 10 000 / 4 000 / 3 000).
+
+Measured: the plan has 250 records in 4 ms; the chunks around the keep cost 91 us each with the castle and 82 us
+without it (`vortex_land --chunk-cost`, 2026-11-26, the machine shared with another build; an earlier run 78 / 69). Not yet: the crane (the outer bailey is too narrow for its jib; it moves
+to `[fort-5]` with the siege yard's props), walkways between lean-to upper floors, the scaffold's hoist, scripts
+that check the way a released part tips (the engine's load check releases the walkway; its fall is the owner's
+check 29), the reachability walk on the worn plan (it waits for the bot's path code).
+
 ## Budgets
 
 | Item | Budget | How it is measured |
@@ -444,7 +494,7 @@ storeys, `[fort-5]`), the GPU cost at fixed cameras on the UHD 620 (the owner's 
 | `[fort-1]` | Stamped skeleton: the fort plan and stamper in `vortex.voxel:fort`; the greybox moves out of `WorldOp`s; batters, faces and rubble cores, buttresses, quoins, string courses, parapets with merlons; D-shaped flank towers; materials granite, granite_quoin, ashlar, rubble_core. Acceptance: the plan's golden hash (done: `Fort.GoldenHash`); column classes agree (done: `Fort.ColumnClassesBoundTheStampedCastle`, `Fort.EveryRecordsBoundsHoldAllItWrites`); 0 releases under the basic blast (done: `Hollowkeep.TheBasicBlastBreachesTheCastleWithoutReleasingIt`; the 2x-load dud sweep waits for worldgen.md's test hook); stamp cost measured (done: "The skeleton as built"); shots | Built | - | - |
 | `[fort-2]` | Openings and interiors: arrow slits, doors, windows, murder holes, putlog holes; joists and floors; spiral stairs; vaults and undercrofts; the culvert and grate (L1); oak_iron. Acceptance: the stairs climb every storey with headroom (done: `Fort.TowersHaveSplayedSlitsAndASpiralStairToTheRoof`; a bot walk waits for the bot's path code); L1 leads from its grate to the bailey and a siege shot opens it (done: `Fort.TheCulvertLeadsFromItsGrateToTheBailey`, `Hollowkeep.ASiegeShotOpensTheCulvertGrate`); the vaulted passage (done: `Fort.TheGatePassageIsVaultedWithMurderHoles`); every tower opens onto both walks (done: `Fort.EveryFlankTowerOpensOntoBothWallWalks`); 0 releases (done: the blast tests) | Built | - | - |
 | `[fort-3]` | Roofs and crowns: conical, pyramidal, hipped and gabled roofs on trusses; dormers, chimneys, the bell turret; machicolations and hoardings; slate, roof_tile, thatch. Acceptance: C5 shells hold (done: `Fort.RoofShellsAreThickEnoughForTheirPitch`); roofs on trusses, machicolations, hoardings, the gatehouse's roof and bell (done: `Fort.TowersCarryRoofsOnTrussesOverAnOpenTopFloor`, `Fort.MachicolationsHaveDropHolesBetweenTheirCorbels`, `Fort.HoardingsHangOnTheCurtainByTheGate`, `Fort.TheGatehouseHasAGableRoofAndABell`); 0 releases (done); the GPU cost at fixed cameras (the owner, check 29); dormers wait for `[fort-5]` | Built | - | - |
-| `[fort-4]` | The bailey: lean-tos (stables, forge, barracks, kitchen, granary, workshop), wattle_daub; the construction scaffolding kit at its 3-4 sites, walkways, crane; the set pieces as designed necks; M1 and H1. Acceptance: each set piece releases within limits and tips the planned way (scripts); reachability on the worn plan | Designed | - | - |
+| `[fort-4]` | The bailey: lean-tos (stables, forge, barracks, kitchen, granary, workshop), wattle_daub; the construction scaffolding kit at its 3-4 sites, walkways, crane; the set pieces as designed necks; M1 and H1. Acceptance: lean-tos and scaffolds (done: `Fort.LeanTosStandAgainstTheCurtainOnTimberFrames`, `Fort.ScaffoldsClimbFromTheGroundToTheirTopDeck`, `Fort.TheUnfinishedTowerHasARaggedTopAndNoRoof`); M1 and H1 (done: `Fort.TheWorkshopsRoofReachesUnderTheWallWalk`, `Fort.TheRepairPatchOpensTheParapetOverItsScaffold`); the walkway releases within limits (done: `Hollowkeep.CuttingTheWalkwaysStrutsDropsItsDeck`); the way it tips (the owner, check 29); the crane moves to `[fort-5]`; reachability on the worn plan waits for the bot's path code | Built | - | - |
 | `[fort-5]` | Props and vignettes: room kits, movable props, lights, weathering, soot; fire-ready materials with spread.md. Acceptance: the object count under the cap; the guardroom's lever drives the portcullis; owner check of the look | Designed | - | - |
 
 The order relative to the ROADMAP (`[wg-W1]`, `[mech-3]`, `[spread-S2]`, the demo work) is the owner's call.

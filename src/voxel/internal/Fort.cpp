@@ -7,6 +7,7 @@ module;
 #include <bit>
 #include <cmath>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 module vortex.voxel;
@@ -69,6 +70,15 @@ namespace vortex::voxel {
         /// A splayed arrow slit through a shell, by the depth into the shell (0 at the outer face): 0.14 m wide outside,
         /// 1 m wide at the inner face.
         bool Slit(float lateral, float depthIn, float shell) { return lateral < 0.07f + 0.43f * std::clamp(depthIn / shell, 0.0f, 1.0f); }
+
+        /// A number in [0, 1) from 2 integers (ragged edges: repair patches, unfinished tops).
+        float Ragged(int a, int b) {
+            uint32_t h = uint32_t(a) * 0x9e3779b1u ^ (uint32_t(b) + 0x7f4a7c15u) * 0x85ebca77u;
+            h ^= h >> 15;
+            h *= 0x2c1b3c6du;
+            h ^= h >> 12;
+            return float(h >> 8) * (1.0f / 16777216.0f);
+        }
 
         uint64_t Mix(uint64_t x) {
             x ^= x >> 30;
@@ -298,6 +308,48 @@ namespace vortex::voxel {
             r.trim = FortTrim_Hoarding;
             r.max.y = std::max(r.max.y, V(std::max(r.lo, r.hi) + 3.0f) + 1);
         }
+        // The high route H1 (fortress.md "The 3 bypass loops"): a curtain run with no tower at either end, 5-8
+        // directions from the gate, where the outside ground stands highest (the shortest climb); a brick repair patch in
+        // its outer face and a gap in its parapet, construction scaffolding outside up to the walk.
+        int highRun = -1;
+        float highLo = 0.0f, highHi = 0.0f;
+        {
+            float best = -1.0e30f;
+            for (int k = 0; k < kSiteDirections; ++k) {
+                const int dk = std::abs(((k - site.gate) % kSiteDirections + kSiteDirections + 12) % kSiteDirections - 12);
+                if (dk < 5 || dk > 8 || towerAt(k) || towerAt(k + 1) || curtainRecord[size_t(k)] < 0) continue;
+                const FortRecord& r = plan.records[size_t(curtainRecord[size_t(k)])];
+                const float len = Length(r.b - r.a);
+                const float lo = 1.5f, hi = len - 1.5f;
+                if (hi - lo < 5.0f) continue;   // 2 flights of 2 m and a deck between
+                const glm::vec2 d = (r.b - r.a) / len;
+                glm::vec2 n(d.y, -d.x);
+                if (Dot(n, (r.a + r.b) * 0.5f - keep) < 0.0f) n = -n;
+                const float outside = ground(r.a + d * ((lo + hi) * 0.5f) + n * 3.0f);
+                if (outside > best) {
+                    best = outside;
+                    highRun = k;
+                    highLo = lo;
+                    highHi = hi;
+                }
+            }
+            if (highRun >= 0) {
+                FortRecord& r = plan.records[size_t(curtainRecord[size_t(highRun)])];
+                r.patchLo = highLo;
+                r.patchHi = highHi;
+            }
+        }
+        // The unfinished tower: on the side away from the high route, 6-9 directions from the gate.
+        int unfinishedTower = -1;
+        {
+            const int highSide = highRun >= 0 ? ((highRun - site.gate + kSiteDirections * 2) % kSiteDirections < 12 ? 1 : -1) : 1;
+            for (int k = 0; k < kSiteDirections && unfinishedTower < 0; k += 3) {
+                const int dk = std::abs(((k - site.gate) % kSiteDirections + kSiteDirections + 12) % kSiteDirections - 12);
+                const int sideOf = (k - site.gate + kSiteDirections * 2) % kSiteDirections < 12 ? 1 : -1;
+                // Its scaffold and the stacks in front of it need 8.5 m behind the curtain, and the inner wall beyond.
+                if (towerAt(k) && dk >= 6 && dk <= 9 && sideOf != highSide && site.curtain[size_t(k)] - site.inner[size_t(k)] >= 11.5f) unfinishedTower = k;
+            }
+        }
 
         // 4. Blocks: the flank towers, the gate towers, the keep.
         const auto block = [&](FortBlock kind, glm::vec2 c, glm::vec2 out, float half, float floor, float top) {
@@ -349,16 +401,22 @@ namespace vortex::voxel {
                 const FortRecord& run = plan.records[size_t(right)];
                 rightWalk = FortWalk(run, Length(run.b - run.a) - tr);
             }
-            // The tower stands at least 6 m over its walks.
-            block(FortBlock::Tower, c, out, 3.5f, ground(c - out * 2.0f), std::max(gHi + 14.0f, std::max(leftWalk, rightWalk) + 6.0f));
+            // The tower stands at least 6 m over its walks; its floor is the bailey's ground outside its back door (the
+            // site may slope up behind it).
+            block(FortBlock::Tower, c, out, 3.5f, ground(c - out * 4.75f), std::max(gHi + 14.0f, std::max(leftWalk, rightWalk) + 6.0f));
             FortRecord& tower = plan.records.back();
             tower.walkLeft = leftWalk;
             tower.walkRight = rightWalk;
             tower.walkLeftU = leftU;
             tower.walkRightU = rightU;
-            // A slate roof over the battlements: the tower's own D shape, 2 in 1, its eaves 0.25 m out.
-            const float towerTop = tower.hi;
-            roof(FortRoof::Cone, FortBlock::Tower, c, out, 3.75f, 0.0f, towerTop + kParapet + kMerlon, 2.0f, m.slate);
+            // A slate roof over the battlements: the tower's own D shape, 2 in 1, its eaves 0.25 m out; the unfinished
+            // tower has none.
+            if (k == unfinishedTower) {
+                tower.trim |= FortTrim_Unfinished;
+            } else {
+                const float towerTop = tower.hi;
+                roof(FortRoof::Cone, FortBlock::Tower, c, out, 3.75f, 0.0f, towerTop + kParapet + kMerlon, 2.0f, m.slate);
+            }
         }
         for (const float side : {-1.0f, 1.0f}) {
             const glm::vec2 c = gatePoint + across * (10.0f * side) + axis * 1.0f;
@@ -472,7 +530,7 @@ namespace vortex::voxel {
             float bestScore = -1.0e30f;
             for (int k = 0; k < kSiteDirections; ++k) {
                 const int dk = std::abs(((k - site.gate) % kSiteDirections + kSiteDirections + 12) % kSiteDirections - 12);
-                if (dk < 5 || towerAt(k) || towerAt(k + 1)) continue;
+                if (dk < 5 || towerAt(k) || towerAt(k + 1) || k == highRun) continue;   // not the high route's run
                 glm::vec2 d, n, mid;
                 float len = 0.0f;
                 frame(k, d, n, mid, len);
@@ -548,7 +606,168 @@ namespace vortex::voxel {
             }
         }
 
-        // 7. The keep on its pad: 16 x 16 m, 22 m high, its door towards the gate.
+        // An oriented box (a deck, a beam, a doorway's air) from a to b, `half` either side, from y0 to y1.
+        const auto beam = [&](glm::vec2 from, glm::vec2 to, float half, float y0, float y1, uint8_t id, float rise = 0.0f) {
+            FortRecord r;
+            r.shape = FortShape::Beam;
+            r.a = from;
+            r.b = to;
+            r.half = half;
+            r.lo = y0;
+            r.hi = y1;
+            r.id = id;
+            r.height = rise;
+            setBounds(r, glm::min(from, to) - half - vs, glm::max(from, to) + half + vs, y0 + std::min(0.0f, rise), y1 + std::max(0.0f, rise));
+            plan.records.push_back(r);
+        };
+
+        // 7. The bailey's lean-to buildings (fortress.md "Lean-to buildings"): against the curtain's inner face on the
+        // runs 3-9 directions from the gate (not the culvert's run), clear of a tower's skirt; as deep as the outer
+        // bailey allows with a 1 m lane left before the inner wall's batter; the roof 1 in 2 from 1.75 m under the walk
+        // (the workshop's 1 m: the mid route M1 steps from its roof onto the walk).
+        {
+            static constexpr FortBuilding kKinds[] = {FortBuilding::Workshop, FortBuilding::Stables, FortBuilding::Forge, FortBuilding::Barracks,
+                                                      FortBuilding::Kitchen, FortBuilding::Granary, FortBuilding::Barracks, FortBuilding::Stables};
+            int placed = 0;
+            for (int k = 0; k < kSiteDirections; ++k) {
+                const int dk = std::abs(((k - site.gate) % kSiteDirections + kSiteDirections + 12) % kSiteDirections - 12);
+                const int ri = curtainRecord[size_t(k)];
+                if (dk < 3 || dk > 9 || ri < 0) continue;
+                const FortRecord& wall = plan.records[size_t(ri)];
+                if (wall.clearAt > -1.0e29f) continue;
+                const float len = Length(wall.b - wall.a);
+                const glm::vec2 d = (wall.b - wall.a) / len;
+                glm::vec2 in(-d.y, d.x);
+                if (Dot(in, keep - (wall.a + wall.b) * 0.5f) < 0.0f) in = -in;
+                const size_t i0 = size_t(k), i1 = size_t((k + 1) % kSiteDirections);
+                const float gap = std::min(site.curtain[i0] - site.inner[i0], site.curtain[i1] - site.inner[i1]);
+                float depth = std::min(5.0f, gap - 1.25f - 1.0f - kBatterMax - 1.0f);
+                if (depth < 2.5f) continue;
+                // Clear of a tower's battered skirt (its back is square, 3.5 m + the batter): the run meets the tower at
+                // an angle, so the distance along it is not enough.
+                const auto clearOfTower = [&](float t, int corner) {
+                    if (!towerAt(corner)) return true;
+                    const glm::vec2 c = vertex(site.curtain, corner), o = LandSiteDirection(corner), side(-o.y, o.x);
+                    for (float w = -0.25f; w <= depth + 0.75f; w += 0.25f) {
+                        const glm::vec2 q = wall.a + d * t + in * (1.25f + w) - c;
+                        if (std::max(std::abs(Dot(q, o)), std::abs(Dot(q, side))) < 3.5f + kBatterMax + 0.25f) return false;
+                    }
+                    return true;
+                };
+                // Shallower by 0.5 m while that is too short (a tower's corner cuts into the deep side first).
+                float t0 = 1.5f, t1 = len - 1.5f;
+                for (;; depth -= 0.5f) {
+                    t0 = 1.5f;
+                    t1 = len - 1.5f;
+                    while (t0 < len && !clearOfTower(t0 - 0.25f, k)) t0 += 0.25f;
+                    while (t1 > 0.0f && !clearOfTower(t1 + 0.25f, k + 1)) t1 -= 0.25f;
+                    if (t1 - t0 >= 3.0f || depth - 0.5f < 2.5f) break;
+                }
+                const float length = t1 - t0;   // posts every 2 m from its start, corner posts at both ends
+                if (length < 3.0f) continue;
+                const FortBuilding kind = kKinds[placed % 8];
+                const glm::vec2 a = wall.a + d * t0 + in * 1.25f, b = a + d * length;
+                float floor = -1.0e30f, walk = 1.0e30f;
+                for (float t = 0.0f; t <= length + 0.01f; t += 1.0f) {
+                    walk = std::min(walk, FortWalk(wall, t0 + t));
+                    for (float w = 0.0f; w <= depth + 0.01f; w += 1.0f) floor = std::max(floor, ground(a + d * t + in * w));
+                }
+                const float raise = kind == FortBuilding::Granary ? 0.75f : 0.0f;
+                const float high = walk - (kind == FortBuilding::Workshop ? 1.0f : 1.75f);
+                depth = std::min(depth, 2.0f * (high - floor - raise - 2.75f));   // the front wall keeps a 2.25 m door
+                if (depth < 2.5f) continue;
+                FortRecord r;
+                r.shape = FortShape::LeanTo;
+                r.building = kind;
+                r.a = a;
+                r.b = b;
+                r.out = in;
+                r.half = depth;
+                r.lo = floor;
+                r.hi = high;
+                r.height = (kind == FortBuilding::Workshop || kind == FortBuilding::Barracks) && high - floor - raise >= 6.5f ? 2.0f : 1.0f;
+                r.id = kind == FortBuilding::Stables || kind == FortBuilding::Granary ? m.thatch
+                       : kind == FortBuilding::Forge || kind == FortBuilding::Kitchen ? m.roofTile
+                                                                                     : m.planks;
+                const glm::vec2 c0 = glm::min(a, b), c1 = glm::max(a, b);
+                const glm::vec2 far0 = glm::min(a + in * (depth + 0.5f), b + in * (depth + 0.5f)), far1 = glm::max(a + in * (depth + 0.5f), b + in * (depth + 0.5f));
+                float gLo = 0.0f, gHi = 0.0f;
+                groundRange(glm::min(c0, far0) - 0.5f, glm::max(c1, far1) + 0.5f, gLo, gHi);
+                setBounds(r, glm::min(c0, far0) - 0.5f, glm::max(c1, far1) + 0.5f, std::min(gLo, floor) - 0.75f, high + 2.0f);
+                plan.records.push_back(r);
+                ++placed;
+            }
+        }
+
+        // 8. The walkway (fortress.md "Collapse-to-ramp set pieces"): a timber bridge 1.5 m wide from the wall walks'
+        // landing in a flank tower, out of its back door, up at most 1 in 1 to the inner wall's walk (higher than the
+        // curtain's). Clear of both ends and carried only by 2 struts under its beams: cut them and the deck falls free,
+        // its far end on the inner wall's walk (a ramp into the bailey). The longest such span is chosen.
+        {
+            int best = -1;
+            float bestSpan = 0.0f;
+            for (int k = 0; k < kSiteDirections; k += 3) {
+                const int dk = std::abs(((k - site.gate) % kSiteDirections + kSiteDirections + 12) % kSiteDirections - 12);
+                if (!towerAt(k) || k == unfinishedTower || dk < 3 || dk > 9) continue;
+                const size_t i = size_t(k);
+                const glm::vec2 c = vertex(site.curtain, k);
+                const FortRecord* innerRun = nullptr;
+                const FortRecord* tower = nullptr;
+                for (const FortRecord& r : plan.records) {
+                    if (r.shape == FortShape::Wall && r.half < 1.2f && Length(r.a - vertex(site.inner, k)) < 0.01f) innerRun = &r;
+                    if (r.shape == FortShape::Block && r.block == FortBlock::Tower && Length(r.a - c) < 0.01f) tower = &r;
+                }
+                if (innerRun == nullptr || tower == nullptr || std::abs(tower->walkLeft - tower->walkRight) > 0.01f) continue;
+                // From 0.375 m clear of the tower (3 voxels whatever the facing) to 2 m out of the inner wall's middle: its
+                // face, and the corner of the 2 runs that meet here beside the deck.
+                const float span = (site.curtain[i] - 3.5f - 0.375f) - (site.inner[i] + 2.0f);
+                const float rise = FortWalk(*innerRun, 0.5f) + 0.25f + vs - tower->walkLeft;
+                if (span < 2.0f || std::abs(rise) > span || span <= bestSpan) continue;
+                best = k;
+                bestSpan = span;
+            }
+            if (best >= 0) {
+                const size_t i = size_t(best);
+                const glm::vec2 o = LandSiteDirection(best), side(-o.y, o.x);
+                const glm::vec2 c = vertex(site.curtain, best);
+                const FortRecord* innerRun = nullptr;
+                float landing = 0.0f;
+                for (const FortRecord& r : plan.records) {
+                    if (r.shape == FortShape::Wall && r.half < 1.2f && Length(r.a - vertex(site.inner, best)) < 0.01f) innerRun = &r;
+                    if (r.shape == FortShape::Block && r.block == FortBlock::Tower && Length(r.a - c) < 0.01f) landing = r.walkLeft;
+                }
+                const float walk = FortWalk(*innerRun, 0.5f);
+                const float deckTop = walk + 0.25f + vs;   // over the walk, a voxel clear of it at any voxel size
+                const glm::vec2 from = c - o * (3.5f + 0.375f), edge = keep + o * (site.inner[i] + 2.0f), to = keep + o * (site.inner[i] + 0.25f);
+                const float span = Length(edge - from), slope = (deckTop - landing) / span;
+                // The doorways: through the tower's back shell onto its landing, through the inner wall's parapet.
+                beam(c - o * 1.75f, c - o * 3.75f, 0.6f, landing, landing + 2.25f, 0);
+                beam(edge + o * 0.25f, keep + o * (site.inner[i] - 0.25f), 1.0f, walk, deckTop + 2.25f, 0);
+                // A plank step a voxel high on the walk, 0.25 m clear of the deck's end: 2 steps under the stepping height.
+                beam(to - o * 0.25f, to - o * 0.75f, 0.75f, walk, walk + vs, m.planks);
+                // The deck: up from the landing's level to the wall's face, then level over the walk.
+                beam(from, edge, 0.75f, landing - 0.25f, landing, m.planks, deckTop - landing);
+                beam(edge, to, 0.75f, deckTop - 0.25f, deckTop, m.planks);
+                // The carrying beams under the slope, stopping 0.5 m short of its end.
+                const glm::vec2 beamEnd = keep + o * (site.inner[i] + 2.5f);
+                const float beamRise = slope * Length(beamEnd - from);
+                for (const float s : {-0.625f, 0.625f}) beam(from + side * s, beamEnd + side * s, 0.125f, landing - 0.5f, landing - 0.25f, m.wood, beamRise);
+                // The struts at a third of the span: 0.375 m square under each carrying beam, up into its rows (the
+                // same voxel rule as the beam, so they meet whatever the facing).
+                const float along = span / 3.0f;
+                const glm::vec2 strut = from - o * along;
+                const float foot = std::min(ground(strut + side * 0.625f), ground(strut - side * 0.625f));
+                const float under = landing + slope * along - 0.25f;
+                for (const float s : {-0.625f, 0.625f})
+                    beam(strut + side * s - o * 0.1875f, strut + side * s + o * 0.1875f, 0.1875f, foot - 0.5f, under, m.wood);
+                plan.walkway = true;
+                plan.walkwayStrut = strut;
+                plan.walkwayGround = foot;
+                plan.walkwayDeck = under + 0.25f;
+            }
+        }
+
+        // 9. The keep on its pad: 16 x 16 m, 22 m high, its door towards the gate.
         block(FortBlock::Keep, keep, axis, 8.0f, site.keepGround, site.keepGround + 22.0f);
         plan.records.back().trim = FortTrim_Machicolations;
         {
@@ -564,6 +783,88 @@ namespace vortex::voxel {
             column(flue, 0.5f, top - 0.5f, top + 6.5f, m.brick);
             column(flue, 0.25f, top + 3.0f, top + 6.5f, 0);
         }
+
+        // 10. Construction scaffolding (fortress.md "Construction scaffolding, walkways and cranes"): putlog scaffolds,
+        // standing 1.25 m off the face (clear of the batter), decks 2.25 m deep every 2.5 m (2 m clear under the next
+        // deck's ledgers) with stair flights between them at alternate ends (a player cannot climb a ladder) and a 1 m
+        // lane beside each flight; stacks of planks and cut stone in front. With a base (a door's floor) the lowest deck
+        // lies on it; without, the decks count down from a fixed top deck and a flight from the ground at the higher
+        // end climbs to the lowest.
+        const auto scaffold = [&](glm::vec2 a, glm::vec2 b, glm::vec2 away, float top, float base, uint8_t site) {
+            constexpr float kLift = 2.5f;
+            const float len = Length(b - a);
+            if (len < 6.0f) return;   // 2 flights of 2.5 m at alternate ends
+            const glm::vec2 along = (b - a) / len;
+            const float groundA = ground(a + along * 0.5f + away * 2.125f), groundB = ground(b - along * 0.5f + away * 2.125f);
+            if (groundA > groundB) std::swap(a, b);   // a flight from the ground starts at b
+            FortRecord r;
+            r.shape = FortShape::Scaffold;
+            r.a = a;
+            r.b = b;
+            r.out = away;
+            r.id = site;
+            float gLo = 0.0f, gHi = 0.0f;
+            const glm::vec2 lo = glm::min(glm::min(a, b), glm::min(a + away * 3.75f, b + away * 3.75f)), hi = glm::max(glm::max(a, b), glm::max(a + away * 3.75f, b + away * 3.75f));
+            groundRange(lo, hi, gLo, gHi);
+            const float foot = std::max(groundA, groundB);
+            if (base > -1.0e29f) {
+                // Decks level with the door's floor. On level ground the lowest lies on it; on a slope it stands 1.8 m
+                // clear of the ground under its ledgers (the door stays open), reached by a flight from the ground
+                // where one fits, else only from above.
+                r.lo = base - 0.25f;
+                r.hi = r.lo + kLift * std::floor((top - r.lo) / kLift);
+                r.height = 0.0f;
+                if (gHi > base + 0.125f) {
+                    r.lo += kLift * std::ceil((gHi + 2.05f - r.lo) / kLift);
+                    r.height = 0.25f * std::ceil((r.lo - foot) / 0.25f);
+                    if (r.height > len - 3.5f) r.height = -1.0f;
+                }
+            } else {
+                // The lowest deck over the highest ground, or lower (down to the flight's foot) while the flight is too
+                // long: its top stays clear of the lowest deck's own flight.
+                r.hi = top;
+                r.lo = top - kLift * std::floor((top - gHi) / kLift);
+                r.height = 0.25f * std::ceil((r.lo - foot) / 0.25f);
+                while (r.height > len - 3.5f && r.lo - kLift >= foot) {
+                    r.lo -= kLift;
+                    r.height = 0.25f * std::ceil((r.lo - foot) / 0.25f);
+                }
+                if (r.height > len - 3.5f) return;
+            }
+            if (r.hi < r.lo + kLift - 0.01f) return;
+            setBounds(r, lo - 0.5f, hi + 0.5f, std::min(gLo, r.lo) - 0.5f, r.hi + 1.5f);
+            plan.records.push_back(r);
+            // The materials of the work, in front of its first bay: a stack of planks, a pile of cut stone.
+            const glm::vec2 d = (b - a) / len;
+            const glm::vec2 stack = a + d * 1.0f + away * 4.5f, pile = a + d * 2.75f + away * 4.5f;
+            const float g0 = ground(stack), g1 = ground(pile);
+            beam(stack - d * 0.75f, stack + d * 0.75f, 0.4f, g0 - 0.25f, g0 + 0.5f, m.planks);
+            beam(pile - d * 0.5f, pile + d * 0.5f, 0.5f, g1 - 0.25f, g1 + 0.75f, m.ashlar);
+        };
+        // H1: along the whole run outside the repair patch; its top deck level with the walk at the gap.
+        if (highRun >= 0) {
+            const FortRecord& wall = plan.records[size_t(curtainRecord[size_t(highRun)])];
+            const float len = Length(wall.b - wall.a);
+            const glm::vec2 d = (wall.b - wall.a) / len;
+            glm::vec2 n(d.y, -d.x);
+            if (Dot(n, (wall.a + wall.b) * 0.5f - keep) < 0.0f) n = -n;
+            const glm::vec2 face = wall.a + n * wall.half;
+            const float walk = FortWalk(wall, (highLo + highHi) * 0.5f);
+            scaffold(face + d * 0.5f, face + d * (len - 0.5f), n, walk - 0.25f, -1.0e30f, 0);
+        }
+        // Along the unfinished tower's back (the bailey side), from its door's floor up to its finished top.
+        for (size_t j = 0; j < plan.records.size(); ++j) {
+            const FortRecord r = plan.records[j];
+            if (r.shape != FortShape::Block || (r.trim & FortTrim_Unfinished) == 0) continue;
+            const glm::vec2 back = r.a - r.b * r.half, side(-r.b.y, r.b.x);
+            scaffold(back - side * (r.half - 0.5f), back + side * (r.half - 0.5f), -r.b, r.hi - 2.5f, r.lo, 1);
+            break;
+        }
+        // On the keep's gate face, from its door's floor up to the sill of its upper storey's windows.
+        {
+            const glm::vec2 side(-axis.y, axis.x), face = keep + axis * 8.0f;
+            scaffold(face - side * 5.25f, face + side * 5.25f, axis, site.keepGround + 18.0f, site.keepGround, 2);
+        }
         return plan;
     }
 
@@ -576,8 +877,8 @@ namespace vortex::voxel {
             for (const float f : {r.a.x, r.a.y, r.b.x, r.b.y, r.lo, r.hi, r.half, r.gapLo, r.gapHi, r.walkLeft, r.walkRight, r.walkLeftU, r.walkRightU,
                                   r.clearAt, r.flatA, r.flatB, r.height, r.grateTo, r.bulkheadAt})
                 putf(f);
-            put(uint64_t(r.caps) | uint64_t(r.trim) << 8 | uint64_t(r.roof) << 16);
-            putf(r.length);
+            put(uint64_t(r.caps) | uint64_t(r.trim) << 8 | uint64_t(r.roof) << 16 | uint64_t(r.building) << 24);
+            for (const float f : {r.length, r.out.x, r.out.y, r.patchLo, r.patchHi}) putf(f);
             put(uint64_t(uint32_t(r.min.x)) | uint64_t(uint32_t(r.min.y)) << 32);
             put(uint64_t(uint32_t(r.min.z)) | uint64_t(uint32_t(r.max.x)) << 32);
             put(uint64_t(uint32_t(r.max.y)) | uint64_t(uint32_t(r.max.z)) << 32);
@@ -698,6 +999,12 @@ namespace vortex::voxel {
                                     continue;
                                 }
                                 uint8_t id = m.rubbleCore;
+                                // The repair patch: brick in the outer face, its lower edge ragged.
+                                if (t >= r.patchLo && t <= r.patchHi && s > r.half - 0.75f && s <= r.half &&
+                                    ym >= walk - 4.5f + 1.5f * Ragged(int(std::floor(t * 2.0f)), 3)) {
+                                    set(x, y, z, m.brick);
+                                    continue;
+                                }
                                 if (ym < batterTop || s > r.half) id = m.granite;
                                 else if (s > r.half - 0.75f || s < -r.half + 0.75f || ym >= walk - 0.5f) id = m.ashlar;
                                 set(x, y, z, id);
@@ -708,7 +1015,7 @@ namespace vortex::voxel {
                                                   ym < walk + kParapet + kMerlon - 0.25f;
                                 // A doorway through the parapet onto the hoarding every 4 m.
                                 const float door = t + 50.0f - 4.0f * std::floor((t + 50.0f) / 4.0f);
-                                const bool doorway = hoard && door >= 1.75f && door < 2.5f && ym < walk + 2.0f;
+                                const bool doorway = (hoard && door >= 1.75f && door < 2.5f && ym < walk + 2.0f) || (t >= r.patchLo + 0.5f && t <= r.patchHi - 0.5f);
                                 set(x, y, z, slit || doorway ? 0 : m.ashlar);
                             }
                         }
@@ -826,6 +1133,189 @@ namespace vortex::voxel {
                 break;
             }
 
+            case FortShape::Beam: {
+                const float len = Length(r.b - r.a);
+                const glm::vec2 d = (r.b - r.a) / len, n(-d.y, d.x);
+                for (int z = lo.z; z < hi.z; ++z)
+                    for (int x = lo.x; x < hi.x; ++x) {
+                        const glm::vec2 p = glm::vec2((float(x) + 0.5f) * vs, (float(z) + 0.5f) * vs) - r.a;
+                        const float t = Dot(p, d), s = Dot(p, n);
+                        if (t < 0.0f || t > len || std::abs(s) > r.half) continue;
+                        const float up = r.height * t / len;   // a sloped beam rises `height` from a to b
+                        for (int y = lo.y; y < hi.y; ++y) {
+                            const float ym = (float(y) + 0.5f) * vs;
+                            if (ym >= r.lo + up && ym < r.hi + up) set(x, y, z, r.id);
+                        }
+                    }
+                break;
+            }
+
+            case FortShape::LeanTo: {
+                const float len = Length(r.b - r.a);
+                const glm::vec2 d = (r.b - r.a) / len, in = r.out;
+                const float depth = r.half;
+                const bool granary = r.building == FortBuilding::Granary;
+                const bool hearth = r.building == FortBuilding::Forge || r.building == FortBuilding::Kitchen;
+                const bool earth = r.building == FortBuilding::Stables || hearth;
+                const float floorTop = r.lo + (granary ? 0.75f : 0.0f);
+                const int storeys = int(r.height);
+                const float shell = 2.0f * vs;   // 1 in 2: worldgen.md C5
+                const int doorBay = int(std::floor(len / 4.0f));
+                for (int z = lo.z; z < hi.z; ++z)
+                    for (int x = lo.x; x < hi.x; ++x) {
+                        const glm::vec2 p = glm::vec2((float(x) + 0.5f) * vs, (float(z) + 0.5f) * vs) - r.a;
+                        const float t = Dot(p, d), w = Dot(p, in);
+                        if (t < -0.25f || t > len + 0.25f || w < -0.25f || w > depth + 0.5f) continue;
+                        const float g = ground[(x - c0.x) + (z - c0.z) * kChunkSize] * vs;
+                        const float roofY = r.hi - 0.5f * std::max(0.0f, w);
+                        const bool inside = t >= 0.0f && t <= len && w >= 0.0f && w <= depth;
+                        const bool front = w >= depth - 0.25f, end = t < 0.25f || t > len - 0.25f;
+                        const int bay = int(std::floor(t / 2.0f));
+                        const float inBay = t - 2.0f * float(bay);
+                        const bool post = inBay < 0.25f || t > len - 0.25f || w < 0.25f;
+                        const bool chimney = hearth && std::abs(t - 1.0f) < 0.375f && std::abs(w - 0.75f) < 0.375f;
+                        const bool flue = hearth && std::abs(t - 1.0f) < 0.125f && std::abs(w - 0.75f) < 0.125f;
+                        const bool fire = hearth && std::abs(t - 1.0f) < 0.75f && w < 1.5f;
+                        const bool stair = storeys > 1 && t > len - 4.25f && t < len - 0.25f && w >= 0.25f && w < 1.25f;
+                        const bool staddle = granary && std::abs(inBay - 1.0f) < 0.25f && (std::abs(w - 0.5f) < 0.25f || std::abs(w - (depth - 0.5f)) < 0.25f);
+                        const float top = chimney ? roofY + 1.5f : roofY;
+                        const int y0 = std::max(lo.y, int(std::floor((std::min(g, r.lo) - 0.5f) / vs)));
+                        for (int y = y0; y < hi.y; ++y) {
+                            const float ym = (float(y) + 0.5f) * vs;
+                            if (ym >= top) break;
+                            if (chimney && ym >= floorTop) {
+                                set(x, y, z, flue && ym >= floorTop + 1.0f ? 0 : m.brick);
+                                continue;
+                            }
+                            if (ym >= roofY - shell) {
+                                set(x, y, z, r.id);   // the roof, overhanging 0.25 m at the ends and 0.5 m at the front
+                                continue;
+                            }
+                            if (!inside) continue;
+                            if (ym >= roofY - shell - 0.25f && t + 50.0f - std::floor(t + 50.0f) < 0.25f) {
+                                set(x, y, z, m.wood);   // rafters every metre
+                                continue;
+                            }
+                            if (ym < floorTop) {
+                                if (granary) {
+                                    if (ym >= g - 0.5f && staddle) set(x, y, z, m.ashlar);
+                                    else if (ym >= floorTop - 0.25f) set(x, y, z, m.planks);
+                                    continue;
+                                }
+                                if (ym < g - 0.5f) continue;
+                                const bool rim = front || end;
+                                set(x, y, z, ym >= floorTop - 0.25f && !rim ? (earth ? m.dirt : m.planks) : (rim ? m.ashlar : m.rubbleCore));
+                                continue;
+                            }
+                            const float rel = ym - floorTop;
+                            if (fire && rel < 0.75f) {
+                                set(x, y, z, m.brick);   // the hearth (forge) or the oven (kitchen)
+                                continue;
+                            }
+                            if (stair && rel < 3.25f && rel < (t - (len - 4.25f)) * 0.8125f) {
+                                set(x, y, z, m.planks);   // a straight stair along the end wall to the upper floor
+                                continue;
+                            }
+                            if (storeys > 1 && rel >= 3.0f && rel < 3.25f && !stair && !(front || end)) {
+                                set(x, y, z, m.planks);   // the upper floor
+                                continue;
+                            }
+                            if (storeys > 1 && rel >= 2.75f && rel < 3.0f && !stair && !(front || end) && t + 50.0f - std::floor(t + 50.0f) < 0.25f) {
+                                set(x, y, z, m.wood);   // its joists
+                                continue;
+                            }
+                            if (front || end) {
+                                // The frame: posts every bay, the sill, a plate at each storey, a brace in the end bays.
+                                const float storeyRel = rel - 3.0f * std::floor(rel / 3.0f);
+                                const bool sill = rel < 0.25f, plate = storeyRel >= 2.75f;
+                                const bool brace = front && (bay == 0 || t > len - 2.0f) && std::abs((t > len - 2.0f ? len - t : t) - storeyRel * 0.6667f) < 0.15f;
+                                const bool framePost = front ? post : (w < 0.25f || w > depth - 0.25f);
+                                // Openings: the door in the middle bay, windows in every other bay, on each storey.
+                                const bool door = front && bay == doorBay && inBay >= (r.building == FortBuilding::Stables ? 0.25f : 0.5f) &&
+                                                  inBay < (r.building == FortBuilding::Stables ? 1.75f : 1.5f) && rel < 2.25f && rel >= 0.25f;
+                                const bool window = front && bay != doorBay && bay % 2 == 1 && inBay >= 0.625f && inBay < 1.375f && storeyRel >= 1.25f &&
+                                                    storeyRel < 2.0f;
+                                if (door || window) set(x, y, z, 0);
+                                else if (framePost || sill || plate || brace) set(x, y, z, m.wood);
+                                else set(x, y, z, m.wattleDaub);
+                                continue;
+                            }
+                            set(x, y, z, 0);   // inside
+                        }
+                    }
+                break;
+            }
+
+            case FortShape::Scaffold: {
+                constexpr float kLift = 2.5f;
+                const float len = Length(r.b - r.a);
+                const glm::vec2 d = (r.b - r.a) / len, n = r.out;
+                const float rise0 = r.height;   // the ground flight's rise to the lowest deck (0: the deck lies on the ground; < 0: none)
+                for (int z = lo.z; z < hi.z; ++z)
+                    for (int x = lo.x; x < hi.x; ++x) {
+                        const glm::vec2 p = glm::vec2((float(x) + 0.5f) * vs, (float(z) + 0.5f) * vs) - r.a;
+                        const float t = Dot(p, d), s = Dot(p, n);
+                        if (t < -0.25f || t > len + 0.25f || s < 0.0f || s > 3.75f) continue;
+                        const float g = ground[(x - c0.x) + (z - c0.z) * kChunkSize] * vs;
+                        const float inBay = t + 50.0f - 2.0f * std::floor((t + 50.0f) / 2.0f);
+                        const bool atBay = inBay < 0.25f || t > len - 0.25f;
+                        const bool innerRow = s >= 1.25f && s < 1.5f, outerRow = s >= 3.5f && s < 3.75f;
+                        const bool deckRow = s >= 1.25f && s < 3.75f, lane = s >= 1.75f && s < 2.5f;
+                        // A flight's run from its foot: from a's end on even lifts, from b's on odd ones and the ground's.
+                        const float runEven = t - 0.5f, runOdd = (len - 0.5f) - t;
+                        // Under the top 2.5 m of the flight that comes up to a deck: the deck is open there, no putlog crosses.
+                        const auto underFlight = [&](int deckLift) {
+                            if (deckLift >= 1) {
+                                const float run = (deckLift - 1) % 2 == 0 ? runEven : runOdd;
+                                return run >= 0.0f && run < kLift;
+                            }
+                            return rise0 > 0.0f && runOdd >= 0.0f && runOdd >= rise0 - kLift && runOdd < rise0;
+                        };
+                        const int y0 = std::max(lo.y, int(std::floor((std::min(g, r.lo) - 0.25f) / vs)));
+                        for (int y = y0; y < hi.y; ++y) {
+                            const float ym = (float(y) + 0.5f) * vs;
+                            if (ym >= r.hi + 1.25f) break;
+                            // Standards from the ground to 1 m over the top deck.
+                            if ((innerRow || outerRow) && atBay) {
+                                if (ym >= g - 0.25f) set(x, y, z, m.wood);
+                                continue;
+                            }
+                            const int lift = int(std::floor((ym - r.lo) / kLift));   // the deck under this height (-1: below the lowest)
+                            const float deck = r.lo + kLift * float(lift), rel = ym - deck;
+                            const bool topDeck = deck >= r.hi - 0.01f;
+                            if (lift < 0) {
+                                if (rise0 == 0.0f) {
+                                    if (deckRow && ym >= g - 0.25f) set(x, y, z, m.planks);   // the lowest deck stands on the ground
+                                    continue;
+                                }
+                                // The ground flight, solid from the ground up to its step.
+                                if (lane && runOdd >= 0.0f && runOdd < rise0 && ym < r.lo - rise0 + (std::floor(runOdd / 0.25f) + 1.0f) * 0.25f) {
+                                    set(x, y, z, m.planks);
+                                    continue;
+                                }
+                            }
+                            if (topDeck) {
+                                if (rel < 0.25f && !(lane && underFlight(lift))) set(x, y, z, m.planks);   // out to the face
+                                else if (outerRow && rel >= 1.125f) set(x, y, z, m.wood);                    // the top rail
+                                continue;
+                            }
+                            // The flight from this deck to the next: 0.25 m steps every 0.25 m.
+                            const float run = lift % 2 == 0 ? runEven : runOdd;
+                            if (lift >= 0 && lane && run >= 0.0f && run < kLift && rel < (std::floor(run / 0.25f) + 1.0f) * 0.25f) {
+                                set(x, y, z, m.planks);
+                                continue;
+                            }
+                            // The next deck's ledgers along both rows of standards and its putlogs at each bay.
+                            if (rel >= kLift - 0.25f && (lift >= 0 || (lift == -1 && rise0 != 0.0f)) && ((innerRow || outerRow) || (atBay && !underFlight(lift + 1)))) {
+                                set(x, y, z, m.wood);
+                                continue;
+                            }
+                            if (lift >= 0 && rel < 0.25f && deckRow && !(lane && underFlight(lift))) set(x, y, z, m.planks);
+                        }
+                    }
+                break;
+            }
+
             case FortShape::Block: {
                 const glm::vec2 o = r.b, side(-o.y, o.x);
                 const bool isKeep = r.block == FortBlock::Keep;
@@ -886,8 +1376,13 @@ namespace vortex::voxel {
                             for (const glm::vec2 dir : {glm::vec2(1, 0), glm::vec2(0.70710678f, 0.70710678f), glm::vec2(0.70710678f, -0.70710678f)}) addSlit(dir);
                         }
                         const int y0 = std::max(lo.y, int(std::floor((std::min(g, r.lo - 0.5f) - kFoundation) / vs)));
+                        // An unfinished tower: its shell stops raggedly in its top 2 m; no roof slab, no crown.
+                        const bool unfinished = (r.trim & FortTrim_Unfinished) != 0;
+                        const float builtTo = unfinished ? r.hi - 2.0f + 1.75f * Ragged(x >> 2, z >> 2) : r.hi;
                         for (int y = y0; y < hi.y; ++y) {
                             const float ym = (float(y) + 0.5f) * vs;
+                            // Inside, the top storey is open from 2 m under the top; the shell stops at its ragged height.
+                            if (unfinished && (ym >= builtTo || (dist < R - towerShell && ym >= r.hi - 2.0f))) continue;
                             if (ym >= r.hi) {
                                 const float crown = turret ? r.hi + 2.5f : r.hi;
                                 if (turret && ym < crown && dist <= R) {
