@@ -4,11 +4,11 @@
 
 | | |
 |---|---|
-| Status | Designed and reviewed, nothing built or measured for it. Merged from three proposals by a judge's synthesis brief; reviewed by two critics on 2026-11-21 (29 findings on 27 issues, all taken, three only in part: [design-review-2026-11-21.md](../history/magic/design-review-2026-11-21.md)). Four spells replaced by the owner on 2026-11-26 (below). |
+| Status | Designed and reviewed. Merged from three proposals by a judge's synthesis brief; reviewed by two critics on 2026-11-21 (29 findings on 27 issues, all taken, three only in part: [design-review-2026-11-21.md](../history/magic/design-review-2026-11-21.md)). Four spells replaced by the owner on 2026-11-26 (below). **[mag-1] built** (2026-11-26, headless, no wire change: Updraft, Dash, Punch and Barricade Wave in sim, the offline scripts and gate G23; what differs from this design: [mag-1-as-built.md](../history/magic/mag-1-as-built.md)); not reviewed, `verify.sh full --ci` and the soak not run yet. |
 | Decided | - Owner's concept (2026-11-21), verbatim in [owner-concept-2026-11-21.md](../history/magic/owner-concept-2026-11-21.md), not reopened here: every spell is a **Cast Type** (Liquid: down and pooling; Flame: up and rising; Solid: linear penetration that spends structural health per voxel; Torrent: lateral or radial burst) x an **Element** (Metal: create and reinforce voxels; Thermal: damage over time, ignition, heats metal; Pressure: impulse, knockback, launch, bonus damage to brittle voxels, no residue; Frost, the owner's recommended 4th: slow, freeze liquid into walkable ice, brittleness 2x against Pressure and Solid). All 16 named siege spells and their tactical roles.<br>- Owner, 2026-11-26: Pressure is mostly movement on the map (high jumps, dashes, punches): Meteor Leap, Updraft, Dash and Punch replace Crushing Weight, Siege Cannon and Shockwave; Flow x Frost is a static Rune Trap instead of Glacier Slide; the other 12 spells are unchanged. [mag-1] builds Updraft, Dash, Punch and Barricade Wave.<br>- Owner, standing rules: fun gameplay with few bugs first; realistic synced simulation is unnecessary; we settle open design questions ourselves with a recommended answer; every feature has a cheap path and a measured cost; replicated world edits are integer-exact and no float decides which voxel changes; no randomness in replicated rules; everything stays original.<br>- Owner (2026-11-17, [spread.md](spread.md)): fire is lockstep, a simple spread operation, no randomness; Claude implements it. Owner (2026-11-10, ROADMAP "Direction"): building only in fights, created matter is temporary; magic means create matter, move matter, change materials, spreading fire and summoning.<br>- Us (this design, 2026-11-21): items 1-16 of "Decision in brief" and every answer in "Open questions", as amended by the design review. Base: proposal 3 (8.2 of 10), with proposal 2's player design (7.2) and proposal 1's exact operators (7.0) ([proposal-scores-2026-11-21.md](../history/magic/proposal-scores-2026-11-21.md)).<br>- Owner (2026-11-21, "Doors first"): [mag-1] and [mag-2] right after [mech-1] ("ROADMAP placement"); our proposal to put them before it was vetoed. |
-| Next | The owner reviews the 4 new spells (9, 11, 12, 13 in "The sixteen spells"). Then [mag-1], headless only, in ROADMAP "Next" after [mech-1] (owner, 2026-11-21). |
+| Next | The review of [mag-1] and its full verify and soak; the owner reviews the 4 new spells (9, 11, 12, 13 in "The sixteen spells"). Then [mag-2], the first playable spells (ROADMAP "Next"). |
 | Open | "Open questions" 1-31, each with the recommended answer. For the owner: how far Dash and Meteor Leap go (question 31), the in-world name for "Napalm" (question 19), the keys, colours and feel of slick ground and launches (windowed, question 23), the reorder of ROADMAP "Next" (question 24), and the damage split between Thermal and Pressure (question 27). |
-| History | [owner-concept-2026-11-21.md](../history/magic/owner-concept-2026-11-21.md): the owner's concept, verbatim<br>[proposal-scores-2026-11-21.md](../history/magic/proposal-scores-2026-11-21.md): the scores of the three proposals, what the merged design takes from each, and the conflicts settled<br>[design-review-2026-11-21.md](../history/magic/design-review-2026-11-21.md): the two critics' findings and what was done with each |
+| History | [owner-concept-2026-11-21.md](../history/magic/owner-concept-2026-11-21.md): the owner's concept, verbatim<br>[proposal-scores-2026-11-21.md](../history/magic/proposal-scores-2026-11-21.md): the scores of the three proposals, what the merged design takes from each, and the conflicts settled<br>[design-review-2026-11-21.md](../history/magic/design-review-2026-11-21.md): the two critics' findings and what was done with each <br>[mag-1-as-built.md](../history/magic/mag-1-as-built.md): what [mag-1] built, where it differs from this design, and its measured costs |
 | Marks | **(m)** measured (quoted from ROADMAP), **(c)** computed from sizes, **(e)** estimate; every (e) names the measurement that replaces it. Voxel counts are at 0.125 m. Work units are `sim::CastWorkOf` units (about 0.11 us each on the UHD 620 laptop: 10 000 units = 1.09 ms). Code read at engine `58f2650`. |
 
 Related:
@@ -56,7 +56,7 @@ Related:
    `StepPlayer`, so a client that holds the event in time makes no correction. The same 0.4 s is the readable
    telegraph: a ring that contracts, then fires. Late zones are inserted, replayed and counted, never dropped. A root
    or pin is followed by 1.5 s in which no root or pin applies, so control never chains into a lock.
-   `kPlayerRuleRevision` goes up in each stage that adds a zone kind or the slick rule (2 in [mag-1]).
+   `kPlayerRuleRevision` goes up in each stage that adds a zone kind or the slick rule (3 in [mag-1]: 2 was taken by land.md's foliage).
 7. **Casts stay hitscan** with the server's eye-rewound capture (`StateAt`), as blasts are today. Flow is lobbed: an
    instant integer arc trace at capture, not a flying bolt. Projectile flight is presentation only. The owner's
    "deflect" is Punch's dispel: it cuts short the live enemy zones near its fist (lifts, pins, chills, runes) from its
@@ -608,7 +608,7 @@ Appended after spread's 21-63 and W4's 12, in this order; whichever design lands
 
 | Id (working name) | Count | Hardness | Density | `strength` C / S / T (kg/m^2) | Flags | Look | Stage |
 |---|---|---|---|---|---|---|---|
-| `knit_iron` | 1 | 7.0 | 2 000 (light: knit walls do not overload floors) | 100 000 / 40 000 / 15 000 (stone's: a plate replaces a cut neck, never makes it stronger) | Conjured | dark violet-grey, banded; cracks shown in its last 2 s | [mag-1] |
+| `knit_iron` (id 44, [mag-1]) | 1 | 7.0 | 2 000 (light: knit walls do not overload floors) | 100 000 / 40 000 / 15 000 (stone's: a plate replaces a cut neck, never makes it stronger) | Conjured | dark violet-grey, banded; cracks shown in its last 2 s | [mag-1] |
 | `slag` | 1 | 7.0 | 2 000 | as knit | Conjured, Hot | bright orange, emissive 5 | [mag-4] |
 | `ice` | 1 | 1.0 | 900 | 40 000 / 8 000 / 3 000 | Conjured, Slick | pale cyan, roughness 0.1 (opaque) | [mag-3] |
 | `floe` | 1 | 1.0 | 900 | as ice | Conjured, Slick, **Indestructible** (an anchor) | as ice, a shade bluer | [mag-3] |
@@ -1208,7 +1208,7 @@ deferred-check drop work as for kinds 1-6 (only `SpreadStep` needs list membersh
 
 **`buildHash`** gains `TurningTableHash` (the maps) and `SpellTableHash` (operator parameters, element verbs, bore
 costs, lifetimes, zone parameters, cooldowns, damage); the ids and flags go through `MaterialTableHash`, pitch through
-`SpreadTableHash`; `kPlayerRuleRevision` is 2 from [mag-1] and rises to 5 by [mag-7].
+`SpreadTableHash`; `kPlayerRuleRevision` is 3 from [mag-1] and rises to 5 by [mag-7].
 
 **`kProtocolVersion`**: the next number when [mag-2] lands: after M2a's 11 and [mech-1]'s 12, so 13 on the ROADMAP
 order the owner set on 2026-11-21.
@@ -1354,7 +1354,7 @@ it wraps in about 25-30 s (c); spread adds about 10 parts/s. L12 holds: no fallb
   expiry) of 2-4 chunks each, about 9 chunk uploads; 5.6 spells/s and 4.4 blasts/s (3-4 chunks) are about 65 uploads
   a second, **about 2.4 MB/s**, and **about 3.7 MB/s** if every cast were a spell: 40-62 KB a frame at 60 fps (bands
   land on separate ticks, so they do not coalesce). The copy is small against the UHD 620's shared memory bandwidth;
-  under 0.1 ms a frame (e). Measured with `--stress-spells` (G23) and the `GPU` upload line at a fixed `--camera`.
+  under 0.1 ms a frame (e). Measured with `--stress-spells` (its gate) and the `GPU` upload line at a fixed `--camera`.
 - **Effects:** `--stress-spells 10` keeps destruction + effects CPU <= 4 ms and GPU effects <= 4 ms.
 - **Memory:** registry up to about 0.6 MB (server), zones about 2 KB (64 records), operator scratch at most 45 KB per
   call; conjured chunks under about 300 more store slots per client (`--memory`, the `store a/b` line).
@@ -1400,7 +1400,7 @@ it wraps in about 25-30 s (c); spread adds about 10 parts/s. L12 holds: no fallb
   `Player.ARespawnedPlayerIgnoresRootPinAndImpulse`, `Player.ReleaseFreesARootedAlly`,
   `Player.ADashStopsAtAWallAndKeepsItsCarry`, `Player.AShovePushesAlongItsAxis`, `Player.ARootedPlayerCannotDashOrLeap`,
   `Player.AMeteorLeapLandsWhereTheServerTracedIt`,
-  `SessionFile.BuildHashSeesThePlayerRuleRevision` (revisions 2-4),
+  `SessionFile.BuildHashSeesThePlayerRuleRevision` (revisions 3-5),
   `SessionFile.BuildHashSeesTheSpellAndTurningTables`.
 - Spread: `Spread.PhaseGatedContentAdvancesWithNothingElseAwake` (the amendment below); `Spread.*` unchanged with
   Ignite and Douse as `MapShape` maps.
@@ -1422,10 +1422,11 @@ it wraps in about 25-30 s (c); spread adds about 10 parts/s. L12 holds: no fallb
 
 ## Headless flags and gates
 
-- **`--spell-demo NAME`** (game, offline, its own yard east of the plaza, like `--probe`): one spell at a fixed target
-  at frame 30; logs `Magic: <spell>: path P, front F, contact C, ops N, bytes B, work W, ms M, players hit H,
-  released R` and the spell's check line, for example `Spire: rider on top at y = ...`,
-  `Dash: 8.0 m in 18 ticks, stopped by wall at X m`, `Punch: planks broken N, shoved H`, `Freeze: floe anchored, 0 islands`,
+- **`--spell-demo NAME[,NAME...]`** (game, offline, its own yard east of the plaza, like `--probe`): each spell at a
+  fixed station, the first at frame 30; logs `Magic: <spell>: path P, front F, ops N, bytes B, work W, ms M, players hit H,
+  released R` (a `contact C` field joins it with the first operator that reads `Contact`) and the spell's check line,
+  for example `Spire: rider on top at y = ...`, `Barricade: N knit voxels in 4 bands`, `Updraft: lifted +X m`,
+  `Dash: X m in N ticks`, `Punch: planks broken N, shoved H`, `Freeze: floe anchored, 0 islands`,
   `Rebar: ledge reached at 6.4 m`, `Rune: burst under bot N`. `--spell-demo dash` and `--spell-demo punch` also run at
   G6's `--voxel-size 0.1` and `0.15`; `--spell-demo shatter-spike` (from [mag-3]) must fell the yard's tower with blasts.
 - **`--siege-matrix`**: all built spells in a stamped yard (a stone curtain wall with slits and a timber walkway, a gate,
@@ -1442,23 +1443,25 @@ it wraps in about 25-30 s (c); spread adds about 10 parts/s. L12 holds: no fallb
   server's written world with its ops applied through `ApplyOp`.
 - **`tools/session-check.sh`** gains a spell pair between its clients (an Updraft on the walker, a Barricade between
   them); its verdict counts `Client: correction` lines by cause (zone late, zone edge, terrain, other).
-- **Gates** (proposed; the stage that builds them adds them to CLAUDE.md's table and to the game's `docs/verify.md`,
-  numbered after rendezvous' G20): G21 `--siege-matrix` (exit 0, the lines above, the screenshot); G22
-  `vortex_server --session=engine/tools/server/sessions/drill.session --drill=200 --clients=2 --bot-spells 30 --loss=0.05
-  --delay-ms=40 --jitter-ms=30` (as G11, plus the `Zones:` and `Magic:` lines); G23 `--stress-spells 10 --after-fill`
-  (CPU and GPU effects <= 4 ms). G16 and G17 run with spells from [mag-2] on.
+- **Gates** (the stage that builds a gate adds it to CLAUDE.md's table and to the game's `docs/verify.md`): **G23**
+  `--siege-matrix` (built in [mag-1]; G21 and G22 had been taken by the GPU baseline and the bot fight): the
+  matrix of the built spells and their lines, the screenshots, and `--spell-demo dash,punch` at G6's voxel sizes.
+  Proposed, numbered when their stage builds them: the spell drill (`vortex_server
+  --session=engine/tools/server/sessions/drill.session --drill=200 --clients=2 --bot-spells 30 --loss=0.05
+  --delay-ms=40 --jitter-ms=30`, as G11 plus the `Zones:` and `Magic:` lines; [mag-2]) and the stress gate
+  (`--stress-spells 10 --after-fill`, CPU and GPU effects <= 4 ms; [mag-6]). G16 and G17 run with spells from [mag-2] on.
 
 ## Stages
 
 | ID | Stage | Depends on | Acceptance | Effort (e) | State |
 |---|---|---|---|---|---|
-| [mag-1] | **Siege core in sim, headless only** (no wire). Only what its four spells use: `SpellTable` + hash, `sim::CastSpell`, the Burst strip and seed plane, Plume's single-seed column, `MapMask` (with its axis order) and `MapShape` as sim ops, `TurningTable` (Knit, Unknit, Ablate), `knit_iron` and the `Conjured` flag, the ablative absorb rule, the `KnitRegistry` with mask and cheap expiries and site checks by what changed (`noCarve` and the minimal structure credit if SI has not built them), the conjured-piece rule, the spawn guard, the `ZoneSet` with Impulse, Lift and Shove, truncation and replay retention, `PlayerState` (`push`, status, the dash) and `StepPlayer` revision 2 (the cast edge's own moves), the `UpdateCharacter` `vertical` parameter, server damage hooks, the dash's path trace. Spells: **Updraft, Dash, Punch, Barricade Wave** (jump, dash, punch, cover; owner, 2026-11-26). `--spell-demo`, `--siege-matrix` (4 rows) | [wp-6] (rules seam), [wp-7] (health, teams, charges, spawns), [wp-8] (the fight baseline) | Operator, op, registry, player and determinism tests above for what it builds; G1-G10 unchanged; `--spell-demo dash` and `--spell-demo punch` at G6's voxel sizes; demo and matrix lines and screenshot; `Magic:` cost lines after fill | 6-9 d | Designed (re-scoped 2026-11-26) |
+| [mag-1] | **Siege core in sim, headless only** (no wire). Only what its four spells use: `SpellTable` + hash, `sim::CastSpell`, the Burst strip and seed plane, Plume's single-seed column, `MapMask` (with its axis order) and `MapShape` as sim ops, `TurningTable` (Knit, Unknit, Ablate), `knit_iron` and the `Conjured` flag, the ablative absorb rule, the `KnitRegistry` with mask and cheap expiries and site checks by what changed (`noCarve` and the minimal structure credit if SI has not built them), the conjured-piece rule, the spawn guard, the `ZoneSet` with Impulse, Lift and Shove, truncation and replay retention, `PlayerState` (`push`, status, the dash) and `StepPlayer` revision 3 (the cast edge's own moves), the `UpdateCharacter` `vertical` parameter, server damage hooks, the dash's path trace. Spells: **Updraft, Dash, Punch, Barricade Wave** (jump, dash, punch, cover; owner, 2026-11-26). `--spell-demo`, `--siege-matrix` (4 rows) | [wp-6] (rules seam), [wp-7] (health, teams, charges, spawns), [wp-8] (the fight baseline) | Operator, op, registry, player and determinism tests for what it builds (done: `Propagate.BurstCellsRestOnTheirSurface`, `Propagate.BurstNeverStepsMoreThanStepMax`, `Propagate.PlumeColumnStopsUnderACeiling`, `Magic.ClipEqualsWhole`, `MapMask.DecidesFromTheOldIdOnly`, `MapMask.AxisOrderGivesTheSameVoxels`, `TurningTable.HashCoversEveryMap`, `SpellTable.HashCoversEveryField`, `KnitRegistry.ReplayGivesTheSameOps`, `KnitRegistry.ExpiryRemovesOnlyItsOwnMatter`, `KnitRegistry.FillRunsNoLoadCheckAndExpiryRunsASiteCheck`, `Magic.ABlastOnFreshKnitIsAbsorbed`, `Magic.AnAbsorbedBlastAblatesThePlate`, `Magic.ConjuredPiecesNeverTakeASlot`, `Magic.FillNeverEntombsAPlayer`, `Magic.NoSpellReachesAnEnemySpawn`, `Magic.OfflineAndServerEmitTheSameOps`, `Magic.PunchTruncatesLiveEnemyZones`, `Player.ZonesAreEvaluatedInZoneOrderFromQuantisedFeet`, `Player.KnockbackStopsAtThePlayArea`, `Player.ADashStopsAtAWallAndKeepsItsCarry`, `Player.AShovePushesAlongItsAxis`, `CastBudget.SpellWorkIsEqualColdAndWarm`); G3-G6 unchanged (done); `--spell-demo dash` and `--spell-demo punch` at G6's voxel sizes, demo and matrix lines and screenshots (done: gate G23); `Magic:` cost lines after fill (done: ROADMAP "Performance and measured values") | 6-9 d | Built (2026-11-26; [as built](../history/magic/mag-1-as-built.md)); not reviewed |
 | [mag-2] | **First playable.** The one protocol bump (every value in "Wire values" reserved, the whole owner block included), `CastFx`, zone events with the lead and `ZoneCancel`, the join baseline, `PlayerInput::spell` and the Spell edge, the owner block, `Attune`, rejections, `buildHash` additions, `RunScheduled` on the server, caps. Offline through M2a's in-process server and in sessions. HUD: the spell bar, element panel, form crosshairs, statuses, refusals, the attune menu (Metal and Pressure only). `PresentSpell` basics. `--bot-spells`, `--check-spells`, session-check with spells and corrections by cause | [mag-1] | `Movement.ZonesPredictedWithoutCorrection` at 0; `Movement.BarricadeAcrossAWalkerCountsCorrectionsByCause` measured (decides on the Block zone); G11-G17 and G22 with `--bot-spells` (`hashes equal`, 0 check mismatches, tick p99 < 16 ms); G16's bound held; the owner's Felling-duel taste check with 4 spells and the two-PC run (owner) | 6-9 d | Designed |
-| [mag-3] | **Frost, the bore and the Shatter combo.** The Pierce operator (bore boxes, `kMaxBoreVoxels`) and `CarveCapsule`; `ice`, `floe`, the rimed ids, `knit_iron_rimed`; maps Rime, Thaw, Freeze, FreezeWater, Shatter and the Shatter flood (Punch's Shatter and Release become live); Chill, Root and Release zones, the control guard, `Fresh` and the slick rule (`kPlayerRuleRevision` 3); the full Plume operator with its `Front` rule (Permafrost Climb) and the Burst disc (Flash Freeze); `shapeChanged` per voxel if spread S1 has not built it; the attune menu gains Frost. Spells: **Shatter Spike, Flash Freeze, Permafrost Climb**. No protocol bump | [mag-2] | Frost, combo and guard tests and lines; `Combo.ShatterSpikeDeepensABlast`; `Movement.IceFilmNoCorrectionAbove2cm`; drills agree | 5-7 d | Designed |
+| [mag-3] | **Frost, the bore and the Shatter combo.** The Pierce operator (bore boxes, `kMaxBoreVoxels`) and `CarveCapsule`; `ice`, `floe`, the rimed ids, `knit_iron_rimed`; maps Rime, Thaw, Freeze, FreezeWater, Shatter and the Shatter flood (Punch's Shatter and Release become live); Chill, Root and Release zones, the control guard, `Fresh` and the slick rule (`kPlayerRuleRevision` 4); the full Plume operator with its `Front` rule (Permafrost Climb) and the Burst disc (Flash Freeze); `shapeChanged` per voxel if spread S1 has not built it; the attune menu gains Frost. Spells: **Shatter Spike, Flash Freeze, Permafrost Climb**. No protocol bump | [mag-2] | Frost, combo and guard tests and lines; `Combo.ShatterSpikeDeepensABlast`; `Movement.IceFilmNoCorrectionAbove2cm`; drills agree | 5-7 d | Designed |
 | [mag-4] | **Flow, climbing, the rune and the rest of Metal.** The Flow operator and its fine fixed-point arc trace; `slag`, the Slag and Set maps, the hazard scan (slag); Plume's bands and ledges with the band timing rule and the lead-tied hover; Rebar Lance's two sockets; the Rune zone and the server's trigger test, one rune per caster. Spells: **Molten Pour, Rising Spire, Rebar Lance, Rune Trap**. No protocol bump | [mag-3] (the bore for Rebar Lance; ice, Root and Chill for Rune Trap) | Their tests and demo lines (`Spire: rider on top`, `Rebar: ledge reached`, `Rune: burst under bot N`); `Movement.SpireRiderNoCorrection`; `Magic.ARuneBurstsOnceUnderTheFirstEnemy`; drills agree | 6-8 d | Designed |
 | [mag-5] | **Thermal.** The pitch class in `SpreadTable`, `knit_iron_hot`, `iron_hot`, the Pitch, Heat and Cool maps, the hazard scan for pitch and hot metal, Burning. Spells: **Pitchfall, Wildfire, Meltdown Beam, Firestorm Sweep** | [spread-S1] (headless and scripts); [spread-S2] / [spread-S3] for play (offline practice and sessions both run the server path); rides S2's bump if they land together | spread.md's gates plus the Thermal lines; `Magic.HeatUnderAFloeBridgeReleasesWhatItCarried`; the ten-fires case with Thermal spells inside the spread credit | 4-6 d | Designed |
-| [mag-6] | **Presentation and tuning.** `FxDirector` effects per element, rings, ghosts, crumble warnings, steam and frost mist (fog when built), the landing marker, team panel letters, audio hooks once audio exists; a 10-bot spell fight measured; lifetimes, strengths, charges and cooldowns after the owner's taste check | [fx-1], [fx-2] ([wp-8]) | G23 (`--stress-spells` inside 4 ms CPU / 4 ms GPU); fight frame within [wp-8]'s margin on the UHD 620; server p99 < 16.7 ms; the owner's windowed checks | 4-6 d + owner | Designed |
-| [mag-7] | **Meteor Leap.** `extraLoad` in Part 4b's check, run as a site check on the structure credit; the Pin zone and the leap's launch at the cast edge (`kPlayerRuleRevision` 4); the slam's arc trace (Flow's). Spell: **Meteor Leap**. No protocol bump. It can land before [mag-5] once [si-2] is done | [si-2] (the `NeckCheck` split), [mag-4] (Flow) | `--crush-demo`; `Neck.ExtraLoad*`; `--neck-blast`, `--tower-blast` and the castle case unchanged; drills agree | 2-3 d | Designed |
+| [mag-6] | **Presentation and tuning.** `FxDirector` effects per element, rings, ghosts, crumble warnings, steam and frost mist (fog when built), the landing marker, team panel letters, audio hooks once audio exists; a 10-bot spell fight measured; lifetimes, strengths, charges and cooldowns after the owner's taste check | [fx-1], [fx-2] ([wp-8]) | the stress gate (`--stress-spells` inside 4 ms CPU / 4 ms GPU); fight frame within [wp-8]'s margin on the UHD 620; server p99 < 16.7 ms; the owner's windowed checks | 4-6 d + owner | Designed |
+| [mag-7] | **Meteor Leap.** `extraLoad` in Part 4b's check, run as a site check on the structure credit; the Pin zone and the leap's launch at the cast edge (`kPlayerRuleRevision` 5); the slam's arc trace (Flow's). Spell: **Meteor Leap**. No protocol bump. It can land before [mag-5] once [si-2] is done | [si-2] (the `NeckCheck` split), [mag-4] (Flow) | `--crush-demo`; `Neck.ExtraLoad*`; `--neck-blast`, `--tower-blast` and the castle case unchanged; drills agree | 2-3 d | Designed |
 | later | Knit tiers from progression (the 3 reserved ids), M7 | M7 | - | - | Not started |
 
 Commits (engine / game) and history files are added to each row as its stage lands.
@@ -1488,7 +1491,7 @@ New rows for CLAUDE.md section 5 (with their pinning tests):
   player's movement is a zone announced at least the session lead ahead and evaluated inside `sim::StepPlayer` from
   quantised feet; damage never enters it; a knockback is cut at the play area. A cancel only truncates a zone from a
   tick at least the lead ahead; a client keeps a zone until its oldest replayable tick passes the zone's end, and
-  every lookup uses the stepped tick. A root or pin is followed by the control guard. `kPlayerRuleRevision` 2-5.
+  every lookup uses the stepped tick. A root or pin is followed by the control guard. `kPlayerRuleRevision` 3-5.
   `Movement.ZonesPredictedWithoutCorrection`, `Movement.ZoneSurvivesAReplayAcrossItsEnd`,
   `Player.KnockbackStopsAtThePlayArea`, `Player.RootAndPinCannotChainPastTheGuard`.
 - **One cast cooldown function.** `sim::CastCooldownFor(state, tuning)` gives the cooldown in `TakeCast`, in

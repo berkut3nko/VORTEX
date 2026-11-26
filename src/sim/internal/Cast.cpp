@@ -478,6 +478,8 @@ namespace vortex::sim {
                 const PlumeColumn column = PlumeSingleColumn(world, ctx.walls, hit.seed, def.riseMax);
                 out.stats.visits += column.visits;
                 out.stats.chunksRead += column.chunksRead;
+                out.stats.path = static_cast<uint32_t>(column.top.y - column.bottom.y);
+                out.stats.front = 1;
                 // One voxel under the seed cell: feet standing on the hit face rest about 2 cm in it
                 // (the character's padding), and the Lift tests the quantised feet.
                 const int32_t bottom = 16 * (column.bottom.y - 1), top = 16 * (column.top.y + 1);
@@ -503,6 +505,7 @@ namespace vortex::sim {
                 const BurstResult strip = BurstStrip(world, ctx.walls, p);
                 out.stats.visits += strip.visits;
                 out.stats.chunksRead += strip.chunksRead;
+                out.stats.front = static_cast<uint32_t>(strip.cells.size());
                 const FillBands fill = BarricadeFill(world, ctx.walls, strip, p.axes, def.rimHeight, def.bandCount, def.burstHalfWidth);
                 if (fill.cells > 0) {
                     glm::ivec3 lo(std::numeric_limits<int32_t>::max()), hi(std::numeric_limits<int32_t>::min());
@@ -540,6 +543,7 @@ namespace vortex::sim {
             const uint32_t kept = TraceDash(world, ctx.walls, materials, ctx.tuning, feet, dashDir, stepM, maxSteps, out.stats.visits, chunksRead);
             out.stats.chunksRead += chunksRead;
             out.stats.dashSteps = kept;
+            out.stats.path = kept;
             const glm::dvec3 end = feet + glm::dvec3(dashDir.x, 0.0, dashDir.y) * (stepM * kept);
             out.hitQ = ToQ(end, q);
             voxel::ShapeQ shape;

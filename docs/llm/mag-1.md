@@ -4,7 +4,7 @@
 
 | | |
 |---|---|
-| State | Re-scoped on 2026-11-26 ("Re-scope" below wins over every card where they differ) |
+| State | Built 2026-11-26, cards 1-12 (re-scoped on 2026-11-26: "Re-scope" below wins over every card where they differ); what differs: [history/magic/mag-1-as-built.md](../history/magic/mag-1-as-built.md) |
 | Stage | `[mag-1]`: four spells in sim, offline and headless: Siege Cannon (breach), Barricade Wave (cover), Shockwave (knock off), Updraft (climb) |
 | Design | [magic.md](../design/magic.md) "Decision in brief", "The two axes as data", "The four operators (exact)" (Pierce, Burst, Plume's column), "The element verbs", "Conjured matter", "Players: zones, statuses and the movement rule", "Determinism and replication" ("Apply", "Determinism traps"), "Tests", "Headless flags and gates", "Stages" row `[mag-1]` |
 | Code read at | engine `bafca16`, game `0e27ea7` (before `[wp-4]`..`[mech-1]`: where a card builds on what those stages add, it names the symbol and says "read the built interface") |

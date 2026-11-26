@@ -134,6 +134,8 @@ export namespace vortex::sim {
         uint32_t ops = 0;                     ///< ops applied now and scheduled
         uint32_t bytes = 0;                   ///< wire bytes of the ops, the zone starts, the cancels and the cast's fx
         uint32_t dashSteps = 0;               ///< Dash: path steps the trace kept
+        uint32_t path = 0;                    ///< operator `Path` cells (Updraft: the rise; Dash: the kept steps)
+        uint32_t front = 0;                   ///< operator `Front` cells (Updraft: the column's top; Barricade Wave: the strip)
     };
 
     struct CastSpellResult {

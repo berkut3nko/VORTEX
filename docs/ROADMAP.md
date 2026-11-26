@@ -25,6 +25,17 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
   the game plays steps by ground material, jumps, landings, casts, use refusals, throws, the menus and ambience beds
   by biome, water, cover and height. Five volume settings on the settings page. Headless runs mix offline and log
   `Audio:` lines. [design/audio.md](design/audio.md). The owner listens: owner check 30. First listen (2026-11-26): steps like hooves, no gate heard, water slurping. Fixed in code and the tool: steps at a person's cadence (1.5 m a step walking), one hit per footstep file, -4 dBTP (mechanism files clipped), river water plays the stream bed, the portcullis plays its tension first, mechanisms 3 dB louder. The takes themselves need making again: 21 prompts rewritten (the game's `docs/product/sound-list.md` section 3.1), and the generator must set `seconds_total`.
+- **[mag-1] Siege core in sim, headless: built, not reviewed** (2026-11-26). The first four spells of
+  [design/magic.md](design/magic.md), re-scoped by the owner (Pressure is movement): Updraft, Dash, Punch and Barricade
+  Wave, cast through `sim::CastSpell` and `sim::RunScheduled` (`vortex.sim:cast`) with no wire change. Built: the spell
+  table and its hash, the Burst strip, Plume's single column, `MapShape` (7) and `MapMask` (8) as sim ops with the
+  Knit, Unknit and Ablate maps, `knit_iron` (palette id 44, the `Conjured` flag), the ablative absorb rule (also on
+  the left-click blast through the rules seam), the knit registry with expiries and site checks on the structure
+  credit, the spawn guard and the caps; the `ZoneSet` (Impulse, Lift, Shove) inside `sim::StepPlayer` with `push`,
+  statuses and the caster's own dash (`kPlayerRuleRevision` 3). The offline game steps its player with the zones and
+  has the headless scripts `--spell-demo NAME[,NAME...]` and `--siege-matrix` in a yard east of the plaza, with the
+  `Magic:` cost lines; new gate G23 (tier quick). Not run yet: `verify.sh full --ci` and the soak. The spells are not
+  playable until [mag-2] (the cast key, the wire, the HUD).
 - **[wp-7] M2a "first fight": built and reviewed** (2026-11-23; review fixes 2026-11-24). The sandbox is a PvP game: a session file with
   `mode = deathmatch` or `felling` runs health 100, blast damage (60 at the capsule, 0 at 1.2 m, integer mm), falls,
   lava and the void, death (not stepped, casts refused `Dead`) and a 3 s respawn at the team spawn with 2 s of spawn
@@ -198,24 +209,17 @@ In this order:
    auto-drops (pinned) by carrying bots, and `tools/session-check.sh` fails with or without the yard (two bodies still
    moving at its end, 1-5 m apart: the same at card 9's commit, so not caused by this stage). Not run: `verify.sh full
    --ci`, the soak, the owner's windowed check 25.
-3. **[mag-1] Siege core in sim, headless only.** The spell system's first four spells, re-scoped by the owner
-   (2026-11-26, Pressure is movement): Updraft, Dash, Punch and Barricade Wave (jump, dash, punch, cover), with only
-   what they use: the Burst strip and seed plane, Plume's single column, `MapMask` / `MapShape` as sim ops, knit iron
-   that blasts chip, with server-scheduled expiries, the spawn guard, Impulse, Lift and Shove zones and the caster's own
-   dash in `sim::StepPlayer` (`kPlayerRuleRevision` 2), Punch's light carve and dispel; no wire change. The owner
-   reviews the 4 new spells first (magic.md "The sixteen spells" 9, 11, 12, 13).
-   [design/magic.md](design/magic.md), "Stages". 6-9 d (e).
-4. **[mag-2] First playable spells.** The same four spells in offline practice and in sessions: the one magic
+3. **[mag-2] First playable spells.** The same four spells in offline practice and in sessions: the one magic
     protocol bump (it reserves every value the later magic stages need), zone events with a 0.4 s lead, the spell bar
     and the attune menu on the HUD; the owner's Felling-duel taste check. [design/magic.md](design/magic.md), "Stages".
     6-9 d (e).
-5. **[si-2] Impacts with crush damage** (with the `NeckCheck` split and a chunk-source interface first). A falling
+4. **[si-2] Impacts with crush damage** (with the `NeckCheck` split and a chunk-source interface first). A falling
     tower cracks walls and kills. [design/shred.md](design/shred.md), "SI-2 - impacts (inertial contact)". 7-11 d (e).
-6. **[fog-1] Fog stage 1.** Haze toward the sun, low mist and blast dust puffs, without losing frame rate.
+5. **[fog-1] Fog stage 1.** Haze toward the sun, low mist and blast dust puffs, without losing frame rate.
     [design/fog.md](design/fog.md), "Stages" 1. About 4 d (e).
-7. **[spread-S1] Fire offline.** A burning house that falls, offline only, no wire change (its smoke feeds fog later).
+6. **[spread-S1] Fire offline.** A burning house that falls, offline only, no wire change (its smoke feeds fog later).
     [design/spread.md](design/spread.md), "Stages" S1. Large (e).
-8. **[wg-W1] Stamped village.** The first real map, with towers worth felling. Soak tier (nightly) first.
+7. **[wg-W1] Stamped village.** The first real map, with towers worth felling. Soak tier (nightly) first.
     [design/worldgen.md](design/worldgen.md), "W1: a stamped village, offline". About 1.5 weeks (e).
 
 Placement of [mech-1] and [spread-S1] was decided by us under the owner's rules; the owner may veto it. Mechanisms
@@ -336,6 +340,7 @@ before `[wp-4]` (2026-11-23: G1 + G2 took 2.6 ms off the far view, 0.4 ms off th
 
 | Date | Measure | Value | Source |
 |---|---|---|---|
+| 2026-11-26 | [mag-1] the four spells' cast cost (the Windows PC, not the UHD 620; `Shredborne --headless --validation --siege-matrix --after-fill --frames 2200`, 0.125 m, `Magic:` lines) | Barricade Wave: work 1654, 0.75 ms, 4 ops, 140 B, 1332 knit voxels; Updraft: work 680, 0.04 ms, 64 B, a 10 m column (lifted +10.18 m); Dash: work 664, 0.26 ms, 74 B, 7.90 m in 18 ticks; Punch: work 208, under 0.01 ms (the blow's island search runs at its zone tick, on the structure credit), 91 B, 224 planks voxels broken (m). The ms are the cast's wall time at T_run only | [design/magic.md](design/magic.md) "Stages" [mag-1]; the game's `docs/verify.md` |
 | 2026-11-26 | [audio-1] the sound set and its cost (the Windows PC, the 13 headless game runs of `verify.sh quick`, offline output) | assets 16.97 MB (256 sounds, 636 files, 1578 s; 16.53 MB and 1528 s after the owner's first listen: one step per footstep file, -4 dBTP; from 1694.5 MB of WAV takes); mixing 0.14-0.54 % of one core (up to 23 voices at once, 24-58 plays a run); main-thread `AudioSystem::Update` 0.008-0.028 ms (once 1.1 ms); the first play of a variant decodes it on the main thread offline: 2.5-4.6 ms (once 29.5 ms); decoded 0.6-4.0 MB a run. A device run decodes the sounds of every fight on miniaudio's job thread at the start instead, 18 MB of 16-bit PCM (e, from the files' lengths); the device thread's cost is the offline mixing cost (e) (m) | `build/verify/quick-20261126-105653` |
 | 2026-11-24 | G17 (`tools/soak.sh --short`, both regions) on the batch [wp-5] / [wp-6] / [wp-7] | 5 runs: 2 FAIL, 3 PASS. Both failures were `Bot: N FAILED: its drain did not hold again within 15 s of the leave word`: one server body stayed awake through the whole drain, creeping about 1 cm in 16 s (playground object 842 at (10.8, 8.1, 14.9), arena object 814 at (19.5, 4.5, -8.9)), so the bots' copies never got an `EntityRest`; a copy still moving differed from the server's by 0.05-0.11 m (sample timing, not a desync); terrain hashes and resting objects agreed. The first failure ran last in a loaded `full` run, the second alone on the pre-review tree; on the reviewed HEAD (engine `5b2c193`, game `ba5c851`) `verify.sh full --only G17` passed twice (202 / 192 s). The same symptom predates the batch: G19 of 2026-11-22 (WP2 tree) logged `the drain did not settle in 60 s: ... 1 copies not resting` before its drain held, and the soak of 2026-11-17 (`build/soak-o2`) failed the same way. Recorded as a known intermittent flake (a body that never sleeps), not chased (m) | `build/verify/full-20261124-000048`, `-003255`, `-003917`, `-074054`, `-074416` |
 | 2026-11-23 | The cast path through the rules seam and the net split, before / after (drill: G11's command; walk: G13's; session-check: G16) | drill: equal world hash `7cf265595fef59bf` at opSeq 3163, `Drill: freed` line and both `Entities: client N ... agree` lines in 2 runs before and 5 after; arena walk: equal `Drill: freed` line and world / sync-box hashes (`2f47611cfe48a298`), entity id hash `3f44ac910423721e`, in 2 before and 4 after (its end opSeq 770-775, end tick and awake count vary between runs of one build: timing); session-check `PASS` 2 / 2 before, 4 / 4 after, the walking client's corrections 1, 3 before and 2, 2, 6, 2 after, max error 0.063, 0.321 m before and 0.183, 0.467, 0.379, 0.100 m after (wall-clock ENet: its worlds differ run to run) | [wp-6] |

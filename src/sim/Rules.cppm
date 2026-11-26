@@ -145,7 +145,8 @@ export namespace vortex::sim {
         uint32_t tick = 0;
         BlastDamageRule blastDamage{};
     };
-    /// @brief Applies the action: a Blast slot runs sim::Blast(aim.sphere, aim.power) and adds its effect cue; with
+    /// @brief Applies the action: a Blast slot runs sim::BlastAt(aim.sphere, aim.power, the terrain voxel hit; 0
+    /// for a body or a player), which is sim::Blast unless that voxel is fresh conjured matter, and adds its effect cue; with
     /// `context.blastDamage.centre` > 0 every living enemy of the actor in `context.players` (span order) within the
     /// rule's reach gets a DamageEvent (fight.md "Damage"). `aim.hit` false: refusal Missed, nothing applied.
     ActionOutcome ResolveAction(Simulation& simulation, const RulesContext& context, const ActionRequest& request, const ActionAim& aim);

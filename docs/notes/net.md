@@ -174,13 +174,14 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
 - **Event kinds** (`EventKind`, the first byte of an event): 1-6 = `sim::WorldOpKind` (1 `CarveSphere`, 2
   `FillSphere`, 3 `SwapSphere`, 4 `FillBox`, 5 `Detach`, 6 `ClearMask`), 32 `EntitySpawn`, 33 `EntityDespawn`, 34
   `EntityRest`, 35 `ObjectModel`, 36 `EntityWake` [net-6]; 37 `MechanismMove`, 41 `EntityHold`, 42 `EntityRelease`
-  [mech-1] (38-40 stay free for [mag-2]'s planned `ZoneStart`, `ZoneCancel`, `CastFx`). A new `WorldOpKind` takes the
-  next free value (7 today), a new event the next free one after 42 (`RopeCut` with the session part of [mech-2]).
+  [mech-1] (38-40 stay free for [mag-2]'s planned `ZoneStart`, `ZoneCancel`, `CastFx`). `sim::WorldOpKind` 7 `MapShape` and 8
+  `MapMask` landed with [mag-1] as **sim values only**: no event carries them until [mag-2]'s protocol bump. A new
+  `WorldOpKind` takes the next free value (9 today; magic's `CarveCapsule` with [mag-3]), a new event the next free one after 42 (`RopeCut` with the session part of [mech-2]).
 - **This list is the registry** (magic.md amendment 4, 2026-11-21): every new `WorldOpKind`, event kind, message type,
   refusal, rejection, template, generator and `PlayerButton` value takes the **next free value when it lands** and is
   added here in the same commit. Numbers written in a design (spread.md, shred.md Part 3, mechanisms.md, magic.md) are
-  provisional until then. On the ROADMAP order of 2026-11-21 that gives magic's `MapShape` 7, `MapMask` 8,
-  `CarveCapsule` 9, `ZoneStart` 38, `ZoneCancel` 39, `CastFx` 40 (`MechanismMove` 37, `EntityHold` 41 and
+  provisional until then. On the ROADMAP order of 2026-11-21 that gives magic's `MapShape` 7, `MapMask` 8 (sim values since
+  [mag-1]), `CarveCapsule` 9 ([mag-3]), `ZoneStart` 38, `ZoneCancel` 39, `CastFx` 40 (`MechanismMove` 37, `EntityHold` 41 and
   `EntityRelease` 42 landed with [mech-1]; `RopeCut` takes the next free value after 42 with [mech-2]), then spread's `SpreadStep` 10 (its `IgniteSphere` / `DouseSphere` become `MapShape` maps). **One exception**,
   reserved now: `PlayerButton_Spell = 32`, so mechanisms' `PlayerButton_Use = 16` keeps its value whichever lands
   first (unless M2a builds a generic action-slot bit that carries the spell edge).

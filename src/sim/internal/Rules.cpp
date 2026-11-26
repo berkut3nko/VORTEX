@@ -166,7 +166,7 @@ namespace vortex::sim {
             return outcome;
         }
         switch (request.slot) {
-            case ActionSlot::Blast:
+            case ActionSlot::Blast: {
                 // Ropes the ray passes before its hit are cut; they never stop the ray ([mech-2]).
                 CutRopesAlongRay(simulation, request.eye, request.dir, aim.distance, simulation.Tick(), &outcome.ropeCuts);
                 // A cast that resolved on a mechanism ([mech-1] Decision 11): its own damage rule, no terrain
@@ -175,10 +175,13 @@ namespace vortex::sim {
                     outcome.blasts.push_back(MechanismBlast(simulation, aim.body, aim.sphere, aim.power));
                     break;
                 }
-                outcome.blasts.push_back(Blast(simulation, aim.sphere, aim.power));
+                // The absorb rule reads the terrain voxel the ray hit; a body or a player hit has none.
+                const uint8_t hitMaterial = aim.atBody || aim.player != 0 ? uint8_t{0} : simulation.World().GetVoxel(aim.voxel);
+                outcome.blasts.push_back(BlastAt(simulation, aim.sphere, aim.power, hitMaterial));
                 outcome.effects.push_back(EffectCue{EffectKind::Blast, aim.sphere.center, aim.sphere.radius});
                 CutRopesBySphere(simulation, aim.sphere, simulation.Tick(), &outcome.ropeCuts);
                 break;
+            }
         }
         // Damage (fight.md "Damage"): every living enemy of the actor within the rule's reach, in span order.
         if (context.blastDamage.centre > 0 && request.player != 0 && request.slot == ActionSlot::Blast) {
