@@ -172,6 +172,12 @@ namespace vortex::voxel {
         ids.graniteQuoin = add("granite_quoin", Srgb(58, 61, 70),     0.85f, 2700.0f,  7.5f, 0.08f);
         ids.ashlar       = add("ashlar",       Srgb(196, 186, 164),   0.85f, 2400.0f,  3.0f, 0.06f);
         ids.rubbleCore   = add("rubble_core",  Srgb(120, 108, 92),    0.90f, 2000.0f,  2.0f, 0.22f);
+        ids.oakIron      = add("oak_iron",     Srgb(84, 60, 40),      0.80f,  900.0f,  6.5f, 0.10f, MaterialFlag_Flammable);
+        // Roof covers: a voxel is 0.125 m of solid cover, about 10 times a real roof's weight, so the density is an
+        // effective one (worldgen.md C5).
+        ids.slate        = add("slate",        Srgb(74, 80, 92),      0.70f,  600.0f,  0.8f, 0.10f);
+        ids.roofTile     = add("roof_tile",    Srgb(176, 92, 60),     0.75f,  600.0f,  0.8f, 0.12f);
+        ids.thatch       = add("thatch",       Srgb(196, 164, 92),    0.95f,  250.0f,  0.3f, 0.18f, MaterialFlag_Flammable);
 
         // Bond strengths, kg/m^2: compression / shear / tension (docs/design/shred.md Part 4b,
         // "Material strengths"). A free column of height h holds while density x h <= C, a
@@ -215,6 +221,10 @@ namespace vortex::voxel {
         strength(ids.graniteQuoin, 200000, 80000, 25000);
         strength(ids.ashlar, 100000, 40000, 15000);
         strength(ids.rubbleCore, 40000, 6000, 1500);
+        strength(ids.oakIron, 100000, 40000, 40000);
+        strength(ids.slate, 30000, 10000, 8000);
+        strength(ids.roofTile, 25000, 8000, 6000);
+        strength(ids.thatch, 2000, 1000, 1000);
         for (const uint8_t soft : {ids.needles, ids.reed, ids.fern, ids.flowerYellow, ids.flowerViolet, ids.mushroom}) strength(soft, 10000, 5000, 5000);
         return ids;
     }

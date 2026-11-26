@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| Status | `[fort-1]` built: the land generator stamps Hollowkeep's skeleton from `voxel::PlanFort` ("The skeleton as built"). `[fort-2]`-`[fort-5]` designed. |
+| Status | `[fort-1]`-`[fort-3]` built: the land generator stamps Hollowkeep's skeleton, openings, interiors, the low route, roofs and crowns from `voxel::PlanFort` ("The skeleton as built", "Openings and interiors as built", "Roofs and crowns as built"). `[fort-4]` and `[fort-5]` designed. |
 | Decided | The owner, 2026-11-25: the brief in "The brief" (a detailed medieval fortress as a destructible siege and route-making playground); the answers in the castle draft's section 10 (no trapdoor mechanism, fire spread is in the demo, furniture, medieval construction scaffolding and interactable elements). Us (this design, 2026-11-25): "Decision" items 1-10. |
-| Next | The owner walks the stamped skeleton (owner check 29) and answers "Open questions". Then `[fort-2]`. |
+| Next | The owner walks the stamped castle (owner check 29) and answers "Open questions". Then `[fort-4]`. |
 | Open | "Open questions (with the answer we recommend)". |
 | History | - |
 | Marks | (e) is an estimate. Every size is a design target until a stage measures it. 1 voxel = 0.125 m; "v" after a number is voxels. |
@@ -203,7 +203,7 @@ tension in kg/m^2 for the load check. Values marked (e) are set in `[fort-1]` an
 | ashlar (new, limestone) | 2 | warm light grey, regular | 3.0 | 2400 | 100 000 / 40 000 / 15 000 | no |
 | rubble_core (new) | 2 | brown-grey, only seen in a breach | 2.0 | 2000 | 40 000 / 6 000 / 1 500 (slumps, draft N6) | no |
 | brick (exists) | 2 | red | 2.5 | 1900 | 80 000 / 30 000 / 8 000 | no |
-| oak_iron (new) | 2 | dark oak with iron band voxels | 4.0 | 800 | 100 000 / 40 000 / 40 000 (e) | slow |
+| oak_iron (new) | 2 | dark oak with iron band voxels | 6.5 | 900 | 100 000 / 40 000 / 40 000 (e) | slow |
 | iron (exists) | 2 | grates, portcullis, bands | 8.0 | 7800 | - | no |
 | wood (exists, timber) | 3 | brown | 1.5 | 700 | 80 000 / 30 000 / 30 000 | yes |
 | planks (exists) | 3 | light brown | 1.2 | 600 | 50 000 / 25 000 / 25 000 | yes |
@@ -343,13 +343,78 @@ and stamps last. `sim::HollowkeepTemplate` keeps the portcullis, its lever and t
 |---|---|
 | Trench | the ditch: air from its level floor (1:1 sides) to 14 m over the ground, 4-10 m outside the curtain in the 4 sectors at the gate |
 | Box | the bridge, its cutting and trestles, the gatehouse (a stepped granite batter, a granite base, a string course, ashlar above, a parapet with merlons, the passage, the upper room, the portcullis slot), the lever's post |
-| Wall | one per run of the curtain (2.5 m) and the inner wall (2 m): granite foundation and batter (1 in 3, to 2.5 m over the column's ground), ashlar faces 0.75 m, a rubble core, ashlar paving under the walk, granite string courses at the batter's top and the walk, buttresses every 6-8 m on runs over 10 m (1 m deep, stepping back 0.25 m every 2 m), a parapet with 2 m merlons |
+| Wall | one per run of the curtain (2.5 m) and the inner wall (2 m): granite foundation and batter (1 in 3, to 2.5 m over the column's ground), ashlar faces 0.75 m, a rubble core, ashlar paving under the walk, granite string courses at the batter's top and the walk, buttresses every 6-8 m on runs over 10 m (1 m deep, stepping back 0.25 m every 2 m), a parapet with 2 m merlons. The walk (`voxel::FortWalk`) is continuous: each run is at least its own highest ground plus the walk height; where 2 runs meet, both take one junction height, raised until no ramp climbs more than 1 in 1 (walls only grow); a run is level for 4.5 m beside a tower and 1.5 m at its other ends (where a neighbour's end overlaps), and ramps between |
 | Block | the D-shaped flank towers (7 m, every third direction), the 2 round-fronted gate towers (6 m) and the keep (16 m, 22 m high): granite batter to 3 m, an ashlar shell (the keep: granite to 8 m, 3 m thick, then 2 m), granite quoins at square corners, string courses at every floor, plank floors (towers every 3 m, the keep at 5, 11 and 17 m), the keep's bedrock keel, a door, a flat roof with a parapet and merlons; the keep's 4 corner turrets rise 2.5 m |
 
 Measured on the first map (`vortex_land --chunk-cost`, dev build, one thread): 117 records; the plan with the
 generator in 2 ms; chunks within 64 m of the keep cost 70 us against 67 us without the castle, and the castle adds
-780 chunks the voxel loop runs for (9 062 against 8 282). Tests: `Fort.*`, `Hollowkeep.*`. Not yet: roofs,
-openings, stairs, hoardings, the bailey (the later stages).
+780 chunks the voxel loop runs for (9 062 against 8 282). Tests: `Fort.*`, `Hollowkeep.*`.
+
+## Openings and interiors as built
+
+`[fort-2]`, 2026-11-26, in the same records (`engine/src/voxel/internal/Fort.cpp`):
+- **Slits:** every storey of a flank tower has 3 arrow slits (front and the 2 diagonal faces), 1.5 m high from 0.75 m
+  over the floor, 0.14 m wide at the outer face and splaying to 1 m at the inner face; the gate towers' slits are
+  cross slits; the keep has slits on 3 faces below 8 m (and the front above the ground storey) and 2 round-headed
+  windows (0.75 x 1.25 m) on each face above; every second merlon of the walls has a one-voxel slit.
+- **Doors:** a flank tower opens onto both wall walks beside it, each door on its walk's centre line where it meets
+  the tower's side (`FortRecord::walkLeftU`, `walkRightU`) and at the walk's height there (`walkLeft`, `walkRight`),
+  cut through the shell and its string course; inside, a plank landing on that half of the tower at the walk's level,
+  and no storey floor or joist within 2.5 m over a walk; each tower stands at least 6 m over its walks. The bailey
+  doors of the towers and the keep's door cut through the batter, which is a skirt 3 m over the lower of the column's
+  ground and the block's floor (so high ground beside a tower does not raise it to a walk).
+- **Floors:** planks 0.25 m thick on wood joists (0.25 m, every metre).
+- **Spiral stairs:** in the middle of every tower and in the keep's back corner, from the ground floor through the
+  roof: a 1 m shaft, a 0.2 m ashlar newel, steps of 0.25 m rise per 30 degrees (3 m a turn), each 0.5 m thick so the
+  steps overlap and carry each other; floors and the roof are open over the shaft (the sector test uses a literal
+  table of 12 directions, no libm). The gate towers' shell is 1 m, so their floors leave 1 m around the shaft.
+- **Putlog holes:** 0.25 m square every 2 m, just under the curtain's walk (moved there by `[fort-3]`, where the
+  hoardings' beams pass).
+- **The gate passage:** walls to 2.5 m and a barrel vault (`FortShape::Vault`) to 4.5 m, a straight groove where
+  the portcullis runs (4.5 m wide, 4.5 m high), 3 murder holes from the upper room through the crown.
+- **The low route L1** (`FortShape::Tunnel`, lined in ashlar, with end walls and a footing down to lower ground):
+  on a curtain run with no tower at either end, at least 5 directions from the gate, preferring 9 m or more to the
+  inner wall and the most ground over the room. An iron grate (bars every 0.25 m) in a granite frame, 2 m over the
+  outside ground and 3.25 m out from the wall's middle (beyond the batter; no buttress within 3 m); a 1 x 1 m crawl
+  through the wall to an oak_iron bulkhead and a doorway into a 4 x 3 m room 2.5 m high, whose floor leaves 1 m of
+  ground over its roof where the bailey stands high enough (within 0.5 m under and 2 m over the grate); a spiral
+  stair (`FortShape::Spiral`) in the room's middle up to the bailey's ground, or on a low site to the room's roof,
+  a drop of at most 2.75 m (`FortPlan::culvert`, `culvertMouth`, `culvertExit`, `culvertExitHeight`). The basic blast
+  leaves the grate; a power-9 shot opens it.
+
+Measured on the first map: 125 records, planned in 3 ms; chunks within 64 m of the keep cost 100 us against 90 us
+without the castle (+11 %; the machine ran slow that day: the built-in terrain measured 273 us against 210 us
+before). What depends on a column only (the stair's sector, the openings' geometry) is worked out once per column.
+The review of this stage found the walk's steps and the doors' heights; `Fort.EveryFlankTowerOpensOntoBothWallWalks`
+and the walk test's continuity and ramp checks pin them. Not yet: roofs, hoardings,
+machicolations, the bailey (the later stages); undercrofts under the keep's forebuilding and the kitchen wait for
+their buildings (`[fort-4]`).
+
+## Roofs and crowns as built
+
+`[fort-3]`, 2026-11-26 (`FortShape::Roof`, `FortRoof`, `FortRecord::trim`):
+- **Roofs:** a roof rises `height` per metre in from its eaves at `half`, over the footprint of a block (the D shape
+  of a flank tower, a square for the keep) or as a gable along a ridge. The cover is a shell of (rise per voxel of
+  run + 1) voxels (worldgen.md C5: 3 at 2 in 1, 2 at 1 in 1); under it rafters 0.25 m deep (12 radial ones in a cone,
+  one every metre on a gable, and the ridge beam), tie beams at the eaves (2 crossing ones in a cone, one every 2 m on
+  a gable), king posts. Flank towers: a slate cone of 2 in 1 over the battlements, its eaves 0.25 m out. Gate
+  towers: a slate cone over a machicolated crown. The keep: a slate pyramid of 1 in 1 (5.25 m from the middle, a
+  2.75 m walk inside the parapet), a slate cone on each corner turret, the great hall's brick chimney (1 x 1 m,
+  1.25 m over the apex). The gatehouse: a tiled gable across the passage (1 in 1; a 1 m walk all round), stone gable
+  ends, a bell turret on the ridge (4 posts, a plank floor, an iron bell, a tiled pyramid).
+- **Machicolations** (`FortTrim_Machicolations`) on the gatehouse, the gate towers and the keep: corbels of 3
+  stepped stones (0.25, 0.5, 0.75 m out, 1.125 m in all) 0.75 m wide every 1.5 m, the parapet 0.25-0.75 m out on
+  them; between the corbels the gallery behind the parapet has drop holes down the face.
+- **Hoardings** (`FortTrim_Hoarding`) on the 4 curtain runs by the gate: putlog beams through the holes every 2 m,
+  a plank floor 1.5 m out level with the walk (a drop slot by the face every 2 m), an outer plank wall 1.75 m high
+  with slits, posts on the parapet and a pent roof of planks falling 0.6 per metre outward; a doorway through the
+  parapet every 4 m.
+- **Materials:** slate and roof_tile (hardness 0.8, effective density 600), thatch (0.3, 250, flammable; for
+  `[fort-4]`'s lean-tos).
+
+The basic blast opens a roof (more than 100 voxels) and releases nothing
+(`Hollowkeep.TheBasicBlastBreachesTheCastleWithoutReleasingIt`). Not yet: dormers (they wait for the keep's upper
+storeys, `[fort-5]`), the GPU cost at fixed cameras on the UHD 620 (the owner's check).
 
 ## Budgets
 
@@ -377,8 +442,8 @@ openings, stairs, hoardings, the bailey (the later stages).
 | ID | Stage | State | Commits (engine / game) | History |
 |---|---|---|---|---|
 | `[fort-1]` | Stamped skeleton: the fort plan and stamper in `vortex.voxel:fort`; the greybox moves out of `WorldOp`s; batters, faces and rubble cores, buttresses, quoins, string courses, parapets with merlons; D-shaped flank towers; materials granite, granite_quoin, ashlar, rubble_core. Acceptance: the plan's golden hash (done: `Fort.GoldenHash`); column classes agree (done: `Fort.ColumnClassesBoundTheStampedCastle`, `Fort.EveryRecordsBoundsHoldAllItWrites`); 0 releases under the basic blast (done: `Hollowkeep.TheBasicBlastBreachesTheCastleWithoutReleasingIt`; the 2x-load dud sweep waits for worldgen.md's test hook); stamp cost measured (done: "The skeleton as built"); shots | Built | - | - |
-| `[fort-2]` | Openings and interiors: arrow slits, doors, windows, murder holes, putlog holes; joists and floors; spiral stairs; vaults and undercrofts; the culvert and grate (L1); oak_iron. Acceptance: every tower and the keep are walkable inside (a bot walk); L1 is open after its grate breaks (a script); 0 releases | Designed | - | - |
-| `[fort-3]` | Roofs and crowns: conical, pyramidal, hipped and gabled roofs on trusses; dormers, chimneys, the bell turret; machicolations and hoardings; slate, roof_tile, thatch. Acceptance: C5 shells hold; the GPU cost at fixed cameras; 0 releases | Designed | - | - |
+| `[fort-2]` | Openings and interiors: arrow slits, doors, windows, murder holes, putlog holes; joists and floors; spiral stairs; vaults and undercrofts; the culvert and grate (L1); oak_iron. Acceptance: the stairs climb every storey with headroom (done: `Fort.TowersHaveSplayedSlitsAndASpiralStairToTheRoof`; a bot walk waits for the bot's path code); L1 leads from its grate to the bailey and a siege shot opens it (done: `Fort.TheCulvertLeadsFromItsGrateToTheBailey`, `Hollowkeep.ASiegeShotOpensTheCulvertGrate`); the vaulted passage (done: `Fort.TheGatePassageIsVaultedWithMurderHoles`); every tower opens onto both walks (done: `Fort.EveryFlankTowerOpensOntoBothWallWalks`); 0 releases (done: the blast tests) | Built | - | - |
+| `[fort-3]` | Roofs and crowns: conical, pyramidal, hipped and gabled roofs on trusses; dormers, chimneys, the bell turret; machicolations and hoardings; slate, roof_tile, thatch. Acceptance: C5 shells hold (done: `Fort.RoofShellsAreThickEnoughForTheirPitch`); roofs on trusses, machicolations, hoardings, the gatehouse's roof and bell (done: `Fort.TowersCarryRoofsOnTrussesOverAnOpenTopFloor`, `Fort.MachicolationsHaveDropHolesBetweenTheirCorbels`, `Fort.HoardingsHangOnTheCurtainByTheGate`, `Fort.TheGatehouseHasAGableRoofAndABell`); 0 releases (done); the GPU cost at fixed cameras (the owner, check 29); dormers wait for `[fort-5]` | Built | - | - |
 | `[fort-4]` | The bailey: lean-tos (stables, forge, barracks, kitchen, granary, workshop), wattle_daub; the construction scaffolding kit at its 3-4 sites, walkways, crane; the set pieces as designed necks; M1 and H1. Acceptance: each set piece releases within limits and tips the planned way (scripts); reachability on the worn plan | Designed | - | - |
 | `[fort-5]` | Props and vignettes: room kits, movable props, lights, weathering, soot; fire-ready materials with spread.md. Acceptance: the object count under the cap; the guardroom's lever drives the portcullis; owner check of the look | Designed | - | - |
 
