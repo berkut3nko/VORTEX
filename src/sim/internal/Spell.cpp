@@ -101,7 +101,8 @@ namespace vortex::sim {
                                      uint32_t{s.stepRise}, uint32_t{s.stepRun}, uint32_t{s.stepWidth}, uint32_t{s.deckWidth}, uint32_t{s.deckThick},
                                      uint32_t{s.stairsMinRiseQ}, uint32_t{s.bridgeLevelQ}, uint32_t{s.bridgeMinQ}, uint32_t{s.bridgeEndQ},
                                      uint32_t{s.socketSpacing}, uint32_t{s.pegLengthQ}, uint32_t{s.aimLevel ? 1u : 0u}, uint32_t{s.armTicks},
-                                     uint32_t{s.burstRadiusQ}})
+                                     uint32_t{s.burstRadiusQ}, uint32_t{s.leapMaxTicks}, uint32_t{s.heatLifetimeTicks},
+                                     uint32_t{s.heatRadiusQ}, uint32_t{s.scorchDamage}, uint32_t{s.burnTicks}})
                 h = voxel::HashMix64(h, v);
             h = MixZone(h, s.zone3);
             return h;
@@ -123,6 +124,7 @@ namespace vortex::sim {
             {m.slate, 13}, {m.roofTile, 13}, {m.thatch, 5}, {m.wattleDaub, 10}, {m.soot, 48}, {m.graniteDamp, 120},
             {m.knitIron, 112}, {m.ice, 16}, {m.floe, kBoreStop}, {m.knitIronRimed, 56}, {m.stoneRimed, 24},
             {m.stoneDarkRimed, 32}, {m.brickRimed, 20}, {m.ironRimed, 64}, {m.slag, 112},
+            {m.knitIronHot, 56}, {m.ironHot, 64}, {m.pitch, 0},
         };
         for (const auto& [id, cost] : costs) c[id] = cost;
         return c;
@@ -273,6 +275,84 @@ namespace vortex::sim {
             s.manaCost = Mana(30.0);
         }
 
+        // Thermal (magic.md "The sixteen spells"): pitch burns 3.5 s where it lands, hot metal cools after 4 s. Without fire
+        // spread a pitch fill's registry expiry (Unknit) stands in for the burn stages of its fire class.
+        constexpr uint16_t kPitchTicks = 210, kHeatTicks = 240;
+        {   // Pitchfall: a lobbed Flow; pitch over its Fall and Run skin cells and its pool, Heat on what they touch.
+            SpellDef& s = t.spells[kPitchfall];
+            s.built = true;
+            s.flowSeedRadius = U8(V(0.5));
+            s.fallMax = U16(V(8.0));
+            s.flowRunPops = 1200;
+            s.flowLateral = U16(V(3.0));
+            s.frontCount = 240;
+            s.flowVisitCap = 12000;
+            s.fillCap = U16(static_cast<int32_t>(std::lround(1600.0 * (0.125 / vs) * (0.125 / vs) * (0.125 / vs))));
+            s.fillMap = voxel::Map_Pitch;
+            s.lifetimeTicks = kPitchTicks;
+            s.expiryMap = voxel::Map_Unknit;
+            s.heatLifetimeTicks = kHeatTicks;
+            s.splashRadiusQ = Q(1.0);
+            s.splashDamage = 20;
+            s.manaCost = Mana(30.0);
+        }
+        {   // Wildfire: the full Plume; pitch up its Rise and Run skin cells and its joined Front, Heat on what they touch.
+            SpellDef& s = t.spells[kWildfire];
+            s.built = true;
+            s.plumeSeedRadius = U8(V(0.375));
+            s.riseMax = U16(V(6.0));
+            s.plumeRunPops = 400;
+            s.plumeLateral = U16(V(2.0));
+            s.plumeVisitCap = 4000;
+            s.fillMap = voxel::Map_Pitch;
+            s.lifetimeTicks = kPitchTicks;
+            s.expiryMap = voxel::Map_Unknit;
+            s.heatLifetimeTicks = kHeatTicks;
+            s.zone.radiusQ = U16(V(0.5));        // the scorch: the plume's box grown sideways (voxels) ...
+            s.zone.halfHeightQ = U16(V(2.0));    // ... and down (voxels)
+            s.scorchDamage = 20;
+            s.manaCost = Mana(30.0);
+        }
+        {   // Meltdown Beam: Heat round the bore, then the bore through what the Heat softened; 45 and Burning.
+            SpellDef& s = t.spells[kMeltdownBeam];
+            s.built = true;
+            s.pierceRadiusQ = 32;   // 2 voxels: a bore is counted in voxels
+            s.piercePower = 80;
+            s.pierceMaxSlices = 64;
+            // Three metres of stone at 0.125 m (24 slices of about 12.6 voxels at 48), scaled with the slices of a metre.
+            s.pierceBudget = Budget(14400);
+            s.heatRadiusQ = 64;     // 4 voxels round the bore's axis
+            s.heatLifetimeTicks = kHeatTicks;
+            s.directDamage = 45;
+            s.burnTicks = 180;
+            s.manaCost = Mana(20.0);
+        }
+        {   // Firestorm Sweep: a Burst disc whose leading half-rim rises into a fire curtain of pitch; Heat under the sweep;
+            // 30 and Burning to enemies on the disc. A Line draws the curtain along the polyline.
+            SpellDef& s = t.spells[kFirestormSweep];
+            s.built = true;
+            s.burstDiscRadius = U16(V(4.0));
+            s.stepMax = U8(V(0.375));
+            s.burstPops = 6000;
+            s.burstVisitCap = U16(std::min(60000, 16 * V(4.0) * V(4.0)));
+            s.burstPlane = U16(V(4.0) + 2);
+            s.burstNormalMin = static_cast<int16_t>(-V(0.5));
+            s.burstNormalMax = static_cast<int16_t>(V(1.75));
+            s.fillMap = voxel::Map_Pitch;
+            s.rimHeight = U8(V(0.75));
+            s.lifetimeTicks = kPitchTicks;
+            s.expiryMap = voxel::Map_Unknit;
+            s.heatLifetimeTicks = kHeatTicks;
+            s.scorchDamage = 30;
+            s.burnTicks = 120;
+            s.manaCost = Mana(30.0);
+            s.drawsLine = true;
+            s.drawHalfWidthQ = 8;   // one voxel thick
+            s.drawHeight = U8(V(0.75));
+            s.drawMinQ = Q(1.5);
+            s.drawMaxQ = Q(10.0);
+            s.drawZoneRadiusQ = Q(1.5);
+        }
         {   // Updraft: a Lift over a single Plume column, everyone.
             SpellDef& s = t.spells[kUpdraft];
             s.built = true;
@@ -286,6 +366,33 @@ namespace vortex::sim {
             s.zone.rampQ = Q(0.25);
             s.zone.hoverQ = Q(0.5);
             s.manaCost = Mana(20.0);
+            s.maxBodies = 8;
+            s.maxBodyKickCmS = 1200;
+        }
+        {   // Meteor Leap: the caster's own arc at the Spell edge; at the landing a Pin and a knockback round it, 15 damage,
+            // and the Shatter flood of rimed matter and ice.
+            SpellDef& s = t.spells[kMeteorLeap];
+            s.built = true;
+            s.fallMax = U16(V(8.0));
+            s.leapMaxTicks = 240;
+            s.manaCost = Mana(45.0);
+            s.noProjectile = true;
+            s.zone.kind = ZoneKind::Pin;
+            s.zone.place = ZonePlace::LeapSlam;
+            s.zone.target = ZoneTarget::Enemies;
+            s.zone.durationTicks = 60;
+            s.zone.strength[1] = 30;    // the tail: a pinned player stays pinned 0.5 s after the ring
+            s.zone.radiusQ = Q(2.5);
+            s.zone.halfHeightQ = Q(1.0);
+            s.zone2 = s.zone;
+            s.zone2.kind = ZoneKind::Impulse;
+            s.zone2.durationTicks = 1;
+            s.zone2.strength[0] = 500;
+            s.zone2.strength[1] = 200;
+            s.zoneDamage = 15;
+            s.shatterRadiusQ = Q(1.5);
+            s.shatterDepth = U8(std::max(1, V(0.5)));
+            s.shatterVisitCap = 4000;
             s.maxBodies = 8;
             s.maxBodyKickCmS = 1200;
         }
@@ -461,7 +568,8 @@ namespace vortex::sim {
                                  uint32_t{table.drawBaseMana}, uint32_t{table.drawManaPerMetre}, uint32_t{table.maxFlightTicks},
                                  uint32_t{table.lineSpeedMs}, table.gestureReachQ, table.gestureStepQ, table.gesturePathQ,
                                  uint32_t{table.gestureSupportQ}, table.arcSpeedFine, table.arcGravity, uint32_t{table.arcMaxTicks},
-                                 uint32_t{table.lobMinTicks}, uint32_t{table.hazardTicks}, uint32_t{table.hazardDamage}})
+                                 uint32_t{table.lobMinTicks}, uint32_t{table.hazardTicks}, uint32_t{table.hazardDamage}, uint32_t{table.pitchHpPerSecond},
+                                 uint32_t{table.burnHpPerSecond}, uint32_t{table.hazardCapHpPerSecond}})
             h = voxel::HashMix64(h, v);
         for (const SpellDef& spell : table.spells) h = MixSpell(h, spell);
         for (const uint16_t cost : table.boreCost) h = voxel::HashMix64(h, cost);

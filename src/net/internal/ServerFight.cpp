@@ -233,8 +233,8 @@ namespace vortex::net {
             DealDamage({target, 0, 999, static_cast<uint8_t>(sim::DamageCause::Void)});
             return;
         }
-        // A landing after a step that began in the air.
-        if (!before.OnGround() && after.OnGround()) {
+        // A landing after a step that began in the air; a lifted or leaping player takes none (magic.md "Damage and hazards").
+        if (!before.OnGround() && after.OnGround() && (before.status & sim::PlayerStatus_Lifted) == 0) {
             const int16_t fall = sim::FallDamage(Rules(), before.velocity.y);
             if (fall > 0) DealDamage({target, 0, fall, static_cast<uint8_t>(sim::DamageCause::Fall)});
             if (f.dead) return;

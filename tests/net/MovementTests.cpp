@@ -1115,3 +1115,42 @@ TEST(Movement, SpireRiderNoCorrection) {
     EXPECT_EQ(bot.client->Prediction().corrections, before) << "the rider is never corrected";
     EXPECT_LT(Disagreement(m, bot), 0.05f) << "both sides agree where the rider stands";
 }
+
+// magic.md spell 9 and "What can still cause a correction": a Meteor Leap is the caster's own input, as a jump is: its
+// launch, its flight and its landing are predicted from the Spell edge, on G16's link (40 ms + 0-30 ms each way, 5 %
+// loss), with no correction for the caster; the server announces the slam where the caster lands.
+TEST(Movement, MeteorLeapNoCorrection) {
+    Match m(Settings(), Lossy());
+    ASSERT_TRUE(m.started);
+    uint32_t castAt = 0;
+    Match::Bot& bot = m.AddBot(Scripted([&castAt](uint32_t tick) {
+        sim::PlayerInput in;
+        if (castAt != 0 && tick == castAt) {
+            sim::AimAngles(glm::normalize(glm::vec3(0.36f, 1.0f, 0.0f)), in.yaw, in.pitch);   // 70 degrees up: about 9.4 m
+            in.buttons = sim::PlayerButton_Spell;
+            in.spell = sim::kMeteorLeap;
+        }
+        return in;
+    }));
+    ASSERT_TRUE(m.Join());
+    m.Passes(90);
+    const uint8_t slot = bot.client->Slot();
+    const uint64_t before = bot.client->Prediction().corrections;
+    const sim::PlayerState start = m.server.GetPlayer(slot).value_or(sim::PlayerState{});
+    castAt = bot.client->PredictTick() + 5;
+    float top = start.position.y;
+    for (int i = 0; i < 360; ++i) {
+        m.Pass();
+        top = std::max(top, m.server.GetPlayer(slot).value_or(sim::PlayerState{}).position.y);
+    }
+    const sim::PlayerState end = m.server.GetPlayer(slot).value_or(sim::PlayerState{});
+    EXPECT_EQ(m.server.Stats().spellCasts, 1u);
+    EXPECT_EQ(m.server.Stats().spellsRefused, 0u);
+    EXPECT_GT(m.server.Stats().zonesEmitted, 1u) << "the slam's Impulse and Pin";
+    EXPECT_GT(end.position.x - start.position.x, 8.0f) << "the leap carried the caster";
+    EXPECT_GT(top - start.position.y, 5.0f);
+    EXPECT_TRUE(end.OnGround());
+    EXPECT_EQ(end.status & sim::PlayerStatus_Leaping, 0);
+    EXPECT_EQ(bot.client->Prediction().corrections, before) << "the caster is never corrected";
+    EXPECT_LT(Disagreement(m, bot), 0.05f) << "both sides agree where the caster stands";
+}

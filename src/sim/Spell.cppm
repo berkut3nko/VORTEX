@@ -24,14 +24,19 @@ export namespace vortex::sim {
     constexpr Element ElementOf(SpellId s) { return static_cast<Element>(s % 4); }
 
     inline constexpr SpellId kMoltenPour = MakeSpell(Form::Flow, Element::Metal);         // 0
+    inline constexpr SpellId kPitchfall = MakeSpell(Form::Flow, Element::Thermal);         // 1
+    inline constexpr SpellId kMeteorLeap = MakeSpell(Form::Flow, Element::Pressure);       // 2
     inline constexpr SpellId kRuneTrap = MakeSpell(Form::Flow, Element::Frost);           // 3
     inline constexpr SpellId kRisingSpire = MakeSpell(Form::Plume, Element::Metal);       // 4
+    inline constexpr SpellId kWildfire = MakeSpell(Form::Plume, Element::Thermal);       // 5
     inline constexpr SpellId kUpdraft = MakeSpell(Form::Plume, Element::Pressure);       // 6
     inline constexpr SpellId kPermafrostClimb = MakeSpell(Form::Plume, Element::Frost);  // 7
     inline constexpr SpellId kRebarLance = MakeSpell(Form::Pierce, Element::Metal);      // 8
+    inline constexpr SpellId kMeltdownBeam = MakeSpell(Form::Pierce, Element::Thermal);  // 9
     inline constexpr SpellId kDash = MakeSpell(Form::Pierce, Element::Pressure);         // 10
     inline constexpr SpellId kShatterSpike = MakeSpell(Form::Pierce, Element::Frost);    // 11
     inline constexpr SpellId kBarricadeWave = MakeSpell(Form::Burst, Element::Metal);    // 12
+    inline constexpr SpellId kFirestormSweep = MakeSpell(Form::Burst, Element::Thermal); // 13
     inline constexpr SpellId kPunch = MakeSpell(Form::Burst, Element::Pressure);         // 14
     inline constexpr SpellId kFlashFreeze = MakeSpell(Form::Burst, Element::Frost);      // 15
 
@@ -49,6 +54,7 @@ export namespace vortex::sim {
         PlumeBox = 6,        ///< the Plume's cells' box, grown by `radiusQ` (voxels) sideways and `halfHeightQ` (voxels) down
         SpireLift = 7,       ///< a y-cylinder of `radiusQ` over the spire's column, up to `hoverQ` over its top (Rising Spire)
         RuneFloor = 8,       ///< a y-cylinder of `radiusQ` and `halfHeightQ` standing on the landing's floor (Rune Trap)
+        LeapSlam = 9,        ///< a y-cylinder of `radiusQ` and `halfHeightQ` standing on the floor where the leap lands (Meteor Leap)
     };
     /// @brief Which players a zone acts on, seen from the caster's team.
     enum class ZoneTarget : uint8_t { Enemies = 0, Everyone = 1, Allies = 2 };
@@ -125,6 +131,15 @@ export namespace vortex::sim {
         // Rune Trap (magic.md spell 13)
         uint16_t armTicks = 0;             ///< the rune arms this long after the cast
         uint16_t burstRadiusQ = 0;         ///< the burst's zones and its ice round the rune
+        // Meteor Leap (magic.md spell 9): the caster's own arc, traced at most this many ticks
+        uint16_t leapMaxTicks = 0;
+        // Thermal's verbs (magic.md "The sixteen spells"): Heat on the matter a spell touches (Cool after
+        // heatLifetimeTicks), Meltdown Beam's Heat capsule round its bore, the damage of a scorch (Wildfire's plume,
+        // Firestorm Sweep's disc or curtain) and the Burning a hit starts (server only)
+        uint16_t heatLifetimeTicks = 0;
+        uint16_t heatRadiusQ = 0;
+        uint16_t scorchDamage = 0;
+        uint16_t burnTicks = 0;
         // Pierce (magic.md "Pierce (Solid): a bore that pays for every voxel it adds")
         uint16_t pierceRadiusQ = 0;
         uint16_t piercePower = 0;          ///< 1/16 hardness
@@ -205,6 +220,10 @@ export namespace vortex::sim {
         // The server's hazard scan (magic.md "Damage and hazards"): every hazardTicks, hazardDamage per Hot contact.
         uint8_t hazardTicks = 6;
         uint8_t hazardDamage = 1;
+        // Pitch under or beside a player, and Burning (server only); the hazard scan deals at most hazardCapHpPerSecond in all.
+        uint8_t pitchHpPerSecond = 15;
+        uint8_t burnHpPerSecond = 8;
+        uint8_t hazardCapHpPerSecond = 15;
         // The server's gesture checks (q).
         uint32_t gestureReachQ = 0;        ///< each point within this of the eye
         uint32_t gestureStepQ = 0;         ///< each point at most this from the last
@@ -218,8 +237,7 @@ export namespace vortex::sim {
     /**
      * @brief The table at `voxelSize`: metres become voxels (`lround(m / vs)`) and q
      * (`lround(m / vs * 16)`) once, in double from the float voxel size, so both sides of a
-     * session hold the same integers. Built: Molten Pour, Rune Trap, Rising Spire, Updraft, Permafrost Climb,
-     * Rebar Lance, Dash, Shatter Spike, Barricade Wave, Punch and Flash Freeze.
+     * session hold the same integers. Built: all sixteen spells of the matrix (Thermal without fire spread).
      */
     SpellTable BuildSpellTable(float voxelSize);
     /// @brief The bore cost of every id of the default world palette (SpellTable::boreCost).

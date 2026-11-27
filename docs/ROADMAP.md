@@ -14,6 +14,26 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
 
 ## Now
 
+- **[mag-5] Thermal: built, not reviewed** (2026-11-27), without fire spread (the owner's re-scope: [spread-S1] is not
+  built; pitch burns only where it lands and expires in 3.5 s, timber never catches). Pitchfall, Wildfire, Meltdown
+  Beam and Firestorm Sweep through the shared cast path. `knit_iron_hot` and `iron_hot` at half their base's
+  hardness (a blast carves them; the absorb rule does not hold them), pitch's four burn stages as films
+  (`MaterialFlag_Film`: no collider, not in the structure, open for the operators, passed by the spell ray), the
+  Pitch, Heat and Cool maps (Heat melts ice and floe and thaws rime; Rime quenches hot metal; Freeze turns pitch into
+  ice), Meltdown Beam's Heat before its bore, the hazard scan for pitch and hot metal and Burning (server only, at most
+  15 HP/s together). No protocol bump. G23 runs 16 rows: `Pitch: N voxels burning, 0 left after expiry`, `Wildfire:`,
+  `Meltdown: bore`, `Heat: knit blastable`, `Firestorm: curtain`. [As built](history/magic/mag-5-as-built.md). Not run:
+  `verify.sh full --ci`, the soak. Windowed look (pitch, hot metal): owner checks.
+- **[mag-7] Meteor Leap: built, not reviewed** (2026-11-27), without `extraLoad` and [si-2] (the owner's re-scope:
+  the slam fells no floor). Meteor Leap (Flow x Pressure, 45 mana) launches its caster at the Spell edge inside
+  `sim::StepPlayer` along the input's look (12 m/s, the pitch clamped to 15-80 degrees), as a Dash does; the caster
+  flies with no wish and no push decay (`PlayerStatus_Leaping`, `Lifted`: no fall damage) and stops where it lands. A
+  client picks the look that lands at the release point (`sim::LeapAimToward`). The server traces the same launch with
+  `sim::TraceArc` and, at max(the landing, T_run + the lead), an Impulse and a Pin round the landing for enemies, 15
+  damage and the Shatter flood. The Pin zone acts from this stage (a tail of 0.5 s, the control guard after it).
+  `kPlayerRuleRevision` 6, no protocol bump. G23 runs 12 rows: `Leap: X m in N ticks, landed D m from the target, slam
+  pinned 0, shattered S`. [As built](history/magic/mag-7-as-built.md). Not run: `verify.sh full --ci`, the soak.
+  Windowed feel (the leap's arc and trail): owner checks.
 - **[mag-4] Flow, climbing, the rune and the rest of Metal: built, not reviewed** (2026-11-27). Molten Pour, Rising
   Spire, Rebar Lance and Rune Trap through the shared cast path (offline and the server). The integer arc
   (`sim::TraceArc`: a lob to the gesture's release point, or a tap along the aim at 22 m/s) replaces Flow's
@@ -346,7 +366,7 @@ never been measured.
 
 ## State
 
-Tests: **1148** in ctest: 1140 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
+Tests: **1165** in ctest: 1157 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
 game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts), `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
 `Tools.DocCheck`, `Tools.DocCheckSelftest`, `Tools.SessionCheckVerdict` and `Tools.VerifyAssertions` (WP2's checks
 and their self-tests), `Tools.RendezvousWorker` (the rendezvous Worker under `node --test`, registered when `node` is

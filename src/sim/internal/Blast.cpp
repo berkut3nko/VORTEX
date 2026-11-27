@@ -145,7 +145,7 @@ namespace vortex::sim {
             Clock::time_point start = Clock::now();
             voxel::IslandBoxScan scan;
             out.boxIslands = voxel::ExtractFloatingIslands(world, &simulation.Materials(), boxMin, boxMax, kMaxIslandVoxels, false,
-                                                           voxel::MaterialFlag_Liquid, &out.searched, &scan);
+                                                           voxel::kNonStructuralFlags, &out.searched, &scan);
             out.searchMs = MsSince(start);
             if (!out.searched) return out;
             IslandSearchStats& stats = out.stats;
@@ -164,7 +164,7 @@ namespace vortex::sim {
                 limits.deferOnUnloaded = !simulation.Config().sessionServer;
                 // The labelled box: the island box without rows below a full-height window.
                 voxel::FloodResult flood = voxel::ProveFaceComponents(world, &simulation.Materials(), scan.faceComponents, scan.boxMin,
-                                                                      scan.boxMax, scan.labels, voxel::MaterialFlag_Liquid, limits);
+                                                                      scan.boxMax, scan.labels, voxel::kNonStructuralFlags, limits);
                 stats.merged = flood.merged;
                 stats.attachedByLimit = flood.attachedByLimit;
                 stats.attachedByKnown = flood.attachedByKnown;
@@ -192,7 +192,7 @@ namespace vortex::sim {
             limits.maxNodeVisits = kGraphNodeVisitBudget;
             limits.deferOnUnloaded = !simulation.Config().sessionServer;
             voxel::TerrainGraphCache& cache = simulation.TerrainGraphs();
-            const voxel::GraphMaterials materials = voxel::MakeGraphMaterials(&simulation.Materials(), voxel::MaterialFlag_Liquid);
+            const voxel::GraphMaterials materials = voxel::MakeGraphMaterials(&simulation.Materials(), voxel::kNonStructuralFlags);
             // The load check (shred.md Part 4b): capacities for the session's voxel size (the
             // float both sides hold bit for bit), the four work budgets.
             voxel::NeckLimits neck;

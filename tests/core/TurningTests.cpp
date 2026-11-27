@@ -52,8 +52,8 @@ TEST(TurningTable, NeverNameBedrockAndIdentityElsewhere) {
     const WorldMaterials ids = RegisterDefaultWorldMaterials(library);
     const TurningTable table = BuildTurningTable(ids);
     ASSERT_NE(ids.knitIron, 0);
-    // Every row each map names (magic.md "The Turning table"); Heat, Cool, Pitch, Ignite and Douse name ids that are not
-    // built yet and stay the identity.
+    // Every row each map names (magic.md "The Turning table"); Ignite and Douse name ids that are not built yet (spread)
+    // and stay the identity.
     const std::vector<std::pair<uint8_t, uint8_t>> rimed = {{ids.stone, ids.stoneRimed},
                                                             {ids.stoneDark, ids.stoneDarkRimed},
                                                             {ids.brick, ids.brickRimed},
@@ -62,7 +62,7 @@ TEST(TurningTable, NeverNameBedrockAndIdentityElsewhere) {
     std::array<std::vector<std::pair<uint8_t, uint8_t>>, kTurningMapCount> rows;
     rows[Map_Knit] = {{0, ids.knitIron}};
     rows[Map_Ablate] = {{ids.knitIron, 0}, {ids.slag, 0}};
-    rows[Map_Unknit] = {{ids.knitIron, 0}, {ids.knitIronRimed, 0}, {ids.ice, 0}, {ids.floe, ids.water}, {ids.slag, 0}};
+    rows[Map_Unknit] = {{ids.knitIron, 0}, {ids.knitIronRimed, 0}, {ids.ice, 0}, {ids.floe, ids.water}, {ids.slag, 0}, {ids.knitIronHot, 0}};
     rows[Map_Slag] = {{0, ids.slag}};
     rows[Map_Set] = {{ids.slag, ids.knitIron}};
     for (const auto& [base, frosted] : rimed) {
@@ -73,6 +73,19 @@ TEST(TurningTable, NeverNameBedrockAndIdentityElsewhere) {
     rows[Map_Shatter].push_back({ids.ice, 0});
     rows[Map_Shatter].push_back({ids.floe, ids.water});
     rows[Map_Freeze] = {{0, ids.ice}, {ids.water, ids.floe}};
+    for (uint32_t stage = ids.pitch; stage <= ids.pitchLast; ++stage) {
+        const uint8_t p = static_cast<uint8_t>(stage);
+        rows[Map_Freeze].push_back({p, ids.ice});
+        rows[Map_Knit].push_back({p, ids.knitIron});
+        rows[Map_Slag].push_back({p, ids.slag});
+        rows[Map_Unknit].push_back({p, 0});
+    }
+    rows[Map_Pitch] = {{0, ids.pitch}};
+    rows[Map_Heat] = {{ids.knitIron, ids.knitIronHot}, {ids.knitIronRimed, ids.knitIronHot}, {ids.iron, ids.ironHot}, {ids.ironRimed, ids.ironHot},
+                      {ids.ice, 0}, {ids.floe, ids.water}, {ids.stoneRimed, ids.stone}, {ids.stoneDarkRimed, ids.stoneDark}, {ids.brickRimed, ids.brick}};
+    rows[Map_Cool] = {{ids.knitIronHot, ids.knitIron}, {ids.ironHot, ids.iron}};
+    rows[Map_Rime].push_back({ids.knitIronHot, ids.knitIron});
+    rows[Map_Rime].push_back({ids.ironHot, ids.iron});
     rows[Map_FreezeWater] = {{ids.water, ids.floe}};
     for (uint32_t m = 0; m < kTurningMapCount; ++m) {
         const TurningMap& map = table.maps[m];
@@ -117,13 +130,15 @@ TEST(Materials, KnitIronIsConjuredAndStoneStrong) {
     EXPECT_EQ(m.strength[2], 15000u);
     // No other material of the palette is conjured but Frost's ice, floe and rimed knit.
     for (uint32_t id = 1; id < 256; ++id) {
-        if (id == ids.knitIron || id == ids.ice || id == ids.floe || id == ids.knitIronRimed || id == ids.slag) continue;
+        if (id == ids.knitIron || id == ids.ice || id == ids.floe || id == ids.knitIronRimed || id == ids.slag || id == ids.knitIronHot ||
+            (id >= ids.pitch && id <= ids.pitchLast))
+            continue;
         EXPECT_EQ(library.Get(kWorldPalette, static_cast<uint8_t>(id)).flags & MaterialFlag_Conjured, 0u) << id;
     }
 }
 
 // Molten Pour's slag (magic.md "New world-palette ids"): appended after Frost's ids, conjured and hot, as hard and as
-// light as knit with knit's bonds; the only Hot id of the palette.
+// light as knit with knit's bonds; the Hot ids of the palette are slag and Thermal's hot metal.
 TEST(Materials, SlagIsConjuredHotAndKnitStrong) {
     MaterialLibrary library;
     const WorldMaterials ids = RegisterDefaultWorldMaterials(library);
@@ -137,9 +152,45 @@ TEST(Materials, SlagIsConjuredHotAndKnitStrong) {
     for (int i = 0; i < 3; ++i) EXPECT_EQ(slag.strength[i], knit.strength[i]);
     EXPECT_GT(slag.emissive, 0.0f);
     for (uint32_t id = 1; id < 256; ++id) {
-        if (id == ids.slag) continue;
+        if (id == ids.slag || id == ids.knitIronHot || id == ids.ironHot) continue;
         EXPECT_EQ(library.Get(kWorldPalette, static_cast<uint8_t>(id)).flags & MaterialFlag_Hot, 0u) << id;
     }
+}
+
+// Thermal's ids (magic.md "New world-palette ids"), appended after slag: hot knit and hot iron at half their bases'
+// hardness with their bases' bonds (a basic blast of power 6 carves them), and pitch's four burn stages, films: no
+// collider, no structure, open for the operators; the only films of the palette.
+TEST(Materials, ThermalIdsAreAppendedAndPitchIsAFilm) {
+    MaterialLibrary library;
+    const WorldMaterials ids = RegisterDefaultWorldMaterials(library);
+    EXPECT_EQ(ids.knitIronHot, 53);
+    EXPECT_EQ(ids.ironHot, 54);
+    EXPECT_EQ(ids.pitch, 55);
+    EXPECT_EQ(ids.pitchLast, 58);
+    EXPECT_EQ(library.Name(kWorldPalette, ids.pitch), "pitch_b1");
+    EXPECT_EQ(library.Name(kWorldPalette, ids.pitchLast), "pitch_b4");
+    const Material& hotKnit = library.Get(kWorldPalette, ids.knitIronHot);
+    const Material& hotIron = library.Get(kWorldPalette, ids.ironHot);
+    EXPECT_EQ(hotKnit.hardness * 2.0f, library.Get(kWorldPalette, ids.knitIron).hardness);
+    EXPECT_EQ(hotIron.hardness * 2.0f, library.Get(kWorldPalette, ids.iron).hardness);
+    EXPECT_LE(QuantizePower(hotKnit.hardness), QuantizePower(6.0f));
+    EXPECT_LE(QuantizePower(hotIron.hardness), QuantizePower(6.0f));
+    EXPECT_EQ(hotKnit.flags, static_cast<uint32_t>(MaterialFlag_Conjured | MaterialFlag_Hot));
+    EXPECT_EQ(hotIron.flags, static_cast<uint32_t>(MaterialFlag_Hot));
+    for (int i = 0; i < 3; ++i) {
+        EXPECT_EQ(hotKnit.strength[i], library.Get(kWorldPalette, ids.knitIron).strength[i]);
+        EXPECT_EQ(hotIron.strength[i], library.Get(kWorldPalette, ids.iron).strength[i]);
+    }
+    for (uint32_t stage = ids.pitch; stage <= ids.pitchLast; ++stage) {
+        const Material& pitch = library.Get(kWorldPalette, static_cast<uint8_t>(stage));
+        EXPECT_EQ(pitch.flags, static_cast<uint32_t>(MaterialFlag_Conjured | MaterialFlag_Film));
+        EXPECT_EQ(pitch.hardness, 0.0f);
+    }
+    for (uint32_t id = 1; id < 256; ++id) {
+        if (id >= ids.pitch && id <= ids.pitchLast) continue;
+        EXPECT_EQ(library.Get(kWorldPalette, static_cast<uint8_t>(id)).flags & MaterialFlag_Film, 0u) << id;
+    }
+    EXPECT_NE(kNonStructuralFlags & MaterialFlag_Film, 0u);
 }
 
 TEST(Materials, FrostIdsAreAppendedWithHalfTheirBasesHardness) {

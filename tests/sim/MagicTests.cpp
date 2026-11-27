@@ -90,15 +90,21 @@ namespace {
         }
 
         /// One tick in the server's order: the players' steps, then the follow-ups, then physics.
-        sim::ScheduledResult Tick() {
+        sim::ScheduledResult Tick() { return TickWith(nullptr, sim::PlayerInput{}, [] {}); }
+
+        /// The same tick with `input` for `who` (the others stand), and `afterSteps` between the steps and the
+        /// follow-ups (where a server runs its casts).
+        template <class F>
+        sim::ScheduledResult TickWith(const Fighter* who, const sim::PlayerInput& input, F&& afterSteps) {
             const std::vector<glm::dvec3> focus = Focus();
             simulation.UpdateStreaming(focus);
             for (Fighter& f : fighters) {
                 simulation.Terrain().FlushBox(sim::PlayerReach(f.state.position, ctx.tuning));
                 const sim::PlayerZones zones{&simulation.Zones(), &simulation.World(), simulation.Tick(), static_cast<uint8_t>(1u << f.team)};
-                sim::StepPlayer(simulation.Physics(), simulation.Terrain(), f.character, f.state, sim::PlayerInput{}, ctx.tuning, sim::PlayArea{},
-                                zones, simulation.FixedTimeStep());
+                sim::StepPlayer(simulation.Physics(), simulation.Terrain(), f.character, f.state, &f == who ? input : sim::PlayerInput{}, ctx.tuning,
+                                sim::PlayArea{}, zones, simulation.FixedTimeStep());
             }
+            afterSteps();
             sim::ScheduledResult r = sim::RunScheduled(simulation, table, ctx, simulation.Tick(), Targets());
             simulation.StepPhysics();
             if (simulation.Terrain().Stats().pending != 0) simulation.Jobs().WaitIdle();
@@ -577,7 +583,7 @@ TEST(Magic, CaptureChecksTheGapAndTheAttunement) {
     c.player = 3;
     c.spell = sim::kPunch;
     EXPECT_EQ(sim::CheckCapture(ctx, table, c, 10), sim::SpellRefusal::None) << "Metal and Pressure by default";
-    c.spell = sim::MakeSpell(sim::Form::Burst, sim::Element::Thermal);
+    c.spell = 16;   // spread's Kindle: never built for play
     EXPECT_EQ(sim::CheckCapture(ctx, table, c, 10), sim::SpellRefusal::NotBuilt);
     sim::CasterState frost;
     frost.elementB = static_cast<uint8_t>(sim::Element::Frost);
@@ -663,4 +669,115 @@ TEST(Magic, OfflineAndServerEmitTheSameOps) {
     EXPECT_EQ(a.ops, b.ops);
     for (size_t i = 0; i < a.casts.size(); ++i) EXPECT_EQ(a.casts[i].zonesStarted, b.casts[i].zonesStarted) << i;
     EXPECT_EQ(offline.Hash(), server.Hash());
+}
+
+// --- Meteor Leap (magic.md spell 9) --------------------------------------------------------------
+
+// The Spell edge's step launches the caster along the look a client solved for the target (sim::LeapAimToward); the
+// cast that follows traces the same arc from the eye after that step: the caster lands at the target, and the slam
+// starts where and when it lands. On flat ground 9.5 m away, and on a block 1.5 m high 8 m away.
+TEST(Magic, MeteorLeapLandsAtTheTarget) {
+    struct Case {
+        glm::dvec3 target;
+        bool block;
+    };
+    for (const Case& c : {Case{{4.0, kGround, 0.5}, false}, Case{{2.5, kGround + 1.5, 0.5}, true}}) {
+        MagicYard yard;
+        ASSERT_TRUE(yard.initialized);
+        if (c.block) yard.World().FillBox({16, kG, -16}, {32, kG + 12, 16}, yard.Ids().stone);   // x 2..4 m, its top at 13.5 m
+        Fighter& caster = yard.Add(1, 1, {-5.5f, kGround, 0.5f});
+        yard.Settle();
+        ASSERT_TRUE(caster.state.OnGround());
+        sim::PlayerInput in;
+        sim::AimAngles(sim::LeapAimToward(caster.state.position, c.target), in.yaw, in.pitch);
+        in.buttons = sim::PlayerButton_Spell;
+        in.spell = sim::kMeteorLeap;
+        const uint32_t edge = yard.simulation.Tick();
+        sim::CastSpellResult cast;
+        yard.TickWith(&caster, in, [&] {
+            EXPECT_NE(caster.state.status & sim::PlayerStatus_Leaping, 0) << "launched in the edge's step";
+            sim::SpellCast sc;
+            sc.player = 1;
+            sc.team = 1;
+            sc.spell = sim::kMeteorLeap;
+            sc.inputTick = edge;
+            sc.eye = glm::dvec3(caster.state.position) + glm::dvec3(0.0, kEye, 0.0);
+            sc.dir = sim::LookDirection(in.yaw, in.pitch);
+            const std::vector<sim::SpellTarget> targets = yard.Targets();
+            cast = sim::CastSpell(yard.simulation, yard.table, sc, yard.ctx, targets);
+        });
+        ASSERT_EQ(cast.refusal, sim::SpellRefusal::None) << sim::ToString(cast.refusal);
+        EXPECT_EQ(cast.manaCost, 45u * 60u);
+        EXPECT_EQ(cast.flightTicks, 0u) << "the caster is the projectile";
+        ASSERT_EQ(cast.zonesStarted.size(), 2u);
+        EXPECT_EQ(cast.zonesStarted[0].kind, sim::ZoneKind::Impulse);
+        EXPECT_EQ(cast.zonesStarted[1].kind, sim::ZoneKind::Pin);
+        uint32_t landTick = 0;
+        for (int i = 0; i < 240 && landTick == 0; ++i) {
+            const uint32_t t = yard.simulation.Tick();
+            yard.Tick();
+            if ((caster.state.status & sim::PlayerStatus_Leaping) == 0) landTick = t;
+        }
+        ASSERT_NE(landTick, 0u) << "the leap landed";
+        EXPECT_TRUE(caster.state.OnGround());
+        EXPECT_EQ(caster.state.push[0], 0) << "the landing ends the leap's push";
+        EXPECT_EQ(caster.state.status & sim::PlayerStatus_Lifted, 0);
+        const glm::dvec3 feet(caster.state.position);
+        EXPECT_NEAR(feet.y, c.target.y, 0.05);
+        EXPECT_LT(glm::length(glm::dvec2(feet.x - c.target.x, feet.z - c.target.z)), 1.0) << "lands at the target";
+        const glm::dvec3 slam = glm::dvec3(cast.hitQ) * (kVoxel / 16.0);
+        EXPECT_LT(glm::length(glm::dvec2(slam.x - feet.x, slam.z - feet.z)), 0.75) << "the slam is where it lands";
+        EXPECT_NEAR(slam.y, feet.y, 0.05);
+        const uint32_t slamTick = cast.zonesStarted[1].startTick;
+        EXPECT_GE(slamTick, edge + yard.table.zoneLeadTicks);
+        EXPECT_LE(slamTick > landTick ? slamTick - landTick : landTick - slamTick, 3u) << "the slam starts when it lands";
+        std::printf("leap to (%.2f, %.2f): landed at (%.2f, %.2f, %.2f) %u ticks after the edge, slam at %u, %u arc ticks\n", c.target.x,
+                    c.target.z, feet.x, feet.y, feet.z, landTick - edge, slamTick - edge, cast.stats.arcTicks);
+    }
+}
+
+// The slam: at the landing an enemy is knocked back, pinned and takes 15; an ally is not; exposed ice and rimed
+// stone in reach shatter.
+TEST(Magic, MeteorLeapSlamPinsAndShatters) {
+    MagicYard yard;
+    ASSERT_TRUE(yard.initialized);
+    // Ice and rimed stone beside the landing at x 4 m.
+    yard.World().FillBox({36, kG, -4}, {40, kG + 4, 0}, yard.Ids().ice);          // x 4.5..5 m
+    yard.World().FillBox({24, kG, 8}, {28, kG + 4, 12}, yard.Ids().stoneRimed);   // x 3..3.5 m, z 1..1.5 m
+    Fighter& caster = yard.Add(1, 1, {-5.5f, kGround, 0.5f});
+    Fighter& enemy = yard.Add(3, 2, {4.0f, kGround, -1.0f});
+    Fighter& ally = yard.Add(2, 1, {5.4f, kGround, 1.8f});
+    yard.Settle();
+    const uint32_t iceBefore = yard.Count({36, kG, -4}, {40, kG + 4, 0}, yard.Ids().ice);
+    const uint32_t rimedBefore = yard.Count({24, kG, 8}, {28, kG + 4, 12}, yard.Ids().stoneRimed);
+    const glm::dvec3 eye = glm::dvec3(caster.state.position) + glm::dvec3(0.0, kEye, 0.0);
+    const glm::vec3 aim = sim::LeapAimToward(caster.state.position, {4.0, kGround, 0.5});
+    const sim::CastSpellResult cast = yard.Cast(sim::kMeteorLeap, 1, 1, eye, eye + glm::dvec3(aim), &caster.state);
+    ASSERT_EQ(cast.refusal, sim::SpellRefusal::None) << sim::ToString(cast.refusal);
+    EXPECT_TRUE(cast.dashStarted) << "the script's caster leaps from its state";
+    EXPECT_NE(caster.state.status & sim::PlayerStatus_Lifted, 0);
+    ASSERT_EQ(cast.zonesStarted.size(), 2u);
+    EXPECT_TRUE(yard.ctx.zoneOwners.at(cast.zonesStarted[1].zoneId).dispellable) << "a Punch ends a Pin";
+    const uint32_t slam = cast.zonesStarted[1].startTick;
+    std::printf("slam: tick %u (now %u), at (%.2f, %.2f, %.2f), %u arc ticks\n", slam, yard.simulation.Tick(), cast.hitQ.x / 128.0, cast.hitQ.y / 128.0, cast.hitQ.z / 128.0, cast.stats.arcTicks);
+    uint32_t enemyDamage = 0, allyDamage = 0;
+    while (yard.simulation.Tick() <= slam + 2) {
+        const sim::ScheduledResult r = yard.Tick();
+        for (const sim::SpellDamage& d : r.damage) {
+            if (d.player == enemy.player) enemyDamage += d.amount;
+            if (d.player == ally.player) allyDamage += d.amount;
+        }
+    }
+    EXPECT_EQ(enemyDamage, 15u);
+    EXPECT_EQ(allyDamage, 0u);
+    EXPECT_GT(enemy.state.pinLeft, 0) << "pinned";
+    EXPECT_NE(enemy.state.status & sim::PlayerStatus_Pinned, 0);
+    EXPECT_EQ(ally.state.pinLeft, 0);
+    EXPECT_LT(enemy.state.position.z, -1.0f) << "knocked back away from the landing";
+    EXPECT_LT(yard.Count({36, kG, -4}, {40, kG + 4, 0}, yard.Ids().ice), iceBefore) << "the exposed ice shattered";
+    EXPECT_LT(yard.Count({24, kG, 8}, {28, kG + 4, 12}, yard.Ids().stoneRimed), rimedBefore) << "the exposed rime shattered";
+    // The pin's tail: pinned while the zone lives, then 30 ticks more, then the control guard.
+    for (int i = 0; i < 100; ++i) yard.Tick();
+    EXPECT_EQ(enemy.state.pinLeft, 0);
+    EXPECT_GT(enemy.state.ccGuardLeft, 0);
 }

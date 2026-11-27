@@ -940,3 +940,112 @@ TEST(Player, ADashSpellEdgeStartsTheDashInsideTheStep) {
     EXPECT_EQ(f.state.dashLeft, 0);
     EXPECT_FALSE(sim::StartSpellMove(f.state, sim::kPunch, {1.0f, 0.0f, 0.0f})) << "Punch has no own move";
 }
+
+// magic.md spell 9: Meteor Leap's Spell edge launches the caster at 12 m/s along the look with its pitch clamped to
+// 15-80 degrees; the caster flies the arc with no wish and no push decay, lands where sim::LeapAimToward aimed it and
+// stops there. A rooted caster does not leap.
+TEST(Player, AMeteorLeapLaunchesAlongTheLookAndLandsAtItsTarget) {
+    int16_t push[3];
+    ASSERT_TRUE(sim::LeapPushOf({1.0f, 1.0f, 0.0f}, push));
+    EXPECT_EQ(push[0], 849);
+    EXPECT_EQ(push[1], 849);
+    EXPECT_EQ(push[2], 0);
+    ASSERT_TRUE(sim::LeapPushOf({1.0f, -1.0f, 0.0f}, push));
+    EXPECT_EQ(push[1], 311) << "the pitch is at least 15 degrees up";
+    ASSERT_TRUE(sim::LeapPushOf({0.01f, 1.0f, 0.0f}, push));
+    EXPECT_EQ(push[1], 1182) << "and at most 80";
+    EXPECT_FALSE(sim::LeapPushOf({0.0f, 1.0f, 0.0f}, push)) << "no horizontal direction";
+
+    Field f({-4.0f, kGround, 0.3f});
+    ASSERT_TRUE(f.initialized);
+    Settle(f);
+    const glm::dvec3 target(5.0, kGround, -1.2);
+    sim::PlayerInput leap;
+    leap.buttons = sim::PlayerButton_Spell;
+    leap.spell = sim::kMeteorLeap;
+    sim::AimAngles(sim::LeapAimToward(f.state.position, target), leap.yaw, leap.pitch);
+
+    sim::PlayerState rooted = f.state;
+    rooted.rootLeft = 3;
+    EXPECT_FALSE(sim::StartLeap(rooted, sim::LookDirection(leap.yaw, leap.pitch)));
+    EXPECT_EQ(rooted.status & sim::PlayerStatus_Leaping, 0);
+
+    // Held forward: the wish is ignored while it flies.
+    leap.moveZ = 127;
+    sim::PlayerStepResult r = f.ZoneTick(leap);
+    EXPECT_TRUE(r.spellMove);
+    EXPECT_NE(f.state.status & sim::PlayerStatus_Leaping, 0);
+    EXPECT_NE(f.state.status & sim::PlayerStatus_Lifted, 0);
+    EXPECT_FALSE(f.state.OnGround());
+    sim::PlayerInput forward = leap;
+    forward.buttons = sim::PlayerButton_Spell;   // held: no new edge
+    int ticks = 1;
+    while ((f.state.status & sim::PlayerStatus_Leaping) != 0 && ticks < 300) {
+        f.ZoneTick(forward);
+        ++ticks;
+    }
+    EXPECT_LT(ticks, 300);
+    EXPECT_TRUE(f.state.OnGround());
+    EXPECT_EQ(f.state.push[0], 0);
+    EXPECT_EQ(f.state.push[2], 0);
+    EXPECT_EQ(f.state.status & sim::PlayerStatus_Lifted, 0);
+    EXPECT_NEAR(f.state.position.x, target.x, 0.6);
+    EXPECT_NEAR(f.state.position.z, target.z, 0.6);
+    std::printf("leap: %d ticks, landed at (%.2f, %.2f)\n", ticks, f.state.position.x, f.state.position.z);
+}
+
+// The replay rule for a leap and a Pin on its way: stepped again from a restored state, each step with its own tick,
+// the states are the same bit for bit.
+TEST(Player, AMeteorLeapReplayedGivesTheSameStates) {
+    Field f({-4.0f, kGround, 0.3f});
+    ASSERT_TRUE(f.initialized);
+    Settle(f);
+    const std::array<glm::dvec3, 2> focus = {glm::dvec3(-4.0, kGround, 0.3), glm::dvec3(8.0, kGround, 0.3)};
+    f.simulation.Terrain().Update(focus, 14.0f);
+    f.simulation.Terrain().Flush();
+
+    const uint32_t base = 2000;
+    // A Pin ring where the leap comes down, live from tick 40 on.
+    sim::Zone pin;
+    pin.zoneId = 4;
+    pin.kind = sim::ZoneKind::Pin;
+    pin.shape.kind = voxel::kShapeCylinder;
+    pin.shape.a = MetresToQ({6.0f, kGround + 1.0f, 0.3f});
+    pin.shape.radiusQ = 3 * 128;
+    pin.shape.halfHeightQ = 128;
+    pin.startTick = base + 40;
+    pin.duration = 60;
+    pin.strength[1] = 30;
+    ASSERT_TRUE(f.simulation.Zones().Insert(pin));
+    sim::PlayerInput leap;
+    leap.buttons = sim::PlayerButton_Spell;
+    leap.spell = sim::kMeteorLeap;
+    sim::AimAngles(sim::LeapAimToward(f.state.position, {6.0, kGround, 0.3}), leap.yaw, leap.pitch);
+    sim::PlayerInput hold = leap;
+    hold.spell = 0;
+    const auto step = [&f](uint32_t tick, const sim::PlayerInput& in) {
+        f.simulation.Terrain().FlushBox(sim::PlayerReach(f.state.position, f.tuning));
+        const sim::PlayerZones zones{&f.simulation.Zones(), &f.simulation.World(), tick, 1};
+        sim::StepPlayer(f.simulation.Physics(), f.simulation.Terrain(), f.character, f.state, in, f.tuning, f.area, zones,
+                        f.simulation.FixedTimeStep());
+        f.simulation.StepPhysics();
+    };
+    const uint32_t steps = 160;
+    std::vector<sim::PlayerState> recorded(steps);
+    for (uint32_t k = 0; k < steps; ++k) {
+        step(base + k, k == 0 ? leap : hold);
+        recorded[k] = f.state;
+    }
+    EXPECT_NE(recorded[0].status & sim::PlayerStatus_Leaping, 0);
+    EXPECT_EQ(recorded[steps - 1].status & sim::PlayerStatus_Leaping, 0) << "it landed";
+    EXPECT_GT(recorded[steps - 1].ccGuardLeft + recorded[steps - 1].pinLeft, 0) << "the ring pinned it where it landed";
+    EXPECT_GT(recorded[steps - 1].position.x, 4.5f);
+
+    f.state = recorded[5];
+    sim::RestorePlayer(f.simulation.Physics(), f.character, f.state);
+    for (uint32_t k = 6; k < steps; ++k) {
+        step(base + k, hold);
+        EXPECT_EQ(f.state, recorded[k]) << "replayed tick " << k;
+        if (f.state != recorded[k]) break;
+    }
+}

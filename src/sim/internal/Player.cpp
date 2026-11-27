@@ -75,7 +75,7 @@ namespace vortex::sim {
             if (state.pinLeft > 0) --state.pinLeft;
             if (state.ccGuardLeft > 0) --state.ccGuardLeft;
             if (held && state.rootLeft == 0 && state.pinLeft == 0) state.ccGuardLeft = kControlGuardTicks;
-            uint8_t s = static_cast<uint8_t>(state.status & (PlayerStatus_Lifted | PlayerStatus_Fresh));
+            uint8_t s = static_cast<uint8_t>(state.status & (PlayerStatus_Lifted | PlayerStatus_Fresh | PlayerStatus_Leaping));
             if (state.ccGuardLeft == 0) s = static_cast<uint8_t>(s & ~PlayerStatus_Fresh);
             if (state.rootLeft > 0) s |= PlayerStatus_Rooted;
             if (state.pinLeft > 0) s |= PlayerStatus_Pinned;
@@ -206,8 +206,54 @@ namespace vortex::sim {
         return true;
     }
 
+    bool LeapPushOf(const glm::vec3& aim, int16_t push[3]) {
+        if (!Finite(aim.x) || !Finite(aim.y) || !Finite(aim.z)) return false;
+        const double x = aim.x, y = aim.y, z = aim.z, h = std::sqrt(x * x + z * z);
+        if (!(h > 1.0e-6)) return false;
+        constexpr double kDegree = std::numbers::pi / 180.0;
+        const double pitch = std::clamp(std::atan2(y, h), static_cast<double>(kLeapMinPitchDegrees) * kDegree,
+                                        static_cast<double>(kLeapMaxPitchDegrees) * kDegree);
+        const double speed = kLeapSpeedCmS, across = std::cos(pitch) * speed;
+        push[0] = static_cast<int16_t>(std::lround(x / h * across));
+        push[1] = static_cast<int16_t>(std::lround(std::sin(pitch) * speed));
+        push[2] = static_cast<int16_t>(std::lround(z / h * across));
+        return true;
+    }
+
+    bool StartLeap(PlayerState& state, const glm::vec3& aim) {
+        if (state.rootLeft > 0 || state.pinLeft > 0 || (state.status & (PlayerStatus_Rooted | PlayerStatus_Pinned)) != 0) return false;
+        int16_t push[3];
+        if (!LeapPushOf(aim, push)) return false;
+        for (int i = 0; i < 3; ++i) state.push[i] = push[i];
+        state.dashLeft = 0;
+        state.status = static_cast<uint8_t>(state.status | PlayerStatus_Leaping | PlayerStatus_Lifted);
+        return true;
+    }
+
+    glm::vec3 LeapAimToward(const glm::vec3& feet, const glm::dvec3& target, float gravity) {
+        const glm::dvec3 d = target - glm::dvec3(feet);
+        const double dx = std::sqrt(d.x * d.x + d.z * d.z), dy = d.y;
+        const double g = Finite(gravity) && gravity > 0.0f ? static_cast<double>(gravity) : 9.81;
+        const double v = static_cast<double>(kLeapSpeedCmS) / 100.0;
+        constexpr double kDegree = std::numbers::pi / 180.0;
+        const double lo = static_cast<double>(kLeapMinPitchDegrees) * kDegree, hi = static_cast<double>(kLeapMaxPitchDegrees) * kDegree;
+        const glm::dvec2 across = dx > 1.0e-6 ? glm::dvec2(d.x, d.z) / dx : glm::dvec2(0.0, -1.0);
+        double pitch = 45.0 * kDegree;
+        const double disc = v * v * v * v - g * (g * dx * dx + 2.0 * dy * v * v);
+        if (dx > 1.0e-6 && disc >= 0.0) {
+            const double low = std::atan((v * v - std::sqrt(disc)) / (g * dx)), high = std::atan((v * v + std::sqrt(disc)) / (g * dx));
+            pitch = low >= lo ? low : std::clamp(high, lo, hi);
+        } else if (dx <= 1.0e-6) {
+            pitch = hi;
+        }
+        pitch = std::clamp(pitch, lo, hi);
+        return glm::vec3(static_cast<float>(across.x * std::cos(pitch)), static_cast<float>(std::sin(pitch)),
+                         static_cast<float>(across.y * std::cos(pitch)));
+    }
+
     bool StartSpellMove(PlayerState& state, SpellId spell, const glm::vec3& aim) {
         if (spell == kDash) return StartDash(state, aim);
+        if (spell == kMeteorLeap) return StartLeap(state, aim);
         return false;
     }
 
@@ -313,6 +359,11 @@ namespace vortex::sim {
                 state.rootLeft = std::max(state.rootLeft, static_cast<uint8_t>(std::min<uint32_t>(z.duration, 255)));
                 return;
             }
+            case ZoneKind::Pin: {
+                if (state.ccGuardLeft > 0 || !ZoneShapeHolds(z, glm::ivec3(feet))) return;
+                state.pinLeft = std::max(state.pinLeft, static_cast<uint8_t>(std::clamp<int32_t>(z.strength[1], 0, 255)));
+                return;
+            }
             case ZoneKind::Release: {
                 if (zones.tick != z.startTick || !ZoneShapeHolds(z, glm::ivec3(feet))) return;
                 const bool held = state.rootLeft > 0 || state.pinLeft > 0;
@@ -353,6 +404,7 @@ namespace vortex::sim {
             r.spell = true;
             if (zones.spellMoveAllowed) r.spellMove = StartSpellMove(state, input.spell, LookDirection(input.yaw, input.pitch));
         }
+        const bool launched = r.spellMove && input.spell == kMeteorLeap;
         // A cast ends Fresh (the guard itself runs on).
         if (r.cast || r.spell) state.status = static_cast<uint8_t>(state.status & ~PlayerStatus_Fresh);
 
@@ -366,7 +418,9 @@ namespace vortex::sim {
         const bool rooted = state.rootLeft > 0, pinned = state.pinLeft > 0;
         // A root ends a dash where it stands.
         if (rooted) state.dashLeft = 0;
-        const bool slick = !rooted && state.OnGround() && OnSlickGround(zones.world, state.position);
+        // The leap's caster is its projectile: no wish and no slick rule until it lands.
+        const bool leaping = (state.status & PlayerStatus_Leaping) != 0;
+        const bool slick = !rooted && !leaping && state.OnGround() && OnSlickGround(zones.world, state.position);
 
         const bool run = (input.buttons & PlayerButton_Run) != 0;
         glm::vec3 wish = MoveDirection(input) * (run ? tuning.runSpeed : tuning.walkSpeed);
@@ -377,6 +431,7 @@ namespace vortex::sim {
         const glm::vec2 dashDir = DashDirection(state);
         const float dashSpeed = static_cast<float>(kDashSpeedCmS) / 100.0f * static_cast<float>(16 - std::min<int>(state.slowQ, 16)) / 16.0f;
         if (dashing) wish = glm::vec3(dashDir.x, 0.0f, dashDir.y) * dashSpeed;
+        if (leaping) wish = glm::vec3(0.0f);
         if (slick) wish *= static_cast<float>(kSlickWishNum) / 16.0f;
         // Only a push that is there changes the wish: a step without one stays bit for bit as before.
         if (state.push[0] != 0) wish.x += static_cast<float>(state.push[0]) / 100.0f;
@@ -435,9 +490,17 @@ namespace vortex::sim {
         state.velocity = cs.velocity;
         state.flags = cs.onGround ? PlayerFlag_OnGround : 0;
 
-        if (cs.onGround) state.status = static_cast<uint8_t>(state.status & ~PlayerStatus_Lifted);
-        const uint16_t decay =
-            cs.onGround ? (OnSlickGround(zones.world, state.position) ? kPushDecaySlick : tuning.pushDecayGround) : tuning.pushDecayAir;
+        const bool landed = cs.onGround && !launched;
+        if (landed) state.status = static_cast<uint8_t>(state.status & ~PlayerStatus_Lifted);
+        if (leaping && landed) {
+            // The leap ends where it lands: its horizontal push goes with it.
+            state.status = static_cast<uint8_t>(state.status & ~PlayerStatus_Leaping);
+            state.push[0] = state.push[2] = 0;
+        }
+        const bool flying = leaping && !landed;
+        const uint16_t decay = flying ? uint16_t{0}
+                               : cs.onGround ? (OnSlickGround(zones.world, state.position) ? kPushDecaySlick : tuning.pushDecayGround)
+                                             : tuning.pushDecayAir;
         state.push[0] = Decay(state.push[0], decay);
         state.push[2] = Decay(state.push[2], decay);
         if (dashing) {

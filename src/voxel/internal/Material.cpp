@@ -194,6 +194,18 @@ namespace vortex::voxel {
         ids.brickRimed   = add("brick_rimed",  Srgb(188, 140, 138),   0.80f, 1900.0f,  1.25f, 0.14f);
         ids.ironRimed    = add("iron_rimed",   Srgb(184, 190, 202),   0.35f, 7800.0f,  4.0f, 0.06f, 0, 0.0f, 1.0f);
         ids.slag         = add("slag",         Srgb(255, 132, 40),    0.60f, 2000.0f,  7.0f, 0.12f, MaterialFlag_Conjured | MaterialFlag_Hot, 5.0f, 0.4f);
+        // Thermal: hot metal at half its base's hardness (3.5 and 4.0: a basic blast carves it), and pitch, a burning film.
+        ids.knitIronHot  = add("knit_iron_hot", Srgb(236, 110, 46),   0.55f, 2000.0f,  3.5f, 0.12f, MaterialFlag_Conjured | MaterialFlag_Hot, 3.0f, 0.5f);
+        ids.ironHot      = add("iron_hot",     Srgb(240, 120, 60),    0.35f, 7800.0f,  4.0f, 0.06f, MaterialFlag_Hot, 3.0f, 1.0f);
+        // Pitch: four burn stages of one fire class (spread.md), darker and dimmer as they burn down. Without fire spread
+        // only b1 is laid, and it goes with its spell's expiry.
+        for (int j = 1; j <= 4; ++j) {
+            const float burnt = static_cast<float>(j - 1) / 3.0f;
+            const uint8_t id = add(std::string("pitch_b") + static_cast<char>('0' + j), Srgb(52, 30, 20) * (1.0f - 0.4f * burnt), 0.95f, 900.0f, 0.0f,
+                                   0.30f, MaterialFlag_Conjured | MaterialFlag_Film, 2.0f - 1.2f * burnt);
+            if (j == 1) ids.pitch = id;
+            ids.pitchLast = id;
+        }
 
         // Bond strengths, kg/m^2: compression / shear / tension (docs/design/shred.md Part 4b,
         // "Material strengths"). A free column of height h holds while density x h <= C, a
@@ -254,6 +266,8 @@ namespace vortex::voxel {
         strength(ids.brickRimed, 80000, 30000, 8000);
         strength(ids.ironRimed, 1000000, 600000, 600000);
         strength(ids.slag, 100000, 40000, 15000);
+        strength(ids.knitIronHot, 100000, 40000, 15000);
+        strength(ids.ironHot, 1000000, 600000, 600000);
         for (const uint8_t soft : {ids.needles, ids.reed, ids.fern, ids.flowerYellow, ids.flowerViolet, ids.mushroom}) strength(soft, 10000, 5000, 5000);
         return ids;
     }

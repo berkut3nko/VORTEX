@@ -49,9 +49,8 @@ export namespace vortex::sim {
         std::map<std::tuple<int, int, int>, std::unique_ptr<voxel::Chunk>> m_Chunks;   ///< nullptr: not loaded
     };
 
-    /// @brief An operator moves through an open cell: air (films are open too, once they exist).
-    /// kWallId is not open.
-    constexpr bool IsOpenId(uint8_t id) { return id == 0; }
+    /// @brief An operator moves through an open cell: air, or a film of the world palette (pitch). kWallId is not open.
+    bool IsOpenId(uint8_t id);
 
     /// @brief The hit face: `n` = the normal (one axis, with its sign); `u`, `v` = unit vectors of
     /// the other two axes, the lower axis first.
@@ -246,6 +245,9 @@ export namespace vortex::sim {
         const std::array<uint16_t, 256>* boreCost = nullptr;
         const voxel::MaterialLibrary* materials = nullptr;
         std::vector<glm::ivec3>* paidOut = nullptr;   ///< tests: the paid solid voxels in walk order
+        /// The element's pre-map: each voxel is read through it before its cost and power are judged (Meltdown Beam
+        /// reads metal through Heat, which its own op applies before the carve). Null: the ids as they are.
+        const voxel::TurningMap* preMap = nullptr;
     };
     enum class PierceStop : uint8_t { Slices = 0, TooHard = 1, Budget = 2, Length = 3, Wall = 4, VisitCap = 5 };
     struct PierceResult {

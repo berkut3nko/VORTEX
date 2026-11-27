@@ -111,6 +111,7 @@ export namespace vortex::sim {
         Bore = 5,       ///< a bore planned at T_run (`site`), carved with its island search on its arrival
         Hit = 6,        ///< a projectile's direct damage to `target` on its arrival
         Splash = 7,     ///< `damage` to the enemies within `op.sphere` (its centre and radius, q) on its arrival
+        Scorch = 8,     ///< `damage` to the enemies whose feet lie in `op.shape` (a box, a cylinder or a capsule), and the spell's Burning
     };
     /// @brief A follow-up, run by RunScheduled in (tick, seq) order.
     struct ScheduledAction {
@@ -131,6 +132,14 @@ export namespace vortex::sim {
         uint8_t target = 0;                   ///< Hit: slot + 1
     };
 
+    /// @brief A player on fire (server only): Burning deals SpellTable::burnHpPerSecond until `untilTick`.
+    struct Burning {
+        uint32_t untilTick = 0;
+        uint8_t source = 0;                   ///< the caster (slot + 1; 0 a script)
+        TeamId sourceTeam = kNoTeam;
+        SpellId spell = 0;
+    };
+
     /// @brief The server-only state of spells, owned by whoever casts (the offline game, a server).
     struct CastContext {
         KnitRegistry registry;
@@ -145,7 +154,8 @@ export namespace vortex::sim {
         PlayerTuning tuning;                            ///< the capsule, the eye height and castRange
         uint32_t maxZones = 32;                         ///< live or pending in the region
         uint32_t maxZonesPerPlayer = 4;                 ///< live or pending per player (not for scripts)
-        uint32_t hotUntil = 0;                          ///< the hazard scan runs up to this tick (slag may lie until then)
+        uint32_t hotUntil = 0;                          ///< the hazard scan runs up to this tick (slag, pitch or hot metal may lie until then)
+        std::map<uint8_t, Burning> burning;             ///< by player (slot + 1); ends at its tick or when the player is not a target
     };
 
     /// @brief Counters of one cast (logged; `visits` and `chunksRead` are charged as work).
@@ -165,6 +175,7 @@ export namespace vortex::sim {
         uint8_t riseShape = 0;                ///< a RiseKind: what Rising Spire made
         uint32_t sockets = 0;                 ///< Rebar Lance: the sockets bored (pegs set)
         uint32_t arcTicks = 0;                ///< a Flow spell: the ticks of its arc to the hit
+        uint32_t heated = 0;                  ///< Thermal: voxels its Heat op will turn (Meltdown Beam: the capsule's metal, ice and rime)
     };
 
     struct CastSpellResult {
@@ -177,7 +188,7 @@ export namespace vortex::sim {
         std::vector<glm::ivec3> drawnPointsQ;
         glm::ivec3 hitQ{0};                   ///< the hit (Punch: the fist point; Dash: the path's end), q
         uint8_t face = 0;                     ///< the hit face: axis * 2 + (sign < 0)
-        bool dashStarted = false;
+        bool dashStarted = false;             ///< the caster's own move (a Dash, a Meteor Leap) started in SpellCast::casterState
         std::vector<BlastResult> groups;      ///< ops applied now (no flight), one group each, in order
         std::vector<Zone> zonesStarted;
         std::vector<std::pair<uint16_t, uint32_t>> zonesCancelled;   ///< (zoneId, endTick)
@@ -196,7 +207,7 @@ export namespace vortex::sim {
         std::vector<std::pair<uint16_t, uint32_t>> zonesCancelled;       ///< (zoneId, endTick): a rune that burst or broke
         std::vector<std::pair<uint16_t, uint8_t>> runeBursts;            ///< (the rune's zoneId, the player under it)
         uint32_t runesBroken = 0;
-        uint32_t hazardHits = 0;              ///< the hazard scan's damage entries
+        uint32_t hazardHits = 0;              ///< the hazard scan's damage entries (Burning included)
     };
 
     /// @brief What Rising Spire's Rise gesture makes (magic.md "Casting: mana, gestures and projectiles").
@@ -291,6 +302,19 @@ export namespace vortex::sim {
      * floor each band waits for (the band timing rule), ending a lead after the last band; a Rise gesture makes
      * stairs or a bridge instead (RiseShapeOf). Rebar Lance: two level bores a socketSpacing apart up the face and one
      * knit band over both sockets and their pegs, a Root at the hit; a direct hit on an enemy bores nothing.
+     * Meteor Leap: the launch of LeapPushOf along `dir` from the feet under the eye (StartLeap in `cast.casterState` when
+     * one is given; else the Spell edge's step already started it and the eye is after that step), traced with TraceArc
+     * to its landing (the floor under the cell it meets), then at max(the landing tick, T_run + the lead) an Impulse
+     * and a Pin y-cylinder round the landing for enemies, its damage with the Pin, and the Shatter flood there.
+     * Thermal (no fire spread: pitch burns where it lands and expires with Unknit after lifetimeTicks; Heat's metal
+     * cools after heatLifetimeTicks): Pitchfall, a lob as Molten Pour, pitch over the Fall and Run skin cells and the
+     * pool, Heat over the support voxels they touch that Heat changes, a splash round the landing. Wildfire: the full
+     * Plume (a Rise gesture: from S up to E's height), pitch over its Rise and Run skin cells and the Front cells that
+     * are skin or join it, Heat on what they touch, a scorch over the plume's box on the arrival. Meltdown Beam: a bore
+     * that reads metal through Heat, preceded on its arrival by a Heat capsule of heatRadiusQ round it; a direct hit on
+     * an enemy in front of the terrain deals directDamage and Burning. Firestorm Sweep: a Burst disc whose leading
+     * half-rim is extruded rimHeight up into pitch, Heat under the sweep, a scorch over the disc at T_z with Burning;
+     * a Line draws the curtain on the ground under the polyline, its scorch a capsule from its first to its last point.
      * Barricade Wave: a Burst strip extruded into knit bands at their ticks; no band cell
      * in a player's capsule grown by one voxel, a rigid body's box or a spawn area (a cell in an
      * enemy's refuses the cast). Work: operator visits and chunks read, and every op now or
@@ -303,10 +327,12 @@ export namespace vortex::sim {
                               std::span<const SpellTarget> targets);
 
     /**
-     * @brief The follow-ups due at `tick` in (tick, seq) order, the runes (one whose floor voxel turned to air breaks;
+     * @brief The follow-ups due at `tick` in (tick, seq) order, the runes (one whose floor voxel turned to air or holds a
+     * film over it breaks;
      * the first target of the rune's teams whose feet lie in it bursts it: the rune ends at `tick`, Root and Chill round it
      * and the damage start a lead later, an ice band on the floor's skin lands then), the hazard scan (every hazardTicks
-     * while slag may lie), then the registry's expiries, the site
+     * while slag, pitch or hot metal may lie: the strongest of pitch and a Hot id within two voxels of a capsule, and
+     * Burning, at most hazardCapHpPerSecond in all), then the registry's expiries, the site
      * checks on the structure credit (it refills once per call: call it once per tick, after the
      * players' step of that tick) and the pruning of ended zones. A blow's island search is not
      * known at T_run: its work is paid from the structure credit.

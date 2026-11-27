@@ -319,6 +319,20 @@ namespace vortex::sim {
         int64_t RoundDiv(int64_t n, int64_t d) { return n >= 0 ? (2 * n + d) / (2 * d) : (2 * n - d) / (2 * d); }
     }
 
+    bool IsOpenId(uint8_t id) {
+        static const std::array<bool, 256> open = [] {
+            voxel::MaterialLibrary scratch;
+            voxel::RegisterDefaultWorldMaterials(scratch);
+            std::array<bool, 256> out{};
+            out[0] = true;
+            for (uint32_t i = 1; i < 255; ++i)
+                out[i] = !scratch.Name(voxel::kWorldPalette, static_cast<uint8_t>(i)).empty() &&
+                         (scratch.Get(voxel::kWorldPalette, static_cast<uint8_t>(i)).flags & voxel::MaterialFlag_Film) != 0;
+            return out;
+        }();
+        return open[id];
+    }
+
     PierceResult Pierce(const voxel::World& world, const OperatorWalls& walls, const PierceParams& params) {
         PierceResult out;
         VoxelCache cache(world, walls);
@@ -345,9 +359,12 @@ namespace vortex::sim {
             s.radiusQ = static_cast<uint16_t>(r);
             return s;
         };
+        // Liquids and films cost nothing; the element's pre-map (Thermal's Heat on metal) decides the rest.
         const auto isLiquid = [&](uint8_t id) {
-            return params.materials != nullptr && (params.materials->Get(voxel::kWorldPalette, id).flags & voxel::MaterialFlag_Liquid) != 0;
+            return params.materials != nullptr &&
+                   (params.materials->Get(voxel::kWorldPalette, id).flags & (voxel::MaterialFlag_Liquid | voxel::MaterialFlag_Film)) != 0;
         };
+        const auto pre = [&](uint8_t id) { return params.preMap != nullptr && id != VoxelCache::kWallId ? (*params.preMap)[id] : id; };
         std::vector<glm::ivec3> slice;
         glm::i64vec3 prev = A;
         for (int64_t k = 0;; ++k) {
@@ -383,7 +400,7 @@ namespace vortex::sim {
             uint32_t solid = 0;
             bool stop = false;
             for (const glm::ivec3& v : slice) {
-                const uint8_t id = cache.Get(v);
+                const uint8_t id = pre(cache.Get(v));
                 if (id == VoxelCache::kWallId) {
                     out.stop = PierceStop::Wall;
                     stop = true;
@@ -409,7 +426,7 @@ namespace vortex::sim {
             if (k <= stubSlices) out.frontVoxels += static_cast<uint32_t>(slice.size());
             if (params.paidOut != nullptr)
                 for (const glm::ivec3& v : slice) {
-                    const uint8_t id = cache.Get(v);
+                    const uint8_t id = pre(cache.Get(v));
                     if (id != 0 && !isLiquid(id)) params.paidOut->push_back(v);
                 }
             out.bored = true;

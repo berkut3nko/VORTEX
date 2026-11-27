@@ -43,6 +43,30 @@ namespace vortex::voxel {
         table.maps[Map_FreezeWater][ids.water] = ids.floe;
         table.maps[Map_Shatter][ids.ice] = 0;
         table.maps[Map_Shatter][ids.floe] = ids.water;
+        // Thermal: Pitch lays a burning film on air; Heat makes metal hot (half its hardness), melts ice and floe and thaws
+        // rime; Cool and Rime's quench make hot metal plain again; Freeze turns pitch into ice. A fill takes a film's cell,
+        // and an expiry takes hot knit and pitch away.
+        table.maps[Map_Pitch][0] = ids.pitch;
+        TurningMap& heat = table.maps[Map_Heat];
+        heat[ids.knitIron] = ids.knitIronHot;
+        heat[ids.knitIronRimed] = ids.knitIronHot;
+        heat[ids.iron] = ids.ironHot;
+        heat[ids.ironRimed] = ids.ironHot;
+        heat[ids.ice] = 0;
+        heat[ids.floe] = ids.water;
+        for (const auto& [base, frosted] : rimed)
+            if (base != ids.iron && base != ids.knitIron) heat[frosted] = base;
+        table.maps[Map_Cool][ids.knitIronHot] = ids.knitIron;
+        table.maps[Map_Cool][ids.ironHot] = ids.iron;
+        table.maps[Map_Rime][ids.knitIronHot] = ids.knitIron;
+        table.maps[Map_Rime][ids.ironHot] = ids.iron;
+        unknit[ids.knitIronHot] = 0;
+        for (uint32_t stage = ids.pitch; stage != 0 && stage <= ids.pitchLast; ++stage) {
+            table.maps[Map_Freeze][stage] = ids.ice;
+            table.maps[Map_Knit][stage] = ids.knitIron;
+            table.maps[Map_Slag][stage] = ids.slag;
+            unknit[stage] = 0;
+        }
         return table;
     }
 

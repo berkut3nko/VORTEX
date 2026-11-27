@@ -86,7 +86,7 @@ TEST(SpellTable, SizesHoldWithinOneVoxelAcrossVoxelSizes) {
         for (sim::SpellId id = 0; id < sim::kSpellCount; ++id) {
             const bool built = id == sim::kUpdraft || id == sim::kDash || id == sim::kBarricadeWave || id == sim::kPunch ||
                                id == sim::kShatterSpike || id == sim::kFlashFreeze || id == sim::kPermafrostClimb || id == sim::kMoltenPour ||
-                               id == sim::kRisingSpire || id == sim::kRebarLance || id == sim::kRuneTrap;
+                               id == sim::kRisingSpire || id == sim::kRebarLance || id == sim::kRuneTrap || id == sim::kMeteorLeap || (id < 16 && sim::ElementOf(id) == sim::Element::Thermal);
             EXPECT_EQ(t.spells[id].built, built) << "spell " << int(id);
         }
     }
@@ -211,13 +211,21 @@ TEST(SpellTable, HashCoversEveryField) {
         {"drawMinQ", [&S](sim::SpellTable& t) { ++S(t).drawMinQ; }},
         {"drawMaxQ", [&S](sim::SpellTable& t) { ++S(t).drawMaxQ; }},
         {"drawZoneRadiusQ", [&S](sim::SpellTable& t) { ++S(t).drawZoneRadiusQ; }},
-        {"a spell not built", [](sim::SpellTable& t) { t.spells[1].built = true; }},
+        {"a spell not built", [](sim::SpellTable& t) { t.spells[16].built = true; }},
         {"arcSpeedFine", [](sim::SpellTable& t) { ++t.arcSpeedFine; }},
         {"arcGravity", [](sim::SpellTable& t) { ++t.arcGravity; }},
         {"arcMaxTicks", [](sim::SpellTable& t) { ++t.arcMaxTicks; }},
         {"lobMinTicks", [](sim::SpellTable& t) { ++t.lobMinTicks; }},
         {"hazardTicks", [](sim::SpellTable& t) { ++t.hazardTicks; }},
         {"hazardDamage", [](sim::SpellTable& t) { ++t.hazardDamage; }},
+        {"pitchHpPerSecond", [](sim::SpellTable& t) { ++t.pitchHpPerSecond; }},
+        {"burnHpPerSecond", [](sim::SpellTable& t) { ++t.burnHpPerSecond; }},
+        {"hazardCapHpPerSecond", [](sim::SpellTable& t) { ++t.hazardCapHpPerSecond; }},
+        {"leapMaxTicks", [&S](sim::SpellTable& t) { ++S(t).leapMaxTicks; }},
+        {"heatLifetimeTicks", [&S](sim::SpellTable& t) { ++S(t).heatLifetimeTicks; }},
+        {"heatRadiusQ", [&S](sim::SpellTable& t) { ++S(t).heatRadiusQ; }},
+        {"scorchDamage", [&S](sim::SpellTable& t) { ++S(t).scorchDamage; }},
+        {"burnTicks", [&S](sim::SpellTable& t) { ++S(t).burnTicks; }},
         {"flowSeedRadius", [&S](sim::SpellTable& t) { ++S(t).flowSeedRadius; }},
         {"fallMax", [&S](sim::SpellTable& t) { ++S(t).fallMax; }},
         {"flowRunPops", [&S](sim::SpellTable& t) { ++S(t).flowRunPops; }},

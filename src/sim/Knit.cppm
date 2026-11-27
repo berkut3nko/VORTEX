@@ -36,6 +36,7 @@ export namespace vortex::sim {
         uint8_t expiryMap = 0;    ///< a voxel::TurningMapId: Map_Unknit for conjured matter
         uint8_t caster = 0;       ///< player slot + 1; 0 none
         uint8_t casterTeam = 0;   ///< the caster's sim::TeamId (0: no team)
+        uint8_t spell = 0;        ///< the sim::SpellId that made it (the hazard scan credits its damage to it)
         uint32_t dueTick = 0;
         bool hasShape = false;    ///< its matter came from one MapShape: it can expire with that shape
         voxel::ShapeQ shape;
@@ -90,7 +91,7 @@ export namespace vortex::sim {
         uint32_t m_NextOwner = 1;
     };
 
-    /// @brief A voxel a player collides with: not air, not a liquid.
+    /// @brief A voxel a player collides with: not air, not a liquid, not a film.
     bool IsCollider(const voxel::MaterialLibrary& materials, uint8_t id);
 
     /**

@@ -23,9 +23,14 @@ export namespace vortex::voxel {
         MaterialFlag_Conjured       = 1u << 4,
         /// Ice: a player standing on it keeps momentum (sim::StepPlayer's slick rule).
         MaterialFlag_Slick          = 1u << 5,
-        /// Hot (slag): the server's hazard scan burns a player whose capsule touches it.
+        /// Hot (slag, hot metal): the server's hazard scan burns a player whose capsule touches it.
         MaterialFlag_Hot            = 1u << 6,
+        /// A film (pitch): not a collider, not in the cell graph and weightless, open for the spell operators and
+        /// passed by the server's spell rays; drawn as a voxel.
+        MaterialFlag_Film           = 1u << 7,
     };
+    /// @brief Ids with any of these flags take no part in the structure: the island search and the load check ignore them.
+    inline constexpr uint32_t kNonStructuralFlags = MaterialFlag_Liquid | MaterialFlag_Film;
 
     /**
      * @brief Everything the engine knows about one voxel material.
@@ -137,6 +142,10 @@ export namespace vortex::voxel {
         uint8_t stoneRimed = 0, stoneDarkRimed = 0, brickRimed = 0, ironRimed = 0;
         /// Molten Pour's slag: conjured and hot, as hard as knit; it sets into knit after a second (magic.md).
         uint8_t slag = 0;
+        /// Thermal (magic.md "New world-palette ids"): hot knit and hot iron at half their hardness (a blast carves them)
+        /// until a Cool, and pitch, a burning film that a Freeze turns into ice: the burn stages pitch_b1..b4 of spread.md's
+        /// fire class (K 0, B 4), consecutive ids from `pitch` (b1, what the Pitch map lays) to `pitchLast` (b4).
+        uint8_t knitIronHot = 0, ironHot = 0, pitch = 0, pitchLast = 0;
     };
 
     /// @brief Fills the world palette with a starter set of natural and building materials.

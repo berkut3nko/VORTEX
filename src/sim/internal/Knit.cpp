@@ -218,7 +218,7 @@ namespace vortex::sim {
     }
 
     bool IsCollider(const voxel::MaterialLibrary& materials, uint8_t id) {
-        return id != 0 && (materials.Get(voxel::kWorldPalette, id).flags & voxel::MaterialFlag_Liquid) == 0;
+        return id != 0 && (materials.Get(voxel::kWorldPalette, id).flags & (voxel::MaterialFlag_Liquid | voxel::MaterialFlag_Film)) == 0;
     }
 
     void StructureCredit::QueueSite(const glm::ivec3& chunk) {

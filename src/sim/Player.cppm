@@ -61,6 +61,9 @@ export namespace vortex::sim {
         PlayerStatus_Lifted = 8,   ///< set while in a Lift, cleared on the first step that ends on the ground
         PlayerStatus_Free = 16,
         PlayerStatus_Fresh = 32,
+        /// A Meteor Leap's flight (StartLeap): the wish is ignored and the push does not decay until the first step that
+        /// ends on the ground, which ends the flight and its horizontal push. Owner block only (remote records carry bits 0-3).
+        PlayerStatus_Leaping = 64,
     };
 
     enum PlayerFlag : uint8_t {
@@ -162,8 +165,9 @@ export namespace vortex::sim {
      * 4: Chill, Root and Release zones, the control guard, Fresh and slick ground (magic.md, 2026-11-26).
      * 5: a Spell edge no longer takes the blast's cast cooldown (magic.md "Casting: mana, gestures and
      * projectiles", 2026-11-27).
+     * 6: the Pin zone and Meteor Leap's launch and flight (magic.md spell 9, 2026-11-27).
      */
-    inline constexpr uint32_t kPlayerRuleRevision = 5;
+    inline constexpr uint32_t kPlayerRuleRevision = 6;
 
     /// @brief Each axis of PlayerState::push stays within +- this (cm/s).
     inline constexpr int32_t kPushLimitCmS = 1500;
@@ -172,6 +176,10 @@ export namespace vortex::sim {
     inline constexpr uint8_t kDashTicks = 18;
     inline constexpr uint16_t kDashSpeedCmS = 2670;
     inline constexpr uint16_t kDashEndPushCmS = 400;
+    /// @brief Meteor Leap (magic.md spell 9): the launch speed along the aim and the clamp of its pitch (degrees up).
+    inline constexpr uint16_t kLeapSpeedCmS = 1200;
+    inline constexpr float kLeapMinPitchDegrees = 15.0f;
+    inline constexpr float kLeapMaxPitchDegrees = 80.0f;
     /// @brief The control guard (magic.md "PlayerState, StepPlayer and the physics call"): after a root or a
     /// pin ends, and after a respawn (with Fresh), Root and Pin zones do not apply for this many ticks.
     inline constexpr uint8_t kControlGuardTicks = 90;
@@ -244,10 +252,28 @@ export namespace vortex::sim {
      */
     bool StartDash(PlayerState& state, const glm::vec3& aim);
     /**
+     * @brief Meteor Leap's launch along `aim`: kLeapSpeedCmS along the aim's horizontal direction with its pitch clamped to
+     * [kLeapMinPitchDegrees, kLeapMaxPitchDegrees], as push in cm/s (x and z the horizontal part, y the vertical part).
+     * False when `aim` has no finite horizontal part. CastSpell traces the same launch for the slam.
+     */
+    bool LeapPushOf(const glm::vec3& aim, int16_t push[3]);
+    /**
+     * @brief Starts a Meteor Leap: the push of LeapPushOf (the vertical part is taken by the next step as a launch),
+     * PlayerStatus_Leaping and PlayerStatus_Lifted (no fall damage on its landing); a running dash ends. Refused (false,
+     * nothing changes) while rooted or pinned, or for an aim LeapPushOf refuses.
+     */
+    bool StartLeap(PlayerState& state, const glm::vec3& aim);
+    /**
+     * @brief The aim whose leap from `feet` lands at `target` (a client's choice of the Spell edge's look; the server
+     * never solves it): the lower arc of the launch speed under `gravity` (m/s^2) when its pitch is at least the
+     * minimum, else the higher one, clamped to the pitch range; out of reach, 45 degrees toward the target.
+     */
+    glm::vec3 LeapAimToward(const glm::vec3& feet, const glm::dvec3& target, float gravity = 9.81f);
+    /**
      * @brief The caster's own move of `spell`, started at its Spell edge inside StepPlayer at the
      * input's tick, on the server and on the predicting client alike (magic.md "PlayerState,
-     * StepPlayer and the physics call" step 1): Dash calls StartDash. False for a spell without an
-     * own move, or one the state refuses.
+     * StepPlayer and the physics call" step 1): Dash calls StartDash, Meteor Leap StartLeap. False for a
+     * spell without an own move, or one the state refuses.
      */
     bool StartSpellMove(PlayerState& state, SpellId spell, const glm::vec3& aim);
     /// @brief A respawn's state (the server's teleport keeps it): Fresh, and the control guard for
@@ -276,7 +302,8 @@ export namespace vortex::sim {
      * whichever is longer, so a lifted player stops at the top and hovers; sets
      * PlayerStatus_Lifted. Chill (while live, inside): `slowLeft = max(slowLeft, strength1)`,
      * `slowQ = max(slowQ, strength0)`. Root (start tick, inside, no guard running): `rootLeft =
-     * max(rootLeft, duration)`. Release (start tick, inside): root, pin and chill end, and the control
+     * max(rootLeft, duration)`. Pin (while live, inside, no guard running): `pinLeft = max(pinLeft,
+     * strength1)`, a fixed tail. Release (start tick, inside): root, pin and chill end, and the control
      * guard starts if a root or a pin did. While Fresh, Impulse and Shove do not apply either.
      * Integers in cm/s; `push` is clamped to +-kPushLimitCmS per axis.
      * @return The Lift's vertical target in m/s (the highest of the zones), or nothing.
@@ -314,6 +341,9 @@ export namespace vortex::sim {
      * 6/16 of the wish and no jump; a chilled one `(16 - slowQ) / 16` of it. On slick ground
      * (OnSlickGround, the state on the ground before the step) the horizontal velocity moves from the
      * last one toward the wish x 1.3 (plus the push) by at most 3 m/s^2, capped at 1.4 x the run speed.
+     * A leap (PlayerStatus_Leaping): no wish (the caster is the projectile; a push from zones still adds), no
+     * slick rule and no push decay; the first step after the launch that ends on the ground ends it and zeroes
+     * the horizontal push.
      * Then the counters count down: a chill ends with slowQ 0; when the last of root and pin ends, the
      * control guard starts (kControlGuardTicks); Fresh ends with the guard or a cast.
      */

@@ -243,7 +243,8 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
     `TooMuchConjured`, 9 `TooManyZones`, 10 `TooMuchFire` (reserved for spread's fire cap), 11 `NearSpawn`.
   - Owner block +19 B after `useResult` (`kSnapshotOwnerBytes` 63 since protocol 15): push i16 x 3 (each within +-1 500),
     status, slowQ (at most 16), slowLeft, rootLeft, pinLeft, ccGuardLeft, dashLeft (u8 each), dashDir i8 x 2 (the client
-    restores these 12 and the dash's 3 before every replay), [mag-8]'s mana u16 (1/60 mana, at most 6 000; refused above)
+    restores these 12 and the dash's 3 before every replay; status bit 6, 64, is [mag-7]'s `PlayerStatus_Leaping`, owner
+    block only), [mag-8]'s mana u16 (1/60 mana, at most 6 000; refused above)
     and spellGap u8 (ticks until a Spell edge is captured again; HUD and the client's own Dash only), the attunement byte (bits 0-1 element A, 2-3 element B, bit 4 `kAttuneActiveB`: the last Spell edge's
     element was B; bits above 4 refused). Remote record +1 B (`kSnapshotPlayerBytes` 19): `statusBits`, bits 0-3 status
     & 15, bits 4-5 the element of its last Spell edge. Roster +1 B per player (7 B each): bits 0-1 element A, 2-3 element

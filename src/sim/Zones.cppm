@@ -18,7 +18,7 @@ export namespace vortex::sim {
         None = 0,
         Impulse = 1,   ///< on its start tick: a push away from its centre (a capsule: from the nearest point of its axis) and up
         Lift = 2,      ///< while live: a lower bound on the vertical speed, ramped at the rim, eased to a hover at the top
-        Pin = 3,       ///< reserved: no behaviour yet
+        Pin = 3,       ///< while live and inside: pinned (strength {0, tail ticks}: pinLeft = max(pinLeft, tail)); not during the control guard
         Chill = 4,     ///< while live and inside: slowed (strength {slowQ in sixteenths, tail ticks})
         Root = 5,      ///< on its start tick, inside: rooted for its duration (not during the control guard)
         Release = 6,   ///< on its start tick, inside: root, pin and chill end (the control guard starts)

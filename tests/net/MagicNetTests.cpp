@@ -390,7 +390,7 @@ TEST(Magic, CastRejectedOverTheCaps) {
 }
 
 // Decision 12: Attune is taken before the first spawn and while dead (two different, built elements) and applied at the
-// next spawn; while alive, or with an element no spell of this build has, it is ignored.
+// next spawn; while alive, or with one element twice, it is ignored.
 TEST(Magic, AttuneOnlyWhileDeadOrBeforeSpawn) {
     SpellYard y(Settings(Duel()));
     ASSERT_TRUE(y.started);
@@ -402,7 +402,7 @@ TEST(Magic, AttuneOnlyWhileDeadOrBeforeSpawn) {
     constexpr uint8_t kMetal = static_cast<uint8_t>(sim::Element::Metal), kPressure = static_cast<uint8_t>(sim::Element::Pressure),
                       kThermal = static_cast<uint8_t>(sim::Element::Thermal);
     a.client->SendAttune(kPressure, kMetal);
-    a.client->SendAttune(kThermal, kMetal);                  // Thermal has no built spell: ignored, the first stays
+    a.client->SendAttune(kThermal, kThermal);                // one element twice: ignored, the first stays
     y.Passes(10);
     EXPECT_EQ(y.server.Stats().attunes, 1u);
     EXPECT_EQ(y.server.Stats().attunesRefused, 1u);
@@ -674,5 +674,46 @@ TEST(Magic, ARuneBurstsUnderAnEnemyInASession) {
     EXPECT_EQ(y.server.Fighter(slotB).health, healthBefore - 15);
     EXPECT_GE(b.client->Stats().zoneCancels, 1u);
     EXPECT_GE(b.client->Stats().zonesApplied, 3u) << "the rune, its Root and its Chill";
+    EXPECT_TRUE(y.HashesEqual());
+}
+
+// --- Thermal ([mag-5], without fire spread) -------------------------------------------------------------------------
+
+// Pitchfall, Meltdown Beam, Wildfire and Firestorm Sweep cast by a client attuned to Thermal in a fight, aimed out of both
+// spawn areas: the server runs them, the stream carries their pitch, Heat, bores, Cool and the pitch's expiry, and both
+// clients end with the server's voxels.
+TEST(Magic, ThermalSpellsReplicateWithEqualHashes) {
+    SpellYard y(Settings(Duel()));
+    ASSERT_TRUE(y.started);
+    SpellPlan plan;
+    SpellYard::Bot& a = y.AddBot(plan.Controls());
+    ASSERT_TRUE(y.Until([&] { return a.client->State() == net::ClientState::Playing; }, 600));
+    y.Passes(10);
+    a.client->SendAttune(static_cast<uint8_t>(sim::Element::Metal), static_cast<uint8_t>(sim::Element::Thermal));
+    SpellYard::Bot& b = y.AddBot();
+    ASSERT_TRUE(y.Join());
+    ASSERT_TRUE(y.Until([&] { return y.server.RoundState().phase == sim::RoundPhase::Live; }, 600));
+    y.Passes(150);   // past the spawn protection
+    const uint8_t slotA = a.client->Slot();
+    ASSERT_EQ(y.server.Caster(slotA).elementB, static_cast<uint8_t>(sim::Element::Thermal));
+    const uint32_t tick = a.client->PredictTick() + 5;
+    plan.casts[tick] = {sim::kPitchfall, glm::vec3(0.0f, 0.0f, -11.0f)};
+    plan.casts[tick + 60] = {sim::kMeltdownBeam, glm::vec3(2.0f, 0.0f, -9.0f)};
+    plan.casts[tick + 120] = {sim::kWildfire, glm::vec3(-2.0f, 0.0f, -10.0f)};
+    plan.casts[tick + 180] = {sim::kFirestormSweep, glm::vec3(0.0f, 0.0f, -10.0f)};
+    y.Passes(240);
+    EXPECT_EQ(y.server.Stats().spellCasts, 4u);
+    EXPECT_EQ(y.server.Stats().spellsRefused, 0u) << "pitchfall " << static_cast<int>(a.rejections[tick]) << ", meltdown "
+                                                  << static_cast<int>(a.rejections[tick + 60]) << ", wildfire "
+                                                  << static_cast<int>(a.rejections[tick + 120]) << ", firestorm "
+                                                  << static_cast<int>(a.rejections[tick + 180]);
+    const glm::ivec3 centre = glm::ivec3(y.Feet(slotA) / 0.125f) + glm::ivec3(0, 0, -80);
+    EXPECT_GT(VoxelsOf(y.server.Simulation().World(), DefaultIds().pitch, centre - glm::ivec3(48, 8, 40), centre + glm::ivec3(48, 24, 40)).size(), 0u)
+        << "the Firestorm's curtain still burns";
+    EXPECT_EQ(b.client->Stats().castFx, 4u);
+    EXPECT_TRUE(y.HashesEqual());
+    // The pitch burns out and the metal cools everywhere alike.
+    y.Passes(300);
+    EXPECT_EQ(VoxelsOf(y.server.Simulation().World(), DefaultIds().pitch, centre - glm::ivec3(64, 8, 64), centre + glm::ivec3(64, 24, 64)).size(), 0u);
     EXPECT_TRUE(y.HashesEqual());
 }
