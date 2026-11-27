@@ -143,7 +143,8 @@ carries no contradiction. The owner confirms the colours windowed (question 23).
   (`PlayerInput::spell`).
 - **Attunement: 2 of the 4 elements per life**, chosen on the respawn screen (M2a's 3 s). Keys 1-4 toggle elements
   there; exactly 2 must be on; Ready or the timer confirms; the default is the last choice (Metal + Pressure on a
-  first life). Q (crate) and E (use) stay mechanisms'. As built in the session client (2026-11-27, `src/Session.cpp`
+  first life). A sandbox session has no deaths: T opens the same menu at any time, and the server takes the pair at
+  once. Q (crate) and E (use) stay mechanisms'. As built in the session client (2026-11-27, `src/Session.cpp`
   with `sim::AttunePick`): the menu opens when the player dies or waits for its first spawn in a fight; a third
   element turns off the one picked first; every complete pick goes to the server at once as `Attune` (the server
   applies the newest at the spawn), so the 3 s respawn never waits on the menu; Enter is Ready, and the timer (3 s,

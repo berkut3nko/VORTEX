@@ -580,11 +580,12 @@ TEST(Magic, AGestureCastReplicatesWithEqualHashes) {
     plan.spell = sim::kFlashFreeze;
     plan.gesture = LineGesture({GroundPointQ(feet, 2.0f, -3.0f), GroundPointQ(feet, 3.0f, -1.5f), GroundPointQ(feet, 4.0f, 0.0f),
                                 GroundPointQ(feet, 4.0f, 2.0f)});
-    // Frost is not of the default pair: the sandbox caster takes Metal and Frost before its first spell.
-    caster.client->SendAttune(static_cast<uint8_t>(sim::Element::Metal), static_cast<uint8_t>(sim::Element::Frost));
+    // Frost is not of the default pair: the sandbox caster takes Pressure and Frost at once, before its first spell.
+    caster.client->SendAttune(static_cast<uint8_t>(sim::Element::Pressure), static_cast<uint8_t>(sim::Element::Frost));
     plan.tick = caster.client->PredictTick() + 5;
     y.Passes(120);
     const net::CastRejection first = caster.rejections.contains(plan.tick) ? caster.rejections[plan.tick] : net::CastRejection::None;
+    const glm::ivec3 stripStart = plan.gesture.pointsQ[0] >> 4;
 
     plan.spell = sim::kPunch;
     plan.gesture = LineGesture({GroundPointQ(feet, 1.5f, -1.0f), GroundPointQ(feet, 1.5f, 1.0f)});
@@ -594,11 +595,32 @@ TEST(Magic, AGestureCastReplicatesWithEqualHashes) {
     EXPECT_EQ(y.server.Stats().gestures, 2u);
     EXPECT_GE(y.server.Stats().spellCasts, 1u);
     EXPECT_EQ(caster.rejections[plan.tick], net::CastRejection::None) << "the Punch";
-    if (first == net::CastRejection::None) {
-        const glm::ivec3 centre = plan.gesture.pointsQ[0] >> 4;
-        EXPECT_GT(VoxelsOf(y.server.Simulation().World(), DefaultIds().ice, centre - glm::ivec3(48, 4, 48), centre + glm::ivec3(48, 4, 48)).size(), 0u);
-    }
+    EXPECT_EQ(first, net::CastRejection::None) << "the Flash Freeze: the sandbox took Metal and Frost at once";
+    EXPECT_GT(VoxelsOf(y.server.Simulation().World(), DefaultIds().ice, stripStart - glm::ivec3(48, 4, 48), stripStart + glm::ivec3(48, 4, 48)).size(), 0u)
+        << "the ice strip";
     EXPECT_EQ(other.client->Stats().castFx, caster.client->Stats().castFx);
+    EXPECT_TRUE(y.HashesEqual());
+}
+
+// A sandbox has no deaths: an Attune is taken at once, while alive, and the owner block carries the pair.
+TEST(Magic, ASandboxTakesAnAttuneAtOnce) {
+    SpellYard y;
+    ASSERT_TRUE(y.started);
+    SpellYard::Bot& a = y.AddBot();
+    SpellYard::Bot& b = y.AddBot();
+    ASSERT_TRUE(y.Join());
+    y.Passes(30);
+    const uint8_t slotA = a.client->Slot();
+    constexpr uint8_t kThermal = static_cast<uint8_t>(sim::Element::Thermal), kFrost = static_cast<uint8_t>(sim::Element::Frost);
+    a.client->SendAttune(kThermal, kFrost);
+    a.client->SendAttune(kFrost, kFrost);                    // one element twice: refused, the pair stays
+    y.Passes(10);
+    EXPECT_EQ(y.server.Stats().attunes, 1u);
+    EXPECT_EQ(y.server.Stats().attunesRefused, 1u);
+    EXPECT_EQ(y.server.Caster(slotA).elementA, kThermal);
+    EXPECT_EQ(y.server.Caster(slotA).elementB, kFrost);
+    ASSERT_TRUE(y.Until([&] { return (a.client->Magic().attune & 0x0F) == (kThermal | kFrost << 2); }, 120)) << "the owner block";
+    EXPECT_TRUE(b.client->Predicting());
     EXPECT_TRUE(y.HashesEqual());
 }
 

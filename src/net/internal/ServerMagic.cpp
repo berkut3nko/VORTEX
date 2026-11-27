@@ -260,7 +260,8 @@ namespace vortex::net {
         Attune a;
         if (!Decode(bytes, a)) return false;
         const sim::FighterState& f = fighters[p.slot];
-        const bool open = Fighting() && (!f.spawned || f.dead);
+        // A fight attunes per life (taken at the next spawn); a sandbox has no deaths and takes the pick at once.
+        const bool open = !Fighting() || !f.spawned || f.dead;
         const bool valid = a.craftA != a.craftB && ElementBuilt(spellTable, a.craftA) && ElementBuilt(spellTable, a.craftB);
         if (!open || !valid || !p.player) {
             ++stats.attunesRefused;
@@ -271,6 +272,7 @@ namespace vortex::net {
         p.player->attuneA = a.craftA;
         p.player->attuneB = a.craftB;
         ++stats.attunes;
+        if (!Fighting()) ApplyAttune(p.slot);
         return true;
     }
 
