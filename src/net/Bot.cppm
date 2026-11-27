@@ -181,6 +181,8 @@ export namespace vortex::net {
      * frozen (TerrainColliders::GuardBodies; on a 250 m region the server cooks colliders only near the
      * players and the spawn) and counts as awake there, so its copy never gets an EntityRest; it does not
      * move either. A copy that is not resting must stay within 1 mm of where it was when the hold began.
+     * The client must step ticks through the hold (Client::RunTick or StepPlayer): only they move a copy to its
+     * samples, so a client that only polls holds still copies of bodies the server still moves.
      */
     class DrainWatch {
     public:
@@ -199,6 +201,7 @@ export namespace vortex::net {
             m_CaughtUp = false;
             m_Seen = 0;
             m_Since = 0.0;
+            m_TickAtHold = 0;
             m_Still.clear();
         }
 
@@ -207,6 +210,7 @@ export namespace vortex::net {
         bool m_CaughtUp = false;
         uint32_t m_Seen = 0;
         double m_Since = 0.0;
+        uint64_t m_TickAtHold = 0, m_Ticks = 0;            ///< PredictionStats::ticks when the hold began; ticks stepped since
         uint32_t m_NotResting = 0, m_Moved = 0;
         uint32_t m_Applied = 0, m_Server = 0;
         bool m_Synced = false, m_Playing = false;

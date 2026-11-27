@@ -781,6 +781,59 @@ TEST(Fight, ARespawnSoonerThanTheClientsLeadIsNotACorrection) {
     EXPECT_LT(after.lastError, 0.02f);
 }
 
+// A player that joins in the warmup is moved to its team's spawn when the round starts: a respawn, never a correction.
+TEST(Fight, AWarmupJoinerMovedAtTheRoundsFirstSpawnIsNotCorrected) {
+    FightField f;
+    ASSERT_TRUE(f.started);
+    FightField::Bot& first = f.AddBot();
+    ASSERT_TRUE(f.Join());
+    f.Passes(20);
+    ASSERT_EQ(f.server.RoundState().phase, sim::RoundPhase::Warmup);
+    // 5 m away from the spawn ring: the round's spawn is a long teleport.
+    ASSERT_TRUE(f.server.TeleportPlayer(0, f.Feet(0) + glm::vec3(0.0f, 0.05f, 5.0f)));
+    f.Passes(60);
+    const net::PredictionStats before = first.client->Prediction();
+    f.AddBot();
+    ASSERT_TRUE(f.Join());
+    ASSERT_TRUE(f.Until([&] { return f.server.RoundState().phase == sim::RoundPhase::Live; }, 600));
+    f.Passes(60);
+    const net::PredictionStats& after = first.client->Prediction();
+    EXPECT_EQ(after.respawns, before.respawns + 1);
+    EXPECT_EQ(after.corrections, before.corrections);
+    EXPECT_EQ(after.snaps, before.snaps);
+    EXPECT_LT(glm::length(first.client->Player().position - f.Feet(0)), 0.02f);
+}
+
+// The round's first spawn reaches a warmup joiner before its prediction starts, and the newest snapshot whose events
+// are in is one of the warmup: the prediction starts from that snapshot, and the spawn's snapshot is still a respawn.
+TEST(Fight, AFirstSpawnSeenBeforeThePredictionStartsIsNotACorrection) {
+    FightField f;
+    ASSERT_TRUE(f.started);
+    FightField::Bot& first = f.AddBot();
+    first.hold.holdReceive[kState] = true;                     // no snapshot yet: the prediction does not start
+    ASSERT_TRUE(f.Until([&] { return first.client->State() == net::ClientState::Playing && first.client->Synced(); }, 600));
+    ASSERT_FALSE(first.client->Predicting());
+    ASSERT_EQ(f.server.RoundState().phase, sim::RoundPhase::Warmup);
+    ASSERT_TRUE(f.server.TeleportPlayer(0, f.Feet(0) + glm::vec3(0.0f, 0.05f, 5.0f)));
+    f.Passes(3);
+    first.hold.holdReceive[kEvents] = true;
+    const voxel::World& w = f.server.Simulation().World();
+    const glm::ivec3 lo = w.WorldToVoxel(glm::dvec3(-14.0, 12.0, 8.0)), hi = w.WorldToVoxel(glm::dvec3(-13.0, 13.0, 9.0));
+    ASSERT_NE(f.server.ApplyOp(sim::WorldOp::Box(lo, hi, f.server.Simulation().WorldMaterialIds().stone)), 0u);
+    f.AddBot();
+    ASSERT_TRUE(f.Until([&] { return f.server.Fighter(0).lifeSeq == 1; }, 20));
+    f.Passes(2);
+    first.hold.holdReceive[kState] = false;                    // the warmup's snapshots and the spawn's arrive together
+    ASSERT_TRUE(f.Until([&] { return first.client->Predicting(); }, 5));
+    first.hold.holdReceive[kEvents] = false;
+    f.Passes(60);
+    const net::PredictionStats& after = first.client->Prediction();
+    EXPECT_EQ(after.respawns, 1u);
+    EXPECT_EQ(after.corrections, 0u);
+    EXPECT_EQ(after.snaps, 0u);
+    EXPECT_LT(glm::length(first.client->Player().position - f.Feet(0)), 0.02f);
+}
+
 // A player held over a chunk without a base (plan amendment 7) dies: its pending resume is dropped, so the inputs
 // replayed at the respawn are not stepped a second time once the chunk is current again.
 TEST(Fight, APlayerThatDiesWhileHeldIsNotSteppedTwiceAfterItsRespawn) {

@@ -470,19 +470,22 @@ namespace vortex::net {
             // The hold (re)starts here: the positions it measures stillness from are taken now (the first
             // Update that sees a non-resting copy records it and does not hold).
             m_Since = now;
+            m_TickAtHold = client.Prediction().ticks;
             m_Still.clear();
             for (const EntityInfo& e : entities)
                 if (!e.resting) m_Still.emplace(e.netId, e.position);
         }
         m_Seen = server;
         m_CaughtUp = holds;
-        return holds && now - m_Since >= m_Hold;
+        m_Ticks = client.Prediction().ticks - m_TickAtHold;
+        return holds && now - m_Since >= m_Hold && m_Ticks > 0;
     }
 
     std::string DrainWatch::Describe(double now) const {
-        return std::format("applied opSeq {} of {}, {}{}, {} copies not resting ({} moved or new since the hold began), held for {:.1f} s",
+        return std::format("applied opSeq {} of {}, {}{}, {} copies not resting ({} moved or new since the hold began), held for {:.1f} s "
+                           "({} ticks stepped)",
                            m_Applied, m_Server, m_Synced ? "synced" : "NOT SYNCED", m_Playing ? "" : ", not playing", m_NotResting, m_Moved,
-                           m_CaughtUp ? now - m_Since : 0.0);
+                           m_CaughtUp ? now - m_Since : 0.0, m_Ticks);
     }
 
     // --- numbers and lines -----------------------------------------------------------------------------

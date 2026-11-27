@@ -530,8 +530,8 @@ Players and the client clock [net-4, net-5]
   not link it (`vortex_assert_no_network`).
 
 Exit rules of a session client
-- **A headless game client** (`--connect --headless`) drains at exit (applied == the server's opSeq, held 1 s, at most
-  5 s) and exits 3 when it cannot (`Session: replication not shown: ...`): the hash it logs is then comparable with
+- **A headless game client** (`--connect --headless`) drains at exit (applied == the server's opSeq, held 1 s of stepped ticks,
+  at most 30 s) and exits 3 when it cannot (`Session: replication not shown: ...`): the hash it logs is then comparable with
   the server's last one. It also exits 3 when its hash is incomplete, its own checks found a mismatch, a check came out
   of its stream position, or it played in server terrain mode without `--other-terrain` (`net::ClientCheckFailures`,
   called from `../src/Session.cpp`). Exit 1 stays a connection that was refused, lost or failed. `vortex_bot` applies the
@@ -550,6 +550,11 @@ Clocks and passes
   ticks must still be fine without a poll for a pass.
 - Other players are drawn at `ServerTime`, which advances only in `TicksDue` (real time): a harness that ticks a client
   without calling `TicksDue` sees them stand at the first snapshot's tick.
+- The owner block's `lifeSeq` is read on receipt, but the prediction starts from the newest snapshot whose events are
+  applied. That snapshot can be of an earlier life: a warmup joiner can see the round's first spawn while it starts.
+  Such a start marks the respawn pending, so `Respawned` takes the first snapshot of the new life and Reconcile does
+  not correct it (`Fight.AFirstSpawnSeenBeforeThePredictionStartsIsNotACorrection`). `Server::TeleportPlayer` (tests
+  only) keeps the life: its move is a correction by design, as the 52 m one in the Hollowkeep siege test.
 - `TickClock::Report` takes ticks the client made; feeding it non-increasing input ticks makes every report a repeat
   (ignored) - a test bug that once hid what a clock test was meant to show.
 - Comparing prediction and server position is meaningful only while the player stands: a walking client is ahead by
@@ -682,7 +687,11 @@ Entities
   prediction: many corrections in the drill).
 - Copies move only in `Client::StepPlayer` / `RunTick` (`MoveCopies`, one tick each): a harness that polls and steps
   the simulation without them sees copies stand at their spawn until their `EntityRest` (the `Session` fixture of
-  `SessionTests.cpp` does that; `Arena` and `Match` do not).
+  `SessionTests.cpp` does that; `Arena` and `Match` do not). A drain is such a harness too: the headless game
+  client drained with `Poll` only, so the copy of a body that the server still moved stood still, `DrainWatch` took
+  it as settled after 1 s, and the awake list put it 0.2-2.7 m from the server's body (G16, G19). The game's drain
+  runs `RunTick` now, and `DrainWatch` holds only when the client stepped ticks through the hold
+  (`Entities.ADrainSettlesOnlyOnStepsThatFollowTheServersBodies`).
 - A client's copy removed by its own scene (`DestroyBelow`: drawn in the past it can fall out first) is dropped and
   counted (`ClientStats::copiesLost`); the entity check shows it missing until the server's despawn comes.
 - The `Arena` / `Match` harnesses are reproducible only because colliders install in chunk order with a per-round job

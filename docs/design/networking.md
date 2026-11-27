@@ -431,7 +431,7 @@ changed `Detach` or `ClearMask`.
 - `net::Bot` (`vortex.net:bot`) is one bot player: a `net::Client` with its own `Simulation`, piloted by `BotPilot`
   (walks, runs, jumps, casts, drops crates, or walks across the region and back). `vortex_server`'s in-process bots,
   `vortex_bot` and the game's headless drain share it, with `DrainWatch` (applied the server's last opSeq, synced,
-  every copy resting or still for 1 s) and the shared exit lines (`SessionHashLine`, `SessionEntitiesLine`,
+  every copy resting or still for 1 s of stepped ticks) and the shared exit lines (`SessionHashLine`, `SessionEntitiesLine`,
   `ServerLeaveLine`, the awake list). `Bot::PassOnClock` counts the work inside a pass into the bot's clock.
 - `vortex_bot` (`engine/tools/bot`, Net only): one bot per process over its own UDP socket; impairment by a
   `UdpRelay` (`--loss`, `--delay-ms`, `--jitter-ms`, `--outage-ms`, `--down-bytes-per-second`); `--connect HOST:PORT`

@@ -115,6 +115,9 @@ namespace vortex::net {
     void Client::Impl::StartPrediction(const Snapshot& snap) {
         Restore(snap.owner);
         predicting = true;
+        // The start may be a snapshot of an earlier life than the newest owner block (the round's first spawn came
+        // while its events were not in): that life's teleport is a respawn too, never a correction.
+        respawnPending = lifeKnown && snap.tick < lifeStartTick;
         nextTick = snap.tick + 1;
         clock.DropBacklog();
         // The transport's recent round trip: one that a stall of this side does not inflate

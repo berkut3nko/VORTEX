@@ -797,6 +797,45 @@ TEST(Entities, ACastAimedAtACrateBreaksIt) {
     EXPECT_EQ(e.server, 0u);
 }
 
+// The drain rule needs the client's ticks: only they move a copy to its samples. A drain that only polls (the
+// headless game client's did) held the copy of a falling crate still for the hold time and settled while the
+// server's crate still fell; its awake list then named the crate metres from the server's.
+TEST(Entities, ADrainSettlesOnlyOnStepsThatFollowTheServersBodies) {
+    Arena a(ArenaSettings(), DelayLink(0.04));
+    ASSERT_TRUE(a.started);
+    Arena::Bot& bot = a.AddBot(nullptr);
+    ASSERT_TRUE(a.Join());
+    ASSERT_TRUE(a.Settle());
+    const glm::vec3 feet = bot.client->Player().position;
+    const uint32_t crate = a.server.SpawnCrate(glm::dvec3(feet) + glm::dvec3(4.0, 10.0, 0.0));   // about 1.4 s of fall
+    ASSERT_NE(crate, 0u);
+    // Polls only: the events and the samples arrive, no tick moves the copy.
+    net::DrainWatch polled(1.0);
+    int polledSettledAt = -1, passes = 0;
+    for (; passes < 400 && a.server.AwakeBodies() > 0 && polledSettledAt < 0; ++passes) {
+        a.clock += a.dt;
+        a.server.Advance(a.dt);
+        if (a.server.Simulation().Terrain().Stats().pending != 0) a.server.Simulation().Jobs().WaitIdle();
+        bot.client->Poll();
+        if (polled.Update(*bot.client, a.clock)) polledSettledAt = passes;
+    }
+    EXPECT_LT(polledSettledAt, 0) << "settled after " << polledSettledAt << " passes while the server's crate moved";
+    // Ticks: the copy follows the crate; the drain settles once it rests, where the server's rests.
+    net::DrainWatch stepped(1.0);
+    int steppedSettledAt = -1;
+    for (int i = 0; i < 600 && steppedSettledAt < 0; ++i) {
+        a.Pass();
+        if (stepped.Update(*bot.client, a.clock)) steppedSettledAt = i;
+    }
+    ASSERT_GE(steppedSettledAt, 0) << stepped.Describe(a.clock);
+    const std::optional<net::EntityInfo> server = ServerEntity(a.server, crate);
+    ASSERT_TRUE(server.has_value());
+    for (const net::EntityInfo& e : bot.client->Entities())
+        if (e.netId == crate) EXPECT_LT(glm::length(e.position - server->position), 0.05f);
+    const net::EntityComparison e = a.Compare(bot);
+    EXPECT_TRUE(e.Agree(0.001f)) << e.Describe();
+}
+
 // Review of stage 6: players' crates (the E key) are bounded - one per crateCooldownTicks, at most
 // maxCratesPerPlayer alive (the oldest goes) - and go when their player leaves (a reconnect loop left
 // 8 bodies per connection for the rest of the session). The clients' copies follow, a late joiner's

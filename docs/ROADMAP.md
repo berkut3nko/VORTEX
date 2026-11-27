@@ -14,6 +14,14 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
 
 ## Now
 
+- **Two session fixes: built, not reviewed** (2026-11-27). (1) A warmup joiner that sees the round's first spawn
+  while its prediction starts from a warmup snapshot takes the spawn as a respawn, not as a correction
+  (`Client::Impl::StartPrediction`; `Fight.AFirstSpawnSeenBeforeThePredictionStartsIsNotACorrection` failed before
+  with 1 correction and 1 snap). (2) The headless game client's drain runs its client ticks: before, it only polled, so
+  its copies of bodies that the server still moved stood still and `DrainWatch` settled after 1 s. G16 and G19 then
+  found those copies 0.2-2.7 m from the server's bodies. `DrainWatch` now holds only over stepped ticks
+  (`Entities.ADrainSettlesOnlyOnStepsThatFollowTheServersBodies` failed before), and the game's drain limit is 30 s.
+  Measured: `tools/session-check.sh` PASS 4 times, its drains took 9.2-10.1 s. No wire change. Not run: the soak.
 - **Siege at Hollowkeep: built, not reviewed** (2026-11-27; [design/fight.md](design/fight.md) "Siege"). Hollowkeep in
   sessions: `RegionTemplateId::Hollowkeep` (2) on `generator = land`; the server runs `sim::HollowkeepTemplate` and
   replicates the portcullis and its lever as mechanisms, the props as server bodies and the lights (props and lights
@@ -393,7 +401,7 @@ never been measured.
 
 ## State
 
-Tests: **1201** in ctest: 1193 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
+Tests: **1205** in ctest: 1197 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
 game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts), `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
 `Tools.DocCheck`, `Tools.DocCheckSelftest`, `Tools.SessionCheckVerdict` and `Tools.VerifyAssertions` (WP2's checks
 and their self-tests), `Tools.RendezvousWorker` (the rendezvous Worker under `node --test`, registered when `node` is
