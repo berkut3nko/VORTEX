@@ -237,6 +237,90 @@ TEST(Combat, AnEmptyTeamForfeitsAfter1800Ticks) {
     EXPECT_EQ(round.end, sim::RoundEnd::Forfeit);
 }
 
+// --- siege (fight.md "Siege") ----------------------------------------------------------------------------------------
+
+namespace {
+    sim::FightRules Siege() {
+        sim::FightRules r;
+        r.mode = sim::GameMode::Siege;
+        r.holdTicks = 600;
+        return r;
+    }
+}
+
+TEST(Siege, AnUnbrokenHoldOfTheSanctumWinsForTheAttackers) {
+    const sim::FightRules rules = Siege();
+    uint32_t tick = 1;
+    sim::Round round = LiveRound(rules, tick);
+    const uint32_t from = tick + 100;
+    // Every tick an attacker and no defender is inside holds it; the hold's first tick counts.
+    for (uint32_t t = from; t < from + rules.holdTicks - 1; ++t) {
+        const sim::RoundStep step = sim::StepRound(round, rules, t, {2, 2}, {false, false}, {0, 1});
+        ASSERT_EQ(round.phase, sim::RoundPhase::Live) << "tick " << t;
+        ASSERT_EQ(round.holdSince, from);
+        EXPECT_EQ(step.changed, t == from) << "a RoundUpdate when the hold starts, none while it runs";
+    }
+    const sim::RoundStep win = sim::StepRound(round, rules, from + rules.holdTicks - 1, {2, 2}, {false, false}, {0, 2});
+    EXPECT_TRUE(win.changed);
+    EXPECT_EQ(round.phase, sim::RoundPhase::Ended);
+    EXPECT_EQ(round.winner, sim::kSiegeAttackers);
+    EXPECT_EQ(round.end, sim::RoundEnd::Held);
+}
+
+TEST(Siege, ADefenderInsideOrNoAttackerBreaksTheHold) {
+    const sim::FightRules rules = Siege();
+    uint32_t tick = 1;
+    sim::Round round = LiveRound(rules, tick);
+    uint32_t t = tick + 10;
+    for (uint32_t k = 0; k < rules.holdTicks - 10; ++k) sim::StepRound(round, rules, t++, {2, 2}, {false, false}, {0, 1});
+    EXPECT_NE(round.holdSince, 0u);
+    // A defender comes in: the hold breaks at once and starts again from 0 when the room is the attackers' again.
+    EXPECT_TRUE(sim::StepRound(round, rules, t++, {2, 2}, {false, false}, {1, 2}).changed);
+    EXPECT_EQ(round.holdSince, 0u);
+    const uint32_t again = t;
+    sim::StepRound(round, rules, t++, {2, 2}, {false, false}, {0, 1});
+    EXPECT_EQ(round.holdSince, again);
+    // The last attacker leaves (or dies): the hold breaks too.
+    sim::StepRound(round, rules, t++, {2, 2}, {false, false}, {0, 0});
+    EXPECT_EQ(round.holdSince, 0u);
+    for (uint32_t k = 0; k < rules.holdTicks - 1; ++k) sim::StepRound(round, rules, t++, {2, 2}, {false, false}, {0, 1});
+    EXPECT_EQ(round.phase, sim::RoundPhase::Live) << "a hold one tick short does not win";
+}
+
+TEST(Siege, TheDefendersWinWhenTheTimeRunsOutAndKillsNeverEndIt) {
+    const sim::FightRules rules = Siege();
+    uint32_t tick = 1;
+    sim::Round round = LiveRound(rules, tick);
+    for (uint16_t k = 0; k < rules.scoreLimit + 5; ++k) EXPECT_FALSE(sim::ScoreKill(round, rules, sim::kSiegeAttackers, tick + k));
+    EXPECT_EQ(round.score[1], rules.scoreLimit + 5);
+    EXPECT_EQ(round.phase, sim::RoundPhase::Live);
+    sim::StepRound(round, rules, round.phaseEndTick - 1, {2, 2}, {false, false}, {0, 1});
+    EXPECT_EQ(round.phase, sim::RoundPhase::Live);
+    sim::StepRound(round, rules, round.phaseEndTick, {2, 2}, {false, false}, {0, 1});
+    EXPECT_EQ(round.phase, sim::RoundPhase::Ended);
+    EXPECT_EQ(round.winner, sim::kSiegeDefenders) << "no overtime: the keep held out";
+    EXPECT_EQ(round.end, sim::RoundEnd::Time);
+    EXPECT_FALSE(round.overtime);
+}
+
+TEST(Attune, APickKeepsTwoElementsAndDropsTheFirstPicked) {
+    sim::AttunePick pick;   // Metal + Pressure: the first life's
+    EXPECT_TRUE(pick.Complete());
+    pick.Toggle(static_cast<uint8_t>(sim::Element::Frost));
+    EXPECT_EQ(pick.picked, (std::array<uint8_t, 2>{2, 3})) << "Metal (picked first) goes";
+    pick.Toggle(static_cast<uint8_t>(sim::Element::Frost));
+    EXPECT_FALSE(pick.Complete());
+    EXPECT_TRUE(pick.Has(2));
+    pick.Toggle(static_cast<uint8_t>(sim::Element::Thermal));
+    EXPECT_TRUE(pick.Complete());
+    EXPECT_EQ(pick.picked, (std::array<uint8_t, 2>{2, 1}));
+    pick.Toggle(2);
+    pick.Toggle(1);
+    EXPECT_EQ(pick.count, 0);
+    pick.Toggle(4);   // no fifth element
+    EXPECT_EQ(pick.count, 0);
+}
+
 TEST(Combat, AimAnglesInvertLookDirection) {
     const float limit = std::cos(glm::radians(0.1f));
     for (int y = 0; y < 8; ++y)

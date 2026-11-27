@@ -38,7 +38,9 @@ export namespace vortex::net {
     /// roster +1 per player; Attune 24; CastRejection 6-11; Welcome's zone lead and push decays; BaselineEnd's zones).
     /// 15: [mag-8] (SpellGesture 25; CastFx +2 B and its points; the owner block's form cooldowns become mana and spellGap,
     /// -1 B; CastRejection 6 retired, NoMana 12, TooSoon 13, BadGesture 14).
-    inline constexpr uint16_t kProtocolVersion = 15;
+    /// 16: siege (RegionTemplateId::Hollowkeep 2, GameMode::Siege 3, RoundEnd::Held 5; RoundUpdate +6 B: holdSince,
+    /// holdTicks).
+    inline constexpr uint16_t kProtocolVersion = 16;
 
     /// @brief First byte of every message. Wire format.
     enum class MessageType : uint8_t {
@@ -319,7 +321,7 @@ export namespace vortex::net {
         std::vector<RosterEntry> players;
         friend bool operator==(const Roster&, const Roster&) = default;
     };
-    /// @brief The round (16 B with the type byte): sent on every change and to a joiner.
+    /// @brief The round (22 B with the type byte): sent on every change and to a joiner.
     struct RoundUpdate {
         sim::GameMode mode = sim::GameMode::Sandbox;
         sim::RoundPhase phase = sim::RoundPhase::Warmup;
@@ -329,9 +331,13 @@ export namespace vortex::net {
         uint8_t winner = 0;               ///< 0 none, 1, 2, sim::kDraw
         sim::RoundEnd end = sim::RoundEnd::None;
         bool overtime = false;
+        /// Siege: the tick the attackers' unbroken hold of the sanctum began (sim::Round::holdSince; 0 = none) and the
+        /// hold that wins (FightRules::holdTicks). The HUD counts the hold from its own tick estimate.
+        uint32_t holdSince = 0;
+        uint16_t holdTicks = 0;
         friend bool operator==(const RoundUpdate&, const RoundUpdate&) = default;
     };
-    inline constexpr size_t kRoundUpdateBytes = 16;
+    inline constexpr size_t kRoundUpdateBytes = 22;
     /// @brief One death (9 B with the type byte). `victim` is a slot, `killer` slot + 1 (0 = none).
     struct KillNotice {
         uint32_t tick = 0;
@@ -376,7 +382,7 @@ export namespace vortex::net {
     std::vector<uint8_t> Encode(const SpellGesture& m);
     /// @brief Refuses a kind over 3, a form over sim::kAutoForm, more than sim::kMaxGesturePoints points.
     bool Decode(std::span<const uint8_t> bytes, SpellGesture& out);
-    /// @brief Refuses a mode over 2, a phase over 3, a winner not 0, 1, 2 or 255, an end over 4, overtime over 1.
+    /// @brief Refuses a mode over 3, a phase over 3, a winner not 0, 1, 2 or 255, an end over 5, overtime over 1.
     bool Decode(std::span<const uint8_t> bytes, RoundUpdate& out);
     /// @brief Refuses a cause of 0 or over 5, flags over 1, a killer that is the victim.
     bool Decode(std::span<const uint8_t> bytes, KillNotice& out);

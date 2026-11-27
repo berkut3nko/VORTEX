@@ -666,6 +666,8 @@ namespace vortex::net {
         void StepRoundAndLives();
         std::vector<sim::PlayerView> PlayerViews();          // slot ascending, joined players
         std::array<uint32_t, 2> TeamPlayers();
+        std::array<uint32_t, 2> TeamsInSanctum();            // siege: living players per team with their feet in the sanctum
+        void LogHold(uint32_t holdBefore);
         void SendToJoined(const std::vector<uint8_t>& bytes);
         Roster MakeRoster();
         RoundUpdate MakeRoundUpdate() const;
@@ -690,7 +692,7 @@ namespace vortex::net {
         std::vector<scene::Entity> mechanisms;             // the yard's, in creation order
         std::vector<glm::vec3> holdFeet;                   // HoldEnvFor()'s storage
         uint32_t NetIdOf(scene::Entity entity) const;      // 0 without a NetId
-        void BuildYard();                                  // at Start, with SessionConfig::mechanisms and the playground
+        void BuildYard();                                  // at Start: the playground with SessionConfig::mechanisms, Hollowkeep always
         /// The mechanism's state with its ring's segments still running at `tick` (always the newest), oldest first.
         bool MakeMechanismState(scene::Entity entity, uint32_t tick, MechanismState& out) const;
         void EmitMechanismSpawn(uint32_t netId, scene::Entity entity);

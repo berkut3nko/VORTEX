@@ -395,8 +395,37 @@ namespace vortex::net {
         s.tmpl = sim::BuildRegionTemplate(*s.simulation, s.region);
         if (!s.tmpl.sited) {
             Log::Error("Server: the template found no site for itself inside the play bounds (a playground needs level ground above "
-                       "the sea within about 30 m of the origin)");
+                       "the sea within about 30 m of the origin; hollowkeep needs the castle's site on the map and its keep and gate "
+                       "inside the play bounds)");
             return false;
+        }
+        if (s.settings.session.fight.mode == sim::GameMode::Siege) {
+            if (!s.tmpl.hasSanctum) {
+                Log::Error("Server: mode siege needs the hollowkeep template's sanctum");
+                return false;
+            }
+            // A spawn area (6 m round a team spawn, sim::SpawnAreasOf) refuses the enemy's spells: none may cover the sanctum.
+            const float vs = w.VoxelSize();
+            for (size_t t = 0; t < 2; ++t) {
+                const glm::vec2 p = s.settings.session.fight.teamSpawns[t];
+                const glm::vec2 lo = glm::vec2(s.tmpl.sanctumMin.x, s.tmpl.sanctumMin.z) * vs - glm::vec2(6.0f);
+                const glm::vec2 hi = glm::vec2(s.tmpl.sanctumMax.x, s.tmpl.sanctumMax.z) * vs + glm::vec2(6.0f);
+                if (p.x > lo.x && p.y > lo.y && p.x < hi.x && p.y < hi.y) {
+                    Log::Error("Server: team_spawn_{} at ({:.1f}, {:.1f}) is within 6 m of the sanctum", t + 1, p.x, p.y);
+                    return false;
+                }
+            }
+        }
+        if (s.region.templateId == sim::RegionTemplateId::Hollowkeep) {
+            const float vs = w.VoxelSize();
+            const glm::vec3 lo = glm::vec3(s.tmpl.sanctumMin) * vs, hi = glm::vec3(s.tmpl.sanctumMax) * vs;
+            const glm::vec3 gate = s.tmpl.mechanisms.empty() ? glm::vec3(0.0f) : glm::vec3(s.tmpl.mechanisms.front().spawnVoxel) * vs;
+            Log::Info("Hollowkeep: keep at ({:.1f}, {:.1f}, {:.1f}) m, sanctum ({:.1f}, {:.1f}, {:.1f})..({:.1f}, {:.1f}, {:.1f}) m, "
+                      "portcullis at ({:.1f}, {:.1f}, {:.1f}) m, the road past the bridge at ({:.1f}, {:.1f}, {:.1f}) m, {} props, {} lights, "
+                      "{} mechanisms",
+                      glm::vec3(s.tmpl.anchor).x * vs, glm::vec3(s.tmpl.anchor).y * vs, glm::vec3(s.tmpl.anchor).z * vs, lo.x, lo.y, lo.z,
+                      hi.x, hi.y, hi.z, gate.x, gate.y, gate.z, s.tmpl.spawn.x, s.tmpl.spawn.y, s.tmpl.spawn.z, s.tmpl.objects.size(),
+                      s.tmpl.lights.size(), s.tmpl.mechanisms.size());
         }
         for (const sim::WorldOp& op : s.tmpl.ops) ApplyOp(op);
         s.stats.templateOps = static_cast<uint32_t>(s.tmpl.ops.size());

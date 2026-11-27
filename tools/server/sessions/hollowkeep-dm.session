@@ -1,0 +1,25 @@
+# Hollowkeep as a deathmatch arena (docs/design/fight.md "Rules"): the same castle, approach and team spawns as
+# hollowkeep.session (team 1 in the bailey, team 2 on the approach past the gate's ditch); the first team to
+# score_limit kills wins, or the team ahead when round_seconds run out. The map is not sent: the server bakes it from
+# land_map (run from the game's root), and every client bakes its own copy and compares the baked map's hash.
+#   vortex_server --session=engine/tools/server/sessions/hollowkeep-dm.session --listen 27015 --new-token
+# A public test token, published with the engine and used by tests and gates; the live server never uses it
+# (--new-token makes one for the players).
+token = 7a3f19c2e4b80d5661a2c3e4f5061728
+template = hollowkeep
+seed = 1337
+play_min = -70 -54
+play_max = -33 -24
+height = -48 128
+voxel_size = 0.125
+generator = land
+land_map = assets/world
+max_clients = 8
+chunk_capacity = 0
+pack_hidden = 1
+mode = deathmatch
+team_spawn_1 = -212 -142
+team_spawn_2 = -238 -140
+min_players = 2
+round_seconds = 600
+score_limit = 20

@@ -271,6 +271,12 @@ namespace vortex::sim {
         const glm::vec2 arrive = gatePoint + axis * (plan.bridgeSpan + 2.0f);
         t.spawn = glm::dvec3(arrive.x, voxel::LandHeight(map, land, arrive.x, arrive.y) + 0.1f, arrive.y);
         t.anchor = glm::ivec3(V(plan.keep.x), V(plan.keepGround), V(plan.keep.y));
+        // The sanctum: the keep's ground floor inside its 3 m shell (the keep is 16 m square, its first floor 5 m up),
+        // 0.25 m in from the shell's inner faces; feet from half a metre under the floor to 4.5 m over it.
+        constexpr float kSanctumHalf = 8.0f - 3.0f - 0.25f;
+        t.hasSanctum = true;
+        t.sanctumMin = glm::ivec3(V(plan.keep.x - kSanctumHalf), V(plan.keepGround - 0.5f), V(plan.keep.y - kSanctumHalf));
+        t.sanctumMax = glm::ivec3(V(plan.keep.x + kSanctumHalf), V(plan.keepGround + 4.5f), V(plan.keep.y + kSanctumHalf));
         return t;
     }
 }

@@ -10,7 +10,7 @@
 //                 [--bot-broken-chunk N[:X,Y,Z]] [--bot-broken-generator N] [--timeline FILE] [--broken-chunk-candidate]
 //                 [--terrain-bulk-ceiling KIB] [--bulk-window-floor KIB] [--pacer-delivery-interval S]
 //                 [--rendezvous [URL]] [--stun HOST:PORT ...] [--candidates KINDS] [--public A.B.C.D:PORT]
-//                 [--fight] [--until-round-end] [--require-winner]
+//                 [--fight] [--until-round-end] [--require-winner] [--round-seconds S]
 //   vortex_server --nat-probe [--stun HOST:PORT ...] [--bind ADDR] [--listen PORT]
 //   vortex_server --punch-test --token HEX [--stun HOST:PORT ...] [--candidates KINDS] [--public A.B.C.D:PORT]
 //                 [--bind ADDR] [--listen PORT]
@@ -45,7 +45,8 @@
 // The fight ([wp-7], engine/docs/design/fight.md): a session file with `mode = deathmatch | felling` runs teams,
 // damage, respawns and one round; --fight makes every in-process bot fight (aim and cast at enemies),
 // --until-round-end runs until the round ends (--ticks is then the cap: not over by then is exit 1), then drains
-// and compares as after --ticks; --require-winner fails a draw. A listening server whose round ended with
+// and compares as after --ticks; --require-winner fails a draw; --round-seconds S replaces the session's round_seconds (a
+// short siege for a check: the defenders win when it runs out). A listening server whose round ended with
 // end_session (the default for a fight) exits 0 (a live install's wrapper starts the next session). Logs Round:,
 // Kill: and Fight: lines (docs/verify.md).
 //
@@ -344,6 +345,11 @@ int main(int argc, char** argv) {
     pilotSettings.fight = args.Has("--fight");
     const bool untilRoundEnd = args.Has("--until-round-end");
     const bool requireWinner = args.Has("--require-winner");
+    const uint32_t roundSeconds = static_cast<uint32_t>(Number(args, "--round-seconds", 0));
+    if (roundSeconds > 3600) {
+        Log::Error("--round-seconds expects 1..3600");
+        return 2;
+    }
     // Stage 7a M-b: the bots' window, the walk across the region, casts before anyone joins.
     const int32_t clientWindow = static_cast<int32_t>(Number(args, "--client-window", 0));
     if (clientWindow < 0 || clientWindow > net::kMaxClientWindowChunks) {
@@ -408,6 +414,7 @@ int main(int argc, char** argv) {
     settings.session = session;
     // [wp-7] In-process bots drain after the round (the hashes are compared then): the session is not ended under them.
     if (untilRoundEnd) settings.session.fight.endSession = false;
+    if (roundSeconds > 0) settings.session.fight.roundTicks = roundSeconds * 60;
     settings.simulation.jobThreads = threads;
     // The drill report reads every drill cast (review of stage 8: players' casts and the precasts share the
     // record; a limit of the drill's steps alone dropped the oldest drill casts in a 10-minute soak and the

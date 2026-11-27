@@ -14,6 +14,19 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
 
 ## Now
 
+- **Siege at Hollowkeep: built, not reviewed** (2026-11-27; [design/fight.md](design/fight.md) "Siege"). Hollowkeep in
+  sessions: `RegionTemplateId::Hollowkeep` (2) on `generator = land`; the server runs `sim::HollowkeepTemplate` and
+  replicates the portcullis and its lever as mechanisms, the props as server bodies and the lights (props and lights
+  outside the play bounds left out). `mode = siege` (`GameMode` 3): team 2 wins by holding the sanctum (the keep's
+  ground floor, `sim::InSanctum`) with no defender inside for `hold_seconds` (30) without a break (`RoundEnd::Held`
+  5), team 1 when `round_seconds` run out; kills only count. `RoundUpdate` carries `holdSince` and `holdTicks`
+  (22 B). Protocol 16. `hollowkeep.session` (siege, max 8 clients, 600 s) and `hollowkeep-dm.session`
+  (deathmatch); `vortex_server --round-seconds S`. The game: the attune menu on the respawn screen (`sim::AttunePick`,
+  1-4, Enter or 3 s; R swaps), the `SANCTUM 12/30` banner line and the siege's role and end lines. Measured: a 4-bot
+  siege at 5 % loss (`--round-seconds 30`) ends `team 1 wins by time`, `hashes equal`, 25 entities agree (23 props, 2
+  mechanisms); a client with a 48-chunk window
+  holds at most 6368 store slots. Not run: `verify.sh full --ci`, the soak. Windowed and internet play: the game's
+  owner check 33.
 - **[spread-S1] Fire offline: built, not reviewed** (2026-11-27). The offline game runs fire
   ([design/spread.md](design/spread.md) S1; `SimulationConfig::spread`, never in a session): 35 fire ids (59-93:
   planks, wood and foliage kindle and burn stages, `charred_wood`, `scorched`) and `MaterialFlag_Burning` (bit 8), the
@@ -380,7 +393,7 @@ never been measured.
 
 ## State
 
-Tests: **1195** in ctest: 1187 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
+Tests: **1201** in ctest: 1193 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
 game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts), `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
 `Tools.DocCheck`, `Tools.DocCheckSelftest`, `Tools.SessionCheckVerdict` and `Tools.VerifyAssertions` (WP2's checks
 and their self-tests), `Tools.RendezvousWorker` (the rendezvous Worker under `node --test`, registered when `node` is

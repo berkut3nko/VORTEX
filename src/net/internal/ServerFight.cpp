@@ -104,6 +104,26 @@ namespace vortex::net {
         return n;
     }
 
+    std::array<uint32_t, 2> Server::Impl::TeamsInSanctum() {
+        std::array<uint32_t, 2> n{};
+        const voxel::World& w = simulation->World();
+        for (const auto& [id, p] : PlayersBySlot()) {
+            const sim::FighterState& f = fighters[p->slot];
+            if (!f.spawned || f.dead || f.team < 1 || f.team > sim::kTeamCount) continue;
+            if (sim::InSanctum(tmpl, w.WorldToVoxel(glm::dvec3(p->player->state.position)))) ++n[f.team - 1];
+        }
+        return n;
+    }
+
+    void Server::Impl::LogHold(uint32_t holdBefore) {
+        const uint32_t tick = Tick();
+        if (round.holdSince != 0)
+            Log::Info("Siege: the attackers hold the sanctum from tick {}", round.holdSince);
+        else
+            Log::Info("Siege: the hold broke at tick {} after {:.1f} s", tick,
+                      static_cast<double>(tick - holdBefore) * static_cast<double>(simulation->FixedTimeStep()));
+    }
+
     void Server::Impl::SendToJoined(const std::vector<uint8_t>& bytes) {
         for (const auto& [id, p] : peers)
             if (p.joined && p.player && !p.closing) Send(id, Channel::Events, bytes);
@@ -128,6 +148,8 @@ namespace vortex::net {
         u.winner = round.winner;
         u.end = round.end;
         u.overtime = round.overtime;
+        u.holdSince = round.holdSince;
+        u.holdTicks = static_cast<uint16_t>(std::min<uint32_t>(Rules().holdTicks, 0xFFFF));
         return u;
     }
 
@@ -294,7 +316,10 @@ namespace vortex::net {
         }
         if (Rules().mode == sim::GameMode::Felling && round.phase == sim::RoundPhase::Live && tick % 30 == 0) CheckCrowns();
         const sim::RoundPhase phaseBefore = round.phase;
-        const sim::RoundStep step = sim::StepRound(round, Rules(), tick, TeamPlayers(), felled);
+        const uint32_t holdBefore = round.holdSince;
+        const std::array<uint32_t, 2> inSanctum = Rules().mode == sim::GameMode::Siege ? TeamsInSanctum() : std::array<uint32_t, 2>{};
+        const sim::RoundStep step = sim::StepRound(round, Rules(), tick, TeamPlayers(), felled, inSanctum);
+        if (round.holdSince != holdBefore) LogHold(holdBefore);
         if (step.startLives) {
             // The round begins: every player at its team's spawn, health and charges full, scores 0.
             for (const auto& [id, p] : PlayersBySlot()) {

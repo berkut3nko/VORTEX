@@ -227,6 +227,7 @@ TEST(SessionFile, FightKeysRoundTrip) {
     f.towers = {glm::vec2(-12.0f, 0.0f), glm::vec2(8.0f, 0.5f)};
     f.scoreLimit = 7;
     f.roundTicks = 300 * 60;
+    f.holdTicks = 45 * 60;
     f.respawnTicks = 150;
     f.chargeTicks = 60;
     f.maxCharges = 4;
@@ -265,6 +266,10 @@ TEST(SessionFile, FightKeysRoundTrip) {
     refused(dm + "round_seconds = 0\n", "round_seconds");
     refused(dm + "round_seconds = 3601\n", "round_seconds");
     refused("mode = brawl\n", "mode");
+    // Siege: the sanctum is Hollowkeep's; the hold is 1..600 s.
+    refused("mode = siege\nteam_spawn_1 = -5 0\nteam_spawn_2 = 5 0\n", "template = hollowkeep");
+    refused(dm + "hold_seconds = 0\n", "hold_seconds");
+    refused(dm + "hold_seconds = 601\n", "hold_seconds");
     // Review of [wp-7]: a fight's players all fit the Roster (64); a sandbox keeps 255.
     const std::string duel = dm + "team_spawn_1 = -5 0\nteam_spawn_2 = 5 0\n";
     refused(duel + "max_clients = 65\n", "max_clients");
@@ -304,6 +309,12 @@ TEST(SessionFile, RegionValidationRefusesWhatCannotBeBuilt) {
     EXPECT_EQ(why, "a playground's play bounds must contain the plaza site around the origin");
     bad = r;
     bad.templateId = sim::RegionTemplateId::Playground;
+    EXPECT_TRUE(sim::IsValid(bad, &why)) << why;
+    bad = r;
+    bad.templateId = sim::RegionTemplateId::Hollowkeep;   // Hollowkeep stands on the world map
+    EXPECT_FALSE(sim::IsValid(bad, &why));
+    EXPECT_EQ(why, "the hollowkeep template needs the land generator");
+    bad.generator = sim::RegionGenerator::Land;
     EXPECT_TRUE(sim::IsValid(bad, &why)) << why;
     bad = r;
     bad.templateId = static_cast<sim::RegionTemplateId>(99);

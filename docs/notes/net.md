@@ -191,11 +191,12 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
   12 `ModelRequest`, 13 `BaselineEntity`, 14 `BaselineEnd`, 15 `BaselineNear`; [net-7b] checks and terrain mode 16
   `TerrainAck`, 17 `HashCheck`, 18 `EntityCheck`, 19 `EntityListRequest`, 20 `EntityList`; [wp-7] the fight 21
   `Roster`, 22 `RoundUpdate`, 23 `KillNotice` (events channel, taken on receipt, not by opSeq); [mag-2] 24 `Attune` (client ->
-  server, events channel); [mag-8] 25 `SpellGesture` (client -> server, events channel). Protocol 15 ([mag-8]).
+  server, events channel); [mag-8] 25 `SpellGesture` (client -> server, events channel). Protocol 16 (siege).
 - **The fight** [wp-7] (fight.md "Wire"): `CastRejection` 4 `NoCharge`, 5 `Dead`; `sim::DamageCause` 1 `Blast`, 2
   `Fall`, 3 `Lava`, 4 `Void`, 5 `Crush` (reserved for [si-2]); `sim::GameMode` 0 `Sandbox`, 1 `Deathmatch`, 2
-  `Felling`; `sim::RoundPhase` 0 `Warmup`, 1 `Countdown`, 2 `Live`, 3 `Ended`; `sim::RoundEnd` 0 `None`, 1 `Score`, 2
-  `Time`, 3 `Felled`, 4 `Forfeit`; `RoundUpdate::winner` 0 none, 1, 2, 255 draw; owner-block fight flags 1 `kDead`, 2
+  `Felling`, 3 `Siege` (protocol 16); `sim::RoundPhase` 0 `Warmup`, 1 `Countdown`, 2 `Live`, 3 `Ended`; `sim::RoundEnd` 0
+  `None`, 1 `Score`, 2 `Time`, 3 `Felled`, 4 `Forfeit`, 5 `Held` (protocol 16); `RoundUpdate::winner` 0 none, 1, 2, 255 draw; `RoundUpdate` 22 B
+  since protocol 16 (+ `holdSince` u32, `holdTicks` u16 after `overtime`); owner-block fight flags 1 `kDead`, 2
   `kProtected`, 4 `kSpectator`; `RemotePlayer::fight` bit 7 dead; `KillNotice::kCredited` 1. `kSnapshotOwnerBytes`
   39, `kSnapshotPlayerBytes` 17, `Welcome` +7 B.
 - **`ChunkRequestReason`** [net-7b]: 0 `Sync` (the ring no longer covered the chunk's base, or a slot freed for an
@@ -305,7 +306,8 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
 - Also wire format: `WindowUpdate::kTerrainMode` (2) and `kReset`, `EntityKind` (1 `Light`, 2 `Object`, 3 `Mechanism`),
   `scene::DespawnReason` (1 `Destroyed`, 2 `ToRubble`, 3 `Broken`), `PlayerButton` (1 `Jump`, 2 `Run`, 4 `Cast`, 8
   `Crate`, 16 `Use`, 32 `Spell`), `RegionGenerator` (0 `Terrain`, 1 `Flat`, 2 `Land` since protocol 13: the region then carries
-  `landHash` and `landSourceHash`, 8 bytes each, after `flatGroundVoxels`), `RegionTemplateId` (0 `Empty`, 1 `Playground`),
+  `landHash` and `landSourceHash`, 8 bytes each, after `flatGroundVoxels`), `RegionTemplateId` (0 `Empty`, 1 `Playground`,
+  2 `Hollowkeep` since protocol 16),
   `RefuseReason` (1 `Protocol`, 2 `Build`, 3 `Token`, 4 `Full`, 5 `Malformed`; 6 retired), `CastRejection` (0-11).
 
 Ordering, the base rule and sync

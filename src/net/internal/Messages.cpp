@@ -879,6 +879,8 @@ namespace vortex::net {
         w.U8(m.winner);
         w.U8(static_cast<uint8_t>(m.end));
         w.U8(m.overtime ? 1 : 0);
+        w.U32(m.holdSince);
+        w.U16(m.holdTicks);
         return w.Take();
     }
 
@@ -892,6 +894,8 @@ namespace vortex::net {
         out.scoreLimit = in.U16();
         out.winner = in.U8();
         const uint8_t end = in.U8(), overtime = in.U8();
+        out.holdSince = in.U32();
+        out.holdTicks = in.U16();
         if (in.Failed() || mode > sim::kMaxGameMode || phase > sim::kMaxRoundPhase || end > sim::kMaxRoundEnd || overtime > 1) return false;
         if (out.winner != 0 && out.winner != 1 && out.winner != 2 && out.winner != sim::kDraw) return false;
         out.mode = static_cast<sim::GameMode>(mode);

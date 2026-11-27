@@ -38,6 +38,7 @@ namespace vortex::sim {
             case GameMode::Sandbox: return "sandbox";
             case GameMode::Deathmatch: return "deathmatch";
             case GameMode::Felling: return "felling";
+            case GameMode::Siege: return "siege";
         }
         return "?";
     }
@@ -59,6 +60,7 @@ namespace vortex::sim {
             case RoundEnd::Time: return "time";
             case RoundEnd::Felled: return "felled";
             case RoundEnd::Forfeit: return "forfeit";
+            case RoundEnd::Held: return "held";
         }
         return "?";
     }
@@ -214,7 +216,7 @@ namespace vortex::sim {
     }
 
     RoundStep StepRound(Round& round, const FightRules& rules, uint32_t tick, std::array<uint32_t, 2> teamPlayers,
-                        std::array<bool, 2> felled) {
+                        std::array<bool, 2> felled, std::array<uint32_t, 2> inSanctum) {
         RoundStep step;
         if (!rules.Active()) return step;
         const Round before = round;
@@ -232,6 +234,7 @@ namespace vortex::sim {
                     round.phase = RoundPhase::Live;
                     round.phaseEndTick = tick + rules.roundTicks;
                     round.emptySince[0] = round.emptySince[1] = 0;
+                    round.holdSince = 0;
                 }
                 break;
             case RoundPhase::Live: {
@@ -257,6 +260,17 @@ namespace vortex::sim {
                     }
                 }
                 if (forfeit) break;
+                if (rules.mode == GameMode::Siege) {
+                    const bool held = inSanctum[kSiegeAttackers - 1] > 0 && inSanctum[kSiegeDefenders - 1] == 0;
+                    if (!held) round.holdSince = 0;
+                    else if (round.holdSince == 0) round.holdSince = std::max(1u, tick);
+                    if (held && tick - round.holdSince + 1 >= rules.holdTicks) {
+                        Win(round, rules, kSiegeAttackers, RoundEnd::Held, tick);
+                        break;
+                    }
+                    if (tick >= round.phaseEndTick) Win(round, rules, kSiegeDefenders, RoundEnd::Time, tick);
+                    break;
+                }
                 if (tick >= round.phaseEndTick) {
                     if (!round.overtime) {
                         if (round.score[0] != round.score[1]) {
@@ -276,13 +290,15 @@ namespace vortex::sim {
                 break;
         }
         step.changed = round.phase != before.phase || round.phaseEndTick != before.phaseEndTick || round.score != before.score ||
-                       round.overtime != before.overtime || round.winner != before.winner || round.end != before.end;
+                       round.overtime != before.overtime || round.winner != before.winner || round.end != before.end ||
+                       round.holdSince != before.holdSince;
         return step;
     }
 
     bool ScoreKill(Round& round, const FightRules& rules, TeamId team, uint32_t tick) {
         if (round.phase != RoundPhase::Live || team < 1 || team > kTeamCount) return false;
         round.score[team - 1] = static_cast<uint16_t>(round.score[team - 1] + 1);
+        if (rules.mode == GameMode::Siege) return false;   // a siege ends by the sanctum or the time, never by kills
         if (round.overtime || round.score[team - 1] >= rules.scoreLimit) {
             Win(round, rules, team, RoundEnd::Score, tick);
             return true;

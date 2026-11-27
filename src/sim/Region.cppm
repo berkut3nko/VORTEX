@@ -29,6 +29,9 @@ export namespace vortex::sim {
     enum class RegionTemplateId : uint32_t {
         Empty = 0,        ///< Pristine terrain: no operations, no objects, spawn at the play bounds' centre.
         Playground = 1,   ///< The plaza of the Shredborne sandbox (PlaygroundTemplate).
+        /// Hollowkeep on the land generator's map (HollowkeepTemplate): the portcullis and its lever, the lights, the
+        /// props and the sanctum. Needs RegionGenerator::Land and play bounds that hold the keep.
+        Hollowkeep = 2,
     };
 
     /**
@@ -73,7 +76,8 @@ export namespace vortex::sim {
     /// @brief True when `region` can be built safely: voxel::IsValid(terrain), non-empty play bounds
     /// of at most kMaxRegionChunks per axis well inside +-2^25 chunks, a finite height range of
     /// at most 128 rows, a flat ground inside the range, and for a playground play bounds that hold
-    /// the plaza around the origin (+-kPlaygroundHalfMetres). `why` gets the first reason.
+    /// the plaza around the origin (+-kPlaygroundHalfMetres), for Hollowkeep the land generator. `why` gets the first
+    /// reason.
     bool IsValid(const RegionDesc& region, std::string* why = nullptr);
 
     /// @brief The window of a region (server and, until networking stage 7, client): the play
@@ -221,6 +225,10 @@ export namespace vortex::sim {
         /// The template found a place for itself (the playground: a level site above the sea inside
         /// its area). A server does not start without one.
         bool sited = true;
+        /// Hollowkeep: the sanctum (the keep's ground-floor room inside its shell), a voxel box [min, max) that holds the
+        /// feet of a player in the room. A siege's attackers win by holding it (fight.md "Siege").
+        bool hasSanctum = false;
+        glm::ivec3 sanctumMin{0}, sanctumMax{0};
     };
 
     /// @brief Where the playground may put its plaza (world metres, x / z): the plaza (est. 8 m
@@ -245,8 +253,14 @@ export namespace vortex::sim {
      * plaza is then built at the origin, y = 0).
      */
     RegionTemplate PlaygroundTemplate(voxel::World& world, const voxel::WorldMaterials& m, bool loadSite, const PlaygroundArea& area = {});
-    /// @brief The template of `region` for a simulation whose window is loaded.
+    /**
+     * @brief The template of `region` for a simulation whose window is loaded. Hollowkeep (the land attached): not sited
+     * when the sanctum and the portcullis are not inside the play bounds; props and lights outside the play bounds are
+     * left out.
+     */
     RegionTemplate BuildRegionTemplate(Simulation& simulation, const RegionDesc& region);
+    /// @brief True when the voxel `feet` (World::WorldToVoxel of a player's feet) lies in the template's sanctum.
+    bool InSanctum(const RegionTemplate& t, const glm::ivec3& feet);
     /// @brief The crate of the playground: 0.8 m of planks, hollow, iron edges (`scale` = 0.1 m / voxel size).
     std::shared_ptr<voxel::VoxelModel> CrateModel(const voxel::WorldMaterials& m, double scale);
     /// @brief 0.1 m / voxelSize, exactly 1 at 0.1 m: the factor the playground's voxels are scaled by.
@@ -269,7 +283,8 @@ export namespace vortex::sim {
     /**
      * @brief What Hollowkeep has besides the voxels the land generator stamps from voxel::PlanFort (fortress.md): the
      * portcullis and the guardroom's lever that runs it, the plan's lights, and the movable props, each dropped onto the
-     * generated voxels under its spot (one that does not fit is left out). No operations. Not sited without a site.
+     * generated voxels under its spot (one that does not fit is left out), and the sanctum. No operations. Not sited
+     * without a site.
      */
     RegionTemplate HollowkeepTemplate(const voxel::LandMap& map, const voxel::LandGeneratorSettings& land);
 

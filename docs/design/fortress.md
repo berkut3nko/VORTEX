@@ -6,7 +6,7 @@
 |---|---|
 | Status | `[fort-1]`-`[fort-5]` built: the land generator stamps Hollowkeep's skeleton, openings, interiors, the low route, roofs and crowns, the bailey's buildings, scaffolds and walkway, and the rooms' furniture from `voxel::PlanFort`; `sim::HollowkeepTemplate` adds the lights, the movable props and the guardroom's lever ("The skeleton as built", "Openings and interiors as built", "Roofs and crowns as built", "The bailey as built", "Rooms, lights and props as built"). |
 | Decided | The owner, 2026-11-25: the brief in "The brief" (a detailed medieval fortress as a destructible siege and route-making playground); the answers in the castle draft's section 10 (no trapdoor mechanism, fire spread is in the demo, furniture, medieval construction scaffolding and interactable elements). Us (this design, 2026-11-25): "Decision" items 1-10. |
-| Next | The owner walks the stamped castle (owner check 29) and answers "Open questions". What stays open is listed in "Rooms, lights and props as built" (the crane, doors, fire, the session). |
+| Next | The owner walks the stamped castle (owner check 29) and answers "Open questions". What stays open is listed in "Rooms, lights and props as built" (the crane, doors, fire). The castle is in sessions (fight.md "Siege"); the siege with friends is the game's owner check 33. |
 | Open | "Open questions (with the answer we recommend)". |
 | History | - |
 | Marks | (e) is an estimate. Every size is a design target until a stage measures it. 1 voxel = 0.125 m; "v" after a number is voxels. |
@@ -505,8 +505,11 @@ start-up (1.4-1.5 s with the surface load, `Hollowkeep: built ...`). Tests: `For
 `Fort.DampStainsOnlyTheShadedBatters`, `Hollowkeep.TheGuardroomsLeverLightsAndPropsStayUnderTheCaps`,
 `Hollowkeep.ThePropsAtTheKeepsWorkSiteRestWhereTheyAreDropped`. Not yet: the crane, dormers, doors as mechanisms
 (the keep's and the guardroom's doors are open), hanging cloths, hammer-beam trusses and the hall's gallery, the
-undercroft's casks, the scaffold's hoist; fire (spread.md is designed, nothing burns yet); the props and lights in a
-session (the server does not use this template).
+undercroft's casks, the scaffold's hoist; fire (spread.md is designed, nothing burns yet).
+In a session (2026-11-27, fight.md "Siege"): `template = hollowkeep` (`RegionTemplateId::Hollowkeep`) runs this
+template on the server, which replicates the portcullis and the lever as mechanisms, the props as server bodies and
+the lights; the template also gives the sanctum (the keep's ground-floor room) that a siege is won in
+(`engine/tools/server/sessions/hollowkeep.session`).
 
 ## Budgets
 

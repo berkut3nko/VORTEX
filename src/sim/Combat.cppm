@@ -22,9 +22,12 @@ export namespace vortex::sim {
     enum class DamageCause : uint8_t { None = 0, Blast = 1, Fall = 2, Lava = 3, Void = 4, Crush = 5 };
     inline constexpr uint8_t kMaxDamageCause = 5;
     /// @brief A session's game (session key `mode`). Wire format (Welcome, RoundUpdate).
-    enum class GameMode : uint8_t { Sandbox = 0, Deathmatch = 1, Felling = 2 };
-    inline constexpr uint8_t kMaxGameMode = 2;
+    /// Siege (fight.md "Siege"): team 1 defends Hollowkeep's sanctum, team 2 attacks it.
+    enum class GameMode : uint8_t { Sandbox = 0, Deathmatch = 1, Felling = 2, Siege = 3 };
+    inline constexpr uint8_t kMaxGameMode = 3;
     inline constexpr TeamId kTeamCount = 2;            ///< teams 1 and 2
+    inline constexpr TeamId kSiegeDefenders = 1;
+    inline constexpr TeamId kSiegeAttackers = 2;
 
     const char* ToString(DamageCause cause);
     const char* ToString(GameMode mode);
@@ -43,6 +46,7 @@ export namespace vortex::sim {
         uint16_t countdownTicks = 300;                 ///< [countdown_ticks]
         uint16_t endTicks = 600;                       ///< [end_ticks]
         uint32_t overtimeTicks = 3600;
+        uint32_t holdTicks = 1800;                     ///< [hold_seconds] x 60: siege, the unbroken hold that wins
         uint32_t forfeitTicks = 1800;
         uint16_t creditTicks = 300;                    ///< environment deaths credit the last enemy attacker this recent
         uint8_t minPlayers = 2;                        ///< [min_players]
@@ -111,9 +115,10 @@ export namespace vortex::sim {
     void AimAngles(const glm::vec3& dir, uint16_t& yaw, int16_t& pitch);
 
     enum class RoundPhase : uint8_t { Warmup = 0, Countdown = 1, Live = 2, Ended = 3 };
-    enum class RoundEnd : uint8_t { None = 0, Score = 1, Time = 2, Felled = 3, Forfeit = 4 };
+    /// Held: a siege's attackers held the sanctum for FightRules::holdTicks.
+    enum class RoundEnd : uint8_t { None = 0, Score = 1, Time = 2, Felled = 3, Forfeit = 4, Held = 5 };
     inline constexpr uint8_t kMaxRoundPhase = 3;
-    inline constexpr uint8_t kMaxRoundEnd = 4;
+    inline constexpr uint8_t kMaxRoundEnd = 5;
     inline constexpr uint8_t kDraw = 255;              ///< Round::winner of a draw
     const char* ToString(RoundPhase phase);
     const char* ToString(RoundEnd end);
@@ -126,6 +131,8 @@ export namespace vortex::sim {
         uint8_t winner = 0;                            ///< 0 none, 1, 2, kDraw
         RoundEnd end = RoundEnd::None;
         uint32_t emptySince[2]{};                      ///< Live: tick a team became empty, 0 = it has players
+        /// Siege, Live: the tick the attackers' unbroken hold of the sanctum began; 0 = no hold.
+        uint32_t holdSince = 0;
     };
     /// @brief What StepRound changed this tick (the server sends a RoundUpdate on any).
     struct RoundStep {
@@ -133,10 +140,17 @@ export namespace vortex::sim {
         bool startLives = false;                       ///< Countdown began: respawn everyone, reset scores
         bool sessionOver = false;                      ///< Ended ran out
     };
-    /// @brief One tick of the machine. `teamPlayers` = players per team; `felled[t]` = team t+1's crown released.
+    /**
+     * @brief One tick of the machine. `teamPlayers` = players per team; `felled[t]` = team t+1's crown released;
+     * `inSanctum[t]` = living players of team t+1 whose feet are in the sanctum (siege). Siege, Live: a tick with an
+     * attacker and no defender in the sanctum holds it (the hold starts at that tick); any other tick breaks the hold.
+     * A hold of `holdTicks` wins for the attackers (Held); the time running out wins for the defenders (Time, no
+     * overtime).
+     */
     RoundStep StepRound(Round& round, const FightRules& rules, uint32_t tick, std::array<uint32_t, 2> teamPlayers,
-                        std::array<bool, 2> felled);
-    /// @brief A credited kill for `team` (score, overtime end). Returns true when it ended the round.
+                        std::array<bool, 2> felled, std::array<uint32_t, 2> inSanctum = {});
+    /// @brief A credited kill for `team` (score, overtime end; a siege's kills only count). Returns true when it ended
+    /// the round.
     bool ScoreKill(Round& round, const FightRules& rules, TeamId team, uint32_t tick);
 
     /// @brief Felling (card 9): one team's tower as FillBox operations and its crown box.

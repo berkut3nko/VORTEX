@@ -25,11 +25,11 @@ against them offline through an in-process server.
 2. **`vortex.sim:combat`** (`engine/src/sim/Combat.cppm`, `internal/Combat.cpp`) holds the rules: `FightRules`,
    `FighterState`, the damage functions and the round machine `sim::Round`. GPU-free and network-free.
    `net::Server` owns one `FighterState` per slot and one `Round`; the offline sandbox owns none.
-3. **Modes**: the session key `mode = sandbox | deathmatch | felling`, default `sandbox`. A sandbox session is
+3. **Modes**: the session key `mode = sandbox | deathmatch | felling | siege`, default `sandbox`. A sandbox session is
    today's game (no teams, no damage, unlimited charges, no round): `sim::SandboxRules()`, whatever the other fight
    keys say. Every session file from before (`drill`, `arena250`, `playground`) is a sandbox. `deathmatch`: the
    first team to `score_limit` credited kills wins. `felling`: as deathmatch, and releasing the enemy tower's
-   crown wins at once.
+   crown wins at once. `siege` (section "Siege"): team 2 attacks Hollowkeep, team 1 defends its sanctum.
 4. **One round per session.** After `Ended` the server logs `Round: session over at tick T`; with `end_session = 1`
    (the default of a fight mode) it disconnects every peer and stops ticking; a listening `vortex_server` then
    exits 0 (a live install's wrapper starts the next session). No region reset. The game's client, closed after
@@ -83,10 +83,11 @@ against them offline through an in-process server.
   spells and crush go through it, so kill credit, the kill feed and the score have one path.
 - **Session keys** (`net::ParseSession`): `mode`, `team_spawn_1`, `team_spawn_2`, `score_limit`, `round_seconds`
   (1..3600), `respawn_ticks`, `charge_ticks`, `max_charges` (0..9), `min_players`, `countdown_ticks`, `end_ticks`,
-  `tower_1`, `tower_2`, `end_session`. Refused: a fight mode without both team spawns, a spawn or tower less than
+  `tower_1`, `tower_2`, `end_session`, `hold_seconds` (1..600, siege). Refused: a fight mode without both team spawns, a spawn or tower less than
   4 m inside the play bounds, felling without both towers, `charge_ticks` 0 with charges, `max_clients` above 64
-  (the `Roster`'s bound). `FormatSession` writes
-  them only for a fight mode. The sessions `duel.session` (2v2 deathmatch, G22) and `felling.session`.
+  (the `Roster`'s bound), siege without `template = hollowkeep`. `FormatSession` writes
+  them only for a fight mode. The sessions `duel.session` (2v2 deathmatch, G22), `felling.session`, `hollowkeep.session`
+  (siege) and `hollowkeep-dm.session` (a deathmatch at the castle).
 
 ## Damage
 
@@ -136,6 +137,40 @@ Log lines (G22 reads them; docs/verify.md): `Round: phase <Warmup|Countdown|Live
 A-B by <score|time|felled|forfeit> at tick T (<mode>)` or `Round: draw A-B at tick T (<mode>)`, `Round: session over
 at tick T`, and `Fight: kills K, deaths D, damage events E, damage H hp, refused dead X, no charge Y, respawns R`.
 
+## Siege
+
+Hollowkeep (fortress.md) as a session: `template = hollowkeep` on `generator = land`, `mode = siege`
+(`engine/tools/server/sessions/hollowkeep.session`). Decided by us, 2026-11-27.
+
+- **The template in a session.** `sim::BuildRegionTemplate` runs `sim::HollowkeepTemplate` on the region's baked map
+  (the server's; the land generator stamps the castle's voxels on both sides). The server replicates the portcullis
+  and the guardroom's lever as mechanisms (`EntityKind::Mechanism`, built whatever the `mechanisms` key says), the
+  props as server bodies (`EmitObjectSpawn`, as the playground's crates) and the lights as `EntitySpawn` of kind
+  Light. Props and lights outside the play bounds are left out; a portcullis, lever or sanctum outside them stops the
+  server ("no site"). The offline `--land` game builds the same template itself (no change).
+- **Teams.** Team 1 (blue) defends, team 2 (red) attacks (`sim::kSiegeDefenders`, `kSiegeAttackers`). The joiner's
+  team, the spawns and the respawns are the fight's rules above. The server refuses to start when a team spawn's
+  spawn area (6 m round it, `sim::SpawnAreasOf`) meets the sanctum: the attackers' spells would be refused there.
+- **The sanctum** (`RegionTemplate::sanctumMin` / `sanctumMax`, `sim::InSanctum`): the keep's ground-floor room, a
+  voxel box 9.5 m square round the keep's middle (the shell's inner faces less 0.25 m), from 0.5 m under its floor
+  to 4.5 m over it. A player is in it when the voxel of its feet (`World::WorldToVoxel`) is in the box: a server
+  decision only, never predicted.
+- **The hold.** Each `Live` tick the server counts the living players of each team in the sanctum
+  (`TeamsInSanctum`). A tick with an attacker and no defender inside holds it; the hold starts at that tick
+  (`Round::holdSince`). Any other tick breaks it (a defender comes in, or the last attacker leaves or dies), and the
+  next hold starts from 0: the hold is continuous, not cumulative. A hold of `hold_seconds` (30 s, 1800 ticks; the
+  hold's first tick counts) wins for the attackers, `RoundEnd::Held`. `round_seconds` running out wins for the
+  defenders (`Time`, no overtime). Kills count in the score but never end a siege. Forfeit is as above.
+- **Why continuous.** A cumulative hold lets the attackers win by many short raids that the defenders already
+  answered; a continuous one makes the defenders' answer (enter the room) count at once, and the HUD can show one
+  number.
+- Log lines: `Hollowkeep: keep at ..., sanctum ...` at the start, `Siege: the attackers hold the sanctum from tick T`,
+  `Siege: the hold broke at tick T after S s`, and the round's lines with `by held`.
+- **Checks.** `Siege.*` (sim: the rule; net: the template replicated with agreeing entities and equal hashes, a
+  teleported attacker's hold wins). `vortex_server --session=engine/tools/server/sessions/hollowkeep.session --clients 4
+  --fight --until-round-end --require-winner --round-seconds 60` ends with the defenders' win by time (the bots do not
+  go for the sanctum).
+
 ## Wire
 
 Protocol 11, the only bump in WP4-WP8 (`net::kProtocolVersion`; the values in notes/net.md section 2):
@@ -146,12 +181,12 @@ Protocol 11, the only bump in WP4-WP8 (`net::kProtocolVersion`; the values in no
 | Owner block after `castRejected` | `health, charges, chargeTicks, flags, respawnTicks, lifeSeq, hits`, u8 each: +7 B (`kSnapshotOwnerBytes` 39; 44 since [mech-1] adds `lastUseTick`, `useResult` after them). Ticks left clamped to 255; flags `kDead` 1, `kProtected` 2, `kSpectator` 4 (more refused) |
 | Remote record after `flags` | `fight u8`: bits 0-6 health (at most 127), bit 7 dead (`kSnapshotPlayerBytes` 17) |
 | `Roster` (21) | `type, count u8` (<= 64), per player `slot u8, team u8` (<= 2), `kills u16, deaths u16`: 2 + 6 B each; duplicate slots refused; at most one per tick (sent at the end of `StepFight` when a kill, join, leave or the round start changed it) |
-| `RoundUpdate` (22) | `type, mode, phase, phaseEndTick u32, score1 u16, score2 u16, scoreLimit u16, winner u8` (0, 1, 2, 255), `end u8` (<= 4), `overtime u8` (<= 1): 16 B |
+| `RoundUpdate` (22) | `type, mode, phase, phaseEndTick u32, score1 u16, score2 u16, scoreLimit u16, winner u8` (0, 1, 2, 255), `end u8` (<= 4), `overtime u8` (<= 1): 16 B; protocol 16 (siege) adds `holdSince u32, holdTicks u16` (22 B), mode <= 3, end <= 5 |
 | `KillNotice` (23) | `type, tick u32, victim u8` (a slot), `killer u8` (slot + 1, 0 none; never the victim), `cause u8` (1..5), `flags u8` (`kCredited` 1): 9 B |
 
 `CastRejection` 4 `NoCharge`, 5 `Dead` (`kMaxCastRejection` 5). `DamageCause` 1 `Blast`, 2 `Fall`, 3 `Lava`,
 4 `Void`, 5 `Crush` (reserved for [si-2]; nothing emits it here); [mag-1] / [mag-2] spell damage uses `Blast`.
-`GameMode` 0-2, `RoundPhase` 0-3, `RoundEnd` 0-4. No new `PlayerButton`, `EventKind`, `WorldOpKind` or
+`GameMode` 0-2, `RoundPhase` 0-3, `RoundEnd` 0-4 (protocol 16: `GameMode` 3 `Siege`, `RoundEnd` 5 `Held`). No new `PlayerButton`, `EventKind`, `WorldOpKind` or
 `EntityKind`; `buildHash` gets no new input. The three messages go on the events channel and are taken on
 receipt, not by opSeq (they are not stream events). Sizes pinned by `FightWire.SizesAreAsDesigned`.
 
@@ -196,9 +231,13 @@ The game's fight HUD (`src/FightHud.cpp`, `HudCanvas`; no ImGui), drawn only in 
 - the kill feed at the top right under the frame rate (`KILLER > VICTIM  CAUSE`, names in team colours, 6 s, at
   most 5);
 - the round banner at the top centre: `BLUE 3 : 2 RED   7:42`, `WAITING FOR PLAYERS A/B`, `STARTS IN N`,
-  `OVERTIME`; at the end `BLUE WINS` / `RED WINS` / `DRAW` with the reason, large in the middle;
+  `OVERTIME`; a siege's second line `SANCTUM 12/30` (the hold in seconds, red and large while it runs; counted from
+  the client's tick estimate and `RoundUpdate::holdSince`) and in the countdown the own role (`DEFEND THE SANCTUM IN THE
+  KEEP`, `TAKE THE SANCTUM: HOLD IT 30 S`); at the end `BLUE WINS` / `RED WINS` / `DRAW` with the reason (`SANCTUM
+  HELD`, a siege's time out `THE KEEP HELD OUT`), large in the middle;
 - the scoreboard (Tab held, or `--scoreboard`): two columns by team, `P3   K 4   D 2`, the own row `YOU`;
-- the death screen: `KILLED BY P2 (BLAST)` and `RESPAWN IN 2.4`, the crosshair and pips hidden;
+- the death screen: `KILLED BY P2 (BLAST)` and `RESPAWN IN 2.4`, the crosshair and pips hidden; under it, and before
+  the first spawn, the attune menu (magic.md "What a player carries");
 - `Cast not run:` keeps its line (`NO CHARGE`, `DEAD`).
 
 Team colours: team 1 blue `Rgba(70, 130, 255)`, team 2 red `Rgba(230, 70, 60)`; figures take their team's torso
@@ -210,6 +249,7 @@ practice client: `Fight: slot S team T health H kills K deaths D, round <phase> 
 | Stage | What | State |
 |---|---|---|
 | [wp-7] | M2a first fight: health, damage, death, respawn, teams, charges, rounds, Felling, fighting bots (G22), the fight HUD, offline practice | built (engine and game [wp-7] commits, 2026-11-23); the owner's taste check open |
+| siege | Hollowkeep in sessions (`RegionTemplateId::Hollowkeep`), `mode = siege`, `hollowkeep.session`, the attune menu, protocol 16 | built 2026-11-27; the castle siege with friends is the game's owner check 33 |
 
 ## Open questions
 

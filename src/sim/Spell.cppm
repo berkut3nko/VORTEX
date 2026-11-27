@@ -244,4 +244,28 @@ export namespace vortex::sim {
     std::array<uint16_t, 256> BoreCostTable();
     /// @brief A hash of every field of the table.
     uint64_t SpellTableHash(const SpellTable& table);
+
+    /**
+     * @brief The respawn screen's choice of two elements (magic.md "What a player carries"): a key toggles its element;
+     * a third element drops the one picked first. `picked[0]` becomes element A (the active one after the spawn),
+     * `picked[1]` element B. Only a complete pick (two elements) goes to the server.
+     */
+    struct AttunePick {
+        std::array<uint8_t, 2> picked{static_cast<uint8_t>(Element::Metal), static_cast<uint8_t>(Element::Pressure)};
+        uint8_t count = 2;
+
+        bool Complete() const { return count == 2; }
+        bool Has(uint8_t element) const { return (count > 0 && picked[0] == element) || (count > 1 && picked[1] == element); }
+        void Toggle(uint8_t element) {
+            if (element > static_cast<uint8_t>(Element::Frost)) return;
+            if (Has(element)) {
+                if (count == 2 && picked[0] == element) picked[0] = picked[1];
+                --count;
+                return;
+            }
+            if (count == 2) picked[0] = picked[1];
+            else ++count;
+            picked[count - 1] = element;
+        }
+    };
 }

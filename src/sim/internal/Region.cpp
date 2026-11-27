@@ -59,8 +59,11 @@ namespace vortex::sim {
             return false;
         };
         if (!voxel::IsValid(region.terrain)) return fail("terrain settings out of range");
-        if (region.templateId != RegionTemplateId::Empty && region.templateId != RegionTemplateId::Playground)
+        if (region.templateId != RegionTemplateId::Empty && region.templateId != RegionTemplateId::Playground &&
+            region.templateId != RegionTemplateId::Hollowkeep)
             return fail("unknown template");
+        if (region.templateId == RegionTemplateId::Hollowkeep && region.generator != RegionGenerator::Land)
+            return fail("the hollowkeep template needs the land generator");
         if (region.generator != RegionGenerator::Terrain && region.generator != RegionGenerator::Flat &&
             region.generator != RegionGenerator::Land)
             return fail("unknown generator");
@@ -409,6 +412,33 @@ namespace vortex::sim {
             const PlaygroundArea area{glm::dvec2(region.playMinChunk) * chunkMetres, glm::dvec2(region.playMaxChunk) * chunkMetres};
             return PlaygroundTemplate(simulation.World(), simulation.WorldMaterialIds(), false, area);
         }
+        if (region.templateId == RegionTemplateId::Hollowkeep) {
+            if (!region.land) {
+                RegionTemplate none;
+                none.sited = false;
+                return none;
+            }
+            RegionTemplate t = HollowkeepTemplate(*region.land, RegionLandSettings(region, *region.land, simulation.WorldMaterialIds()));
+            // What lies outside the play bounds is left out: a body there would stand on chunks outside the window.
+            const glm::ivec3 lo(region.playMinChunk.x * voxel::kChunkSize, 0, region.playMinChunk.y * voxel::kChunkSize);
+            const glm::ivec3 hi(region.playMaxChunk.x * voxel::kChunkSize, 0, region.playMaxChunk.y * voxel::kChunkSize);
+            const auto inside = [&](const glm::ivec3& a, const glm::ivec3& b) {
+                return a.x >= lo.x && a.z >= lo.z && b.x <= hi.x && b.z <= hi.z;
+            };
+            const voxel::World& w = simulation.World();
+            std::erase_if(t.objects, [&](const TemplateObject& o) {
+                const glm::ivec3 a = w.WorldToVoxel(o.position);
+                return !inside(a, a + o.model->Volume().Size());
+            });
+            std::erase_if(t.lights, [&](const TemplateLight& l) {
+                const glm::ivec3 a = w.WorldToVoxel(l.position);
+                return !inside(a, a + 1);
+            });
+            for (const TemplateMechanism& m : t.mechanisms)
+                if (!inside(m.spawnVoxel, m.spawnVoxel + m.model->Volume().Size())) t.sited = false;
+            if (t.hasSanctum && !inside(t.sanctumMin, t.sanctumMax)) t.sited = false;
+            return t;
+        }
         RegionTemplate t;
         // Empty: spawn above the middle of the play bounds, on the ground if there is any.
         const glm::ivec2 mid = (region.playMinChunk + region.playMaxChunk) / 2;
@@ -420,6 +450,10 @@ namespace vortex::sim {
         t.spawn = glm::dvec3(xz.x, hit.hit ? hit.position.y : top, xz.y);
         t.anchor = simulation.World().WorldToVoxel(t.spawn);
         return t;
+    }
+
+    bool InSanctum(const RegionTemplate& t, const glm::ivec3& feet) {
+        return t.hasSanctum && glm::all(glm::greaterThanEqual(feet, t.sanctumMin)) && glm::all(glm::lessThan(feet, t.sanctumMax));
     }
 
     uint32_t ApplyTemplateOps(Simulation& simulation, const RegionTemplate& t) {

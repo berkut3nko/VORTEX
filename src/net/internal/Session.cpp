@@ -116,6 +116,7 @@ namespace vortex::net {
             } else if (key == "template") {
                 if (value == "empty") r.templateId = sim::RegionTemplateId::Empty;
                 else if (value == "playground") r.templateId = sim::RegionTemplateId::Playground;
+                else if (value == "hollowkeep") r.templateId = sim::RegionTemplateId::Hollowkeep;
                 else ok = false;
             } else if (key == "seed") {
                 ok = Number(value, r.seed);
@@ -159,6 +160,7 @@ namespace vortex::net {
                 if (value == "sandbox") fight.mode = sim::GameMode::Sandbox;
                 else if (value == "deathmatch") fight.mode = sim::GameMode::Deathmatch;
                 else if (value == "felling") fight.mode = sim::GameMode::Felling;
+                else if (value == "siege") fight.mode = sim::GameMode::Siege;
                 else ok = false;
             } else if (key == "team_spawn_1" || key == "team_spawn_2" || key == "tower_1" || key == "tower_2") {
                 float v[2];
@@ -181,6 +183,14 @@ namespace vortex::net {
                     return false;
                 }
                 fight.roundTicks = seconds * 60;
+            } else if (key == "hold_seconds") {
+                uint32_t seconds = 0;
+                ok = Number(value, seconds);
+                if (ok && (seconds == 0 || seconds > 600)) {
+                    error = std::format("line {}: 'hold_seconds' must be 1..600: '{}'", lineNumber, value);
+                    return false;
+                }
+                fight.holdTicks = seconds * 60;
             } else if (key == "respawn_ticks") {
                 ok = Number(value, fight.respawnTicks);
             } else if (key == "charge_ticks") {
@@ -256,6 +266,11 @@ namespace vortex::net {
                 error = "'charge_ticks' must not be 0 while 'max_charges' is above 0";
                 return false;
             }
+            // The sanctum is Hollowkeep's (fight.md "Siege").
+            if (fight.mode == sim::GameMode::Siege && r.templateId != sim::RegionTemplateId::Hollowkeep) {
+                error = "mode siege needs 'template = hollowkeep'";
+                return false;
+            }
             if (!endSessionSet) fight.endSession = true;
             config.fight = fight;
         }
@@ -307,7 +322,9 @@ namespace vortex::net {
         const sim::RegionDesc& r = c.region;
         std::string s;
         s += std::format("token = {}\n", FormatToken(c.token));
-        s += std::format("template = {}\n", r.templateId == sim::RegionTemplateId::Playground ? "playground" : "empty");
+        s += std::format("template = {}\n", r.templateId == sim::RegionTemplateId::Playground   ? "playground"
+                                            : r.templateId == sim::RegionTemplateId::Hollowkeep ? "hollowkeep"
+                                                                                                : "empty");
         s += std::format("seed = {}\n", r.seed);
         s += std::format("terrain_seed = {}\n", r.terrain.seed);
         s += std::format("play_min = {} {}\n", r.playMinChunk.x, r.playMinChunk.y);
@@ -333,6 +350,7 @@ namespace vortex::net {
                 for (size_t i = 0; i < 2; ++i) s += std::format("tower_{} = {} {}\n", i + 1, f.towers[i].x, f.towers[i].y);
             s += std::format("score_limit = {}\n", f.scoreLimit);
             s += std::format("round_seconds = {}\n", f.roundTicks / 60);
+            s += std::format("hold_seconds = {}\n", f.holdTicks / 60);
             s += std::format("respawn_ticks = {}\n", f.respawnTicks);
             s += std::format("charge_ticks = {}\n", f.chargeTicks);
             s += std::format("max_charges = {}\n", f.maxCharges);

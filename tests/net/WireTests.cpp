@@ -713,7 +713,7 @@ TEST(Wire, CheckAndTerrainMessagesRoundTripAtTheirSizes) {
         longer.push_back(0);
         return !net::Decode(shorter, decoded) && !net::Decode(longer, decoded);
     };
-    EXPECT_EQ(net::kProtocolVersion, 15u);   // [mag-8]: casting by mana and gesture
+    EXPECT_EQ(net::kProtocolVersion, 16u);   // siege: Hollowkeep in sessions, GameMode::Siege, RoundUpdate's hold
 
     // [wp-7] The fight's messages round-trip and refuse a byte too few or too many (FightWire.* for the values).
     {

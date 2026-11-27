@@ -86,12 +86,28 @@ TEST(FightWire, MessagesRoundTripAndRefuseBadValues) {
         ASSERT_TRUE(net::Decode(bytes, r));
         EXPECT_EQ(r, round);
         RefusesTrailingAndMissing<net::RoundUpdate>(bytes);
-        EXPECT_FALSE(DecodesWith<net::RoundUpdate>(bytes, 1, 3));   // mode 3
+        EXPECT_TRUE(DecodesWith<net::RoundUpdate>(bytes, 1, 3));    // siege
+        EXPECT_FALSE(DecodesWith<net::RoundUpdate>(bytes, 1, 4));   // mode 4
         EXPECT_FALSE(DecodesWith<net::RoundUpdate>(bytes, 2, 4));   // phase 4
         EXPECT_FALSE(DecodesWith<net::RoundUpdate>(bytes, 13, 3));  // winner 3
         EXPECT_TRUE(DecodesWith<net::RoundUpdate>(bytes, 13, 2));
-        EXPECT_FALSE(DecodesWith<net::RoundUpdate>(bytes, 14, 5));  // end 5
+        EXPECT_TRUE(DecodesWith<net::RoundUpdate>(bytes, 14, 5));   // siege: Held
+        EXPECT_FALSE(DecodesWith<net::RoundUpdate>(bytes, 14, 6));  // end 6
         EXPECT_FALSE(DecodesWith<net::RoundUpdate>(bytes, 15, 2));  // overtime 2
+    }
+    // Siege: the attackers' hold travels after the overtime byte.
+    net::RoundUpdate siege;
+    siege.mode = sim::GameMode::Siege;
+    siege.phase = sim::RoundPhase::Live;
+    siege.holdSince = 0x01020304;
+    siege.holdTicks = 1800;
+    {
+        const std::vector<uint8_t> bytes = net::Encode(siege);
+        net::RoundUpdate r;
+        ASSERT_TRUE(net::Decode(bytes, r));
+        EXPECT_EQ(r, siege);
+        EXPECT_EQ(bytes[16], 0x04);   // holdSince, little end first
+        RefusesTrailingAndMissing<net::RoundUpdate>(bytes);
     }
     net::KillNotice kill{98765, 3, 2, sim::DamageCause::Lava, net::KillNotice::kCredited};
     {
@@ -132,7 +148,7 @@ TEST(FightWire, MessagesRoundTripAndRefuseBadValues) {
     }
     EXPECT_STREQ(net::ToString(net::CastRejection::NoCharge), "no charge");
     EXPECT_STREQ(net::ToString(net::CastRejection::Dead), "dead");
-    EXPECT_EQ(net::kProtocolVersion, 15);   // [mag-8]
+    EXPECT_EQ(net::kProtocolVersion, 16);   // siege
 }
 
 TEST(FightWire, SizesAreAsDesigned) {
@@ -160,7 +176,8 @@ TEST(FightWire, SizesAreAsDesigned) {
     net::Roster four;
     for (uint8_t i = 0; i < 4; ++i) four.players.push_back({i, static_cast<sim::TeamId>(1 + i % 2), 0, 0});
     EXPECT_EQ(net::Encode(four).size(), 30u);   // [mag-2]: 7 B per player
-    EXPECT_EQ(net::Encode(net::RoundUpdate{}).size(), 16u);
+    EXPECT_EQ(net::Encode(net::RoundUpdate{}).size(), 22u);   // siege: + holdSince, holdTicks
+    EXPECT_EQ(net::kRoundUpdateBytes, 22u);
     EXPECT_EQ(net::Encode(net::KillNotice{}).size(), 9u);
 }
 

@@ -1,0 +1,27 @@
+# Hollowkeep's siege (docs/design/fight.md "Siege", fortress.md): the world map's castle and its approach, 148 x 120 m
+# (37 x 30 chunks of 4 m at 0.125 m), -48..128 m. Team 1 (blue) defends the sanctum, the keep's ground floor; team 2
+# (red) starts on the approach past the gate's ditch and wins by holding the sanctum, with no defender inside, for
+# hold_seconds without a break. The defenders win when round_seconds run out. The portcullis is down; its lever is in
+# the gatehouse's guardroom. The map is not sent: the server bakes it from land_map (run from the game's root), and
+# every client bakes its own copy and compares the baked map's hash at the Welcome.
+#   vortex_server --session=engine/tools/server/sessions/hollowkeep.session --listen 27015 --new-token
+# A public test token, published with the engine and used by tests and gates; the live server never uses it
+# (--new-token makes one for the players).
+token = 7a3f19c2e4b80d5661a2c3e4f5061728
+template = hollowkeep
+seed = 1337
+play_min = -70 -54
+play_max = -33 -24
+height = -48 128
+voxel_size = 0.125
+generator = land
+land_map = assets/world
+max_clients = 8
+chunk_capacity = 0
+pack_hidden = 1
+mode = siege
+team_spawn_1 = -212 -142
+team_spawn_2 = -238 -140
+min_players = 2
+round_seconds = 600
+hold_seconds = 30

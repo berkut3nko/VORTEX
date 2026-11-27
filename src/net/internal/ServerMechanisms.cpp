@@ -46,13 +46,17 @@ namespace vortex::net {
     }
 
     void Server::Impl::BuildYard() {
-        if (!settings.session.mechanisms || region.templateId != sim::RegionTemplateId::Playground) return;
-        const sim::RegionTemplate yard = sim::MechanismYardTemplate(simulation->World(), simulation->WorldMaterialIds(), tmpl.anchor);
-        for (const sim::WorldOp& op : yard.ops) {
-            const sim::OpResult r = sim::ApplyOp(simulation->World(), op);
-            if (!CheckOp(r)) return;
-            EmitOp(op, r);
-        }
+        const bool hollowkeep = region.templateId == sim::RegionTemplateId::Hollowkeep;
+        if (!hollowkeep && (!settings.session.mechanisms || region.templateId != sim::RegionTemplateId::Playground)) return;
+        // Hollowkeep's portcullis and lever are the template's own (no operations: the land generator stamps the castle).
+        const sim::RegionTemplate yard =
+            hollowkeep ? tmpl : sim::MechanismYardTemplate(simulation->World(), simulation->WorldMaterialIds(), tmpl.anchor);
+        if (!hollowkeep)
+            for (const sim::WorldOp& op : yard.ops) {
+                const sim::OpResult r = sim::ApplyOp(simulation->World(), op);
+                if (!CheckOp(r)) return;
+                EmitOp(op, r);
+            }
         mechanisms = sim::CreateTemplateMechanisms(*simulation, yard);
         scene::Scene& scene = simulation->Scene();
         std::vector<uint32_t> ids;
@@ -62,7 +66,8 @@ namespace vortex::net {
             EmitMechanismSpawn(ids[i], mechanisms[i]);
         }
         stats.mechanisms = static_cast<uint32_t>(mechanisms.size());
-        Log::Info("Mechanisms: server: yard built: {} mechanisms, {} operations", mechanisms.size(), yard.ops.size());
+        Log::Info("Mechanisms: server: {} built: {} mechanisms, {} operations", hollowkeep ? "Hollowkeep" : "yard", mechanisms.size(),
+                  hollowkeep ? size_t{0} : yard.ops.size());
     }
 
     bool Server::Impl::MakeMechanismState(scene::Entity entity, uint32_t tick, MechanismState& out) const {
