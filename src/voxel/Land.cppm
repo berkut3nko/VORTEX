@@ -69,8 +69,11 @@ export namespace vortex::voxel {
     inline constexpr uint64_t kLandSamplingGoldenHash = 0xc013c33ac06d6983ull;
     /// @brief Pins Hollowkeep's plan and its stamped voxels on `Fort.GoldenHash`'s test map (vortex.voxel:fort, fortress.md).
     inline constexpr uint64_t kFortGoldenHash = 0xff46a8f8610ec0f2ull;
-    inline constexpr uint64_t kLandGoldenHash =
-        kLandBakeGoldenHash ^ (kLandStarterGoldenHash * 3) ^ (kLandSamplingGoldenHash * 5) ^ (kFortGoldenHash * 7);
+    /// @brief Pins the wayside structures' plan and their stamped voxels on `LandStructures.GoldenHash`'s test map
+    /// (vortex.voxel:landstructures, land.md "Wayside structures").
+    inline constexpr uint64_t kLandStructuresGoldenHash = 0xae7dc50e9c22e9d0ull;
+    inline constexpr uint64_t kLandGoldenHash = kLandBakeGoldenHash ^ (kLandStarterGoldenHash * 3) ^ (kLandSamplingGoldenHash * 5) ^
+                                                (kFortGoldenHash * 7) ^ (kLandStructuresGoldenHash * 11);
 
     /// @brief A 64-bit hash of the map's inputs: the sizes, the scale, every pixel of the height, biome and region
     /// fields, the starter region and the owner's points. Two sides with the same files have the same value.
@@ -312,6 +315,8 @@ export namespace vortex::voxel {
         bool trees = true;
         /// Stamp Hollowkeep (fortress.md) on the bake's site: the game's --no-hollowkeep clears it.
         bool fort = true;
+        /// Stamp the wayside structures (land.md "Wayside structures"); vortex_land --chunk-cost clears it to measure them.
+        bool structures = true;
         /// As TerrainSettings::skipClassifiedRows: false (tests only) runs the voxel loop for every row.
         bool skipClassifiedRows = true;
     };

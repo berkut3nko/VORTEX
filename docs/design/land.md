@@ -425,6 +425,57 @@ a session's Welcome (the material table is in the build hash).
 terrain 201 us); headless shots in `build/land/t-*.png`. Not yet: a windowed walk
 (owner check 26 covers it), life, wagon ruts, puddles, monoliths.
 
+## Wayside structures
+
+Small ruins and outposts over the starter region, so a walk meets one every 45-90 m (the owner, 2026-11-27: "place
+some random structures on map in theme of world"). The theme is the edge of Tamberlough (open question 2): the
+setting's wet timber highland, its ruins from the Unmaking and its outposts (setting.md 5.1, 5.7 and 7).
+`voxel::PlanLandStructures` (`engine/src/voxel/LandStructures.cppm`, `internal/LandStructures.cpp`) plans them when the
+land generator starts; the generator stamps them per chunk after the plants, with the fort's stamper.
+
+**The types.** Each is a plan of the fort's `Box`, `Beam` and `Roof` records in its own frame (u to its front, v to its
+left), turned in quarter turns. Sizes, heights, the door, the fallen corner and the roof cover come from an integer hash
+of the site.
+
+| Type | What stands | Where |
+|---|---|---|
+| farmstead | a burned stone ground floor (6-8 x 8-10 m, walls 0.625 m), ragged tops with a soot band, charred post stumps of the upper storey, a chimney stack, a scorched floor with a charred beam, a slumped corner and its rubble mound | 10-45 m from a road, front to the road |
+| burned row | 2-3 narrow plots (4.5-5 m) of a burned timber quarter under one front, with party walls, a door each and plots of different heights | 8-22 m from a road |
+| tower stump | a felled stage tower: a hollow ashlar stump 5-6 m square and 4.5-7.5 m high, granite quoins, a door with a lintel; its fallen stage lies 4-11 m out as a line of blocks and a charred beam | 12 m or more from a road |
+| chime tower | a wayside log chime tower: 4 posts on stone footings, ring beams, braces, a platform with a rail, a pyramid roof (slate or planks) and an iron bell on a chain | 5.5-12 m from a road |
+| waystone | a Ledgerwards granite slab on a plinth with an iron tally plate; 45 % under a small gable roof on 2 posts (a shrine) | 4-6.5 m from a road |
+| hill tower | an open-backed hill-fort tower on a slope (relief 1.5-5 m), its front downhill, 1.25 m ashlar walls, stubs of the curtain wall along the contour, a timber floor on 2 joists | 12 m or more from a road |
+| wall run | a breached border wall 10-16 m long across the slope: stone faces over a rubble core, stepping with the ground, moss on the high pieces, a slumped breach and rubble mounds | 10 m or more from a road |
+| well | a stone curb round a lined shaft with water at its foot, 2 posts, a crossbeam, a rope and bucket, a small gable roof | 4.5-10 m from a road |
+
+**Structurally sane.** Every wall piece, post footing and plinth reaches 1.5 m under the footprint's lowest ground;
+every beam, deck, roof and bell rests on a post, a wall or a ring beam by faces. Ruined walls are pieces of 1 m whose
+tops differ, so a blast frees only what it cuts. The load check never runs at generation (CLAUDE.md "World edits").
+
+**Placement.** On the fine grid less 24 m at its border, in two passes in a fixed order:
+1. the roadside: every 30 m of road and trail, spots 5, 7, 13 and 19 m out on either side (a side by hash) for the
+   roadside types (farmstead, burned row, chime tower, waystone, well);
+2. a 64 m grid: up to 10 jittered tries per cell for any type.
+
+A spot takes the first type, least placed first (ties by hash), whose rule holds: its distance to the nearest road
+point; the relief over its body; no road, trail, site or stream bed under its footprint and 1 m round it; no water
+within 3 m; ground from 2 m to 80 m. Every spot keeps 45 m from the others, 30 m plus its size from Hollowkeep's
+curtain, out of the approach (100 m out from the gate, 50 m either side: the field, the bridge and the siege's
+attacking spawn), 50 m from the village, 30 m from the landing and the cave's mouth and chamber, 20 m from the
+landmark. Trees, plants and cairns keep 6 m, 1.5 m and 1 m from them.
+
+**Determinism.** The plan uses only +, -, *, /, sqrt and floor on floats, integer hashes of the cell or road point and
+`LandGeneratorSettings::seed`, and `voxel::LandHeight`; a chunk's voxels come from the plan and the chunk only. A session's
+server and clients plan the same sites from the same bake. `kLandStructuresGoldenHash` (`LandStructures.GoldenHash`)
+joins `kLandGoldenHash`, so the build hash changes with it.
+
+**The first map (2026-11-27, m):** 97 sites (farmstead 3, burned row 0, tower stump 27, chime tower 1, waystone 6,
+hill tower 26, wall run 29, well 5; no spot beside a road was level enough for a burned row), planned in 0.015 s; none
+within 46 m of `hollowkeep.session`'s spawns or in its play bounds. Chunk generation (`vortex_land --chunk-cost`, one
+thread, 32 x 32 columns round the sites' middle, 4 sites): 86 and 102 us per chunk against 84 and 100 us without them
+(2 runs), about 2 %; round the village (a well) 85 us, as before. The game logs `Structures: N sites (...) planned in T s`; `--structures-tour` lists each site with a
+camera pose, and `--camera structure:N` looks at site N. Tests: `LandStructures.*`.
+
 ## Points of interest and roads
 
 - **Scores** (graded, research notes 4.5): castle site (spur or ridge end, height above the valley, neck width, cliffs,

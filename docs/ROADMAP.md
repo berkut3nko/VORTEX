@@ -27,6 +27,15 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
   3 s to the enemies it passes, two Shove capsules of 400 cm/s; 35 mana. G23's line is now `Firestorm: front travelled
   X m, N voxels burning, hit 1`. Not run: `verify.sh full --ci`, the soak. Windowed look (the row, the tints, the tags,
   the flames of the front): owner checks.
+- **Wayside structures: built, not reviewed** (2026-11-27; [design/land.md](design/land.md) "Wayside structures").
+  The land generator stamps 8 small themed types over the starter region (the edge of Tamberlough): burned farmsteads
+  and rows, felled tower stumps, open-backed hill-fort towers, breached wall runs, chime towers, waystones and wells,
+  as the fort's Box, Beam and Roof records. `voxel::PlanLandStructures` places them beside the roads first, then on a
+  jittered 64 m grid, 45 m apart, clear of water, roads, Hollowkeep, its approach, the village and the other points.
+  Offline and in land sessions alike; `kLandStructuresGoldenHash` joins `kLandGoldenHash` (the build hash changes).
+  The game logs `Structures: N sites (...)`; `--structures-tour` and `--camera structure:N` show them. Measured on the first map: 97 sites (7 types; no
+  burned row found level ground beside a road), planned in 0.015 s; chunk generation round 4 sites 86 us per chunk
+  against 84 us without them (`vortex_land --chunk-cost`). Not run: `verify.sh full --ci`, the soak; a windowed walk.
 - **Two session fixes: built, not reviewed** (2026-11-27). (1) A warmup joiner that sees the round's first spawn
   while its prediction starts from a warmup snapshot takes the spawn as a respawn, not as a correction
   (`Client::Impl::StartPrediction`; `Fight.AFirstSpawnSeenBeforeThePredictionStartsIsNotACorrection` failed before
@@ -414,7 +423,7 @@ never been measured.
 
 ## State
 
-Tests: **1205** in ctest: 1197 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
+Tests: **1210** in ctest: 1202 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
 game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts), `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
 `Tools.DocCheck`, `Tools.DocCheckSelftest`, `Tools.SessionCheckVerdict` and `Tools.VerifyAssertions` (WP2's checks
 and their self-tests), `Tools.RendezvousWorker` (the rendezvous Worker under `node --test`, registered when `node` is
