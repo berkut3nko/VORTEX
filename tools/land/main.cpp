@@ -8,7 +8,8 @@
 // land_water.png, land_flow.png, land_relief.png, land_change.png (voxel::WriteLandFiles). --twice bakes a second
 // time and compares the hashes. --chunk-cost times the land generator ([land-3]) over 32 x 32 chunk columns around
 // the spawn against the built-in terrain generator over as many columns around its origin, on one thread:
-// `Land: spawn at ...; chunk generation ...`.
+// `Land: spawn at ...; chunk generation ...`; then around the keep with and without Hollowkeep (`Fort: ...`) and
+// around the middle of the wayside structures with and without them (`Structures: ...`).
 //
 // Log lines: `Land: baked W x H cells of S m in T s (...)`, `Land: N lake(s): ...`, `Land: N river(s), ...`,
 // `Land: hash H`, then `Land: checks pass` or `Land: check failed: ...`.
@@ -207,6 +208,24 @@ int main(int argc, char** argv) {
             if (fort.culvert)
                 Log::Info("Fort: culvert grate at ({:.1f}, {:.1f}, {:.1f}) m, its stair out at ({:.1f}, {:.1f}) m; keep at ({:.1f}, {:.1f}) m",
                           fort.culvertMouth.x, fort.culvertFloor, fort.culvertMouth.y, fort.culvertExit.x, fort.culvertExit.y, fort.keep.x, fort.keep.y);
+        }
+        // Around the middle of the wayside structures (land.md "Wayside structures"), with and without them.
+        const LandStructures structures = PlanLandStructures(*shared, landSettings);
+        if (!structures.sites.empty()) {
+            glm::vec2 sum(0.0f);
+            for (const LandStructureSite& s : structures.sites) sum += s.at;
+            const glm::vec2 middle = sum / float(structures.sites.size());
+            const glm::ivec2 at(int(std::floor(middle.x / chunkMetres)), int(std::floor(middle.y / chunkMetres)));
+            LandGeneratorSettings bare = landSettings;
+            bare.structures = false;
+            uint64_t withChunks = 0, bareChunks = 0;
+            const double withUs = measure(*CreateLandGenerator(shared, landSettings), at, withChunks);
+            const double bareUs = measure(*CreateLandGenerator(shared, bare), at, bareChunks);
+            int inside = 0;
+            for (const LandStructureSite& s : structures.sites)
+                inside += std::abs(s.at.x - middle.x) < 64.0f && std::abs(s.at.y - middle.y) < 64.0f ? 1 : 0;
+            Log::Info("Structures: {} sites; around ({:.0f}, {:.0f}) m ({} sites) {:.0f} us per chunk ({} chunks), {:.0f} us without them ({} chunks)",
+                      structures.sites.size(), middle.x, middle.y, inside, withUs, withChunks, bareUs, bareChunks);
         }
     }
 
