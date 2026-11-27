@@ -271,8 +271,12 @@ namespace vortex::voxel {
                 best.curtain = c;
                 best.inner = n;
             }
-            for (int k = 0; k < kSiteDirections; ++k)
-                best.inner[size_t(k)] = std::clamp(best.inner[size_t(k)], 11.0f, best.curtain[size_t(k)] - 7.0f);
+            // Near a 16 m curtain the upper bound (curtain - 7) falls below 11. std::clamp is undefined then, and
+            // libc++ and libstdc++ answer differently, which baked another map on Linux; the lower bound wins.
+            for (int k = 0; k < kSiteDirections; ++k) {
+                const float inner = best.inner[size_t(k)];
+                best.inner[size_t(k)] = inner < 11.0f ? 11.0f : std::min(inner, best.curtain[size_t(k)] - 7.0f);
+            }
             m.site = best;
 
             // Micro-grading only: the keep's pad (18 x 18 m) and the gatehouse's (14 x 10 m, across the gate).
