@@ -112,7 +112,8 @@ namespace vortex::sim {
         if (found == m_Owners.end()) return;
         const Owner owner = found->second;
         m_Owners.erase(found);
-        if (owner.live == 0) {
+        // No voxel left, or matter that goes by a rule of its own (offline pitch burns out by the fire rule): no op.
+        if (owner.live == 0 || owner.info.expiryMap == 0) {
             Forget(id, owner);
             return;
         }

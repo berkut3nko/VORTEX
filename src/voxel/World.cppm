@@ -64,6 +64,9 @@ export namespace vortex::voxel {
         /// Keep a list of every cell that becomes loaded by streaming (TakeLoadedChunks): a session
         /// client replays the operations a chunk missed while it loaded. Off: no list is kept.
         bool reportLoads = false;
+        /// Keep a list of every chunk an edit changed (TakeEditedChunks): the offline fire driver finds new burning
+        /// voxels there. Off: no list is kept.
+        bool reportEdits = false;
         /// A modified chunk that leaves the window is kept (the RegionStore, in memory without a
         /// save directory) and comes back with its edits. False: it is dropped and comes back as
         /// the generator makes it (a session client gets it again from the server).
@@ -243,6 +246,9 @@ export namespace vortex::voxel {
         /// loaded or unloaded; the whole chunk when SetChunkEncoded replaced a loaded chunk's content.
         /// Physics uses it to know which part of an old collider is stale.
         glm::ivec3 editMin{0}, editMax{0};
+        /// False only when every edit since the last take kept each voxel's occupancy (air stays air, solid stays
+        /// solid: a fire's stage change). Loads, unloads and installs set it. Physics re-cooks only a shape change.
+        bool shapeChanged = true;
         bool Edited() const { return editMin.x < editMax.x && editMin.y < editMax.y && editMin.z < editMax.z; }
     };
 
@@ -484,6 +490,13 @@ export namespace vortex::voxel {
         /// too (Knit turns air into a solid). Returns the number of voxels changed.
         uint32_t MapMaskQ(const glm::ivec3& origin, const VoxelMask& mask, const TurningMap& map,
                           std::vector<VoxelEdit>* edits = nullptr, EditReport* report = nullptr, const ChunkClip* clip = nullptr);
+        /**
+         * @brief Writes one loaded chunk: id = newIds[Chunk::VoxelIndex(local)] wherever it differs (an EditRegion
+         * clipped to the chunk: the revision, the change list and the build ceiling as for any edit). Returns the
+         * voxels changed; 0 when the chunk is not loaded (listed in `report->skipped`).
+         */
+        uint32_t EditVoxelsInChunk(const glm::ivec3& chunk, const uint8_t* newIds, std::vector<VoxelEdit>* edits = nullptr,
+                                   EditReport* report = nullptr);
 
         /// @brief FillSphereQ(QuantizeSphere(centre, radius), ...): centre and radius in voxels.
         uint32_t FillSphere(const glm::vec3& centerVoxel, float radiusVoxels, uint8_t id, std::vector<VoxelEdit>* edits = nullptr);
@@ -496,6 +509,9 @@ export namespace vortex::voxel {
         std::vector<ChunkChange> TakeChunkChanges();
         /// @brief TakeChunkChanges, coordinates only (the same list: either call empties it).
         std::vector<glm::ivec3> TakeChangedChunks();
+        /// @brief With WorldConfig::reportEdits: every chunk an edit changed since the last call, in edit order (a chunk
+        /// may be listed more than once). Empty without reportEdits.
+        std::vector<glm::ivec3> TakeEditedChunks();
 
         // --- chunk sync (docs/design/networking.md, stage 7a) ------------------------------
         /**
@@ -624,7 +640,8 @@ export namespace vortex::voxel {
         void DropKeptBytes(uint32_t index);
         /// Reports the cell's chunk as changed (once until the next take); its entry, valid until
         /// the next call.
-        ChunkChange& QueueChange(Cell& cell);
+        /// `shape` false: an edit that kept every voxel's occupancy (ChunkChange::shapeChanged).
+        ChunkChange& QueueChange(Cell& cell, bool shape = true);
         /// A new ChunkRevision for the cell (its content or its loaded state changed).
         void BumpRevision(Cell& cell) { cell.revision = ++m_ContentRevision; }
         bool Materialize(uint32_t index);
@@ -651,6 +668,9 @@ export namespace vortex::voxel {
         uint32_t EditRegion(const glm::ivec3& min, const glm::ivec3& max, Fn&& decide, Touches&& touches,
                             std::vector<VoxelEdit>* edits, EditReport* report, const ChunkClip* clip = nullptr, Rows rows = {});
         static constexpr uint8_t kServerShown = 1, kServerHidden = 2;
+        /// Per id: 0 air, 1 a collider, 2 solid but no collider (kNonColliderFlags). An edit changes a chunk's collider
+        /// shape only where a voxel changes class.
+        const std::array<uint8_t, 256>& ShapeClasses();
         /// A loading cell gives up its place in its column's bookkeeping (SetChunkEncoded).
         void SettleLoading(uint32_t index);
 
@@ -701,6 +721,9 @@ export namespace vortex::voxel {
         WorldStats m_Counters;                         // the cumulative / last-Update fields of Stats()
         std::vector<ChunkChange> m_ChangedChunks;
         std::vector<glm::ivec3> m_LoadedChunks;        // reportLoads: cells loaded since TakeLoadedChunks
+        std::vector<glm::ivec3> m_EditedChunks;        // reportEdits: chunks edited since TakeEditedChunks
+        std::array<uint8_t, 256> m_ShapeClass{};       // per id: 0 air, 1 collider, 2 solid but no collider (ShapeClasses)
+        uint64_t m_ShapeClassRevision = 0;              // the materials' revision m_ShapeClass was made from (0: never)
         uint64_t m_WindowRevision = 0;
         std::vector<glm::ivec3> m_WindowSteps;         // reportLoads: window corners since TakeWindowSteps
         std::unique_ptr<Chunk> m_Scratch;              // decode target for edits of Packed chunks

@@ -10,6 +10,7 @@ module;
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -57,6 +58,8 @@ export namespace vortex {
         /// loaded from there, saved on shutdown and by the editor's "Save world". Leave it empty
         /// for a networked session, whose world must be memory only.
         voxel::WorldConfig world;
+        /// Fire spread in the offline simulation (sim::SimulationConfig::spread; never in a session).
+        bool spread = false;
         /// Scene tuning: piece and rubble thresholds (see scene::SceneConfig). `voxelSize` is
         /// overwritten with the world's.
         scene::SceneConfig scene;
@@ -249,6 +252,13 @@ export namespace vortex {
 
         /// @brief Shows an outcome of the rules seam: PresentBlast for each of its blasts, in order ([wp-6]).
         void PresentOutcome(const sim::ActionOutcome& outcome);
+
+        /// @brief The offline fire (sim::SimulationConfig::spread): its index, steps and caps. The engine ticks it in its
+        /// fixed step (after Application::OnFixedUpdate, before the physics) and presents what it did; Kindle starts a fire.
+        sim::SpreadDriver& Spread();
+        /// @brief The presentation half of a fire step: a flame burst where a voxel caught, embers where one burnt out
+        /// (at most 32 each per call), and PresentBlast for each site check that released something.
+        void PresentSpread(std::span<const voxel::VoxelEdit> edits, std::span<const sim::BlastResult> released);
 
         /// @brief Print the per-blast `Blast:` line for every blast this engine presents (Decision 3
         /// of [wp-8]: default false; the game turns it on for offline runs and with `--blast-log`).

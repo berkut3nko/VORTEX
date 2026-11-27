@@ -18,3 +18,4 @@ export import :gesture;
 export import :propagate;
 export import :knit;
 export import :cast;
+export import :spread;

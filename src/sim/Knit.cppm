@@ -33,7 +33,7 @@ export namespace vortex::sim {
     /// @brief One cast's matter of one layer: when and how it expires.
     struct KnitOwnerInfo {
         uint8_t layer = 0;        ///< 0 conjure (knit and the other conjured ids), 1 turn (rime, heat)
-        uint8_t expiryMap = 0;    ///< a voxel::TurningMapId: Map_Unknit for conjured matter
+        uint8_t expiryMap = 0;    ///< a voxel::TurningMapId: Map_Unknit for conjured matter; 0: it expires with no op (offline pitch)
         uint8_t caster = 0;       ///< player slot + 1; 0 none
         uint8_t casterTeam = 0;   ///< the caster's sim::TeamId (0: no team)
         uint8_t spell = 0;        ///< the sim::SpellId that made it (the hazard scan credits its damage to it)

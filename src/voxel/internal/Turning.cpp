@@ -67,6 +67,31 @@ namespace vortex::voxel {
             table.maps[Map_Slag][stage] = ids.slag;
             unknit[stage] = 0;
         }
+        // Fire (spread.md): Ignite lights timber and leaves at their first kindle stage and scorches ground cover. Douse
+        // saves a kindling voxel (its base), chars a burning one and puts out burning leaves and pitch; Rime and Freeze
+        // carry Douse's rows for timber and leaves (Frost puts fire out; Freeze already turns pitch into ice).
+        TurningMap& ignite = table.maps[Map_Ignite];
+        ignite[ids.planks] = ids.planksK1;
+        ignite[ids.wood] = ids.woodK1;
+        ignite[ids.leaves] = ids.foliageK1;
+        ignite[ids.leavesAutumn] = ids.foliageK1;
+        ignite[ids.grass] = ids.scorched;
+        ignite[ids.grassDry] = ids.scorched;
+        struct FireRun {
+            uint8_t first, count, to;
+        };
+        const FireRun douse[] = {{ids.planksK1, 6, ids.planks},     {ids.planksB1, 6, ids.charredWood}, {ids.woodK1, 8, ids.wood},
+                                 {ids.woodB1, 8, ids.charredWood}, {ids.foliageK1, 3, 0},             {ids.foliageB1, 2, 0}};
+        for (const FireRun& run : douse) {
+            if (run.first == 0) continue;
+            for (uint32_t i = 0; i < run.count; ++i) {
+                const uint32_t id = run.first + i;
+                table.maps[Map_Douse][id] = run.to;
+                table.maps[Map_Rime][id] = run.to;
+                table.maps[Map_Freeze][id] = run.to;
+            }
+        }
+        for (uint32_t stage = ids.pitch; stage != 0 && stage <= ids.pitchLast; ++stage) table.maps[Map_Douse][stage] = 0;
         return table;
     }
 

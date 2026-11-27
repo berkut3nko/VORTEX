@@ -16,6 +16,7 @@ module;
 #include <iterator>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -115,6 +116,7 @@ namespace vortex {
             config.fallOutDepth = c.fallOutDepth;
             config.world = c.world;
             config.scene = c.scene;
+            config.spread = c.spread;
             return config;
         }
 
@@ -123,6 +125,8 @@ namespace vortex {
         // World, physics, terrain colliders, scene and the tick counter. Declared before the
         // renderer, which draws from its chunk store.
         sim::Simulation sim;
+        sim::SpreadDriver spread;           // the offline fire (SimulationConfig::spread)
+        std::vector<voxel::VoxelEdit> spreadEdits;
 
         graphics::Window window;
         graphics::Device device;
@@ -218,6 +222,31 @@ namespace vortex {
 
     void Engine::PresentOutcome(const sim::ActionOutcome& outcome) {
         for (const sim::BlastResult& blast : outcome.blasts) PresentBlast(blast);
+    }
+
+    sim::SpreadDriver& Engine::Spread() { return m_Impl->spread; }
+
+    void Engine::PresentSpread(std::span<const voxel::VoxelEdit> edits, std::span<const sim::BlastResult> released) {
+        sim::Simulation& sim = m_Impl->sim;
+        const voxel::SpreadTable& table = voxel::WorldSpreadTable();
+        const voxel::World& world = sim.World();
+        const double vs = static_cast<double>(world.VoxelSize());
+        uint32_t flames = 0, embers = 0;
+        fx::EmitterDesc flame = fx::effects::Flame();
+        const fx::EmitterDesc ember = fx::effects::Sparks(glm::vec3(1.0f, 0.55f, 0.2f));
+        for (const voxel::VoxelEdit& edit : edits) {
+            const voxel::SpreadKind before = table.kind[edit.oldId], after = table.kind[edit.newId];
+            const glm::dvec3 centre = world.VoxelCenter(edit.voxel);
+            if (after == voxel::SpreadKind::Burning && before != voxel::SpreadKind::Burning && flames < 32) {
+                sim.Particles().Burst(flame, centre + glm::dvec3(0.0, 0.5 * vs, 0.0), 3);
+                ++flames;
+            } else if (before == voxel::SpreadKind::Burning && edit.newId == 0 && embers < 32) {
+                sim.Particles().Burst(ember, centre, 2);
+                ++embers;
+            }
+        }
+        for (const sim::BlastResult& blast : released)
+            if (!blast.ops.empty()) PresentBlast(blast);
     }
 
     void Engine::PresentBlast(const sim::BlastResult& blast) {
@@ -324,6 +353,12 @@ namespace vortex {
 
         sim::Simulation& sim = s.sim;
         const float fixedDt = sim.FixedTimeStep();
+        // The offline fire's tick: a logical step every few ticks, its site checks and landings, then their pictures.
+        const auto StepSpread = [&]() {
+            s.spreadEdits.clear();
+            const std::vector<sim::BlastResult> released = s.spread.Tick(sim, &s.spreadEdits);
+            if (!s.spreadEdits.empty() || !released.empty()) PresentSpread(s.spreadEdits, released);
+        };
         double last = NowSeconds();
         double accumulator = 0.0;
         uint32_t frame = 0;
@@ -403,6 +438,7 @@ namespace vortex {
                     const uint32_t ticks = std::min(due, kMaxSourceTicksPerFrame);
                     for (uint32_t i = 0; i < ticks; ++i) {
                         app.OnFixedUpdate(*this, fixedDt);
+                        if (sim.Config().spread) StepSpread();
                         sim.StepPhysics();
                     }
                     accumulator = std::clamp(accumulator + wallDt - static_cast<double>(ticks) * fixedDt, 0.0, static_cast<double>(fixedDt));
@@ -411,6 +447,7 @@ namespace vortex {
                     int steps = 0;
                     while (accumulator >= fixedDt && steps < 4) {
                         app.OnFixedUpdate(*this, fixedDt);
+                        if (sim.Config().spread) StepSpread();
                         // Guard, physics step, pose sync; the tick is counted. Whatever the game or
                         // the last frame's update created or moved since the last guard is checked
                         // before it is simulated.

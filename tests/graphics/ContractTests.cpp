@@ -584,13 +584,17 @@ TEST(LayoutContract, MaterialSurfaceKindsMatchTheGlslConstants) {
 
     const std::optional<float> solid = constant("VX_MATERIAL_SOLID");
     const std::optional<float> liquid = constant("VX_MATERIAL_LIQUID");
+    const std::optional<float> burning = constant("VX_MATERIAL_BURNING");
     ASSERT_TRUE(solid.has_value());
     ASSERT_TRUE(liquid.has_value());
+    ASSERT_TRUE(burning.has_value());
     EXPECT_FLOAT_EQ(*solid, voxel::kGpuMaterialSolid);
     EXPECT_FLOAT_EQ(*liquid, voxel::kGpuMaterialLiquid);
-    // VxMaterialIsLiquid() tests params.w > 0.5.
+    EXPECT_FLOAT_EQ(*burning, voxel::kGpuMaterialBurning);
+    // VxMaterialIsLiquid() tests |params.w - 1| < 0.5, VxMaterialIsBurning() params.w > 1.5.
     EXPECT_LT(voxel::kGpuMaterialSolid, 0.5f);
-    EXPECT_GT(voxel::kGpuMaterialLiquid, 0.5f);
+    EXPECT_LT(std::abs(voxel::kGpuMaterialLiquid - 1.0f), 0.5f);
+    EXPECT_GT(voxel::kGpuMaterialBurning, 1.5f);
 
     // What the library packs: the flag of the material, nothing else, in params.w.
     voxel::MaterialLibrary library;
@@ -601,11 +605,15 @@ TEST(LayoutContract, MaterialSurfaceKindsMatchTheGlslConstants) {
     EXPECT_FLOAT_EQ(gpu[ids.lava].params.w, voxel::kGpuMaterialLiquid);
     EXPECT_FLOAT_EQ(gpu[ids.stone].params.w, voxel::kGpuMaterialSolid);
     EXPECT_FLOAT_EQ(gpu[ids.glass].params.w, voxel::kGpuMaterialSolid);
+    EXPECT_FLOAT_EQ(gpu[ids.planksB1].params.w, voxel::kGpuMaterialBurning);
     EXPECT_FLOAT_EQ(gpu[0].params.w, voxel::kGpuMaterialSolid);          // air
     EXPECT_FLOAT_EQ(gpu[255].params.w, voxel::kGpuMaterialSolid);        // unused entry
     for (uint32_t i = 0; i < voxel::kPaletteSize; ++i) {
-        const bool isLiquid = (library.Get(voxel::kWorldPalette, static_cast<uint8_t>(i)).flags & voxel::MaterialFlag_Liquid) != 0;
-        EXPECT_FLOAT_EQ(gpu[i].params.w, isLiquid ? voxel::kGpuMaterialLiquid : voxel::kGpuMaterialSolid) << "material " << i;
+        const uint32_t flags = library.Get(voxel::kWorldPalette, static_cast<uint8_t>(i)).flags;
+        const float kind = (flags & voxel::MaterialFlag_Liquid) != 0    ? voxel::kGpuMaterialLiquid
+                           : (flags & voxel::MaterialFlag_Burning) != 0 ? voxel::kGpuMaterialBurning
+                                                                        : voxel::kGpuMaterialSolid;
+        EXPECT_FLOAT_EQ(gpu[i].params.w, kind) << "material " << i;
     }
 
     // Changing the flag re-packs the entry.

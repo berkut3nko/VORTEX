@@ -293,6 +293,15 @@ void main() {
     }
 
     float emissive = max(colorEmissive.a, 0.0) * u_Frame.ambientParams.z;
+    if (VxMaterialIsBurning(params) && emissive > 0.0) {
+        // Fire stages flicker per voxel, eight times a second, so a front in uniform timber does not draw as crisp
+        // bands of one brightness per stage. Presentation only: no CPU decision reads it.
+        vec3 surface = u_Frame.cameraPos.xyz + rd * t - n * (0.5 * u_Frame.cameraPosVoxel.w);
+        uvec3 cell = uvec3(ivec3(floor(surface / u_Frame.cameraPosVoxel.w)));
+        uint tick = uint(floor(u_Frame.temporalParams.w * 8.0));
+        uint h = VxHashPcg(cell.x + VxHashPcg(cell.y + VxHashPcg(cell.z + VxHashPcg(tick))));
+        emissive *= 0.7 + 0.3 * (float(h & 0xFFFFu) * (1.0 / 65535.0));
+    }
     vec3 color;
     if (VxMaterialIsLiquid(params)) {
         color = ShadeLiquid(albedo, lighting, params.x, n, rd, t) + albedo * emissive;

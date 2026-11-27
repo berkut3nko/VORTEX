@@ -35,7 +35,7 @@ Rules every document follows:
 | [design/fx-budget.md](design/fx-budget.md) | plan (effects in fights) | designed | code read at `ec073a8` | 17 |
 | [design/fog.md](design/fog.md) | decision + plan (volumetric fog) | designed | code read at `71dc23e` | 52 |
 | [design/mechanisms.md](design/mechanisms.md) | decision + plan (use key, doors, gates, held objects, ropes) | designed | code read on 2026-11-17 (committed as `e21a84d`) | 126 |
-| [design/spread.md](design/spread.md) | decision + plan (lockstep fire and liquid, no randomness) | designed | code read at `e21a84d` | 73 |
+| [design/spread.md](design/spread.md) | decision + plan (lockstep fire and liquid, no randomness) | partly built (S1, fire offline) | code read at `e21a84d` | 73 |
 | [design/worldgen.md](design/worldgen.md) | decision + plan (regions built from structures) | designed | code read on 2026-11-17 (committed as `c970f16`) | 74 |
 | [design/land.md](design/land.md) | decision + plan (the island world from a baked map: relief, erosion, fixed-level water, regions and biomes, the starter region and Hollowkeep's site, points of interest, roads) | designed | code read at `6fdd9e5` | 17 |
 | [design/fortress.md](design/fortress.md) | decision + plan (Hollowkeep as a detailed fortress: wall anatomy, roofs, interiors, the bailey, 3 material tiers, the chokepoint and 3 bypass loops, collapse-to-ramp set pieces, props, the stamped generation pipeline) | designed | code read at `7f7797a` | 32 |
@@ -167,7 +167,7 @@ Also: [owner-questions-2026-11-11.md](history/view-distance/owner-questions-2026
 | ID | Stage | Design | History |
 |---|---|---|---|
 | `[mech-1]`..`[mech-5]` | Door and gate; ropes; siege kit; placement; later (after M2) | [mechanisms.md](design/mechanisms.md#stages) | [design-review-2026-11-17.md](history/mechanisms/design-review-2026-11-17.md) |
-| `[spread-S1]`..`[spread-S6]` | Fire offline; fire in a session; collapse from fire; liquid; presentation; tuning | [spread.md](design/spread.md), "Stages" | [proposal-scores-2026-11-17.md](history/spread/proposal-scores-2026-11-17.md), [design-review-2026-11-17.md](history/spread/design-review-2026-11-17.md) |
+| `[spread-S1]`..`[spread-S6]` | Fire offline; fire in a session; collapse from fire; liquid; presentation; tuning | [spread.md](design/spread.md), "Stages" | [proposal-scores-2026-11-17.md](history/spread/proposal-scores-2026-11-17.md), [design-review-2026-11-17.md](history/spread/design-review-2026-11-17.md), [s1-as-built.md](history/spread/s1-as-built.md) |
 | `[wg-W1]`..`[wg-W6]` | Stamped village offline; in a session; forts and fights; materials, history, second kit; zones; reach | [worldgen.md](design/worldgen.md#staged-delivery) | [how-it-was-chosen-2026-11-17.md](history/worldgen/how-it-was-chosen-2026-11-17.md) |
 | `[land-1]`..`[land-6]` | The world map as fields and an image (tool); erosion and water; voxels from the map offline; the starter region (site, points of interest, roads); in a session; nature (plants, rocks, ground cover, cairns) | [land.md](design/land.md#stages) | - |
 | `[fort-1]`..`[fort-5]` | Stamped skeleton (batter, faces and cores, buttresses, quoins, string courses, crenellations, D towers); openings and interiors (slits, floors, spiral stairs, vaults, the culvert); roofs and crowns (machicolations, hoardings); the bailey (lean-tos, scaffold, walkways, crane, set pieces); props and vignettes | [fortress.md](design/fortress.md#stages) | - |

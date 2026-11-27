@@ -644,3 +644,106 @@ TEST(World, RaycastAfterAWindowMoveMatchesTheReference) {
     }
     EXPECT_GT(hits, 200);
 }
+
+// One write of a whole chunk (a fire step) equals the same ids set voxel by voxel: equal chunk hashes, a new revision,
+// the chunk listed as changed.
+TEST(World, EditVoxelsInChunkEqualsSetVoxel) {
+    Fixture a, b;
+    a.world->LoadBlocking(glm::dvec3(0.0, 20.0, 0.0));
+    b.world->LoadBlocking(glm::dvec3(0.0, 20.0, 0.0));
+    const glm::ivec3 chunk(1, 1, 2);
+    ASSERT_TRUE(a.world->IsChunkLoaded(chunk));
+    std::vector<uint8_t> ids(static_cast<size_t>(kChunkVolume));
+    uint32_t state = 12345u;
+    for (int z = 0; z < kChunkSize; ++z)
+        for (int y = 0; y < kChunkSize; ++y)
+            for (int x = 0; x < kChunkSize; ++x) {
+                state = state * 1664525u + 1013904223u;
+                const uint8_t pick[] = {0, kSurface, kRock, 5};
+                ids[Chunk::VoxelIndex(x, y, z)] = pick[(state >> 24) & 3u];
+            }
+    const uint64_t revision = a.world->ChunkRevision(chunk);
+    EditReport report;
+    const uint32_t changed = a.world->EditVoxelsInChunk(chunk, ids.data(), nullptr, &report);
+    EXPECT_GT(changed, 0u);
+    EXPECT_EQ(report.changed, std::vector<glm::ivec3>{chunk});
+    EXPECT_NE(a.world->ChunkRevision(chunk), revision);
+    uint32_t setChanged = 0;
+    const glm::ivec3 origin = ChunkToVoxel(chunk);
+    for (int z = 0; z < kChunkSize; ++z)
+        for (int y = 0; y < kChunkSize; ++y)
+            for (int x = 0; x < kChunkSize; ++x) {
+                const glm::ivec3 v = origin + glm::ivec3(x, y, z);
+                const uint8_t id = ids[Chunk::VoxelIndex(x, y, z)];
+                if (b.world->GetVoxel(v) != id) ++setChanged;
+                ASSERT_TRUE(b.world->SetVoxel(v, id));
+            }
+    EXPECT_EQ(changed, setChanged);
+    uint64_t ha = 0, hb = 0;
+    ASSERT_TRUE(ChunkHashAt(*a.world, chunk, ha));
+    ASSERT_TRUE(ChunkHashAt(*b.world, chunk, hb));
+    EXPECT_EQ(ha, hb);
+    // Not loaded: nothing written, the chunk is reported skipped.
+    EditReport outside;
+    EXPECT_EQ(a.world->EditVoxelsInChunk(glm::ivec3(100, 1, 0), ids.data(), nullptr, &outside), 0u);
+    EXPECT_EQ(outside.skipped, std::vector<glm::ivec3>{glm::ivec3(100, 1, 0)});
+}
+
+// ChunkChange::shapeChanged is true only where a voxel changed its collider class (air, collider, solid but no
+// collider), and the store uploads only the changed id blocks of an edit that kept the occupancy.
+TEST(World, ShapeChangedOnlyWhenCollidabilityChanges) {
+    Fixture f;
+    Material stage;            // a burning stage: a collider like the surface
+    Material liquid;
+    liquid.flags = MaterialFlag_Liquid;
+    f.materials.Set(kWorldPalette, 5, stage, "stage");
+    f.materials.Set(kWorldPalette, 6, liquid, "liquid");
+    f.world->LoadBlocking(glm::dvec3(0.0, 20.0, 0.0));
+    for (const ChunkChange& change : f.world->TakeChunkChanges()) EXPECT_TRUE(change.shapeChanged) << "a load";
+    const glm::ivec3 v(5, kGround - 1, 5);
+    const glm::ivec3 chunk = VoxelToChunk(v);
+    (void)f.store.TakeDirty();
+    (void)f.store.TakeDirtyBlocks();
+    const auto take = [&f]() {
+        const std::vector<ChunkChange> changes = f.world->TakeChunkChanges();
+        EXPECT_EQ(changes.size(), 1u);
+        return changes.empty() ? true : changes[0].shapeChanged;
+    };
+    ASSERT_TRUE(f.world->SetVoxel(v, 5));
+    EXPECT_FALSE(take()) << "surface -> stage: the same collider";
+    EXPECT_TRUE(f.store.TakeDirty().empty()) << "no whole upload";
+    const std::vector<ChunkStore::DirtyBlocks> blocks = f.store.TakeDirtyBlocks();
+    ASSERT_EQ(blocks.size(), 1u);
+    BlockMask expected{};
+    const glm::ivec3 l = v - ChunkToVoxel(chunk);
+    const uint32_t block = Chunk::BlockIndex(l.x, l.y, l.z);
+    expected[block >> 6] = uint64_t{1} << (block & 63u);
+    EXPECT_EQ(blocks[0].blocks, expected);
+    ASSERT_TRUE(f.world->SetVoxel(v, 6));
+    EXPECT_TRUE(take()) << "stage -> liquid: no collider any more, though still solid";
+    EXPECT_TRUE(f.store.TakeDirty().empty()) << "the occupancy kept: blocks only";
+    ASSERT_TRUE(f.world->SetVoxel(v, 0));
+    EXPECT_TRUE(take()) << "liquid -> air";
+    EXPECT_FALSE(f.store.TakeDirty().empty()) << "the occupancy changed: the whole chunk";
+    // Two edits before a take: OR.
+    ASSERT_TRUE(f.world->SetVoxel(v, kSurface));
+    ASSERT_TRUE(f.world->SetVoxel(v, 5));
+    EXPECT_TRUE(take());
+}
+
+// With WorldConfig::reportEdits the world lists every chunk an edit changed, nothing else (loads are not edits).
+TEST(World, ReportsEditedChunksWhenAsked) {
+    ChunkStore store(512);
+    JobSystem jobs(2);
+    MaterialLibrary materials;
+    WorldConfig config;
+    config.voxelSize = 0.5f;
+    config.windowSize = {8, 8, 8};
+    config.reportEdits = true;
+    World world(config, store, jobs, CreateFlatGenerator(kGround, kSurface, kRock), &materials);
+    world.LoadBlocking(glm::dvec3(0.0, 20.0, 0.0));
+    EXPECT_TRUE(world.TakeEditedChunks().empty());
+    world.FillBox({1, kGround, 1}, {3, kGround + 2, 3}, kRock);
+    EXPECT_EQ(world.TakeEditedChunks(), std::vector<glm::ivec3>{VoxelToChunk(glm::ivec3(1, kGround, 1))});
+    EXPECT_TRUE(world.TakeEditedChunks().empty());
+}

@@ -140,3 +140,39 @@ TEST(ChunkStore, EditedSlotsAreTakenFirst) {
     EXPECT_TRUE(store.TakeDirty().empty());
     EXPECT_FALSE(store.HasDirty());
 }
+
+// A fire's stage changes upload only their 64 B id blocks: a whole upload of the slot, marked before or after, wins.
+TEST(ChunkStore, BlockDirtyIsSupersededByWhole) {
+    ChunkStore store(4);
+    const uint32_t a = store.Alloc();
+    (void)store.TakeDirty();
+    BlockMask one{};
+    one[0] = 1;
+    store.MarkDirtyBlocks(a, one);
+    EXPECT_TRUE(store.HasDirty());
+    EXPECT_TRUE(store.TakeDirty().empty());
+    std::vector<ChunkStore::DirtyBlocks> blocks = store.TakeDirtyBlocks();
+    ASSERT_EQ(blocks.size(), 1u);
+    EXPECT_EQ(blocks[0].slot, a);
+    EXPECT_EQ(blocks[0].blocks, one);
+    EXPECT_FALSE(store.HasDirty());
+
+    store.MarkDirtyBlocks(a, one);
+    store.MarkEdited(a);                 // after: the whole chunk goes up, the blocks are dropped
+    EXPECT_EQ(store.TakeDirty(), std::vector<uint32_t>{a});
+    EXPECT_TRUE(store.TakeDirtyBlocks().empty());
+
+    store.MarkDirty(a);
+    store.MarkDirtyBlocks(a, one);       // before: the blocks add nothing
+    EXPECT_EQ(store.TakeDirty(), std::vector<uint32_t>{a});
+    EXPECT_TRUE(store.TakeDirtyBlocks().empty());
+
+    BlockMask two{};
+    two[7] = uint64_t{1} << 63;
+    store.MarkDirtyBlocks(a, one);
+    store.MarkDirtyBlocks(a, two);       // merged into one entry
+    blocks = store.TakeDirtyBlocks();
+    ASSERT_EQ(blocks.size(), 1u);
+    EXPECT_EQ(blocks[0].blocks[0], 1u);
+    EXPECT_EQ(blocks[0].blocks[7], uint64_t{1} << 63);
+}

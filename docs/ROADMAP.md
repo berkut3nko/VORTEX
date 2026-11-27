@@ -14,8 +14,21 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
 
 ## Now
 
-- **[mag-5] Thermal: built, not reviewed** (2026-11-27), without fire spread (the owner's re-scope: [spread-S1] is not
-  built; pitch burns only where it lands and expires in 3.5 s, timber never catches). Pitchfall, Wildfire, Meltdown
+- **[spread-S1] Fire offline: built, not reviewed** (2026-11-27). The offline game runs fire
+  ([design/spread.md](design/spread.md) S1; `SimulationConfig::spread`, never in a session): 35 fire ids (59-93:
+  planks, wood and foliage kindle and burn stages, `charred_wood`, `scorched`) and `MaterialFlag_Burning` (bit 8), the
+  Ignite map and Douse's rows (in Douse, Rime and Freeze), `voxel::SpreadTable` with pitch as the fifth class, the fire
+  rule `voxel::StepBox` (up and sideways, never down; the one-voxel gap jump; leaves only climb), the offline
+  `sim::SpreadDriver` (an index of burning chunks, a logical step every 6 ticks on the workers under a work credit, site
+  checks of burnouts with the load check, the landing ignition decided at release), `World::EditVoxelsInChunk`,
+  `ChunkChange::shapeChanged` (stage changes re-cook nothing) and 64 B id block uploads, the emissive flicker, the
+  Kindle key G, `PresentSpread`, `--fire-demo` and `--camera fire-demo`. Offline, Thermal's pitch burns out by the rule
+  and lights timber; a session keeps its Unknit. Measured: `--fire-demo` after fill, ms avg 1.22 max 2.0 per logical step
+  on the Windows PC (m). No wire change, no gate. [As built](history/spread/s1-as-built.md). Not run: `verify.sh full --ci`, the soak.
+  Windowed look (glow, flicker, the Kindle key): owner check 32.
+- **[mag-5] Thermal: built, not reviewed** (2026-11-27), without fire spread (the owner's re-scope then: [spread-S1] was
+  not built; pitch burned only where it landed and expired in 3.5 s, timber never caught; offline that changed with
+  [spread-S1] the same day). Pitchfall, Wildfire, Meltdown
   Beam and Firestorm Sweep through the shared cast path. `knit_iron_hot` and `iron_hot` at half their base's
   hardness (a blast carves them; the absorb rule does not hold them), pitch's four burn stages as films
   (`MaterialFlag_Film`: no collider, not in the structure, open for the operators, passed by the spell ray), the
@@ -277,7 +290,8 @@ In this order:
 5. **[fog-1] Fog stage 1.** Haze toward the sun, low mist and blast dust puffs, without losing frame rate.
     [design/fog.md](design/fog.md), "Stages" 1. About 4 d (e).
 6. **[spread-S1] Fire offline.** A burning house that falls, offline only, no wire change (its smoke feeds fog later).
-    [design/spread.md](design/spread.md), "Stages" S1. Large (e).
+    [design/spread.md](design/spread.md), "Stages" S1. Large (e). State: built 2026-11-27, ahead of [si-2] and [fog-1]
+    (the owner's call), not reviewed (see "Now").
 7. **[wg-W1] Stamped village.** The first real map, with towers worth felling. Soak tier (nightly) first.
     [design/worldgen.md](design/worldgen.md), "W1: a stamped village, offline". About 1.5 weeks (e).
 
@@ -366,7 +380,7 @@ never been measured.
 
 ## State
 
-Tests: **1165** in ctest: 1157 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
+Tests: **1195** in ctest: 1187 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
 game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts), `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
 `Tools.DocCheck`, `Tools.DocCheckSelftest`, `Tools.SessionCheckVerdict` and `Tools.VerifyAssertions` (WP2's checks
 and their self-tests), `Tools.RendezvousWorker` (the rendezvous Worker under `node --test`, registered when `node` is
@@ -399,6 +413,7 @@ before `[wp-4]` (2026-11-23: G1 + G2 took 2.6 ms off the far view, 0.4 ms off th
 
 | Date | Measure | Value | Source |
 |---|---|---|---|
+| 2026-11-27 | [spread-S1] the offline fire step on a burning house (the Windows PC, not the UHD 620; `Shredborne --headless --fire-demo --frames 3200 --camera fire-demo --after-fill`, 0.125 m, `Spread:` line, 2 runs) | 1.22 ms avg, 1.95-2.00 ms max per logical step (site checks not counted), at most 9-10 chunks stepped; fire out after 378 steps (m) | [history/spread/s1-as-built.md](history/spread/s1-as-built.md) |
 | 2026-11-26 | [mag-1] the four spells' cast cost (the Windows PC, not the UHD 620; `Shredborne --headless --validation --siege-matrix --after-fill --frames 2200`, 0.125 m, `Magic:` lines) | Barricade Wave: work 1654, 0.75 ms, 4 ops, 140 B, 1332 knit voxels; Updraft: work 680, 0.04 ms, 64 B, a 10 m column (lifted +10.18 m); Dash: work 664, 0.26 ms, 74 B, 7.90 m in 18 ticks; Punch: work 208, under 0.01 ms (the blow's island search runs at its zone tick, on the structure credit), 91 B, 224 planks voxels broken (m). The ms are the cast's wall time at T_run only | [design/magic.md](design/magic.md) "Stages" [mag-1]; the game's `docs/verify.md` |
 | 2026-11-26 | [audio-1] the sound set and its cost (the Windows PC, the 13 headless game runs of `verify.sh quick`, offline output) | assets 16.97 MB (256 sounds, 636 files, 1578 s; 16.53 MB and 1528 s after the owner's first listen: one step per footstep file, -4 dBTP; from 1694.5 MB of WAV takes); mixing 0.14-0.54 % of one core (up to 23 voices at once, 24-58 plays a run); main-thread `AudioSystem::Update` 0.008-0.028 ms (once 1.1 ms); the first play of a variant decodes it on the main thread offline: 2.5-4.6 ms (once 29.5 ms); decoded 0.6-4.0 MB a run. A device run decodes the sounds of every fight on miniaudio's job thread at the start instead, 18 MB of 16-bit PCM (e, from the files' lengths); the device thread's cost is the offline mixing cost (e) (m) | `build/verify/quick-20261126-105653` |
 | 2026-11-24 | G17 (`tools/soak.sh --short`, both regions) on the batch [wp-5] / [wp-6] / [wp-7] | 5 runs: 2 FAIL, 3 PASS. Both failures were `Bot: N FAILED: its drain did not hold again within 15 s of the leave word`: one server body stayed awake through the whole drain, creeping about 1 cm in 16 s (playground object 842 at (10.8, 8.1, 14.9), arena object 814 at (19.5, 4.5, -8.9)), so the bots' copies never got an `EntityRest`; a copy still moving differed from the server's by 0.05-0.11 m (sample timing, not a desync); terrain hashes and resting objects agreed. The first failure ran last in a loaded `full` run, the second alone on the pre-review tree; on the reviewed HEAD (engine `5b2c193`, game `ba5c851`) `verify.sh full --only G17` passed twice (202 / 192 s). The same symptom predates the batch: G19 of 2026-11-22 (WP2 tree) logged `the drain did not settle in 60 s: ... 1 copies not resting` before its drain held, and the soak of 2026-11-17 (`build/soak-o2`) failed the same way. Recorded as a known intermittent flake (a body that never sleeps), not chased (m) | `build/verify/full-20261124-000048`, `-003255`, `-003917`, `-074054`, `-074416` |

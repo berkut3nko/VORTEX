@@ -4,6 +4,7 @@ export module vortex.voxel;
 
 export import :material;
 export import :turning;
+export import :spread;
 export import :chunk;
 export import :store;
 export import :volume;

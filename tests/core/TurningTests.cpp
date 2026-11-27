@@ -52,8 +52,7 @@ TEST(TurningTable, NeverNameBedrockAndIdentityElsewhere) {
     const WorldMaterials ids = RegisterDefaultWorldMaterials(library);
     const TurningTable table = BuildTurningTable(ids);
     ASSERT_NE(ids.knitIron, 0);
-    // Every row each map names (magic.md "The Turning table"); Ignite and Douse name ids that are not built yet (spread)
-    // and stay the identity.
+    // Every row each map names (magic.md "The Turning table", spread.md's Ignite and Douse).
     const std::vector<std::pair<uint8_t, uint8_t>> rimed = {{ids.stone, ids.stoneRimed},
                                                             {ids.stoneDark, ids.stoneDarkRimed},
                                                             {ids.brick, ids.brickRimed},
@@ -87,6 +86,24 @@ TEST(TurningTable, NeverNameBedrockAndIdentityElsewhere) {
     rows[Map_Rime].push_back({ids.knitIronHot, ids.knitIron});
     rows[Map_Rime].push_back({ids.ironHot, ids.iron});
     rows[Map_FreezeWater] = {{ids.water, ids.floe}};
+    rows[Map_Ignite] = {{ids.planks, ids.planksK1}, {ids.wood, ids.woodK1}, {ids.leaves, ids.foliageK1}, {ids.leavesAutumn, ids.foliageK1},
+                        {ids.grass, ids.scorched},   {ids.grassDry, ids.scorched}};
+    // Douse saves kindling, chars burning timber and puts out leaves; Rime and Freeze carry its timber and leaf rows.
+    const auto douse = [&](uint8_t first, int count, uint8_t to) {
+        for (int i = 0; i < count; ++i) {
+            const uint8_t id = static_cast<uint8_t>(first + i);
+            rows[Map_Douse].push_back({id, to});
+            rows[Map_Rime].push_back({id, to});
+            rows[Map_Freeze].push_back({id, to});
+        }
+    };
+    douse(ids.planksK1, 6, ids.planks);
+    douse(ids.planksB1, 6, ids.charredWood);
+    douse(ids.woodK1, 8, ids.wood);
+    douse(ids.woodB1, 8, ids.charredWood);
+    douse(ids.foliageK1, 3, 0);
+    douse(ids.foliageB1, 2, 0);
+    for (uint32_t stage = ids.pitch; stage <= ids.pitchLast; ++stage) rows[Map_Douse].push_back({static_cast<uint8_t>(stage), 0});
     for (uint32_t m = 0; m < kTurningMapCount; ++m) {
         const TurningMap& map = table.maps[m];
         EXPECT_EQ(map[ids.bedrock], ids.bedrock) << "map " << m;
@@ -183,7 +200,7 @@ TEST(Materials, ThermalIdsAreAppendedAndPitchIsAFilm) {
     }
     for (uint32_t stage = ids.pitch; stage <= ids.pitchLast; ++stage) {
         const Material& pitch = library.Get(kWorldPalette, static_cast<uint8_t>(stage));
-        EXPECT_EQ(pitch.flags, static_cast<uint32_t>(MaterialFlag_Conjured | MaterialFlag_Film));
+        EXPECT_EQ(pitch.flags, static_cast<uint32_t>(MaterialFlag_Conjured | MaterialFlag_Film | MaterialFlag_Burning));
         EXPECT_EQ(pitch.hardness, 0.0f);
     }
     for (uint32_t id = 1; id < 256; ++id) {

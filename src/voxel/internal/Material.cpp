@@ -18,8 +18,10 @@ namespace vortex::voxel {
         GpuMaterial Pack(const Material& m) {
             GpuMaterial g;
             g.colorEmissive = glm::vec4(m.color, m.emissive);
-            g.params = glm::vec4(m.roughness, m.metallic, m.variation,
-                                 (m.flags & MaterialFlag_Liquid) != 0 ? kGpuMaterialLiquid : kGpuMaterialSolid);
+            const float kind = (m.flags & MaterialFlag_Liquid) != 0    ? kGpuMaterialLiquid
+                               : (m.flags & MaterialFlag_Burning) != 0 ? kGpuMaterialBurning
+                                                                       : kGpuMaterialSolid;
+            g.params = glm::vec4(m.roughness, m.metallic, m.variation, kind);
             return g;
         }
 
@@ -197,15 +199,41 @@ namespace vortex::voxel {
         // Thermal: hot metal at half its base's hardness (3.5 and 4.0: a basic blast carves it), and pitch, a burning film.
         ids.knitIronHot  = add("knit_iron_hot", Srgb(236, 110, 46),   0.55f, 2000.0f,  3.5f, 0.12f, MaterialFlag_Conjured | MaterialFlag_Hot, 3.0f, 0.5f);
         ids.ironHot      = add("iron_hot",     Srgb(240, 120, 60),    0.35f, 7800.0f,  4.0f, 0.06f, MaterialFlag_Hot, 3.0f, 1.0f);
-        // Pitch: four burn stages of one fire class (spread.md), darker and dimmer as they burn down. Without fire spread
-        // only b1 is laid, and it goes with its spell's expiry.
+        // Pitch: four burn stages of one fire class (spread.md), darker and dimmer as they burn down. The Pitch map lays
+        // b1; offline the fire rule advances it, in a session it goes with its spell's expiry.
         for (int j = 1; j <= 4; ++j) {
             const float burnt = static_cast<float>(j - 1) / 3.0f;
             const uint8_t id = add(std::string("pitch_b") + static_cast<char>('0' + j), Srgb(52, 30, 20) * (1.0f - 0.4f * burnt), 0.95f, 900.0f, 0.0f,
-                                   0.30f, MaterialFlag_Conjured | MaterialFlag_Film, 2.0f - 1.2f * burnt);
+                                   0.30f, MaterialFlag_Conjured | MaterialFlag_Film | MaterialFlag_Burning, 2.0f - 1.2f * burnt);
             if (j == 1) ids.pitch = id;
             ids.pitchLast = id;
         }
+
+        // Fire (spread.md "New world-palette ids", "Material table values"): per class the kindle stages k1..kK (the
+        // base, glowing brighter, no longer flammable) and the burn stages b1..bB (darker, weaker, 0.6 of the base's
+        // hardness); then charred wood and scorched ground cover. The bonds are set below with the others.
+        const auto fireStages = [&](uint8_t base, const char* name, int K, int B, uint8_t& firstKindle, uint8_t& firstBurn) {
+            const Material b = lib.Get(kWorldPalette, base);
+            const uint32_t keep = b.flags & MaterialFlag_Foliage;
+            for (int i = 1; i <= K; ++i) {
+                const float emissive = 1.0f + 3.0f * static_cast<float>(i - 1) / static_cast<float>(K - 1);
+                const uint8_t id = add(std::string(name) + "_k" + std::to_string(i), b.color, b.roughness, b.density, b.hardness, b.variation,
+                                       keep | MaterialFlag_Burning, emissive);
+                if (i == 1) firstKindle = id;
+            }
+            for (int j = 1; j <= B; ++j) {
+                const float emissive = 5.0f - 3.5f * static_cast<float>(j - 1) / static_cast<float>(B - 1);
+                const glm::vec3 color = b.color * (1.0f - 0.6f * static_cast<float>(j) / static_cast<float>(B));
+                const uint8_t id = add(std::string(name) + "_b" + std::to_string(j), color, b.roughness, b.density, 0.6f * b.hardness, b.variation,
+                                       keep | MaterialFlag_Burning, emissive);
+                if (j == 1) firstBurn = id;
+            }
+        };
+        fireStages(ids.planks, "planks", 6, 6, ids.planksK1, ids.planksB1);
+        fireStages(ids.wood, "wood", 8, 8, ids.woodK1, ids.woodB1);
+        fireStages(ids.leaves, "foliage", 3, 2, ids.foliageK1, ids.foliageB1);
+        ids.charredWood  = add("charred_wood", Srgb(28, 24, 22),      0.95f,  280.0f,  0.6f, 0.10f);
+        ids.scorched     = add("scorched",     Srgb(58, 44, 34),      0.95f, 1500.0f,  0.8f, 0.12f);
 
         // Bond strengths, kg/m^2: compression / shear / tension (docs/design/shred.md Part 4b,
         // "Material strengths"). A free column of height h holds while density x h <= C, a
@@ -268,6 +296,20 @@ namespace vortex::voxel {
         strength(ids.slag, 100000, 40000, 15000);
         strength(ids.knitIronHot, 100000, 40000, 15000);
         strength(ids.ironHot, 1000000, 600000, 600000);
+        // A kindle stage keeps its base's bonds; burn stage j of B keeps (B + 1 - j) / B of them (integers, floor).
+        const auto fireBonds = [&](uint8_t base, uint8_t firstKindle, int K, uint8_t firstBurn, int B) {
+            const Material b = lib.Get(kWorldPalette, base);
+            for (int i = 0; i < K; ++i) strength(static_cast<uint8_t>(firstKindle + i), b.strength[0], b.strength[1], b.strength[2]);
+            for (int j = 1; j <= B; ++j) {
+                const auto part = [&](uint32_t s) { return static_cast<uint32_t>(uint64_t{s} * static_cast<uint64_t>(B + 1 - j) / static_cast<uint64_t>(B)); };
+                strength(static_cast<uint8_t>(firstBurn + j - 1), part(b.strength[0]), part(b.strength[1]), part(b.strength[2]));
+            }
+        };
+        fireBonds(ids.planks, ids.planksK1, 6, ids.planksB1, 6);
+        fireBonds(ids.wood, ids.woodK1, 8, ids.woodB1, 8);
+        fireBonds(ids.leaves, ids.foliageK1, 3, ids.foliageB1, 2);
+        strength(ids.charredWood, 80000 / 4, 30000 / 4, 30000 / 4);
+        strength(ids.scorched, 50000, 8000, 2000);
         for (const uint8_t soft : {ids.needles, ids.reed, ids.fern, ids.flowerYellow, ids.flowerViolet, ids.mushroom}) strength(soft, 10000, 5000, 5000);
         return ids;
     }

@@ -211,6 +211,7 @@ namespace vortex::physics {
         /// body lies on are kept (GuardBodies drops the rest every pass): a body simulated since
         /// saw the new ground, and one parked later is parked on what it saw.
         std::unordered_set<glm::ivec3, IVec3Hash> modifiedUnseen;
+        uint32_t recooksSkipped = 0;   // changes that kept every collider class (ChunkChange::shapeChanged false)
         std::unordered_set<glm::ivec3, IVec3Hash> frozenChunks;    // GuardBodies scratch
         std::vector<glm::ivec3> dirty;            // coordinates of queued entries (may hold stale / duplicate coordinates)
         uint64_t nextGeneration = 0;
@@ -261,7 +262,7 @@ namespace vortex::physics {
             filterRevision = materials.Revision();
             auto fresh = std::make_shared<const voxel::CollisionFilter>(
                 voxel::CollisionFilter::FromMaterials(materials, voxel::kWorldPalette,
-                                                      voxel::MaterialFlag_Liquid | voxel::MaterialFlag_Foliage | voxel::MaterialFlag_Film));
+                                                      voxel::kNonColliderFlags));
             const bool changed = filter && filter->collidable != fresh->collidable;
             filter = std::move(fresh);
             if (!changed) return;
@@ -309,6 +310,12 @@ namespace vortex::physics {
             const bool anyFrozen = physics.FrozenBodyCount() > 0;
             for (const voxel::ChunkChange& change : world.TakeChunkChanges()) {
                 const glm::ivec3& coord = change.coord;
+                // Every voxel kept its collider class (a fire's stage change): the collider and its neighbours' border faces
+                // stay as they are.
+                if (!change.shapeChanged) {
+                    ++recooksSkipped;
+                    continue;
+                }
                 const bool wasTracked = chunks.contains(coord);
                 Touch(coord, true);
                 if (wasTracked && change.Edited()) chunks[coord].pendingEdit.Add({change.editMin, change.editMax});
@@ -859,6 +866,7 @@ namespace vortex::physics {
         stats.built = m_Impl->builtTotal;
         stats.frozenBodies = m_Impl->physics.FrozenBodyCount();
         stats.unseenEdits = static_cast<uint32_t>(m_Impl->modifiedUnseen.size());
+        stats.recooksSkipped = m_Impl->recooksSkipped;
         return stats;
     }
 }

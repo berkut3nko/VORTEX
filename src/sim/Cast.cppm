@@ -306,8 +306,8 @@ export namespace vortex::sim {
      * one is given; else the Spell edge's step already started it and the eye is after that step), traced with TraceArc
      * to its landing (the floor under the cell it meets), then at max(the landing tick, T_run + the lead) an Impulse
      * and a Pin y-cylinder round the landing for enemies, its damage with the Pin, and the Shatter flood there.
-     * Thermal (no fire spread: pitch burns where it lands and expires with Unknit after lifetimeTicks; Heat's metal
-     * cools after heatLifetimeTicks): Pitchfall, a lob as Molten Pour, pitch over the Fall and Run skin cells and the
+     * Thermal (pitch expires with Unknit after lifetimeTicks, or with SimulationConfig::spread burns out by the fire rule
+     * and lights timber; Heat's metal cools after heatLifetimeTicks): Pitchfall, a lob as Molten Pour, pitch over the Fall and Run skin cells and the
      * pool, Heat over the support voxels they touch that Heat changes, a splash round the landing. Wildfire: the full
      * Plume (a Rise gesture: from S up to E's height), pitch over its Rise and Run skin cells and the Front cells that
      * are skin or join it, Heat on what they touch, a scorch over the plume's box on the arrival. Meltdown Beam: a bore

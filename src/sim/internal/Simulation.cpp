@@ -25,6 +25,8 @@ namespace vortex::sim {
             config.scene.voxelSize = config.world.voxelSize;
             // The debris thresholds left at kFromMetres keep their metre size in this world.
             config.scene = scene::ResolveThresholds(config.scene);
+            // The fire driver finds new burning voxels in the chunks edits changed.
+            if (config.spread) config.world.reportEdits = true;
             return config;
         }
     }
@@ -43,6 +45,7 @@ namespace vortex::sim {
         // The metre volume in voxels of this world (kServerReplicatedPieceVoxels at the default size).
         config.scene.replicatedPieceVoxels =
             scene::VoxelsForVolume(kServerReplicatedPieceVolume, static_cast<double>(config.world.voxelSize));
+        config.spread = false;
         config.replication.enabled = true;
         return config;
     }

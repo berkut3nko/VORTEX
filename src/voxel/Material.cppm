@@ -28,9 +28,13 @@ export namespace vortex::voxel {
         /// A film (pitch): not a collider, not in the cell graph and weightless, open for the spell operators and
         /// passed by the server's spell rays; drawn as a voxel.
         MaterialFlag_Film           = 1u << 7,
+        /// Burning (fire stages of timber, foliage and pitch): presentation only (flicker, flame bursts); no rule reads it.
+        MaterialFlag_Burning        = 1u << 8,
     };
     /// @brief Ids with any of these flags take no part in the structure: the island search and the load check ignore them.
     inline constexpr uint32_t kNonStructuralFlags = MaterialFlag_Liquid | MaterialFlag_Film;
+    /// @brief Ids with any of these flags are no collider: terrain colliders leave them out (a player walks through them).
+    inline constexpr uint32_t kNonColliderFlags = MaterialFlag_Liquid | MaterialFlag_Foliage | MaterialFlag_Film;
 
     /**
      * @brief Everything the engine knows about one voxel material.
@@ -58,9 +62,10 @@ export namespace vortex::voxel {
     };
 
     /// @brief Values of `GpuMaterial::params.w`: how the composite pass shades the surface.
-    /// Mirrored by `VX_MATERIAL_SOLID` / `VX_MATERIAL_LIQUID` in shaders/include/common.glsl.
+    /// Mirrored by `VX_MATERIAL_SOLID` / `VX_MATERIAL_LIQUID` / `VX_MATERIAL_BURNING` in shaders/include/common.glsl.
     constexpr float kGpuMaterialSolid = 0.0f;
     constexpr float kGpuMaterialLiquid = 1.0f;    ///< Set for materials with MaterialFlag_Liquid.
+    constexpr float kGpuMaterialBurning = 2.0f;   ///< Set for solid materials with MaterialFlag_Burning: the emissive flickers.
 
     /// @brief GPU material record (std430, 32 bytes). Mirrors `VxMaterial` in the shaders.
     struct GpuMaterial {
@@ -146,6 +151,9 @@ export namespace vortex::voxel {
         /// until a Cool, and pitch, a burning film that a Freeze turns into ice: the burn stages pitch_b1..b4 of spread.md's
         /// fire class (K 0, B 4), consecutive ids from `pitch` (b1, what the Pitch map lays) to `pitchLast` (b4).
         uint8_t knitIronHot = 0, ironHot = 0, pitch = 0, pitchLast = 0;
+        /// Fire (spread.md "New world-palette ids"): the first id of each run of consecutive stages (planks k1..k6 and
+        /// b1..b6, wood k1..k8 and b1..b8, foliage k1..k3 and b1..b2), then the residues: charred wood and burnt ground cover.
+        uint8_t planksK1 = 0, planksB1 = 0, woodK1 = 0, woodB1 = 0, foliageK1 = 0, foliageB1 = 0, charredWood = 0, scorched = 0;
     };
 
     /// @brief Fills the world palette with a starter set of natural and building materials.

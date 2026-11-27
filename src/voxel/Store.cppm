@@ -47,7 +47,17 @@ export namespace vortex::voxel {
         /// MarkEdited slots first (in marking order), then the other MarkDirty slots. When
         /// `editedFirst` is given, it receives how many leading entries are edited slots.
         std::vector<uint32_t> TakeDirty(size_t* editedFirst = nullptr);
-        bool HasDirty() const { return !m_DirtyList.empty() || !m_EditedList.empty(); }
+        /// @brief Marks only these id blocks of `slot` for upload: its occupancy did not change (a fire's stage change).
+        /// A whole MarkDirty / MarkEdited of the slot wins over it, before or after.
+        void MarkDirtyBlocks(uint32_t slot, const BlockMask& blocks);
+        struct DirtyBlocks {
+            uint32_t slot = 0;
+            BlockMask blocks{};
+        };
+        /// @brief The slots dirty by blocks only since the last call (never a slot of TakeDirty's list), cleared. Call
+        /// it after TakeDirty.
+        std::vector<DirtyBlocks> TakeDirtyBlocks();
+        bool HasDirty() const { return !m_DirtyList.empty() || !m_EditedList.empty() || !m_BlockList.empty(); }
 
         uint32_t Capacity() const { return static_cast<uint32_t>(m_Chunks.size()); }
         uint32_t UsedCount() const { return m_Used; }
@@ -62,6 +72,9 @@ export namespace vortex::voxel {
         std::vector<uint8_t> m_DirtyFlag;
         std::vector<uint32_t> m_DirtyList;
         std::vector<uint32_t> m_EditedList;
+        void DropBlocks(uint32_t slot);
+        std::vector<DirtyBlocks> m_BlockList;   // MarkDirtyBlocks; m_BlockIndex[slot] = position + 1 (0: none)
+        std::vector<uint32_t> m_BlockIndex;
         uint32_t m_Used = 0;
         uint32_t m_HighWater = 0;
     };

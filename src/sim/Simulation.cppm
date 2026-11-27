@@ -96,6 +96,10 @@ export namespace vortex::sim {
         physics::PhysicsConfig physics;
         /// Server bodies with a NetId (a session server: ServerConfig sets `enabled`).
         ReplicationConfig replication;
+        /// Fire spread offline (docs/design/spread.md stage S1): the owner runs a sim::SpreadDriver each tick and the
+        /// world lists the chunks edits change (WorldConfig::reportEdits); pitch burns out by the fire rule instead of
+        /// its spell's expiry. Off for a session server and its clients (fire does not run in a session yet).
+        bool spread = false;
     };
 
     /// @brief What the replication of a simulation decided so far (ReplicationConfig).

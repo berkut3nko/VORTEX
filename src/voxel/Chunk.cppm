@@ -2,6 +2,7 @@ module;
 
 #include <glm/glm.hpp>
 
+#include <array>
 #include <bit>
 #include <cstdint>
 #include <cstring>
@@ -15,6 +16,8 @@ export namespace vortex::voxel {
     constexpr int kChunkMask = kChunkSize - 1;
     constexpr int kChunkVolume = kChunkSize * kChunkSize * kChunkSize;
     constexpr int kBlocksPerChunk = 512;          ///< 8^3 blocks of 4^3 voxels.
+    /// 512 bits, one per 4^3 block of a chunk, bit b in Chunk::BlockIndex order (word b >> 6, bit b & 63).
+    using BlockMask = std::array<uint64_t, 8>;
 
     /**
      * @brief Edge length of a voxel in metres unless a world is configured otherwise: the default

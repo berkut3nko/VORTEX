@@ -938,6 +938,8 @@ namespace vortex::graphics {
 
             size_t editedCount = 0;
             const std::vector<uint32_t> dirty = store.TakeDirty(&editedCount);
+            const std::vector<voxel::ChunkStore::DirtyBlocks> dirtyBlocks = store.TakeDirtyBlocks();
+            stats.blockBytesUploaded = 0;
             for (size_t i = editedCount; i < dirty.size(); ++i) EnqueueSlot(dirty[i]);
             // Pushed to the front in reverse, so the edited slots upload in their marking order.
             for (size_t i = editedCount; i-- > 0;) EnqueueSlot(dirty[i], true);
@@ -955,6 +957,8 @@ namespace vortex::graphics {
             EnsureCapacity(frame, frame.staging, reserved + kChunkBytes, 0, BufferKind::Staging, "staging");
             if (frame.staging.size < reserved) {
                 // Not even the tables fit: leave the GPU state untouched and retry next frame.
+                for (const voxel::ChunkStore::DirtyBlocks& entry : dirtyBlocks)
+                    if (store.IsAllocated(entry.slot)) EnqueueSlot(entry.slot);
                 stats.chunkUploadsPending = static_cast<uint32_t>(v.pending.size());
                 return;
             }
@@ -1008,6 +1012,38 @@ namespace vortex::graphics {
                     v.hiddenAt[slot] = ~0u;
                 }
                 ++uploads;
+            }
+
+            // Id blocks of slots whose occupancy did not change (a fire's stage change): runs of 64 B blocks into a copy
+            // the GPU already holds. A slot whose whole copy is still to come takes them with it.
+            for (const voxel::ChunkStore::DirtyBlocks& entry : dirtyBlocks) {
+                const uint32_t slot = entry.slot;
+                if (slot >= v.capacity) continue;
+                if (v.queued[slot]) continue;
+                const voxel::Chunk* chunk = store.TryGet(slot);
+                if (chunk == nullptr) continue;
+                if (!v.uploaded[slot]) {
+                    EnqueueSlot(slot);
+                    continue;
+                }
+                for (uint32_t block = 0; block < static_cast<uint32_t>(voxel::kBlocksPerChunk);) {
+                    if (((entry.blocks[block >> 6] >> (block & 63u)) & 1u) == 0) {
+                        ++block;
+                        continue;
+                    }
+                    uint32_t end = block + 1;
+                    while (end < static_cast<uint32_t>(voxel::kBlocksPerChunk) && ((entry.blocks[end >> 6] >> (end & 63u)) & 1u) != 0) ++end;
+                    const VkDeviceSize bytes = static_cast<VkDeviceSize>(end - block) * 64u;
+                    if (cursor + bytes > frame.staging.size) {
+                        EnqueueSlot(slot);   // no room this frame: the whole chunk goes up later
+                        break;
+                    }
+                    std::memcpy(staging + cursor, chunk->ids + static_cast<size_t>(block) * 64u, static_cast<size_t>(bytes));
+                    v.idCopies.push_back(VkBufferCopy{cursor, static_cast<VkDeviceSize>(slot) * kIdBytes + static_cast<VkDeviceSize>(block) * 64u, bytes});
+                    cursor += bytes;
+                    stats.blockBytesUploaded += static_cast<uint32_t>(bytes);
+                    block = end;
+                }
             }
 
             // --- grid ----------------------------------------------------------------------------
@@ -1090,7 +1126,7 @@ namespace vortex::graphics {
             }
 
             // --- record the copies ---------------------------------------------------------------
-            if (materialsDirty || gridCopyBytes != 0 || !v.occCopies.empty()) {
+            if (materialsDirty || gridCopyBytes != 0 || !v.occCopies.empty() || !v.idCopies.empty()) {
                 Flush(frame.staging);
                 TransferBarrier(cmd, true);
                 if (materialsDirty) {
@@ -1099,10 +1135,10 @@ namespace vortex::graphics {
                     v.materialSource = input.materials;
                     v.materialRevision = input.materials->Revision();
                 }
-                if (!v.occCopies.empty()) {
+                if (!v.occCopies.empty())
                     vkCmdCopyBuffer(cmd, frame.staging.handle, v.occ.handle, static_cast<uint32_t>(v.occCopies.size()), v.occCopies.data());
+                if (!v.idCopies.empty())
                     vkCmdCopyBuffer(cmd, frame.staging.handle, v.ids.handle, static_cast<uint32_t>(v.idCopies.size()), v.idCopies.data());
-                }
                 if (gridCopyBytes != 0) {
                     vkCmdCopyBuffer(cmd, frame.staging.handle, v.grid.handle, static_cast<uint32_t>(v.gridCopies.size()), v.gridCopies.data());
                 }

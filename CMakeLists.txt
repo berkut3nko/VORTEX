@@ -319,6 +319,16 @@ foreach(_t VortexCore VortexPhysics VortexSim VortexNet)
     vortex_assert_no_audio(${_t})
 endforeach()
 
+# spread.md "Determinism traps": the fire rule and its driver decide from voxel ids, the step index and positions only.
+# A source of chance in them would split peers once fire runs in a session; the configure step refuses one.
+foreach(_file src/voxel/internal/Spread.cpp src/sim/internal/Spread.cpp)
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/${_file}" _hits REGEX "Hash3|rand\\(|random|mt19937")
+    if(_hits)
+        message(FATAL_ERROR "VORTEX: ${_file} must not use Hash3, rand(, random or mt19937 (spread.md \"Determinism traps\"): ${_hits}")
+    endif()
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${_file}")
+endforeach()
+
 # --- Tools & tests ---------------------------------------------------------------
 if(VORTEX_BUILD_TOOLS)
     add_subdirectory(tools)

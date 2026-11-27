@@ -127,6 +127,17 @@ namespace vortex::sim {
             {m.knitIronHot, 56}, {m.ironHot, 64}, {m.pitch, 0},
         };
         for (const auto& [id, cost] : costs) c[id] = cost;
+        // Fire stages (spread.md): a kindle stage keeps its base's hardness, a burn stage 0.6 of it.
+        struct Run {
+            uint8_t first;
+            int count;
+            uint16_t cost;
+        };
+        const Run fire[] = {{m.planksK1, 6, 19}, {m.planksB1, 6, 12}, {m.woodK1, 8, 24}, {m.woodB1, 8, 14}, {m.foliageK1, 3, 3}, {m.foliageB1, 2, 2}};
+        for (const Run& run : fire)
+            for (int i = 0; i < run.count; ++i) c[static_cast<uint8_t>(run.first + i)] = run.cost;
+        c[m.charredWood] = 10;
+        c[m.scorched] = 13;
         return c;
     }
 

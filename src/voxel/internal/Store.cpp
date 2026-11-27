@@ -15,6 +15,7 @@ namespace vortex::voxel {
     ChunkStore::ChunkStore(uint32_t capacity) {
         m_Chunks.resize(capacity);
         m_DirtyFlag.assign(capacity, 0);
+        m_BlockIndex.assign(capacity, 0);
         m_FreeList.reserve(capacity);
         // Pop from the back: hand out low slot indices first so GPU buffers stay compact.
         for (uint32_t i = capacity; i-- > 0;) m_FreeList.push_back(i);
@@ -55,15 +56,49 @@ namespace vortex::voxel {
     }
 
     void ChunkStore::MarkDirty(uint32_t slot) {
+        DropBlocks(slot);
         if (slot >= m_DirtyFlag.size() || (m_DirtyFlag[slot] & kListedDirty)) return;
         m_DirtyFlag[slot] |= kListedDirty;
         m_DirtyList.push_back(slot);
     }
 
     void ChunkStore::MarkEdited(uint32_t slot) {
+        DropBlocks(slot);
         if (slot >= m_DirtyFlag.size() || (m_DirtyFlag[slot] & kListedEdited)) return;
         m_DirtyFlag[slot] |= kListedEdited;
         m_EditedList.push_back(slot);
+    }
+
+    void ChunkStore::DropBlocks(uint32_t slot) {
+        if (slot >= m_BlockIndex.size() || m_BlockIndex[slot] == 0) return;
+        m_BlockList[m_BlockIndex[slot] - 1].blocks.fill(0);   // left in the list, empty: TakeDirtyBlocks skips it
+        m_BlockIndex[slot] = 0;
+    }
+
+    void ChunkStore::MarkDirtyBlocks(uint32_t slot, const BlockMask& blocks) {
+        if (slot >= m_DirtyFlag.size()) return;
+        if ((m_DirtyFlag[slot] & (kListedDirty | kListedEdited)) != 0) return;   // the whole chunk goes up anyway
+        if (m_BlockIndex[slot] == 0) {
+            m_BlockList.push_back({slot, blocks});
+            m_BlockIndex[slot] = static_cast<uint32_t>(m_BlockList.size());
+            return;
+        }
+        BlockMask& mask = m_BlockList[m_BlockIndex[slot] - 1].blocks;
+        for (size_t w = 0; w < mask.size(); ++w) mask[w] |= blocks[w];
+    }
+
+    std::vector<ChunkStore::DirtyBlocks> ChunkStore::TakeDirtyBlocks() {
+        std::vector<DirtyBlocks> out;
+        out.reserve(m_BlockList.size());
+        for (const DirtyBlocks& entry : m_BlockList) {
+            bool any = false;
+            for (const uint64_t w : entry.blocks) any = any || w != 0;
+            if (!any) continue;
+            out.push_back(entry);
+            m_BlockIndex[entry.slot] = 0;
+        }
+        m_BlockList.clear();
+        return out;
     }
 
     std::vector<uint32_t> ChunkStore::TakeDirty(size_t* editedFirst) {

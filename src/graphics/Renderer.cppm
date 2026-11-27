@@ -60,6 +60,7 @@ export namespace vortex::graphics {
         uint32_t chunkUploads = 0;           ///< Chunks copied to the GPU this frame.
         uint32_t chunkUploadsPending = 0;
         uint32_t gridBytesUploaded = 0;      ///< Grid words copied to the GPU this frame (dirty 4 KiB pages).
+        uint32_t blockBytesUploaded = 0;     ///< Id blocks of chunks whose occupancy kept (a fire's stage changes) copied this frame.
         uint32_t lights = 0;                 ///< Shadowed lights (lighting pass).
         uint32_t effectLights = 0;           ///< Effect lights after the merge (composite pass).
         uint32_t particles = 0;

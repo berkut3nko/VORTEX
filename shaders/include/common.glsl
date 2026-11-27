@@ -85,10 +85,12 @@ struct VxMaterial {          // mirrors voxel::GpuMaterial (32 bytes)
     vec4 params;             // x = roughness, y = metallic, z = per-voxel variation, w = surface kind (VX_MATERIAL_*)
 };
 
-// VxMaterial.params.w (voxel::kGpuMaterialSolid / kGpuMaterialLiquid).
+// VxMaterial.params.w (voxel::kGpuMaterialSolid / kGpuMaterialLiquid / kGpuMaterialBurning).
 const float VX_MATERIAL_SOLID  = 0.0;
 const float VX_MATERIAL_LIQUID = 1.0;    // water, lava: animated reflecting surface in the composite pass
-bool VxMaterialIsLiquid(vec4 params) { return params.w > 0.5; }
+const float VX_MATERIAL_BURNING = 2.0;   // fire stages: the emissive flickers in the composite pass
+bool VxMaterialIsLiquid(vec4 params) { return abs(params.w - VX_MATERIAL_LIQUID) < 0.5; }
+bool VxMaterialIsBurning(vec4 params) { return params.w > 1.5; }
 
 struct VxInstance {          // mirrors voxel::GpuInstance (224 bytes)
     mat4 localToWorld;       // chunk-local voxel units -> render space

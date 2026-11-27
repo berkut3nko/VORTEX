@@ -23,6 +23,8 @@ export namespace vortex::physics {
         /// Chunks edited while no up-to-date collider of them existed, under a frozen body: their
         /// first build wakes what is around them (docs/design/shred.md stage 1d).
         uint32_t unseenEdits = 0;
+        /// Chunk changes that kept every voxel's collider class (a fire's stage change): nothing was re-cooked. Cumulative.
+        uint32_t recooksSkipped = 0;
     };
 
     /**

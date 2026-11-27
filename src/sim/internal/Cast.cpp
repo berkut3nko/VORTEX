@@ -889,6 +889,10 @@ namespace vortex::sim {
         voxel::ShapeQ scorchShape;
         uint32_t hotFor = 0;
         const voxel::TurningMap& heatMap = voxel::WorldTurningTable().maps[voxel::Map_Heat];
+        // Pitch burns out by the fire rule where the simulation runs fire (offline): its owner then has no expiry op and
+        // lives as long as the slowest burnout; elsewhere it goes with Unknit at its lifetime.
+        const bool pitchBurnsOut = simulation.Config().spread && def.fillMap == voxel::Map_Pitch;
+        const uint32_t pitchLife = pitchBurnsOut ? kPitchBurnoutTicks : def.lifetimeTicks;
         bool turns = false;
         std::vector<SpellDamage> direct;
         const auto zoneFrom = [&](const ZoneDef& zd, const voxel::ShapeQ& shape) {
@@ -902,7 +906,11 @@ namespace vortex::sim {
             z.strength[1] = zd.strength[1];
             return z;
         };
-        const auto newOwner = [&](uint8_t layer, uint8_t expiryMap, uint16_t lifetime, const voxel::ShapeQ* shape) {
+        const auto newOwner = [&](uint8_t layer, uint8_t expiryMap, uint32_t lifetime, const voxel::ShapeQ* shape) {
+            if (pitchBurnsOut && layer == 0 && expiryMap == def.expiryMap) {
+                expiryMap = 0;
+                lifetime = pitchLife;
+            }
             KnitOwnerInfo info;
             info.layer = layer;
             info.expiryMap = expiryMap;
@@ -954,7 +962,7 @@ namespace vortex::sim {
             if (kept.empty()) return;
             out.stats.planned += static_cast<uint32_t>(kept.size());
             nowOps.push_back({MapCellsOp(def.fillMap, kept), newOwner(0, def.expiryMap, def.lifetimeTicks, nullptr)});
-            hotFor = std::max<uint32_t>(hotFor, def.lifetimeTicks);
+            hotFor = std::max<uint32_t>(hotFor, pitchLife);
         };
         static constexpr std::array<glm::ivec3, 6> kFaceSteps = {glm::ivec3(1, 0, 0), glm::ivec3(-1, 0, 0), glm::ivec3(0, 1, 0),
                                                                  glm::ivec3(0, -1, 0), glm::ivec3(0, 0, 1), glm::ivec3(0, 0, -1)};
@@ -1015,7 +1023,7 @@ namespace vortex::sim {
                 if (!kept.empty()) {
                     if (fillOwner < 0) fillOwner = newOwner(0, def.expiryMap, def.lifetimeTicks, nullptr);
                     out.stats.planned += static_cast<uint32_t>(kept.size());
-                    if (def.fillMap == voxel::Map_Pitch) hotFor = std::max<uint32_t>(hotFor, def.lifetimeTicks + segmentDelay[s]);
+                    if (def.fillMap == voxel::Map_Pitch) hotFor = std::max<uint32_t>(hotFor, pitchLife + segmentDelay[s]);
                     bands.push_back({MapCellsOp(def.fillMap, kept), segmentDelay[s], minTicks, 0, fillOwner});
                 }
                 if (!keptFloe.empty()) {
