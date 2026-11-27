@@ -76,19 +76,26 @@ namespace vortex::net {
     sim::PlayerStepResult Client::Impl::PredictTick(sim::PlayerInput input) {
         input.tick = nextTick;
         PrepareStep(nextTick);
-        const bool spellMove = SpellMoveAllowed();
+        const bool spellMove = SpellMoveAllowed(input.spell);
         const sim::PlayerStepResult r = sim::StepPlayer(simulation->Physics(), simulation->Terrain(), character, player, input,
                                                         welcome.player, playArea, ZonesAt(nextTick, spellMove), Dt());
         history[nextTick % kHistoryTicks] = {true, nextTick, input, player, spellMove};
+        if (r.spell && pendingGesture && server != 0) {
+            transport.Send(server, Channel::Events, Encode(SpellGesture{nextTick, *pendingGesture}));
+            pendingGesture.reset();
+        }
         ++nextTick;
         // Zones stay while a replay may still step a tick that sees them (magic.md "sim::ZoneSet", retention).
         simulation->Zones().PruneEndedBefore(nextTick > kHistoryTicks ? nextTick - kHistoryTicks : 0u);
         return r;
     }
 
-    bool Client::Impl::SpellMoveAllowed() const {
+    bool Client::Impl::SpellMoveAllowed(sim::SpellId spell) const {
         if (fight.dead) return false;
-        return !fight.Active() || roundState.phase == sim::RoundPhase::Warmup || fight.maxCharges == 0 || fight.charges > 0;
+        // The server allows the move on the mana it holds for the tap's cost (here the owner block's, a round trip old).
+        // Tap costs do not depend on the voxel size.
+        static const sim::SpellTable costs = sim::BuildSpellTable(voxel::kDefaultVoxelSize);
+        return magic.tick == 0 || magic.mana >= sim::SpellManaCost(costs, spell, sim::SpellGesture{});
     }
 
     void Client::Impl::SendInputs() {
@@ -347,7 +354,7 @@ namespace vortex::net {
             lastCast = {snap.lastCastTick, snap.castRejected};
         }
         OnOwnerFight(snap);
-        magic = {snap.formCooldown4, snap.attune, snap.tick};
+        magic = {snap.mana, snap.spellGap, snap.attune, snap.tick};
         lastUseTick = snap.lastUseTick;
         lastUseResult = snap.useResult;
         // Both are ticks of inputs this client made: never at or past the tick it predicts next

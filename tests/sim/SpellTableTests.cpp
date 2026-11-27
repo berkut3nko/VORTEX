@@ -75,10 +75,19 @@ TEST(SpellTable, SizesHoldWithinOneVoxelAcrossVoxelSizes) {
     }
 
     const sim::SpellTable t = sim::BuildSpellTable(0.125f);
-    EXPECT_EQ(t.forms[static_cast<size_t>(sim::Form::Flow)].cooldownTicks, 540);
-    EXPECT_EQ(t.forms[static_cast<size_t>(sim::Form::Plume)].cooldownTicks, 540);
-    EXPECT_EQ(t.forms[static_cast<size_t>(sim::Form::Pierce)].cooldownTicks, 300);
-    EXPECT_EQ(t.forms[static_cast<size_t>(sim::Form::Burst)].cooldownTicks, 420);
+    EXPECT_EQ(t.forms[static_cast<size_t>(sim::Form::Flow)].speedMs, 20);
+    EXPECT_EQ(t.forms[static_cast<size_t>(sim::Form::Plume)].speedMs, 30);
+    EXPECT_EQ(t.forms[static_cast<size_t>(sim::Form::Pierce)].speedMs, 80);
+    EXPECT_EQ(t.forms[static_cast<size_t>(sim::Form::Burst)].speedMs, 40);
+    EXPECT_EQ(t.metreQ, 128);
+    EXPECT_EQ(t.manaPool, 6000);
+    EXPECT_EQ(t.manaPerTick, 10);
+    EXPECT_EQ(t.spellGapTicks, 12);
+    EXPECT_EQ(t.spells[sim::kDash].manaCost, 1200);
+    EXPECT_EQ(t.spells[sim::kBarricadeWave].manaCost, 1950);
+    EXPECT_EQ(t.gestureReachQ, 3968u);
+    EXPECT_EQ(t.gestureStepQ, 256u);
+    EXPECT_EQ(t.gesturePathQ, 1536u);
     EXPECT_EQ(t.ablateRadiusQ, 32);
     EXPECT_EQ(t.zoneLeadTicks, 24u);
 
@@ -163,8 +172,28 @@ TEST(SpellTable, HashCoversEveryField) {
         {"voxelSize", [](sim::SpellTable& t) { t.voxelSize = 0.126f; }},
         {"zoneLeadTicks", [](sim::SpellTable& t) { ++t.zoneLeadTicks; }},
         {"ablateRadiusQ", [](sim::SpellTable& t) { ++t.ablateRadiusQ; }},
-        {"forms[2]", [](sim::SpellTable& t) { ++t.forms[2].cooldownTicks; }},
-        {"forms[3]", [](sim::SpellTable& t) { ++t.forms[3].cooldownTicks; }},
+        {"forms[2]", [](sim::SpellTable& t) { ++t.forms[2].speedMs; }},
+        {"forms[3]", [](sim::SpellTable& t) { ++t.forms[3].speedMs; }},
+        {"metreQ", [](sim::SpellTable& t) { ++t.metreQ; }},
+        {"manaPool", [](sim::SpellTable& t) { ++t.manaPool; }},
+        {"manaPerTick", [](sim::SpellTable& t) { ++t.manaPerTick; }},
+        {"spellGapTicks", [](sim::SpellTable& t) { ++t.spellGapTicks; }},
+        {"drawBaseMana", [](sim::SpellTable& t) { ++t.drawBaseMana; }},
+        {"drawManaPerMetre", [](sim::SpellTable& t) { ++t.drawManaPerMetre; }},
+        {"maxFlightTicks", [](sim::SpellTable& t) { ++t.maxFlightTicks; }},
+        {"lineSpeedMs", [](sim::SpellTable& t) { ++t.lineSpeedMs; }},
+        {"gestureReachQ", [](sim::SpellTable& t) { ++t.gestureReachQ; }},
+        {"gestureStepQ", [](sim::SpellTable& t) { ++t.gestureStepQ; }},
+        {"gesturePathQ", [](sim::SpellTable& t) { ++t.gesturePathQ; }},
+        {"gestureSupportQ", [](sim::SpellTable& t) { ++t.gestureSupportQ; }},
+        {"manaCost", [&S](sim::SpellTable& t) { ++S(t).manaCost; }},
+        {"noProjectile", [&S](sim::SpellTable& t) { S(t).noProjectile = !S(t).noProjectile; }},
+        {"drawsLine", [&S](sim::SpellTable& t) { S(t).drawsLine = !S(t).drawsLine; }},
+        {"drawHalfWidthQ", [&S](sim::SpellTable& t) { ++S(t).drawHalfWidthQ; }},
+        {"drawHeight", [&S](sim::SpellTable& t) { ++S(t).drawHeight; }},
+        {"drawMinQ", [&S](sim::SpellTable& t) { ++S(t).drawMinQ; }},
+        {"drawMaxQ", [&S](sim::SpellTable& t) { ++S(t).drawMaxQ; }},
+        {"drawZoneRadiusQ", [&S](sim::SpellTable& t) { ++S(t).drawZoneRadiusQ; }},
         {"a spell not built", [](sim::SpellTable& t) { t.spells[0].built = true; }},
         {"built", [&S](sim::SpellTable& t) { S(t).built = false; }},
         {"burstHalfWidth", [&S](sim::SpellTable& t) { ++S(t).burstHalfWidth; }},

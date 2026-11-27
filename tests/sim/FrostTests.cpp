@@ -123,6 +123,14 @@ namespace {
             return sim::CastSpell(simulation, table, c, ctx, targets);
         }
 
+        /// Ticks until the cast's projectile has landed (its effects run at T_run + flightTicks); the groups that ran.
+        std::vector<sim::BlastResult> Land(const sim::CastSpellResult& r) {
+            std::vector<sim::BlastResult> groups;
+            while (simulation.Tick() <= r.runTick + r.flightTicks)
+                for (sim::BlastResult& g : Tick().groups) groups.push_back(std::move(g));
+            return groups;
+        }
+
         /// The game's left-click blast (power 6, r 1.2 m) where the ray from `eye` toward `target` meets the terrain.
         sim::BlastResult RayBlast(const glm::dvec3& eye, const glm::dvec3& target) {
             const voxel::WorldRayHit hit = World().Raycast(eye, glm::vec3(glm::normalize(target - eye)), 60.0f);
@@ -319,6 +327,7 @@ TEST(Propagate, PierceStopsAtBedrockAndWhenTheBudgetIsSpent) {
         const glm::dvec3 eye(0.0, kGround + 1.5, (z0 + 8) * kVoxel);
         const sim::CastSpellResult r = yard.Cast(sim::kShatterSpike, 0, 1, eye, eye + glm::dvec3(1.0, 0.0, 0.0));
         ASSERT_EQ(r.refusal, sim::SpellRefusal::None) << i;
+        yard.Land(r);
         depth[i] = AirRun(yard.World(), 16, kG + 12, z0 + 8, 60);
     }
     std::printf("Pierce: Shatter Spike bores stone %d, rimed stone %d, iron %d, bedrock %d voxels\n", depth[0], depth[1], depth[2], depth[3]);
@@ -485,10 +494,12 @@ TEST(Magic, ShatterSpikeBoresRimesAndThaws) {
     const glm::dvec3 eye(0.0, kGround + kEye, 0.0625);
     const sim::CastSpellResult r = yard.Cast(sim::kShatterSpike, 0, 1, eye, eye + glm::dvec3(1.0, 0.0, 0.0));
     ASSERT_EQ(r.refusal, sim::SpellRefusal::None) << sim::ToString(r.refusal);
-    ASSERT_GE(r.groups.size(), 2u);
-    EXPECT_EQ(r.groups[0].ops[0].op.kind, sim::WorldOpKind::CarveCapsule);
-    EXPECT_EQ(r.groups[1].ops[0].op.kind, sim::WorldOpKind::MapShape);
-    EXPECT_EQ(r.groups[1].ops[0].op.map, voxel::Map_Rime);
+    EXPECT_TRUE(r.groups.empty()) << "the spike lands after its flight";
+    const std::vector<sim::BlastResult> landed = yard.Land(r);
+    ASSERT_GE(landed.size(), 2u);
+    EXPECT_EQ(landed[0].ops[0].op.kind, sim::WorldOpKind::CarveCapsule);
+    EXPECT_EQ(landed[1].ops[0].op.kind, sim::WorldOpKind::MapShape);
+    EXPECT_EQ(landed[1].ops[0].op.map, voxel::Map_Rime);
     const uint32_t rimed = yard.Count({16, kG, -16}, {32, kG + 24, 16}, m.stoneRimed);
     EXPECT_GT(rimed, 100u);
     ASSERT_EQ(r.zonesStarted.size(), 1u);
@@ -509,6 +520,7 @@ TEST(Magic, FlashFreezeFilmsDryGroundAndRootsThenChills) {
     const glm::dvec3 eye(0.0, kGround + kEye, 0.0);
     const sim::CastSpellResult r = yard.Cast(sim::kFlashFreeze, 0, 1, eye, glm::dvec3(3.0, kGround, 0.0));
     ASSERT_EQ(r.refusal, sim::SpellRefusal::None) << sim::ToString(r.refusal);
+    yard.Land(r);
     const uint32_t ice = yard.Count({-4, kG, -28}, {52, kG + 2, 28}, yard.Ids().ice);
     EXPECT_GT(ice, 800u);
     EXPECT_EQ(r.zonesStarted.size(), 2u);
@@ -535,6 +547,7 @@ TEST(Magic, PermafrostClimbIcesAWallFaceAndRimesIt) {
     const glm::dvec3 eye(0.0, kGround + kEye, 0.0625);
     const sim::CastSpellResult r = yard.Cast(sim::kPermafrostClimb, 0, 1, eye, glm::dvec3(3.0, kGround + 0.5, 0.0625));
     ASSERT_EQ(r.refusal, sim::SpellRefusal::None) << sim::ToString(r.refusal);
+    yard.Land(r);
     const uint32_t ice = yard.Count({18, kG, -24}, {24, kG + 64, 24}, m.ice);
     EXPECT_GT(ice, 100u) << "a sheet of ice up the face";
     EXPECT_GT(yard.Count({24, kG, -24}, {27, kG + 64, 24}, m.stoneRimed), 100u);
@@ -553,6 +566,7 @@ TEST(Propagate, PlumeLeavesNoFrontCellHanging) {
     const glm::dvec3 eye(0.0, kGround + kEye, 0.0);
     const sim::CastSpellResult r = yard.Cast(sim::kPermafrostClimb, 0, 1, eye, glm::dvec3(3.0, kGround, 0.0));
     ASSERT_EQ(r.refusal, sim::SpellRefusal::None) << sim::ToString(r.refusal);
+    yard.Land(r);
     // Every ice voxel joins the ground through ice: a flood from the ground's ice reaches all of them.
     const uint8_t ice = yard.Ids().ice;
     std::set<VoxelKey> all, reached;
@@ -591,7 +605,9 @@ TEST(Combo, ShatterSpikeDeepensABlast) {
     for (FrostYard* yard : {&plain, &spiked}) yard->World().FillBox({16, kG, -24}, {64, kG + 32, 24}, yard->Ids().stone);
     const glm::dvec3 eye(0.0, kGround + kEye, 0.0625);
     const glm::dvec3 ahead = eye + glm::dvec3(1.0, 0.0, 0.0);
-    ASSERT_EQ(spiked.Cast(sim::kShatterSpike, 0, 1, eye, ahead).refusal, sim::SpellRefusal::None);
+    const sim::CastSpellResult spike = spiked.Cast(sim::kShatterSpike, 0, 1, eye, ahead);
+    ASSERT_EQ(spike.refusal, sim::SpellRefusal::None);
+    spiked.Land(spike);
     const int row = static_cast<int>(std::floor((kGround + kEye) / kVoxel));
     const int bored = AirRun(spiked.World(), 16, row, 0, 60);
     plain.RayBlast(eye, ahead);
@@ -610,6 +626,7 @@ TEST(Combo, RimedIronIsCarvedByABlast) {
     const glm::dvec3 ahead = eye + glm::dvec3(1.0, 0.0, 0.0);
     const sim::CastSpellResult spike = spiked.Cast(sim::kShatterSpike, 0, 1, eye, ahead);
     ASSERT_EQ(spike.refusal, sim::SpellRefusal::None);
+    spiked.Land(spike);
     EXPECT_GT(spiked.Count({16, kG, -24}, {32, kG + 32, 24}, spiked.Ids().ironRimed), 50u);
     const sim::BlastResult a = plain.RayBlast(eye, ahead), b = spiked.RayBlast(eye, ahead);
     ASSERT_FALSE(a.ops.empty());
@@ -627,6 +644,7 @@ TEST(Combo, PunchShattersTheFloeBridge) {
     const glm::dvec3 eye(0.0, kGround + kEye, 0.0);
     const sim::CastSpellResult freeze = yard.Cast(sim::kFlashFreeze, 0, 1, eye, glm::dvec3(0.0625, kGround, 4.0));
     ASSERT_EQ(freeze.refusal, sim::SpellRefusal::None) << sim::ToString(freeze.refusal);
+    yard.Land(freeze);
     const glm::ivec3 lo(-40, kG - 16, 16), hi(40, kG, 48);
     const uint32_t floe = yard.Count(lo, hi, m.floe);
     EXPECT_GT(floe, 2000u) << "a slab two voxels thick over about 3 m";
@@ -659,6 +677,7 @@ TEST(Magic, FloeThawsBackToWater) {
     const glm::dvec3 eye(0.0, kGround + kEye, 0.0);
     const sim::CastSpellResult freeze = yard.Cast(sim::kFlashFreeze, 0, 1, eye, glm::dvec3(0.0625, kGround, 4.0));
     ASSERT_EQ(freeze.refusal, sim::SpellRefusal::None);
+    yard.Land(freeze);
     EXPECT_GT(yard.Count(lo, hi, m.floe), 0u);
     while (yard.simulation.Tick() <= freeze.runTick + yard.table.spells[sim::kFlashFreeze].floeLifetimeTicks) yard.Tick();
     EXPECT_EQ(yard.Count(lo, hi, m.floe), 0u);

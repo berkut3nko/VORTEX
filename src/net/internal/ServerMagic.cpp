@@ -84,8 +84,10 @@ namespace vortex::net {
         cast.player = static_cast<uint8_t>(p.slot + 1);
         cast.spell = input.spell;
         if (sim::CheckCapture(castContext, spellTable, cast, tick) != sim::SpellRefusal::None) return false;
-        if (Fighting() && round.phase != sim::RoundPhase::Warmup && Rules().maxCharges != 0 && fighters[p.slot].charges == 0) return false;
-        return true;
+        // The mana for the tap's cost (a Dash is a tap): the run charges it, and a moved caster must be able to pay.
+        sim::CasterState c;
+        if (const auto it = castContext.casters.find(cast.player); it != castContext.casters.end()) c = it->second;
+        return sim::ManaAt(spellTable, c, tick) >= sim::SpellManaCost(spellTable, input.spell, sim::SpellGesture{});
     }
 
     void Server::Impl::CaptureSpell(Peer& p, const sim::PlayerInput& input, const sim::PlayerState& at) {
@@ -96,7 +98,7 @@ namespace vortex::net {
             pl.lastCastTick = input.tick;
             pl.castRejected = why;
         };
-        // Decision 5: dead, then the capture checks, then a charge (Countdown, Live and Ended; the warmup's are free).
+        // Dead, then the capture checks (the gap); spells cost no charge, their mana is charged when they run.
         if (RefuseDeadCast(p, input.tick)) {
             ++stats.spellsRefused;
             return;
@@ -108,13 +110,15 @@ namespace vortex::net {
         cast.inputTick = input.tick;
         if (const sim::SpellRefusal why = sim::CheckCapture(castContext, spellTable, cast, input.tick); why != sim::SpellRefusal::None)
             return reject(RejectionOf(why));
-        if (Fighting() && round.phase != sim::RoundPhase::Warmup && !sim::SpendCharge(fighters[p.slot], Rules(), Tick())) {
-            ++stats.castsRefusedNoCharge;
-            return reject(CastRejection::NoCharge);
-        }
-        const size_t form = static_cast<size_t>(sim::FormOf(input.spell));
-        castContext.casters[cast.player].formReadyTick[form] = input.tick + spellTable.forms[form].cooldownTicks;
+        sim::TakeCapture(castContext, spellTable, cast, input.tick);
+        // A spell ends the spawn protection where a charge would have (sim::SpendCharge).
+        if (Fighting() && round.phase != sim::RoundPhase::Warmup) fighters[p.slot].protectedUntil = 0;
         QueuedCast q;
+        if (const auto g = pl.gestures.find(input.tick); g != pl.gestures.end()) {
+            q.hasGesture = true;
+            q.gesture = std::move(g->second);
+            pl.gestures.erase(g);
+        }
         q.spell = true;
         q.team = cast.team;
         q.request.player = cast.player;
@@ -131,8 +135,8 @@ namespace vortex::net {
 
     void Server::Impl::LateSpell(Peer& p, const sim::PlayerInput& in, uint32_t now) {
         Player& pl = *p.player;
+        // A spell takes no cast cooldown: the capture judges the gap at the input's tick.
         const bool allowed = SpellAllowed(p, in, in.tick);
-        if (!LateTake(p, in, now)) return;
         const sim::PlayerState* at = pl.StateAt(in.tick);
         CaptureSpell(p, in, at != nullptr ? *at : pl.state);
         // Its client moved from the input's tick on: the move starts now, less the ticks it has run there.
@@ -177,6 +181,15 @@ namespace vortex::net {
         cast.dir = q.request.dir;
         // The caster's own move (a Dash) started at its Spell edge inside StepPlayer: never a second time here.
         cast.casterState = nullptr;
+        if (q.hasGesture) {
+            cast.gesture = q.gesture;
+        } else if (Peer* p = PeerOfSlot(q.player); p != nullptr) {
+            // A gesture that arrived after its Spell edge was captured.
+            if (const auto g = p->player->gestures.find(q.request.inputTick); g != p->player->gestures.end()) {
+                cast.gesture = std::move(g->second);
+                p->player->gestures.erase(g);
+            }
+        }
         const std::vector<sim::SpellTarget> targets = SpellTargets();
         const sim::CastSpellResult r = sim::CastSpell(*simulation, spellTable, cast, castContext, targets);
         const uint64_t work = sim::CastWorkOf(r).Total();
@@ -194,7 +207,7 @@ namespace vortex::net {
         const uint64_t bytesBefore = stats.eventBytes;
         const double vs = static_cast<double>(simulation->World().VoxelSize());
         // Decision 7: CastFx, the operations applied now, the zone starts, the cancels, then the damage.
-        Emit(CastFx{q.player, cast.spell, ToQ(cast.eye, vs), r.hitQ, r.face, r.runTick});
+        Emit(CastFx{q.player, cast.spell, ToQ(cast.eye, vs), r.hitQ, r.face, r.runTick, r.flightTicks, r.drawnPointsQ});
         for (const sim::BlastResult& group : r.groups) stats.spellOps += EmitGroup(group);
         for (const sim::Zone& zone : r.zonesStarted) {
             if (failed) break;
@@ -250,6 +263,24 @@ namespace vortex::net {
         return true;
     }
 
+    bool Server::Impl::OnSpellGesture(Peer& p, std::span<const uint8_t> bytes) {
+        SpellGesture m;
+        if (!Decode(bytes, m)) return false;
+        if (!p.player) return true;
+        Player& pl = *p.player;
+        // Only recent ticks and a few at a time: a gesture waits for its Spell edge at most the input queue's length.
+        const uint32_t now = Tick();
+        const uint32_t oldest = now > kGestureKeepTicks ? now - kGestureKeepTicks : 0u;
+        std::erase_if(pl.gestures, [oldest](const auto& entry) { return entry.first < oldest; });
+        if (m.inputTick < oldest || m.inputTick > now + settings.inputQueueTicks || pl.gestures.size() >= kMaxKeptGestures) {
+            ++stats.gesturesDropped;
+            return true;
+        }
+        pl.gestures[m.inputTick] = std::move(m.gesture);
+        ++stats.gestures;
+        return true;
+    }
+
     void Server::Impl::ApplyAttune(uint8_t slot) {
         Peer* p = PeerOfSlot(static_cast<uint8_t>(slot + 1));
         if (p == nullptr || !p->player->attunePending) return;
@@ -269,10 +300,8 @@ namespace vortex::net {
     void Server::Impl::FillMagicOwner(Snapshot& snap, uint8_t slot, const Player& pl) const {
         sim::CasterState c;
         if (const auto it = castContext.casters.find(static_cast<uint8_t>(slot + 1)); it != castContext.casters.end()) c = it->second;
-        for (size_t f = 0; f < 4; ++f) {
-            const uint32_t left = c.formReadyTick[f] > snap.tick ? c.formReadyTick[f] - snap.tick : 0u;
-            snap.formCooldown4[f] = static_cast<uint8_t>(std::min<uint32_t>((left + 3) / 4, 255));
-        }
+        snap.mana = sim::ManaAt(spellTable, c, snap.tick);
+        snap.spellGap = static_cast<uint8_t>(std::min<uint32_t>(c.spellReadyTick > snap.tick ? c.spellReadyTick - snap.tick : 0u, 255));
         uint8_t attune = static_cast<uint8_t>((c.elementA & 3) | ((c.elementB & 3) << 2));
         if (pl.spellElement == c.elementB && c.elementB != c.elementA) attune = static_cast<uint8_t>(attune | Snapshot::kAttuneActiveB);
         snap.attune = attune;

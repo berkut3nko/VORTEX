@@ -692,6 +692,10 @@ namespace vortex::net {
                 WriteIvec3(out, fx.hitQ);
                 out.U8(fx.face);
                 out.U32(fx.tick);
+                out.U8(fx.flightTicks);
+                const size_t count = std::min(fx.pointsQ.size(), CastFx::kMaxPoints);
+                out.U8(static_cast<uint8_t>(count));
+                for (size_t i = 0; i < count; ++i) WriteIvec3(out, fx.pointsQ[i]);
             }
             void operator()(const ObjectModel& m) const {
                 out.U8(static_cast<uint8_t>(EventKind::ObjectModel));
@@ -839,7 +843,13 @@ namespace vortex::net {
                 fx.hitQ = ReadIvec3(in);
                 fx.face = in.U8();
                 fx.tick = in.U32();
+                fx.flightTicks = in.U8();
+                const uint8_t count = in.U8();
                 if (in.Failed() || fx.spell > kMaxSpellId || fx.face > 5) return false;
+                if (fx.flightTicks > CastFx::kMaxFlightTicks || count > CastFx::kMaxPoints) return false;
+                fx.pointsQ.resize(count);
+                for (glm::ivec3& p : fx.pointsQ) p = ReadIvec3(in);
+                if (in.Failed()) return false;
                 event = fx;
                 return true;
             }

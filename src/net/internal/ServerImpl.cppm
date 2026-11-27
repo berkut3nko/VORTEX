@@ -58,6 +58,10 @@ namespace vortex::net {
         /// Ticks of player states the server keeps: a late input older than this (it would also be
         /// older than the input queue, 16 ticks) captures its cast from the current state.
         inline constexpr uint32_t kStateHistory = 32;
+        /// [mag-8] A SpellGesture waits this many ticks at most for its Spell edge (a late input is judged up to
+        /// kStateHistory ticks back); at most this many wait per player.
+        inline constexpr uint32_t kGestureKeepTicks = 64;
+        inline constexpr size_t kMaxKeptGestures = 8;
 
         /// A joined client's player (docs/design/networking.md "Player movement", "Time and ticks").
         struct Player {
@@ -101,6 +105,8 @@ namespace vortex::net {
             uint8_t spellElement = static_cast<uint8_t>(sim::Element::Metal);
             bool attunePending = false;
             uint8_t attuneA = 0, attuneB = 0;
+            /// [mag-8] SpellGesture messages by their input tick, until their Spell edge is captured (old ones are dropped).
+            std::map<uint32_t, sim::SpellGesture> gestures;
             /// [mech-1] Holding (mechanisms.md "One use key: E"): the held body (its scene::Held component is the
             /// truth), the busy rule's last change, the echo window after an auto-drop (0: none) and the
             /// replicated body it stood on last.
@@ -242,6 +248,10 @@ namespace vortex::net {
             /// [mag-2] A spell (request.spell; request.eye and dir of its input's tick): sim::CastSpell runs it at dequeue.
             bool spell = false;
             sim::TeamId team = sim::kNoTeam;   ///< the caster's team at capture
+            /// [mag-8] The gesture paired with the Spell edge (by its input tick; one that arrives after the capture is
+            /// taken when the cast runs).
+            bool hasGesture = false;
+            sim::SpellGesture gesture;
         };
 
         /// A terrain-mode peer's bulk goes nearest its eyes first: this far above the feet.
@@ -584,14 +594,14 @@ namespace vortex::net {
         uint64_t scheduledGroups = 0;     // groups RunScheduled emitted (the Magic: line)
         uint64_t sitesRun = 0;
         void StartMagic();                                   // at Start: the table, the walls, the spawn areas
-        /// The capture checks a Spell edge of `input` would pass at `tick` (alive, attuned, the form ready, a charge),
-        /// as StepPlayer's spellMoveAllowed: it changes nothing.
+        /// The capture checks a Spell edge of `input` would pass at `tick` (alive, attuned, the gap over, the mana for its
+        /// cost), as StepPlayer's spellMoveAllowed: it changes nothing.
         bool SpellAllowed(const Peer& p, const sim::PlayerInput& input, uint32_t tick) const;
-        /// A Spell edge the cooldown accepted (decision 5): Dead, the capture checks, a charge, then the form cooldown
-        /// and the cast queue. `at`: the state after the input's tick.
+        /// A Spell edge: Dead, the capture checks (sim::CheckCapture: the gap), then the gap starts and the cast queue takes
+        /// it with its gesture (mana is charged when it runs). `at`: the state after the input's tick.
         void CaptureSpell(Peer& p, const sim::PlayerInput& input, const sim::PlayerState& at);
-        /// A Spell edge in a late input: judged at its input's tick as LateCast judges a cast; a Dash allowed then starts
-        /// now with the ticks it would have run taken off.
+        /// A Spell edge in a late input: its capture is judged at its input's tick (no cast cooldown); a Dash allowed then
+        /// starts now with the ticks it would have run taken off.
         void LateSpell(Peer& p, const sim::PlayerInput& in, uint32_t now);
         void RunSpell(const QueuedCast& q, bool overdue);
         void RunScheduledSpells();
@@ -599,6 +609,9 @@ namespace vortex::net {
         /// Attune (decision 12): taken while the player is dead or before its first spawn; false only for a message that
         /// does not decode (the peer is dropped).
         bool OnAttune(Peer& p, std::span<const uint8_t> bytes);
+        /// SpellGesture: kept by its input tick for the Spell edge of that tick; false only for a message that does not
+        /// decode (the peer is dropped).
+        bool OnSpellGesture(Peer& p, std::span<const uint8_t> bytes);
         void ApplyAttune(uint8_t slot);                      // at a spawn: a pending Attune becomes the caster's pair
         void MagicJoin(uint8_t slot);
         void MagicLeave(uint8_t slot);
@@ -607,7 +620,7 @@ namespace vortex::net {
         uint8_t RosterAttuneOf(uint8_t slot) const;
         /// The zones a joiner gets in its BaselineEnd: live or pending now, at most kMaxBaselineZones.
         std::vector<sim::Zone> BaselineZones() const;
-        /// Judges a cast or Spell edge of a late input by the state of its tick (true: taken; the cooldown and the kept
+        /// Judges a cast edge of a late input by the state of its tick (true: taken; the cooldown and the kept
         /// states are rewritten as if it was taken then).
         bool LateTake(Peer& p, const sim::PlayerInput& in, uint32_t now);
 

@@ -187,7 +187,7 @@ TEST(Magic, UpdraftLiftsEveryoneInItsColumnToAHover) {
     EXPECT_EQ(z.shape.kind, voxel::kShapeCylinder);
     EXPECT_EQ(z.shape.a.y - z.shape.halfHeightQ, (kG - 1) * 16) << "from one voxel under the seed cell: the feet rest in the hit face";
     EXPECT_EQ(2 * z.shape.halfHeightQ, 82 * 16) << "the seed cell and 80 cells above it";
-    EXPECT_EQ(cast.stats.bytes, 32u + 32u);
+    EXPECT_EQ(cast.stats.bytes, 32u + 34u);
 
     // Nothing moves before T_z: the lead.
     while (yard.simulation.Tick() < z.startTick) yard.Tick();
@@ -275,7 +275,7 @@ TEST(Magic, DashMovesItsCasterAndShovesEnemiesBesideThePath) {
     EXPECT_EQ(z.shape.kind, voxel::kShapeCapsule);
     EXPECT_EQ(z.shape.b.x - z.shape.a.x, 8 * 128);
     EXPECT_EQ(z.teamMask, static_cast<uint8_t>(0xFF & ~(1u << 1)));
-    EXPECT_EQ(cast.stats.bytes, 42u + 32u);
+    EXPECT_EQ(cast.stats.bytes, 42u + 34u);
 
     for (int i = 0; i < sim::kDashTicks; ++i) yard.Tick();
     EXPECT_EQ(caster.state.dashLeft, 0);
@@ -377,7 +377,7 @@ TEST(Magic, PunchTruncatesLiveEnemyZones) {
     EXPECT_EQ(yard.simulation.Zones().Find(farId)->EndTick(), farLift.zonesStarted[0].EndTick()) << "out of reach";
     // The Shove and the ally Release (capsules), the cancel, the CastFx and the blow; the Shatter flood's mask is
     // counted when it runs at T_z.
-    EXPECT_EQ(punch.stats.bytes, 42u + 42u + 7u + 32u + static_cast<uint32_t>(sim::OpWireBytes(sim::WorldOp::Carve({}, 0))));
+    EXPECT_EQ(punch.stats.bytes, 42u + 42u + 7u + 34u + static_cast<uint32_t>(sim::OpWireBytes(sim::WorldOp::Carve({}, 0))));
 
     // A truncated zone that ends at T_z is not live then: a second Punch cancels nothing.
     const sim::CastSpellResult again = yard.Cast(sim::kPunch, 0, 1, eye, eye + glm::dvec3(1.0, 0.0, 0.0));
@@ -554,6 +554,7 @@ TEST(Magic, TheKnitCapCrumblesTheCastersOldestWall) {
     const uint8_t knit = yard.Ids().knitIron;
     std::vector<sim::CastSpellResult> walls;
     for (const int z : {-80, -40, 0, 40, 80}) {
+        sim::RefillMana(yard.table, yard.ctx.casters[4], yard.simulation.Tick());   // the knit cap, not the mana, is under test
         walls.push_back(yard.Cast(sim::kBarricadeWave, 4, 1, {-3.0, kGround + 2.0, (z + 0.5) * kVoxel}, GroundAt(0, z)));
         ASSERT_EQ(walls.back().refusal, sim::SpellRefusal::None);
         if (walls.size() < 5) EXPECT_TRUE(walls.back().groups.empty());
@@ -569,7 +570,7 @@ TEST(Magic, TheKnitCapCrumblesTheCastersOldestWall) {
     EXPECT_FALSE(yard.ctx.structure.queue.empty()) << "the crumble queued its site checks";
 }
 
-TEST(Magic, CaptureChecksTheFormCooldownAndTheAttunement) {
+TEST(Magic, CaptureChecksTheGapAndTheAttunement) {
     sim::CastContext ctx;
     const sim::SpellTable table = sim::BuildSpellTable(kVoxel);
     sim::SpellCast c;
@@ -584,9 +585,11 @@ TEST(Magic, CaptureChecksTheFormCooldownAndTheAttunement) {
     c.spell = sim::kPunch;
     EXPECT_EQ(sim::CheckCapture(ctx, table, c, 10), sim::SpellRefusal::NotAttuned);
     c.spell = sim::kBarricadeWave;
-    ctx.casters[3].formReadyTick[static_cast<size_t>(sim::Form::Burst)] = 10 + table.forms[static_cast<size_t>(sim::Form::Burst)].cooldownTicks;
-    EXPECT_EQ(sim::CheckCapture(ctx, table, c, 11), sim::SpellRefusal::FormCooling);
-    EXPECT_EQ(sim::CheckCapture(ctx, table, c, 430), sim::SpellRefusal::None);
+    sim::TakeCapture(ctx, table, c, 10);
+    EXPECT_EQ(sim::CheckCapture(ctx, table, c, 11), sim::SpellRefusal::TooSoon);
+    c.spell = sim::kFlashFreeze;
+    EXPECT_EQ(sim::CheckCapture(ctx, table, c, 21), sim::SpellRefusal::TooSoon) << "the gap is every form's";
+    EXPECT_EQ(sim::CheckCapture(ctx, table, c, 22), sim::SpellRefusal::None) << "12 ticks";
 }
 
 // --- work and determinism -----------------------------------------------------------------------

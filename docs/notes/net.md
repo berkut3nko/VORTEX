@@ -191,7 +191,7 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
   12 `ModelRequest`, 13 `BaselineEntity`, 14 `BaselineEnd`, 15 `BaselineNear`; [net-7b] checks and terrain mode 16
   `TerrainAck`, 17 `HashCheck`, 18 `EntityCheck`, 19 `EntityListRequest`, 20 `EntityList`; [wp-7] the fight 21
   `Roster`, 22 `RoundUpdate`, 23 `KillNotice` (events channel, taken on receipt, not by opSeq); [mag-2] 24 `Attune` (client ->
-  server, events channel). Protocol 14 ([mag-2]).
+  server, events channel); [mag-8] 25 `SpellGesture` (client -> server, events channel). Protocol 15 ([mag-8]).
 - **The fight** [wp-7] (fight.md "Wire"): `CastRejection` 4 `NoCharge`, 5 `Dead`; `sim::DamageCause` 1 `Blast`, 2
   `Fall`, 3 `Lava`, 4 `Void`, 5 `Crush` (reserved for [si-2]); `sim::GameMode` 0 `Sandbox`, 1 `Deathmatch`, 2
   `Felling`; `sim::RoundPhase` 0 `Warmup`, 1 `Countdown`, 2 `Live`, 3 `Ended`; `sim::RoundEnd` 0 `None`, 1 `Score`, 2
@@ -226,7 +226,9 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
     over 64 m (8 192 q, per axis and in length), as a capsule shape is.
   - Events: `ZoneStart` 38: zoneId u16, zone kind u8, teamMask u8, startTick u32, duration u16, strength i16 x 2, the
     shape as `MapShape`'s: 30 / 42 / 40 / 32 B. `ZoneCancel` 39: zoneId u16, endTick u32: 7 B. `CastFx` 40: slot + 1 u8 (0 a
-    server script), spell u8, originQ i32 x 3, hitQ i32 x 3, face u8 (axis * 2 + (sign < 0)), tick u32 (T_run): 32 B.
+    server script), spell u8, originQ i32 x 3, hitQ i32 x 3, face u8 (axis * 2 + (sign < 0)), tick u32 (T_run), then
+    [mag-8]'s flightTicks u8 (at most 60) and the points of a drawn shape (count u8, at most 16; i32 x 3 q each): 34 B +
+    12 B per point.
   - Decoder limits: map 1-15; axis 0-2; a sphere's or cylinder's radius at most `sim::kMaxCastRadiusQ`; a capsule at most
     8 192 q (64 m) long with a radius of at most 1 024 q; box corners within `kMaxSyncChunkCoordinate` chunks; mask voxels
     charged against the batch's budget before the mask is made; zone kinds 1-9 (Impulse 1 .. Block 7, Shove 8, Rune 9;
@@ -237,12 +239,12 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
   - `PlayerButton` 32 `Spell` (an edge: the selected spell; `kPlayerButtonMask` 63; the input decoder refuses other
     bits). `PlayerInput::spell` u8 after `buttons` in every input: `kInputBytes` 8. A spell over 17 is the server's to
     refuse (`NotAttuned`), never the decoder's.
-  - `CastRejection` 6 `FormCooling`, 7 `NotAttuned`, 8 `TooMuchConjured`, 9 `TooManyZones`, 10 `TooMuchFire` (reserved for
-    spread's fire cap), 11 `NearSpawn`; `kMaxCastRejection` 11.
-  - Owner block +20 B after `useResult` (`kSnapshotOwnerBytes` 64): push i16 x 3 (each within +-1 500), status, slowQ (at
-    most 16), slowLeft, rootLeft, pinLeft, ccGuardLeft, dashLeft (u8 each), dashDir i8 x 2 (the client restores these 12
-    and the dash's 3 before every replay), the four form cooldowns u8 in 4-tick units rounded up (0 ready, 255 at most;
-    HUD only), the attunement byte (bits 0-1 element A, 2-3 element B, bit 4 `kAttuneActiveB`: the last Spell edge's
+  - `CastRejection` 6 `FormCooling` (retired by protocol 15: the decoder refuses it, never reuse it), 7 `NotAttuned`, 8
+    `TooMuchConjured`, 9 `TooManyZones`, 10 `TooMuchFire` (reserved for spread's fire cap), 11 `NearSpawn`.
+  - Owner block +19 B after `useResult` (`kSnapshotOwnerBytes` 63 since protocol 15): push i16 x 3 (each within +-1 500),
+    status, slowQ (at most 16), slowLeft, rootLeft, pinLeft, ccGuardLeft, dashLeft (u8 each), dashDir i8 x 2 (the client
+    restores these 12 and the dash's 3 before every replay), [mag-8]'s mana u16 (1/60 mana, at most 6 000; refused above)
+    and spellGap u8 (ticks until a Spell edge is captured again; HUD and the client's own Dash only), the attunement byte (bits 0-1 element A, 2-3 element B, bit 4 `kAttuneActiveB`: the last Spell edge's
     element was B; bits above 4 refused). Remote record +1 B (`kSnapshotPlayerBytes` 19): `statusBits`, bits 0-3 status
     & 15, bits 4-5 the element of its last Spell edge. Roster +1 B per player (7 B each): bits 0-1 element A, 2-3 element
     B.
@@ -251,21 +253,35 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
     +1 B count (at most 32) and that many zones as `ZoneStart` writes them after its kind byte: 10 B with none.
   - `buildHash` mixes `sim::SpellTableHash(BuildSpellTable(voxel::kDefaultVoxelSize))` and
     `voxel::TurningTableHash(WorldTurningTable())` after the land golden hash.
-- **The server's spells** [mag-2] (`ServerMagic.cpp`): a Spell edge (no Cast edge in the same input) goes through the
-  cast's cooldown in `StepPlayer`; before the step the server decides `PlayerZones::spellMoveAllowed` from the capture
-  checks it will make (alive, `sim::CheckCapture`, a charge), so a Dash starts inside `StepPlayer` exactly when its
-  capture passes. Capture: Dead, then `CheckCapture` (`RejectionOf(SpellRefusal)`), then a charge (Countdown, Live and
-  Ended), then the form cooldown and the one cast queue (`QueuedCast::spell`). The run (`sim::CastSpell` with no caster
-  state: the dash is never started twice) emits `CastFx`, its operations through `EmitOp` (`EmitGroup`, as a blast's),
-  every `ZoneStart`, every `ZoneCancel`, then the damage through `DealDamage` (cause `Blast`). `RunScheduled` runs every
-  tick after `RunCasts`: bands, blows, zone ticks, expiries, site checks, zone pruning; its groups through `EmitGroup`, its
+- **Casting** [mag-8] (magic.md "Casting: mana, gestures and projectiles"), protocol 15. Sizes include the type byte.
+  - `SpellGesture` 25 (client -> server, events channel): inputTick u32, kind u8 (`sim::GestureKind`: 0 `Tap`, 1 `Rise`,
+    2 `Fall`, 3 `Line`), form u8 (0-3 a forced `sim::Form`, 4 `sim::kAutoForm`), count u8 (at most 16), then each point
+    i32 x 3 (q): 8 B + 12 B per point. Refused: a kind over 3, a form over 4, more than 16 points.
+  - `CastRejection` 12 `NoMana`, 13 `TooSoon`, 14 `BadGesture`; `kMaxCastRejection` 14.
+  - `sim::kPlayerRuleRevision` 5: a Spell edge takes no cast cooldown (the blast keeps its own).
+  - `buildHash` sees the spell table's mana, gap, projectile speeds and gesture limits through `SpellTableHash`.
+- **The server's spells** [mag-2], [mag-8] (`ServerMagic.cpp`): a Spell edge (no Cast edge in the same input) is taken
+  by `StepPlayer` with no cooldown; before the step the server decides `PlayerZones::spellMoveAllowed` from the checks
+  it will make (alive, `sim::CheckCapture`, the mana for the spell's tap cost), so a Dash starts inside `StepPlayer`
+  exactly when its capture passes. Capture: Dead, then `CheckCapture` (`RejectionOf(SpellRefusal)`: the 12-tick gap
+  refuses `TooSoon`), then `sim::TakeCapture` starts the gap and the one cast queue takes it (`QueuedCast::spell`) with
+  the `SpellGesture` of its input tick (`Player::gestures`: kept 64 ticks, 8 at most; one that comes after the capture
+  is taken when the cast runs). Spells cost no charge; a spell ends the spawn protection where a charge would. The run
+  (`sim::CastSpell` with no caster state: the dash is never started twice) checks the gesture (`BadGesture`), plans,
+  checks the spawn guard and the caps, then charges the mana (`NoMana`; `sim::ManaAt`: the pool, 10 units a tick back,
+  refilled at each respawn by `sim::RefillMana`), and emits `CastFx` (with its flight and drawn points), the operations
+  that land now (a spell with no flight: Punch, Dash) through `EmitOp` (`EmitGroup`, as a blast's), every `ZoneStart`
+  (each starts at max(T_run + the flight, T_run + the lead)), every `ZoneCancel`, then the damage through `DealDamage`
+  (cause `Blast`). `RunScheduled` runs every tick after `RunCasts`: what lands on its projectile's arrival (ops, a bore
+  with its island search, direct hits), bands, blows, zone ticks, expiries, site checks, zone pruning; its groups through `EmitGroup`, its
   damage through `DealDamage`. Zone events and `CastFx` charge the cast queue's event credit, as operations do. `Attune`
   is taken while dead or before the first spawn and applied at the next spawn. A joiner's `BaselineEnd` carries the live
   or pending zones. The exit lines `Magic: server:` and `Zones:` count them (vortex_server prints them after a spell).
 - **The client's zones** [mag-2] (`ClientSync.cpp` `ApplyMagic`): `ZoneStart` and `ZoneCancel` are applied to the
   simulation's zones at their opSeq; a cancel of a zone not held yet waits for its start (a joiner's baseline zones);
   `CastFx` is kept for the presentation (`Client::TakeCastFx`). Zones are pruned after each predicted tick at `nextTick -
-  kHistoryTicks`. Each history entry keeps its `spellMoveAllowed` for replays (alive and a charge as the owner block said).
+  kHistoryTicks`. Each history entry keeps its `spellMoveAllowed` for replays (alive and, as the owner block said, the mana for the spell's tap cost). `Client::SetSpellGesture` sends a
+  `SpellGesture` with the first predicted input that holds a Spell edge, paired by that input's tick.
 - **The server's half** [mech-1] (`ServerMechanisms.cpp`): the session key `mechanisms = 1` with the playground
   template builds the mechanism yard at the start (its operations through `EmitOp`, then one `EntitySpawn` of kind
   `Mechanism` per mechanism, resting). A Use edge is judged from the player's state at the input's tick (older than

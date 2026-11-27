@@ -160,8 +160,10 @@ export namespace vortex::sim {
      * 3: push, the Impulse, Lift and Shove zones, the dash and the vertical parameter of
      * UpdateCharacter (magic.md "PlayerState, StepPlayer and the physics call", 2026-11-26).
      * 4: Chill, Root and Release zones, the control guard, Fresh and slick ground (magic.md, 2026-11-26).
+     * 5: a Spell edge no longer takes the blast's cast cooldown (magic.md "Casting: mana, gestures and
+     * projectiles", 2026-11-27).
      */
-    inline constexpr uint32_t kPlayerRuleRevision = 4;
+    inline constexpr uint32_t kPlayerRuleRevision = 5;
 
     /// @brief Each axis of PlayerState::push stays within +- this (cm/s).
     inline constexpr int32_t kPushLimitCmS = 1500;
@@ -285,7 +287,7 @@ export namespace vortex::sim {
      * @brief One tick of a player: the single movement rule of the server, the predicting client
      * and the offline game (docs/design/networking.md "Player movement").
      * @details In order: button edges (PressButtons), cooldown down by one, a cast edge
-     * (TakeCast), else a Spell edge through the same TakeCast (when `zones.spellMoveAllowed`, its
+     * (TakeCast), else a Spell edge, which takes no cooldown (when `zones.spellMoveAllowed`, its
      * own move: StartSpellMove along the input's look), then the gate: if `terrain.HasCollider(PlayerBounds(state.position))` is false
      * the player is held (PlayerFlag_Held, nothing moves; the gate does not wait for re-cooks, see
      * HasCollider). Otherwise the character moves with the wish velocity (run or walk speed),

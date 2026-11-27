@@ -160,9 +160,9 @@ TEST(Mechanisms, WireSizes) {
 }
 
 TEST(Mechanisms, SnapshotCarriesTheUseResultAndTheHoldPitch) {
-    EXPECT_EQ(net::kSnapshotOwnerBytes, 64u) << "[wp-7]'s 39 + lastUseTick 4 + useResult 1 + [mag-2]'s 20";
+    EXPECT_EQ(net::kSnapshotOwnerBytes, 63u) << "[wp-7]'s 39 + lastUseTick 4 + useResult 1 + [mag-8]'s magic state 19";
     EXPECT_EQ(net::kSnapshotPlayerBytes, 19u) << "[wp-7]'s 17 + holdPitch 1 + [mag-2]'s statusBits 1";
-    EXPECT_EQ(net::kProtocolVersion, 14u);   // [mag-2]
+    EXPECT_EQ(net::kProtocolVersion, 15u);   // [mag-8]
 
     net::Snapshot s;
     s.tick = 10;

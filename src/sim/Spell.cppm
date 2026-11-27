@@ -47,9 +47,9 @@ export namespace vortex::sim {
     /// @brief Which players a zone acts on, seen from the caster's team.
     enum class ZoneTarget : uint8_t { Enemies = 0, Everyone = 1, Allies = 2 };
 
-    /// @brief Per form: the cooldown both of its elements share (magic.md "Resources").
+    /// @brief Per form: its projectile's speed (magic.md "Casting: mana, gestures and projectiles").
     struct FormDef {
-        uint16_t cooldownTicks = 0;
+        uint8_t speedMs = 0;   ///< m/s from the hand to the target (Flow: horizontal, over a parabola)
     };
 
     /// @brief How a spell's zone is placed and what it does. Integers only; q = 1/16 voxel.
@@ -129,6 +129,15 @@ export namespace vortex::sim {
         uint8_t maxBodies = 0;             ///< bodies woken by one cast
         uint16_t maxBodyKickCmS = 0;
         uint16_t dispelRadiusQ = 0;
+        // casting (magic.md "Casting: mana, gestures and projectiles")
+        uint16_t manaCost = 0;             ///< 1/60 mana: the cost of a tap (a drawn shape costs by its length)
+        bool noProjectile = false;         ///< the caster is the projectile (Punch, Dash): no flight
+        bool drawsLine = false;            ///< a Line gesture draws the shape along its polyline
+        uint16_t drawHalfWidthQ = 0;       ///< the drawn shape across the line (the wall's half thickness, the ice strip's half width)
+        uint8_t drawHeight = 0;            ///< voxels of a drawn wall above the ground (0: one cell on the ground)
+        uint16_t drawMinQ = 0;             ///< the drawn shape's length: at least this (the last segment is extended)
+        uint16_t drawMaxQ = 0;             ///< and at most this (the polyline is cut)
+        uint16_t drawZoneRadiusQ = 0;      ///< the zones of a drawn shape: a capsule from its first to its last point
     };
 
     /// @brief One integer table that holds every number of the spells (magic.md "sim::SpellTable").
@@ -138,6 +147,22 @@ export namespace vortex::sim {
         std::array<SpellDef, kSpellCount> spells{};
         uint16_t ablateRadiusQ = 0;        ///< the absorb rule's patch (0.25 m)
         uint32_t zoneLeadTicks = 24;
+        /// q per metre, rounded (lengths and flights are integers on the quantised points).
+        uint16_t metreQ = 128;
+        // Mana (server only; 1/60 mana units) and the gap between spells.
+        uint16_t manaPool = 6000;
+        uint16_t manaPerTick = 10;
+        uint16_t spellGapTicks = 12;
+        uint16_t drawBaseMana = 600;       ///< a drawn shape: this plus drawManaPerMetre per metre of its length
+        uint16_t drawManaPerMetre = 300;
+        // Projectiles.
+        uint8_t maxFlightTicks = 60;
+        uint8_t lineSpeedMs = 20;          ///< a drawn shape grows along its line at this speed
+        // The server's gesture checks (q).
+        uint32_t gestureReachQ = 0;        ///< each point within this of the eye
+        uint32_t gestureStepQ = 0;         ///< each point at most this from the last
+        uint32_t gesturePathQ = 0;         ///< the path at most this long
+        uint16_t gestureSupportQ = 0;      ///< a Line point and a Rise's start this close to a solid voxel
         /// What a bore pays per voxel of each world id: `round(hardness * 16)`, authored in code; 0 for air
         /// and liquids, kBoreStop for the indestructible ids that are not liquids (bedrock, floe).
         std::array<uint16_t, 256> boreCost{};

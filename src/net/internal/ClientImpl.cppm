@@ -373,13 +373,15 @@ namespace vortex::net {
         sim::PlayerZones ZonesAt(uint32_t tick, bool spellMove = true) const;
         // [mag-2] Zones by opSeq and the spell's own move.
         /// A Spell edge may start the own move: alive and, in a fight past its warmup, a charge as the owner block said.
-        bool SpellMoveAllowed() const;
+        bool SpellMoveAllowed(sim::SpellId spell) const;
         /// A ZoneStart, a ZoneCancel or a CastFx at its stream position.
         void ApplyMagic(const Event& event);
         /// Cancels of zones this client does not hold yet (a joiner's baseline zones come later): applied on insert.
         std::map<uint16_t, uint32_t> earlyCancels;
         std::deque<CastFx> castFx;
         Client::MagicView magic;
+        /// [mag-8] The gesture of the next Spell edge (Client::SetSpellGesture), sent with that edge's input.
+        std::optional<sim::SpellGesture> pendingGesture;
         uint32_t NetIdOfEntity(scene::Entity entity) const;
         /// The server's hold of a copy (EntityHold, or a spawn / baseline with kObjectHeld).
         void ApplyHold(uint32_t netId, uint8_t holder, uint16_t relYaw, uint32_t tick);

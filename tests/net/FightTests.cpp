@@ -126,19 +126,20 @@ TEST(FightWire, MessagesRoundTripAndRefuseBadValues) {
         EXPECT_FALSE(DecodesWith<net::Snapshot>(bytes, flagsAt, 8));
         EXPECT_TRUE(DecodesWith<net::Snapshot>(bytes, flagsAt, 7));
         const size_t rejectedAt = net::kSnapshotHeaderBytes - 2 + 31;
-        EXPECT_TRUE(DecodesWith<net::Snapshot>(bytes, rejectedAt, 11));   // [mag-2] NearSpawn is the last
-        EXPECT_FALSE(DecodesWith<net::Snapshot>(bytes, rejectedAt, 12));
+        EXPECT_TRUE(DecodesWith<net::Snapshot>(bytes, rejectedAt, 14));   // [mag-8] BadGesture is the last
+        EXPECT_FALSE(DecodesWith<net::Snapshot>(bytes, rejectedAt, 15));
+        EXPECT_FALSE(DecodesWith<net::Snapshot>(bytes, rejectedAt, 6)) << "6 is retired";
     }
     EXPECT_STREQ(net::ToString(net::CastRejection::NoCharge), "no charge");
     EXPECT_STREQ(net::ToString(net::CastRejection::Dead), "dead");
-    EXPECT_EQ(net::kProtocolVersion, 14);   // [mag-2]
+    EXPECT_EQ(net::kProtocolVersion, 15);   // [mag-8]
 }
 
 TEST(FightWire, SizesAreAsDesigned) {
     net::Snapshot none, owner;
     owner.hasOwner = true;
-    EXPECT_EQ(net::Encode(owner).size() - net::Encode(none).size(), 64u);   // [mag-2]: + the magic state, 20 B
-    EXPECT_EQ(net::kSnapshotOwnerBytes, 64u);
+    EXPECT_EQ(net::Encode(owner).size() - net::Encode(none).size(), 63u);   // [mag-8]: the magic state is 19 B (mana, gap)
+    EXPECT_EQ(net::kSnapshotOwnerBytes, 63u);
     net::Snapshot one = owner;
     one.others.push_back({});
     EXPECT_EQ(net::Encode(one).size() - net::Encode(owner).size(), 19u);    // [mag-2]: + statusBits

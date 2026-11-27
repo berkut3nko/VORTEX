@@ -439,8 +439,8 @@ TEST(Wire, MessagesRoundTripAndRefuseTrailingOrMissingBytes) {
         EXPECT_EQ(sback.bodies[0].velocity, net::QuantizeVelocity(body.velocity));
         EXPECT_FALSE(net::Decode(std::span(sb).first(sb.size() - 1), sback));
         {
-            std::vector<uint8_t> bad = sb;                       // an unknown rejection is refused (11 NearSpawn is the last, [mag-2])
-            bad[net::kSnapshotHeaderBytes - 2 + 31] = 12;
+            std::vector<uint8_t> bad = sb;                       // an unknown rejection is refused (14 BadGesture is the last, [mag-8])
+            bad[net::kSnapshotHeaderBytes - 2 + 31] = 15;
             EXPECT_FALSE(net::Decode(bad, sback));
         }
         {
@@ -713,7 +713,7 @@ TEST(Wire, CheckAndTerrainMessagesRoundTripAtTheirSizes) {
         longer.push_back(0);
         return !net::Decode(shorter, decoded) && !net::Decode(longer, decoded);
     };
-    EXPECT_EQ(net::kProtocolVersion, 14u);   // [mag-2]: the magic values
+    EXPECT_EQ(net::kProtocolVersion, 15u);   // [mag-8]: casting by mana and gesture
 
     // [wp-7] The fight's messages round-trip and refuse a byte too few or too many (FightWire.* for the values).
     {

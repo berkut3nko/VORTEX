@@ -36,7 +36,9 @@ export namespace vortex::net {
     /// 14: [mag-2] (WorldOpKind MapShape 7 and MapMask 8 on the wire; ZoneStart 38, ZoneCancel 39, CastFx 40;
     /// PlayerInput::spell and PlayerButton_Spell 32; the owner block's magic state +20, the remote record +1, the
     /// roster +1 per player; Attune 24; CastRejection 6-11; Welcome's zone lead and push decays; BaselineEnd's zones).
-    inline constexpr uint16_t kProtocolVersion = 14;
+    /// 15: [mag-8] (SpellGesture 25; CastFx +2 B and its points; the owner block's form cooldowns become mana and spellGap,
+    /// -1 B; CastRejection 6 retired, NoMana 12, TooSoon 13, BadGesture 14).
+    inline constexpr uint16_t kProtocolVersion = 15;
 
     /// @brief First byte of every message. Wire format.
     enum class MessageType : uint8_t {
@@ -67,6 +69,7 @@ export namespace vortex::net {
         RoundUpdate = 22,   ///< server -> client, events channel: the round's phase, score and result
         KillNotice = 23,    ///< server -> client, events channel: one death (the kill feed)
         Attune = 24,        ///< [mag-2] client -> server, events channel: the two elements of the next life
+        SpellGesture = 25,  ///< [mag-8] client -> server, events channel: the gesture of one input tick's Spell edge
     };
 
     using Token = std::array<uint8_t, 16>;
@@ -205,14 +208,20 @@ export namespace vortex::net {
         NoCharge = 4,   ///< [wp-7] no cast charge left at the input's tick (fight.md "Rules")
         Dead = 5,       ///< [wp-7] the player was dead at the input's tick
         // [mag-2] spells (magic.md "Wire values").
-        FormCooling = 6,      ///< the spell's form cooldown ran at the input's tick
+        // 6 was FormCooling (protocol 14: the form cooldowns, replaced by mana in [mag-8]). Never reuse it.
         NotAttuned = 7,       ///< the spell's element is not one of the caster's two, or the spell is not built
         TooMuchConjured = 8,  ///< the region holds the most conjured voxels
         TooManyZones = 9,     ///< the region's or the caster's live or pending zones are at their cap
         TooMuchFire = 10,     ///< reserved for spread's fire cap (nothing emits it yet)
         NearSpawn = 11,       ///< an op or a zone of the spell meets an enemy spawn area
+        // [mag-8] casting (magic.md "Casting: mana, gestures and projectiles").
+        NoMana = 12,          ///< the spell cost more than the caster's mana at T_run
+        TooSoon = 13,         ///< inside the gap after the caster's last spell
+        BadGesture = 14,      ///< the gesture failed the server's checks, or its form is not the spell's
     };
-    inline constexpr uint8_t kMaxCastRejection = 11;
+    inline constexpr uint8_t kMaxCastRejection = 14;
+    /// The retired rejection value a decoder refuses.
+    inline constexpr uint8_t kRetiredCastRejection = 6;
     const char* ToString(CastRejection rejection);
     /// @brief The rejection a snapshot reports for a refusal of the rules seam (values are equal; [wp-6]).
     CastRejection RejectionOf(sim::ActionRefusal refusal);
@@ -225,7 +234,7 @@ export namespace vortex::net {
     /// Header (type, tick, lastOpSeq, ackInputTick, marginTick, inputMargin, owner flag, player
     /// count, body count), owner state, one other player and one body, in bytes.
     inline constexpr size_t kSnapshotHeaderBytes = 22;
-    inline constexpr size_t kSnapshotOwnerBytes = 64;
+    inline constexpr size_t kSnapshotOwnerBytes = 63;
     inline constexpr size_t kSnapshotPlayerBytes = 19;
     inline constexpr size_t kSnapshotBodyBytes = 31;
     /// A snapshot is at most this large (networking.md "Entity replication": 1200 B hold about 36
@@ -274,10 +283,12 @@ export namespace vortex::net {
         sim::UseResult useResult = sim::UseResult::None;
         /// [mag-2] After useResult, 20 B: the owner's push (i16 x 3), status, slowQ, slowLeft, rootLeft, pinLeft,
         /// ccGuardLeft, dashLeft (u8 each) and dashDir (i8 x 2) travel in `owner` (the client restores them before a
-        /// replay); then the four form cooldowns in 4-tick units rounded up (0 = ready, 255 at most; for the HUD, never
-        /// for prediction) and the attunement byte (bits 0-1 element A, 2-3 element B, bit 4 set: the last Spell edge's
-        /// element was B).
-        std::array<uint8_t, 4> formCooldown4{};
+        /// replay); then [mag-8]'s mana (u16, 1/60 mana, at most kMaxMana) and spellGap (u8: ticks until a Spell edge is
+        /// captured again; for the HUD and the client's own Dash, never a correction) and the attunement byte (bits 0-1
+        /// element A, 2-3 element B, bit 4 set: the last Spell edge's element was B).
+        uint16_t mana = 0;
+        uint8_t spellGap = 0;
+        static constexpr uint16_t kMaxMana = 6000;
         uint8_t attune = 0;
         static constexpr uint8_t kAttuneActiveB = 16;
         std::vector<RemotePlayer> others;
@@ -352,6 +363,19 @@ export namespace vortex::net {
     std::vector<uint8_t> Encode(const Attune& m);
     /// @brief Refuses an element over 3 (two equal elements decode: the server judges them).
     bool Decode(std::span<const uint8_t> bytes, Attune& out);
+
+    /// @brief [mag-8] The gesture of the Spell edge in the input of `inputTick` (8 B + 12 B per point with the type byte):
+    /// inputTick u32, kind u8, form u8 (0-3 forced, sim::kAutoForm), count u8, then each point i32 x 3 (q). Sent once,
+    /// reliably, with that input; the server pairs them by the tick (magic.md "Casting: mana, gestures and projectiles").
+    struct SpellGesture {
+        uint32_t inputTick = 0;
+        sim::SpellGesture gesture;
+        friend bool operator==(const SpellGesture&, const SpellGesture&) = default;
+    };
+    inline constexpr size_t kSpellGestureHeaderBytes = 8;
+    std::vector<uint8_t> Encode(const SpellGesture& m);
+    /// @brief Refuses a kind over 3, a form over sim::kAutoForm, more than sim::kMaxGesturePoints points.
+    bool Decode(std::span<const uint8_t> bytes, SpellGesture& out);
     /// @brief Refuses a mode over 2, a phase over 3, a winner not 0, 1, 2 or 255, an end over 4, overtime over 1.
     bool Decode(std::span<const uint8_t> bytes, RoundUpdate& out);
     /// @brief Refuses a cause of 0 or over 5, flags over 1, a killer that is the victim.

@@ -40,12 +40,14 @@ namespace vortex::net {
             case CastRejection::Outside: return "outside the play area";
             case CastRejection::NoCharge: return "no charge";
             case CastRejection::Dead: return "dead";
-            case CastRejection::FormCooling: return "form cooling";
             case CastRejection::NotAttuned: return "not attuned";
             case CastRejection::TooMuchConjured: return "too much matter";
             case CastRejection::TooManyZones: return "too many zones";
             case CastRejection::TooMuchFire: return "too much fire";
             case CastRejection::NearSpawn: return "near spawn";
+            case CastRejection::NoMana: return "no mana";
+            case CastRejection::TooSoon: return "too soon";
+            case CastRejection::BadGesture: return "bad gesture";
         }
         return "unknown";
     }
@@ -54,7 +56,7 @@ namespace vortex::net {
         switch (refusal) {
             case sim::SpellRefusal::None: return CastRejection::None;
             case sim::SpellRefusal::NotBuilt: return CastRejection::NotAttuned;
-            case sim::SpellRefusal::FormCooling: return CastRejection::FormCooling;
+            case sim::SpellRefusal::TooSoon: return CastRejection::TooSoon;
             case sim::SpellRefusal::NotAttuned: return CastRejection::NotAttuned;
             case sim::SpellRefusal::Missed: return CastRejection::Missed;
             case sim::SpellRefusal::Outside: return CastRejection::Outside;
@@ -62,6 +64,8 @@ namespace vortex::net {
             case sim::SpellRefusal::TooManyZones: return CastRejection::TooManyZones;
             case sim::SpellRefusal::NearSpawn: return CastRejection::NearSpawn;
             case sim::SpellRefusal::Rooted: return CastRejection::Missed;
+            case sim::SpellRefusal::NoMana: return CastRejection::NoMana;
+            case sim::SpellRefusal::BadGesture: return CastRejection::BadGesture;
         }
         return CastRejection::Missed;
     }
@@ -196,7 +200,8 @@ namespace vortex::net {
             for (const uint8_t b : {o.status, o.slowQ, o.slowLeft, o.rootLeft, o.pinLeft, o.ccGuardLeft, o.dashLeft}) w.U8(b);
             w.U8(static_cast<uint8_t>(o.dashDir[0]));
             w.U8(static_cast<uint8_t>(o.dashDir[1]));
-            for (const uint8_t c : m.formCooldown4) w.U8(c);
+            w.U16(m.mana);
+            w.U8(m.spellGap);
             w.U8(m.attune);
         }
         w.U8(static_cast<uint8_t>(std::min<size_t>(m.others.size(), 255)));
@@ -375,7 +380,8 @@ namespace vortex::net {
         out.fight = Snapshot::Fight{};
         out.lastUseTick = 0;
         out.useResult = sim::UseResult::None;
-        out.formCooldown4 = {};
+        out.mana = 0;
+        out.spellGap = 0;
         out.attune = 0;
         if (out.hasOwner) {
             sim::PlayerState& o = out.owner;
@@ -385,7 +391,7 @@ namespace vortex::net {
             o.lastButtons = in.U8();
             out.lastCastTick = in.U32();
             const uint8_t rejected = in.U8();
-            if (in.Failed() || rejected > kMaxCastRejection) return false;
+            if (in.Failed() || rejected > kMaxCastRejection || rejected == kRetiredCastRejection) return false;
             out.castRejected = static_cast<CastRejection>(rejected);
             Snapshot::Fight& f = out.fight;
             for (uint8_t* b : {&f.health, &f.charges, &f.chargeTicks, &f.flags, &f.respawnTicks, &f.lifeSeq, &f.hits}) *b = in.U8();
@@ -398,9 +404,10 @@ namespace vortex::net {
             for (uint8_t* b : {&o.status, &o.slowQ, &o.slowLeft, &o.rootLeft, &o.pinLeft, &o.ccGuardLeft, &o.dashLeft}) *b = in.U8();
             o.dashDir[0] = static_cast<int8_t>(in.U8());
             o.dashDir[1] = static_cast<int8_t>(in.U8());
-            for (uint8_t& c : out.formCooldown4) c = in.U8();
+            out.mana = in.U16();
+            out.spellGap = in.U8();
             out.attune = in.U8();
-            if (in.Failed() || out.attune > 0x1F) return false;
+            if (in.Failed() || out.attune > 0x1F || out.mana > Snapshot::kMaxMana) return false;
             for (const int16_t p : o.push)
                 if (p < -sim::kPushLimitCmS || p > sim::kPushLimitCmS) return false;
             if (!Finite(o.position) || !Finite(o.velocity)) return false;
@@ -935,6 +942,36 @@ namespace vortex::net {
         out.craftA = in.U8();
         out.craftB = in.U8();
         if (in.Failed() || out.craftA > 3 || out.craftB > 3) return false;
+        return End(in);
+    }
+
+    // --- casting ([mag-8]) -------------------------------------------------------------------------
+
+    std::vector<uint8_t> Encode(const SpellGesture& m) {
+        ByteWriter w;
+        w.U8(static_cast<uint8_t>(MessageType::SpellGesture));
+        w.U32(m.inputTick);
+        w.U8(static_cast<uint8_t>(m.gesture.kind));
+        w.U8(m.gesture.form);
+        const size_t count = std::min<size_t>(m.gesture.pointsQ.size(), sim::kMaxGesturePoints);
+        w.U8(static_cast<uint8_t>(count));
+        for (size_t i = 0; i < count; ++i)
+            for (int a = 0; a < 3; ++a) w.I32(m.gesture.pointsQ[i][a]);
+        return w.Take();
+    }
+
+    bool Decode(std::span<const uint8_t> bytes, SpellGesture& out) {
+        ByteReader in(bytes);
+        if (!Begin(in, MessageType::SpellGesture)) return false;
+        out.inputTick = in.U32();
+        const uint8_t kind = in.U8();
+        out.gesture.form = in.U8();
+        const uint8_t count = in.U8();
+        if (in.Failed() || kind > sim::kMaxGestureKind || out.gesture.form > sim::kAutoForm || count > sim::kMaxGesturePoints) return false;
+        out.gesture.kind = static_cast<sim::GestureKind>(kind);
+        out.gesture.pointsQ.assign(count, glm::ivec3(0));
+        for (glm::ivec3& p : out.gesture.pointsQ)
+            for (int a = 0; a < 3; ++a) p[a] = in.I32();
         return End(in);
     }
 }

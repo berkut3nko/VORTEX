@@ -19,6 +19,7 @@ import :zones;
 import :player;
 import :rules;
 import :spell;
+import :gesture;
 import :propagate;
 import :knit;
 
@@ -31,11 +32,11 @@ export namespace vortex::sim {
     //  Voxel changes are integer WorldOps and zones are integers; the hit tests on players and
     //  bodies are server decisions and use floats.
 
-    /// @brief Why a spell was refused. A refusal keeps the charge and the form cooldown spent.
+    /// @brief Why a spell was refused. A refusal keeps the gap spent and costs no mana.
     enum class SpellRefusal : uint8_t {
         None = 0,
         NotBuilt,          ///< not a spell of the table, or not built
-        FormCooling,       ///< the form's cooldown runs
+        TooSoon,           ///< inside the gap after the caster's last spell
         NotAttuned,        ///< the element is not one of the caster's two
         Missed,            ///< no hit within the range (or a Dash with no horizontal aim)
         Outside,           ///< the hit is outside the operator's walls
@@ -43,6 +44,8 @@ export namespace vortex::sim {
         TooManyZones,      ///< the region's or the caster's live or pending zones are at their cap
         NearSpawn,         ///< an op box or a zone box meets an enemy spawn area
         Rooted,            ///< a Dash while the caster is rooted or pinned
+        NoMana,            ///< the cost is over the caster's mana at T_run
+        BadGesture,        ///< the gesture failed the server's checks, or its form is not the spell's
     };
     const char* ToString(SpellRefusal refusal);
 
@@ -57,6 +60,9 @@ export namespace vortex::sim {
         /// The caster's state: a Dash starts its move in it (StartDash). Null where the caster's own
         /// step starts the dash at the cast edge, or for a script with no player.
         PlayerState* casterState = nullptr;
+        /// The gesture of the cast (no points: a tap along `dir`). The server checks it (CheckGesture) and its form
+        /// must be the spell's (BadGesture).
+        SpellGesture gesture;
     };
 
     /// @brief A living player at the tick of the call: the server's hit tests and damage use it.
@@ -77,9 +83,12 @@ export namespace vortex::sim {
         TeamId team = kNoTeam;
         glm::ivec3 min{0}, max{0};
     };
-    /// @brief A caster's form cooldowns and its two attuned elements (Metal and Pressure by default).
+    /// @brief A caster's mana, its gap and its two attuned elements (Metal and Pressure by default). The mana is
+    /// `mana` at `manaTick`, plus SpellTable::manaPerTick each tick since, up to the pool (ManaAt): a new caster is full.
     struct CasterState {
-        std::array<uint32_t, 4> formReadyTick{};
+        uint16_t mana = 0xFFFF;
+        uint32_t manaTick = 0;
+        uint32_t spellReadyTick = 0;          ///< no Spell edge is captured before this tick (the gap)
         uint8_t elementA = static_cast<uint8_t>(Element::Metal);
         uint8_t elementB = static_cast<uint8_t>(Element::Pressure);
     };
@@ -95,6 +104,9 @@ export namespace vortex::sim {
         ZoneTick = 1,   ///< a zone's start tick: its damage and its body impulses
         Blow = 2,       ///< a Punch's blast at the fist point
         Shatter = 3,    ///< the Shatter flood in `op.sphere` (its radius) at the zone tick: one MapMask(Shatter)
+        Op = 4,         ///< an op planned at T_run, applied on its arrival (recorded under `owner` when `hasOwner`)
+        Bore = 5,       ///< a bore planned at T_run (`site`), carved with its island search on its arrival
+        Hit = 6,        ///< a projectile's direct damage to `target` on its arrival
     };
     /// @brief A follow-up, run by RunScheduled in (tick, seq) order.
     struct ScheduledAction {
@@ -102,6 +114,7 @@ export namespace vortex::sim {
         uint32_t seq = 0;
         ScheduledKind kind = ScheduledKind::Band;
         uint32_t owner = 0;                   ///< Band: the registry owner
+        bool hasOwner = true;                 ///< Op: record the op under `owner`
         WorldOp op;                           ///< Band: its MapMask; Blow: its CarveSphere
         uint16_t zoneId = 0;                  ///< ZoneTick
         uint16_t damage = 0;                  ///< ZoneTick: to the targets inside the zone at its tick
@@ -110,6 +123,8 @@ export namespace vortex::sim {
         uint8_t caster = 0;
         bool hasHitVoxel = false;             ///< Blow: the fist met terrain at `hitVoxel` (the absorb rule reads it)
         glm::ivec3 hitVoxel{0};
+        BlastSite site;                       ///< Bore
+        uint8_t target = 0;                   ///< Hit: slot + 1
     };
 
     /// @brief The server-only state of spells, owned by whoever casts (the offline game, a server).
@@ -140,16 +155,21 @@ export namespace vortex::sim {
         uint32_t boreSlices = 0;              ///< Shatter Spike: the slices the bore paid for
         uint32_t released = 0;                ///< Detach operations of the bore's island search
         uint32_t dashSteps = 0;               ///< Dash: path steps the trace kept
+        uint32_t drawnLengthQ = 0;            ///< a drawn shape: its length after the 1.5-10 m rule (q)
     };
 
     struct CastSpellResult {
         SpellRefusal refusal = SpellRefusal::None;
         uint32_t runTick = 0;                 ///< T_run
-        uint32_t zoneTick = 0;                ///< T_z = T_run + the zone lead
+        uint32_t zoneTick = 0;                ///< T_z = T_run + max(the flight, the zone lead)
+        uint8_t flightTicks = 0;              ///< the projectile's flight: its effects land at T_run + flightTicks
+        uint16_t manaCost = 0;                ///< charged at T_run (1/60 mana); 0 for a script
+        /// The gesture's points for CastFx when the spell drew a shape along them (else empty).
+        std::vector<glm::ivec3> drawnPointsQ;
         glm::ivec3 hitQ{0};                   ///< the hit (Punch: the fist point; Dash: the path's end), q
         uint8_t face = 0;                     ///< the hit face: axis * 2 + (sign < 0)
         bool dashStarted = false;
-        std::vector<BlastResult> groups;      ///< ops applied now, one group each, in order
+        std::vector<BlastResult> groups;      ///< ops applied now (no flight), one group each, in order
         std::vector<Zone> zonesStarted;
         std::vector<std::pair<uint16_t, uint32_t>> zonesCancelled;   ///< (zoneId, endTick)
         std::vector<SpellDamage> damage;
@@ -170,14 +190,55 @@ export namespace vortex::sim {
 
     /**
      * @brief The capture checks of a cast at `tick` (changes nothing): NotBuilt, NotAttuned (a caster
-     * not in `ctx.casters` has the default elements), FormCooling. On None the caller sets the
-     * caster's `formReadyTick[form] = tick + forms[form].cooldownTicks` (never given back).
+     * not in `ctx.casters` has the default elements), TooSoon (the gap). On None the caller calls
+     * TakeCapture (the gap is never given back).
      */
     SpellRefusal CheckCapture(const CastContext& ctx, const SpellTable& table, const SpellCast& cast, uint32_t tick);
+    /// @brief Starts the gap of a capture at `tick`: no Spell edge is captured before tick + spellGapTicks.
+    void TakeCapture(CastContext& ctx, const SpellTable& table, const SpellCast& cast, uint32_t tick);
+
+    // --- mana (magic.md "Casting: mana, gestures and projectiles"): server only, offline the same code ---
+
+    /// @brief The caster's mana at `tick` (tick >= its manaTick): its mana plus manaPerTick per tick, at most the pool.
+    uint16_t ManaAt(const SpellTable& table, const CasterState& caster, uint32_t tick);
+    /// @brief A full pool from `tick` on (a spawn, a respawn).
+    void RefillMana(const SpellTable& table, CasterState& caster, uint32_t tick);
+    /// @brief The length of the shape a Line draws for `spell` (q): the gesture's path within the spell's
+    /// [drawMinQ, drawMaxQ]; 0 when the spell draws no line or the gesture is not a Line of two points or more.
+    uint32_t DrawnLengthQ(const SpellTable& table, SpellId spell, const SpellGesture& gesture);
+    /// @brief The mana a cast costs (1/60 mana): a drawn shape drawBaseMana + drawManaPerMetre per metre of
+    /// DrawnLengthQ (rounded down), else the spell's tap cost.
+    uint32_t SpellManaCost(const SpellTable& table, SpellId spell, const SpellGesture& gesture);
 
     /**
-     * @brief Casts a spell at T_run = `simulation.Tick()`: plans it, checks the spawn guard and the
-     * caps, then applies it (docs/design/magic.md "The cast pipeline").
+     * @brief The server's checks of a gesture's points (BadGesture when one fails): at most kMaxGesturePoints,
+     * each within gestureReachQ of `eyeQ`, at most gestureStepQ from the last, the path at most
+     * gesturePathQ; every point of a Line and the first point of a Rise within gestureSupportQ of a voxel
+     * that is not air (the operator's walls count). A gesture with no points passes.
+     * @param chunksRead Chunks the support test read (charged as the cast's work).
+     */
+    SpellRefusal CheckGesture(const voxel::World& world, const OperatorWalls& walls, const SpellTable& table, const glm::ivec3& eyeQ,
+                              const SpellGesture& gesture, uint32_t* chunksRead = nullptr);
+
+    /**
+     * @brief The projectile's flight in ticks from `fromQ` to `toQ` (q) at `speedMs`:
+     * ceil(dist * 60 / speed), dist the floored quantised distance (horizontal only for `horizontal`), at most
+     * maxFlightTicks; 0 for a speed of 0.
+     */
+    uint8_t FlightTicks(const SpellTable& table, const glm::ivec3& fromQ, const glm::ivec3& toQ, uint32_t speedMs, bool horizontal = false);
+
+    /**
+     * @brief Casts a spell at T_run = `simulation.Tick()`: checks its gesture, plans it, checks the spawn guard,
+     * the caps and the caster's mana (charged then; a script pays none), then applies what lands now and schedules
+     * what lands later (docs/design/magic.md "The cast pipeline", "Casting: mana, gestures and projectiles").
+     * @details The projectile: every effect lands at T_run + flightTicks (FlightTicks from the eye to the hit at the
+     * form's speed; none for Punch and Dash) and every zone starts at max(that, T_run + the lead). A gesture with
+     * points: its form must be the spell's and it must pass CheckGesture (BadGesture). A Line draws Barricade Wave
+     * (a knit wall drawHeight high and 2 x drawHalfWidthQ thick on the ground under the line) and Flash Freeze (an
+     * ice strip, floe over water, Root and Chill in a capsule from its first to its last point) along the polyline
+     * cut to [drawMinQ, drawMaxQ]; segment s lands at its distance along the line at lineSpeedMs after the flight to
+     * the first point. A Line points Punch's shove along its last segment. Any other spell with points casts at
+     * the release point (a Dash keeps its look).
      * @details Updraft: a Lift y-cylinder over the Plume column from the air cell in front of the
      * hit, everyone. Dash: StartDash in `cast.casterState`, a capsule trace of the path from the
      * feet (at most dashRangeQ, stopped before the first step that meets a collider), an Impulse
@@ -185,8 +246,8 @@ export namespace vortex::sim {
      * fistRangeQ of the eye, else that far out), a blow at T_z, a Shove capsule for enemies at T_z,
      * and the dispel of enemy dispellable zones live at T_z whose centre (a capsule's segment, a
      * cylinder's axis) is within dispelRadiusQ of the fist, an ally Release of the Shove's capsule and the Shatter flood
-     * round the fist at T_z. Shatter Spike: a Pierce bore (its island search and load check run now, on the cast's
-     * work), a Rime capsule from the hit to the bore's end (Thaw at its lifetime), a Chill round the hit; a
+     * round the fist at T_z. Shatter Spike: a Pierce bore (its island search and load check run on its arrival, paid from the structure credit, or
+     * now on the cast's work when it has no flight), a Rime capsule from the hit to the bore's end (Thaw at its lifetime), a Chill round the hit; a
      * direct hit on an enemy in front of the terrain bores nothing. Flash Freeze: a Burst disc; water under the hit
      * becomes a floe slab (FreezeWater over a y-cylinder, two voxels deep), the disc's Path cells over dry ground an
      * ice film (Freeze); Root, then Chill over the disc. Permafrost Climb: the full Plume; ice on its Rise cells

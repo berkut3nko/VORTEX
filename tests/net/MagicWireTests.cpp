@@ -273,14 +273,29 @@ TEST(Wire, ZoneEventsAndCastFxRoundTrip) {
     EXPECT_EQ(std::get<net::ZoneCancelEvent>(back), cancel);
     RefusesShortAndLong(cancel);
 
-    const net::CastFx fx{4, sim::kDash, {-1, 2000000, 3}, {-160, 1600, 48}, 5, 123456};
+    const net::CastFx fx{4, sim::kDash, {-1, 2000000, 3}, {-160, 1600, 48}, 5, 123456, 0, {}};
     bytes = EventBytesOf(fx);
-    EXPECT_EQ(bytes.size(), 32u);
+    EXPECT_EQ(bytes.size(), 34u);   // [mag-8]: + the flight and the point count
     EXPECT_EQ(bytes[0], 40u);
     ASSERT_TRUE(DecodesWhole(bytes, back));
     EXPECT_EQ(std::get<net::CastFx>(back), fx);
     RefusesShortAndLong(fx);
-    for (uint8_t spell = 0; spell <= net::kMaxSpellId; ++spell) EXPECT_TRUE(Decodes(net::CastFx{1, spell, {}, {}, 0, 0})) << int(spell);
+    for (uint8_t spell = 0; spell <= net::kMaxSpellId; ++spell) EXPECT_TRUE(Decodes(net::CastFx{1, spell, {}, {}, 0, 0, 0, {}})) << int(spell);
+    // [mag-8] A drawn shape's CastFx: its flight and up to 16 points.
+    net::CastFx drawn = fx;
+    drawn.flightTicks = net::CastFx::kMaxFlightTicks;
+    for (int i = 0; i < 16; ++i) drawn.pointsQ.push_back({i * 64, -5, 1 << 20});
+    bytes = EventBytesOf(drawn);
+    EXPECT_EQ(bytes.size(), 34u + 16u * 12u);
+    ASSERT_TRUE(DecodesWhole(bytes, back));
+    EXPECT_EQ(std::get<net::CastFx>(back), drawn);
+    RefusesShortAndLong(drawn);
+    net::CastFx late = fx;
+    late.flightTicks = net::CastFx::kMaxFlightTicks + 1;
+    EXPECT_FALSE(Decodes(late)) << "a flight over 60 ticks";
+    bytes = EventBytesOf(drawn);
+    bytes[33] = 17;   // the point count
+    EXPECT_FALSE(DecodesWhole(bytes, back)) << "17 points";
 }
 
 TEST(Wire, ZoneStartRefusesKind0And10AndDuration601) {
@@ -356,7 +371,8 @@ TEST(Wire, SnapshotOwnerBlockCarriesMagicState) {
     o.dashLeft = 18;
     o.dashDir[0] = 127;
     o.dashDir[1] = -127;
-    s.formCooldown4 = {255, 0, 1, 135};
+    s.mana = 5999;
+    s.spellGap = 12;
     s.attune = 0x1E;
     net::RemotePlayer other;
     other.slot = 2;
@@ -366,12 +382,14 @@ TEST(Wire, SnapshotOwnerBlockCarriesMagicState) {
     net::Snapshot back;
     ASSERT_TRUE(net::Decode(bytes, back));
     EXPECT_EQ(back.owner, s.owner);
-    EXPECT_EQ(back.formCooldown4, s.formCooldown4);
+    EXPECT_EQ(back.mana, 5999);
+    EXPECT_EQ(back.spellGap, 12);
     EXPECT_EQ(back.attune, 0x1E);
     ASSERT_EQ(back.others.size(), 1u);
     EXPECT_EQ(back.others[0], other);
 
-    // The magic block is the owner block's last 20 bytes: push at +0, the counters at +6, cooldowns at +15, attune at +19.
+    // The magic block is the owner block's last 19 bytes: push at +0, the counters at +6, mana at +15, the gap at +17,
+    // attune at +18.
     const size_t magicAt = net::kSnapshotHeaderBytes - 2 + 44;
     const auto refused = [&](size_t at, uint8_t value) {
         std::vector<uint8_t> bad = bytes;
@@ -386,8 +404,15 @@ TEST(Wire, SnapshotOwnerBlockCarriesMagicState) {
         net::Snapshot b;
         EXPECT_FALSE(net::Decode(bad, b)) << "push 1501";
     }
-    EXPECT_TRUE(refused(magicAt + 19, 0x20)) << "attune bit 5";
-    EXPECT_FALSE(refused(magicAt + 19, 0x1F));
+    EXPECT_TRUE(refused(magicAt + 18, 0x20)) << "attune bit 5";
+    EXPECT_FALSE(refused(magicAt + 18, 0x1F));
+    EXPECT_FALSE(refused(magicAt + 17, 255)) << "any gap";
+    net::Snapshot overfull = s;
+    overfull.mana = net::Snapshot::kMaxMana + 1;
+    EXPECT_FALSE(net::Decode(net::Encode(overfull), back)) << "mana over the pool";
+    net::Snapshot retired = s;
+    retired.castRejected = static_cast<net::CastRejection>(net::kRetiredCastRejection);
+    EXPECT_FALSE(net::Decode(net::Encode(retired), back)) << "rejection 6 is retired";
     EXPECT_TRUE(refused(bytes.size() - 2, 0x40)) << "a remote status bit 6 (the last byte is the body count)";
     net::Snapshot cut = s;
     cut.others.clear();
@@ -409,6 +434,45 @@ TEST(Wire, AttuneRoundTrip) {
     EXPECT_FALSE(net::Decode(longer, back));
     EXPECT_FALSE(net::Decode(net::Encode(net::Attune{4, 0}), back)) << "element 4";
     EXPECT_TRUE(net::Decode(net::Encode(net::Attune{2, 2}), back)) << "two equal elements are the server's to refuse";
+}
+
+// [mag-8] SpellGesture 25: the input tick, the kind, the form (or AUTO) and up to 16 points of int32 x 3.
+TEST(Wire, SpellGestureRoundTrip) {
+    EXPECT_EQ(static_cast<uint8_t>(net::MessageType::SpellGesture), 25u);
+    net::SpellGesture m;
+    m.inputTick = 0xA1B2C3D4u;
+    m.gesture.kind = sim::GestureKind::Rise;
+    m.gesture.form = static_cast<uint8_t>(sim::Form::Burst);
+    for (int i = 0; i < 16; ++i) m.gesture.pointsQ.push_back({-i * 100000, i, 1 << 24});
+    const std::vector<uint8_t> bytes = net::Encode(m);
+    EXPECT_EQ(bytes.size(), net::kSpellGestureHeaderBytes + 16u * 12u);
+    net::SpellGesture back;
+    ASSERT_TRUE(net::Decode(bytes, back));
+    EXPECT_EQ(back, m);
+    EXPECT_FALSE(net::Decode(std::span(bytes).first(bytes.size() - 1), back));
+    std::vector<uint8_t> longer = bytes;
+    longer.push_back(0);
+    EXPECT_FALSE(net::Decode(longer, back));
+
+    net::SpellGesture tap;
+    const std::vector<uint8_t> none = net::Encode(tap);
+    EXPECT_EQ(none.size(), net::kSpellGestureHeaderBytes);
+    ASSERT_TRUE(net::Decode(none, back));
+    EXPECT_EQ(back.gesture.form, sim::kAutoForm);
+    EXPECT_TRUE(back.gesture.pointsQ.empty());
+    const auto refused = [&](size_t at, uint8_t value) {
+        std::vector<uint8_t> bad = none;
+        bad[at] = value;
+        return !net::Decode(bad, back);
+    };
+    EXPECT_TRUE(refused(5, 4)) << "kind 4";
+    EXPECT_FALSE(refused(5, 3));
+    EXPECT_TRUE(refused(6, 5)) << "form 5";
+    EXPECT_FALSE(refused(6, 4)) << "AUTO";
+    std::vector<uint8_t> seventeen = net::Encode(m);
+    seventeen[7] = 17;
+    for (int i = 0; i < 12; ++i) seventeen.push_back(0);
+    EXPECT_FALSE(net::Decode(seventeen, back)) << "17 points";
 }
 
 TEST(Wire, RosterCarriesTheElements) {
@@ -469,21 +533,27 @@ TEST(Wire, WelcomeCarriesTheZoneLeadAndThePushDecays) {
 TEST(Wire, SpellRefusalsMapToRejections) {
     using R = net::CastRejection;
     using S = sim::SpellRefusal;
-    EXPECT_EQ(net::kMaxCastRejection, 11u);
+    EXPECT_EQ(net::kMaxCastRejection, 14u);
     EXPECT_EQ(net::RejectionOf(S::None), R::None);
     EXPECT_EQ(net::RejectionOf(S::NotBuilt), R::NotAttuned);
     EXPECT_EQ(net::RejectionOf(S::NotAttuned), R::NotAttuned);
-    EXPECT_EQ(net::RejectionOf(S::FormCooling), R::FormCooling);
+    EXPECT_EQ(net::RejectionOf(S::TooSoon), R::TooSoon);
+    EXPECT_EQ(net::RejectionOf(S::NoMana), R::NoMana);
+    EXPECT_EQ(net::RejectionOf(S::BadGesture), R::BadGesture);
     EXPECT_EQ(net::RejectionOf(S::Missed), R::Missed);
     EXPECT_EQ(net::RejectionOf(S::Outside), R::Outside);
     EXPECT_EQ(net::RejectionOf(S::TooMuchConjured), R::TooMuchConjured);
     EXPECT_EQ(net::RejectionOf(S::TooManyZones), R::TooManyZones);
     EXPECT_EQ(net::RejectionOf(S::NearSpawn), R::NearSpawn);
     EXPECT_EQ(net::RejectionOf(S::Rooted), R::Missed);
-    EXPECT_EQ(static_cast<uint8_t>(R::FormCooling), 6u);
+    EXPECT_EQ(net::kRetiredCastRejection, 6u);
+    EXPECT_EQ(static_cast<uint8_t>(R::NoMana), 12u);
+    EXPECT_EQ(static_cast<uint8_t>(R::TooSoon), 13u);
+    EXPECT_EQ(static_cast<uint8_t>(R::BadGesture), 14u);
     EXPECT_EQ(static_cast<uint8_t>(R::TooMuchFire), 10u);
     EXPECT_EQ(static_cast<uint8_t>(R::NearSpawn), 11u);
-    EXPECT_STREQ(net::ToString(R::FormCooling), "form cooling");
+    EXPECT_STREQ(net::ToString(R::NoMana), "no mana");
+    EXPECT_STREQ(net::ToString(R::BadGesture), "bad gesture");
     EXPECT_STREQ(net::ToString(R::NearSpawn), "near spawn");
 }
 

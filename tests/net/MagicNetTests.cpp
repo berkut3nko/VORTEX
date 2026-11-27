@@ -346,9 +346,9 @@ TEST(Magic, AnUpdraftUnderItsCasterIsPredictedWithoutACorrection) {
     EXPECT_NEAR(caster.client->Player().position.y, y.Feet(slot).y, 0.05f) << "both on the ground again";
 }
 
-// magic.md "Caps" and decision 5: a form on cooldown is refused at capture (FormCooling, no charge spent); a zone over
-// the caster's cap is refused when the spell runs (TooManyZones: the charge spent at capture is not given back); a
-// spell whose zone meets an enemy spawn area is refused (NearSpawn).
+// magic.md "Caps" and "Casting: mana, gestures and projectiles": a Spell edge inside the gap is refused at capture
+// (TooSoon); a zone over the caster's cap is refused when the spell runs (TooManyZones: no mana is charged); a spell
+// whose zone meets an enemy spawn area is refused (NearSpawn). Spells cost no charge.
 TEST(Magic, CastRejectedOverTheCaps) {
     net::ServerSettings settings = Settings(Duel());
     settings.maxZonesPerPlayer = 1;
@@ -366,7 +366,7 @@ TEST(Magic, CastRejectedOverTheCaps) {
     ASSERT_EQ(y.server.Fighter(slotA).charges, 3u);
     const uint32_t t0 = a.client->PredictTick() + 5;
     planA.casts[t0] = {sim::kUpdraft, glm::vec3(2.0f, 0.0f, 0.0f)};        // its own Lift, 2 m ahead
-    planA.casts[t0 + 20] = {sim::kUpdraft, glm::vec3(2.0f, 0.0f, 0.0f)};   // Plume cools 540 ticks
+    planA.casts[t0 + 6] = {sim::kUpdraft, glm::vec3(2.0f, 0.0f, 0.0f)};    // inside the 12-tick gap
     planA.casts[t0 + 40] = {sim::kPunch, glm::vec3(2.0f, 0.0f, 0.0f)};     // a second zone while its Lift lives
     const glm::vec3 enemySpawn(-5.0f, kGroundMetres, 1.0f);   // inside team 1's spawn area, beside its player
     const uint32_t tB = b.client->PredictTick() + 5;
@@ -374,15 +374,18 @@ TEST(Magic, CastRejectedOverTheCaps) {
     y.Passes(120);
 
     EXPECT_EQ(a.rejections[t0], net::CastRejection::None);
-    EXPECT_EQ(a.rejections[t0 + 20], net::CastRejection::FormCooling);
+    EXPECT_EQ(a.rejections[t0 + 6], net::CastRejection::TooSoon);
     EXPECT_EQ(a.rejections[t0 + 40], net::CastRejection::TooManyZones);
     EXPECT_EQ(b.rejections[tB], net::CastRejection::NearSpawn);
     EXPECT_EQ(y.server.Stats().spellCasts, 1u);
     EXPECT_EQ(y.server.Stats().spellsRefused, 3u);
-    EXPECT_EQ(y.server.Fighter(slotA).charges, 1u) << "the Updraft and the refused Punch spent one each; the cooling one none";
-    EXPECT_EQ(y.server.Fighter(slotB).charges, 2u) << "a spell refused when it runs keeps its charge spent";
-    EXPECT_GT(y.server.Caster(slotA).formReadyTick[static_cast<size_t>(sim::Form::Plume)], t0);
-    EXPECT_GT(y.server.Caster(slotA).formReadyTick[static_cast<size_t>(sim::Form::Burst)], t0 + 40);
+    EXPECT_EQ(y.server.Fighter(slotA).charges, 3u) << "spells cost no charge";
+    EXPECT_EQ(y.server.Fighter(slotB).charges, 3u);
+    const sim::SpellTable table = sim::BuildSpellTable(0.125f);
+    const sim::CasterState casterA = y.server.Caster(slotA), casterB = y.server.Caster(slotB);
+    EXPECT_GE(casterA.spellReadyTick, t0 + 40 + table.spellGapTicks) << "the Punch's capture started the gap";
+    EXPECT_EQ(casterA.mana, table.manaPool - table.spells[sim::kUpdraft].manaCost) << "the Updraft alone paid, at its T_run";
+    EXPECT_EQ(sim::ManaAt(table, casterB, casterB.manaTick + 1000), table.manaPool) << "B paid nothing it did not get back";
     EXPECT_TRUE(y.HashesEqual());
 }
 
@@ -442,4 +445,159 @@ TEST(Magic, AttuneOnlyWhileDeadOrBeforeSpawn) {
     ASSERT_TRUE(y.Until([&] { return !y.server.Fighter(slotA).dead; }, 600));
     EXPECT_EQ(y.server.Caster(slotA).elementA, kMetal);
     EXPECT_EQ(y.server.Caster(slotA).elementB, kPressure);
+    // [mag-8] A new life starts with a full pool, refilled at the respawn.
+    EXPECT_EQ(y.server.Caster(slotA).mana, 6000);
+    EXPECT_EQ(y.server.Caster(slotA).manaTick, y.server.Fighter(slotA).lifeStartTick);
+}
+
+// --- casting by gesture ([mag-8], magic.md "Casting: mana, gestures and projectiles") ------------------------------
+
+namespace {
+    /// A Spell edge at `tick` with a gesture: the bot looks at the release point and sends the gesture with the edge.
+    struct GesturePlan {
+        uint32_t tick = 0;
+        sim::SpellId spell = 0;
+        sim::SpellGesture gesture;
+        std::function<sim::PlayerInput(SpellYard::Bot&)> Controls() {
+            return [this](SpellYard::Bot& bot) {
+                if (tick == 0 || bot.client->PredictTick() != tick) return sim::PlayerInput{};
+                bot.client->SetSpellGesture(gesture);
+                const glm::vec3 release = glm::vec3(glm::dvec3(gesture.pointsQ.back()) / 128.0);
+                sim::PlayerInput in = LookAt(*bot.client, release);
+                in.buttons = sim::PlayerButton_Spell;
+                in.spell = spell;
+                return in;
+            };
+        }
+    };
+
+    glm::ivec3 GroundPointQ(const glm::vec3& feet, float dx, float dz) {
+        return {static_cast<int32_t>(std::lround((feet.x + dx) * 128.0f)), kGround * 16, static_cast<int32_t>(std::lround((feet.z + dz) * 128.0f))};
+    }
+
+    sim::SpellGesture LineGesture(std::vector<glm::ivec3> points) {
+        sim::SpellGesture g;
+        g.kind = sim::GestureKind::Line;
+        g.pointsQ = std::move(points);
+        return g;
+    }
+
+    using VoxelSet = std::vector<glm::ivec3>;
+    VoxelSet VoxelsOf(const voxel::World& world, uint8_t id, const glm::ivec3& min, const glm::ivec3& max) {
+        VoxelSet out;
+        for (int z = min.z; z < max.z; ++z)
+            for (int y = min.y; y < max.y; ++y)
+                for (int x = min.x; x < max.x; ++x)
+                    if (world.GetVoxel({x, y, z}) == id) out.push_back({x, y, z});
+        return out;
+    }
+}
+
+// A wall drawn by a client: the server pairs the SpellGesture with the Spell edge by its input tick, builds the wall
+// along the line, and its CastFx carries the flight and the points. The same cast run offline (sim::CastSpell and
+// sim::RunScheduled on a flat world of its own) gives the same knit voxels.
+TEST(Gesture, ADrawnWallIsTheSameOfflineAndOnTheServer) {
+    SpellYard y;
+    ASSERT_TRUE(y.started);
+    GesturePlan plan;
+    SpellYard::Bot& caster = y.AddBot(plan.Controls());
+    StreamWatcher watcher;
+    y.Watch(watcher);
+    ASSERT_TRUE(y.Join());
+    y.Passes(30);
+    const uint8_t slot = caster.client->Slot();
+    const glm::vec3 feet = y.Feet(slot);
+    plan.spell = sim::kBarricadeWave;
+    plan.gesture = LineGesture({GroundPointQ(feet, 3.0f, -2.0f), GroundPointQ(feet, 3.0f, 0.0f), GroundPointQ(feet, 4.0f, 1.5f)});
+    plan.tick = caster.client->PredictTick() + 5;
+    y.Passes(120);
+
+    EXPECT_EQ(y.server.Stats().gestures, 1u);
+    EXPECT_EQ(y.server.Stats().spellCasts, 1u);
+    ASSERT_TRUE(caster.rejections.contains(plan.tick));
+    EXPECT_EQ(caster.rejections[plan.tick], net::CastRejection::None);
+    std::optional<net::CastFx> fx;
+    for (const auto& [seq, event] : watcher.Events())
+        if (const net::CastFx* f = std::get_if<net::CastFx>(&event)) fx = *f;
+    ASSERT_TRUE(fx.has_value());
+    EXPECT_EQ(fx->pointsQ, plan.gesture.pointsQ);
+    EXPECT_GT(fx->flightTicks, 0u);
+    EXPECT_EQ(fx->hitQ, plan.gesture.pointsQ.front());
+    const sim::SpellTable table = sim::BuildSpellTable(0.125f);
+    const int cost = static_cast<int>(sim::SpellManaCost(table, sim::kBarricadeWave, plan.gesture));
+    const int since = static_cast<int>(caster.client->Magic().tick - fx->tick);
+    EXPECT_EQ(caster.client->Magic().mana, std::min<int>(table.manaPool, 6000 - cost + 10 * since))
+        << "the drawn wall costs 10 mana and 5 a metre, then 10 units a tick come back";
+
+    const uint8_t knit = DefaultIds().knitIron;
+    const glm::ivec3 centre = plan.gesture.pointsQ[1] >> 4;
+    const glm::ivec3 lo = centre - glm::ivec3(40, 2, 40), hi = centre + glm::ivec3(40, 16, 40);
+    const VoxelSet server = VoxelsOf(y.server.Simulation().World(), knit, lo, hi);
+    EXPECT_GT(server.size(), 500u);
+
+    sim::SimulationConfig config;
+    config.chunkCapacity = 1024;
+    config.maxParticles = 0;
+    config.jobThreads = 2;
+    config.world.voxelSize = 0.125f;
+    config.world.windowSize = {8, 6, 8};
+    config.physics.threads = 1;
+    sim::Simulation offline(config);
+    const voxel::WorldMaterials ids = DefaultIds();
+    ASSERT_TRUE(offline.Initialize(voxel::CreateFlatGenerator(kGround, ids.grass, ids.stone)));
+    offline.World().LoadBlocking(glm::dvec3(feet));
+    sim::CastContext ctx;
+    ctx.walls = sim::WindowWalls(offline.World());
+    sim::SpellCast c;
+    c.player = 1;
+    c.team = 1;
+    c.spell = sim::kBarricadeWave;
+    c.eye = glm::dvec3(feet) + glm::dvec3(0.0, 1.62, 0.0);
+    c.gesture = plan.gesture;
+    const uint32_t t0 = offline.Tick();
+    const sim::CastSpellResult r = sim::CastSpell(offline, table, c, ctx, {});
+    ASSERT_EQ(r.refusal, sim::SpellRefusal::None);
+    while (offline.Tick() < t0 + 90) {
+        offline.StepPhysics();
+        sim::RunScheduled(offline, table, ctx, offline.Tick(), {});
+    }
+    EXPECT_EQ(VoxelsOf(offline.World(), knit, lo, hi), server) << "the same wall offline and on the server";
+    EXPECT_TRUE(y.HashesEqual());
+}
+
+// A drawn ice strip and a Punch along a stroke, cast by gesture in a session: every client ends with the server's
+// voxels and zones, with no correction of the caster.
+TEST(Magic, AGestureCastReplicatesWithEqualHashes) {
+    SpellYard y;
+    ASSERT_TRUE(y.started);
+    GesturePlan plan;
+    SpellYard::Bot& caster = y.AddBot(plan.Controls());
+    SpellYard::Bot& other = y.AddBot();
+    ASSERT_TRUE(y.Join());
+    y.Passes(30);
+    const uint8_t slot = caster.client->Slot();
+    const glm::vec3 feet = y.Feet(slot);
+    plan.spell = sim::kFlashFreeze;
+    plan.gesture = LineGesture({GroundPointQ(feet, 2.0f, -3.0f), GroundPointQ(feet, 3.0f, -1.5f), GroundPointQ(feet, 4.0f, 0.0f),
+                                GroundPointQ(feet, 4.0f, 2.0f)});
+    // Frost is not of the default pair: the sandbox caster takes Metal and Frost before its first spell.
+    caster.client->SendAttune(static_cast<uint8_t>(sim::Element::Metal), static_cast<uint8_t>(sim::Element::Frost));
+    plan.tick = caster.client->PredictTick() + 5;
+    y.Passes(120);
+    const net::CastRejection first = caster.rejections.contains(plan.tick) ? caster.rejections[plan.tick] : net::CastRejection::None;
+
+    plan.spell = sim::kPunch;
+    plan.gesture = LineGesture({GroundPointQ(feet, 1.5f, -1.0f), GroundPointQ(feet, 1.5f, 1.0f)});
+    plan.tick = caster.client->PredictTick() + 5;
+    y.Passes(120);
+
+    EXPECT_EQ(y.server.Stats().gestures, 2u);
+    EXPECT_GE(y.server.Stats().spellCasts, 1u);
+    EXPECT_EQ(caster.rejections[plan.tick], net::CastRejection::None) << "the Punch";
+    if (first == net::CastRejection::None) {
+        const glm::ivec3 centre = plan.gesture.pointsQ[0] >> 4;
+        EXPECT_GT(VoxelsOf(y.server.Simulation().World(), DefaultIds().ice, centre - glm::ivec3(48, 4, 48), centre + glm::ivec3(48, 4, 48)).size(), 0u);
+    }
+    EXPECT_EQ(other.client->Stats().castFx, caster.client->Stats().castFx);
+    EXPECT_TRUE(y.HashesEqual());
 }

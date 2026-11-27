@@ -862,9 +862,9 @@ TEST(Player, CastCooldownFollowsTheSlow) {
     EXPECT_EQ(sim::CastCooldownFor(s, t), 255);
 }
 
-// [mag-2] (magic.md "PlayerState, StepPlayer and the physics call" step 1): the Spell edge goes through the cast's
-// cooldown; a step with both edges takes the Cast and drops the Spell.
-TEST(Player, SpellEdgeSharesTheCastCooldown) {
+// magic.md "Casting: mana, gestures and projectiles": a Spell edge takes no cast cooldown (the gap and mana are the
+// server's cast check) and leaves the blast's alone; a step with both edges takes the Cast and drops the Spell.
+TEST(Player, SpellEdgeLeavesTheCastCooldownAlone) {
     Field f;
     ASSERT_TRUE(f.initialized);
     Settle(f);
@@ -876,12 +876,9 @@ TEST(Player, SpellEdgeSharesTheCastCooldown) {
         const bool press = tick == 10 || tick == 12;
         const sim::PlayerStepResult r = f.Tick(press ? spell : none);
         EXPECT_FALSE(r.cast) << tick;
-        if (tick == 10) {
-            EXPECT_TRUE(r.spell) << "the first Spell edge is taken";
-            EXPECT_EQ(f.state.cooldownTicks, f.tuning.castCooldownTicks);
-        } else if (tick == 12) {
-            EXPECT_EQ(r.pressed & sim::PlayerButton_Spell, sim::PlayerButton_Spell);
-            EXPECT_FALSE(r.spell) << "the cooldown refuses the second";
+        if (tick == 10 || tick == 12) {
+            EXPECT_TRUE(r.spell) << "every Spell edge is taken: " << tick;
+            EXPECT_EQ(f.state.cooldownTicks, 0) << "the blast's cooldown is not started";
         } else {
             EXPECT_FALSE(r.spell) << tick;
         }
@@ -894,10 +891,14 @@ TEST(Player, SpellEdgeSharesTheCastCooldown) {
     const sim::PlayerStepResult r = f.Tick(both);
     EXPECT_TRUE(r.cast);
     EXPECT_FALSE(r.spell);
+    // The blast's cooldown runs and a Spell edge is still taken.
+    f.Tick(none);
+    EXPECT_GT(f.state.cooldownTicks, 0);
+    EXPECT_TRUE(f.Tick(spell).spell);
 }
 
 // [mag-2]: a Dash's Spell edge starts the dash inside StepPlayer at the input's tick, along the input's look, unless
-// the stepping side does not allow it (no charge, dead, the form cooling) or the state refuses it (rooted).
+// the stepping side does not allow it (dead, the gap, no mana) or the state refuses it (rooted).
 TEST(Player, ADashSpellEdgeStartsTheDashInsideTheStep) {
     Field f({-4.0f, kGround, 0.3f});
     ASSERT_TRUE(f.initialized);
@@ -916,7 +917,7 @@ TEST(Player, ADashSpellEdgeStartsTheDashInsideTheStep) {
     for (int i = 0; i < 30; ++i) f.ZoneTick(sim::PlayerInput{});
     EXPECT_NEAR(f.state.position.x - start.x, 8.0f, 0.8f);
 
-    // Not allowed by the stepping side: the edge still takes the cooldown, nothing moves.
+    // Not allowed by the stepping side: the edge is taken, nothing moves and no cooldown starts.
     for (int i = 0; i < 30; ++i) f.ZoneTick(sim::PlayerInput{});
     const std::array<glm::dvec3, 1> focus = {glm::dvec3(f.state.position)};
     f.simulation.UpdateStreaming(focus);
@@ -928,7 +929,7 @@ TEST(Player, ADashSpellEdgeStartsTheDashInsideTheStep) {
     EXPECT_TRUE(r.spell);
     EXPECT_FALSE(r.spellMove);
     EXPECT_EQ(f.state.dashLeft, 0);
-    EXPECT_EQ(f.state.cooldownTicks, f.tuning.castCooldownTicks);
+    EXPECT_EQ(f.state.cooldownTicks, 0);
 
     // Rooted: the state refuses it.
     for (int i = 0; i < 30; ++i) f.ZoneTick(sim::PlayerInput{});

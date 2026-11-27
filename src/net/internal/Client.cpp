@@ -455,6 +455,7 @@ namespace vortex::net {
         if (m_Impl->server == 0 || m_Impl->state != ClientState::Playing) return;
         m_Impl->transport.Send(m_Impl->server, Channel::Events, Encode(Attune{craftA, craftB}));
     }
+    void Client::SetSpellGesture(const sim::SpellGesture& gesture) { m_Impl->pendingGesture = gesture; }
     std::vector<CastFx> Client::TakeCastFx() {
         std::vector<CastFx> out(m_Impl->castFx.begin(), m_Impl->castFx.end());
         m_Impl->castFx.clear();

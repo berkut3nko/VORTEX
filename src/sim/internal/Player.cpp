@@ -349,8 +349,9 @@ namespace vortex::sim {
         if (state.cooldownTicks > 0) --state.cooldownTicks;
         r.cast = TakeCast(state, r.pressed, tuning);
         if ((r.pressed & PlayerButton_Spell) != 0 && (r.pressed & PlayerButton_Cast) == 0) {
-            r.spell = TakeCast(state, PlayerButton_Cast, tuning);
-            if (r.spell && zones.spellMoveAllowed) r.spellMove = StartSpellMove(state, input.spell, LookDirection(input.yaw, input.pitch));
+            // The blast's cooldown is its own: a spell's gap and mana are the server's cast check.
+            r.spell = true;
+            if (zones.spellMoveAllowed) r.spellMove = StartSpellMove(state, input.spell, LookDirection(input.yaw, input.pitch));
         }
         // A cast ends Fresh (the guard itself runs on).
         if (r.cast || r.spell) state.status = static_cast<uint8_t>(state.status & ~PlayerStatus_Fresh);

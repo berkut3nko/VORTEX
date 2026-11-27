@@ -228,14 +228,20 @@ export namespace vortex::net {
         uint32_t endTick = 0;
         friend bool operator==(const ZoneCancelEvent&, const ZoneCancelEvent&) = default;
     };
-    /// @brief `CastFx` ([mag-2], 32 B): a spell's streak and impact for the clients to draw. `slot` is the caster's
-    /// slot + 1 (0: a server script), `originQ` and `hitQ` in q (1/16 voxel), `face` axis * 2 + (sign < 0), `tick` T_run.
+    /// @brief `CastFx` ([mag-2], 34 B + 12 B per point): a spell's projectile, its impact and its drawn shape for the
+    /// clients to draw. `slot` is the caster's slot + 1 (0: a server script), `originQ` and `hitQ` in q (1/16 voxel),
+    /// `face` axis * 2 + (sign < 0), `tick` T_run; [mag-8] `flightTicks` (the effects land at tick + flightTicks, at most
+    /// kMaxFlightTicks) and the points of a shape drawn along a gesture (count u8, i32 x 3 q each, at most 16).
     struct CastFx {
         uint8_t slot = 0;
         uint8_t spell = 0;
         glm::ivec3 originQ{0}, hitQ{0};
         uint8_t face = 0;
         uint32_t tick = 0;
+        uint8_t flightTicks = 0;
+        std::vector<glm::ivec3> pointsQ;
+        static constexpr uint8_t kMaxFlightTicks = 60;
+        static constexpr size_t kMaxPoints = 16;
         friend bool operator==(const CastFx&, const CastFx&) = default;
     };
 

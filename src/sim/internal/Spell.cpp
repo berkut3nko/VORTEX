@@ -86,6 +86,14 @@ namespace vortex::sim {
             h = voxel::HashMix64(h, s.maxBodies);
             h = voxel::HashMix64(h, s.maxBodyKickCmS);
             h = voxel::HashMix64(h, s.dispelRadiusQ);
+            h = voxel::HashMix64(h, s.manaCost);
+            h = voxel::HashMix64(h, s.noProjectile ? 1u : 0u);
+            h = voxel::HashMix64(h, s.drawsLine ? 1u : 0u);
+            h = voxel::HashMix64(h, s.drawHalfWidthQ);
+            h = voxel::HashMix64(h, s.drawHeight);
+            h = voxel::HashMix64(h, s.drawMinQ);
+            h = voxel::HashMix64(h, s.drawMaxQ);
+            h = voxel::HashMix64(h, s.drawZoneRadiusQ);
             return h;
         }
     }
@@ -120,11 +128,19 @@ namespace vortex::sim {
 
         SpellTable t;
         t.voxelSize = voxelSize;
-        t.forms[static_cast<size_t>(Form::Flow)].cooldownTicks = 540;
-        t.forms[static_cast<size_t>(Form::Plume)].cooldownTicks = 540;
-        t.forms[static_cast<size_t>(Form::Pierce)].cooldownTicks = 300;
-        t.forms[static_cast<size_t>(Form::Burst)].cooldownTicks = 420;
+        t.forms[static_cast<size_t>(Form::Flow)].speedMs = 20;
+        t.forms[static_cast<size_t>(Form::Plume)].speedMs = 30;
+        t.forms[static_cast<size_t>(Form::Pierce)].speedMs = 80;
+        t.forms[static_cast<size_t>(Form::Burst)].speedMs = 40;
+        t.metreQ = Q(1.0);
+        t.gestureReachQ = static_cast<uint32_t>(std::lround(31.0 / vs * 16.0));
+        t.gestureStepQ = Q(2.0);
+        t.gesturePathQ = Q(12.0);
+        t.gestureSupportQ = Q(1.0);
         t.ablateRadiusQ = Q(0.25);
+        // Tap costs in 1/60 mana (magic.md "Casting: mana, gestures and projectiles"). A shape spell's tap costs as a
+        // drawn shape of its usual size.
+        const auto Mana = [](double mana) { return static_cast<uint16_t>(std::lround(mana * 60.0)); };
         t.boreCost = BoreCostTable();
 
         {   // Updraft: a Lift over a single Plume column, everyone.
@@ -139,6 +155,7 @@ namespace vortex::sim {
             s.zone.radiusQ = Q(1.0);
             s.zone.rampQ = Q(0.25);
             s.zone.hoverQ = Q(0.5);
+            s.manaCost = Mana(20.0);
             s.maxBodies = 8;
             s.maxBodyKickCmS = 1200;
         }
@@ -150,6 +167,8 @@ namespace vortex::sim {
             s.dashEndPushCmS = kDashEndPushCmS;
             s.dashRangeQ = Q(8.0);
             s.dashStepQ = Q(0.125);
+            s.manaCost = Mana(20.0);
+            s.noProjectile = true;
             s.zone.kind = ZoneKind::Impulse;
             s.zone.place = ZonePlace::DashPath;
             s.zone.target = ZoneTarget::Enemies;
@@ -177,6 +196,12 @@ namespace vortex::sim {
             s.bandFirstTick = 18;
             s.bandSpacingTicks = 4;
             s.lifetimeTicks = 1200;
+            s.manaCost = Mana(32.5);
+            s.drawsLine = true;
+            s.drawHalfWidthQ = Q(0.25);
+            s.drawHeight = U8(V(1.5));
+            s.drawMinQ = Q(1.5);
+            s.drawMaxQ = Q(10.0);
             s.expiryMap = voxel::Map_Unknit;
         }
         {   // Punch: a blow at the fist point and a Shove capsule along the aim; dispels lasting zones.
@@ -206,6 +231,8 @@ namespace vortex::sim {
             s.shatterRadiusQ = Q(1.0);
             s.shatterDepth = U8(std::max(1, V(0.5)));
             s.shatterVisitCap = 4000;
+            s.manaCost = Mana(20.0);
+            s.noProjectile = true;
         }
         {   // Shatter Spike: a bore, a Rime capsule round it and past its end, a Chill at the hit.
             SpellDef& s = t.spells[kShatterSpike];
@@ -226,6 +253,7 @@ namespace vortex::sim {
             s.zone.radiusQ = Q(1.0);
             s.zone.halfHeightQ = Q(2.0);   // feet below a hit on a wall at eye height are inside
             s.directDamage = 25;
+            s.manaCost = Mana(20.0);
         }
         {   // Flash Freeze: a Burst disc; water under it turns into a floe slab, dry cells into an ice film.
             SpellDef& s = t.spells[kFlashFreeze];
@@ -255,6 +283,12 @@ namespace vortex::sim {
             s.zone2.strength[0] = 6;
             s.zone2.strength[1] = 60;
             s.zoneDamage = 10;
+            s.manaCost = Mana(30.0);
+            s.drawsLine = true;
+            s.drawHalfWidthQ = Q(1.0);
+            s.drawMinQ = Q(1.0);
+            s.drawMaxQ = Q(12.0);
+            s.drawZoneRadiusQ = Q(1.5);
         }
         {   // Permafrost Climb: the full Plume; ice on its Rise cells near support and on joined Front cells.
             SpellDef& s = t.spells[kPermafrostClimb];
@@ -282,6 +316,7 @@ namespace vortex::sim {
             s.zone2.strength[0] = 6;
             s.zone2.strength[1] = 60;
             s.zoneDamage = 15;
+            s.manaCost = Mana(30.0);
         }
         return t;
     }
@@ -291,7 +326,12 @@ namespace vortex::sim {
         h = voxel::HashMix64(h, std::bit_cast<uint32_t>(table.voxelSize));
         h = voxel::HashMix64(h, table.zoneLeadTicks);
         h = voxel::HashMix64(h, table.ablateRadiusQ);
-        for (const FormDef& form : table.forms) h = voxel::HashMix64(h, form.cooldownTicks);
+        for (const FormDef& form : table.forms) h = voxel::HashMix64(h, form.speedMs);
+        for (const uint32_t v : {uint32_t{table.metreQ}, uint32_t{table.manaPool}, uint32_t{table.manaPerTick}, uint32_t{table.spellGapTicks},
+                                 uint32_t{table.drawBaseMana}, uint32_t{table.drawManaPerMetre}, uint32_t{table.maxFlightTicks},
+                                 uint32_t{table.lineSpeedMs}, table.gestureReachQ, table.gestureStepQ, table.gesturePathQ,
+                                 uint32_t{table.gestureSupportQ}})
+            h = voxel::HashMix64(h, v);
         for (const SpellDef& spell : table.spells) h = MixSpell(h, spell);
         for (const uint16_t cost : table.boreCost) h = voxel::HashMix64(h, cost);
         return h;

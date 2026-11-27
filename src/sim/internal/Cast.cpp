@@ -371,6 +371,16 @@ namespace vortex::sim {
             int owner = -1;
         };
 
+        /// A band of conjured matter, run at T_run + max(flight + `along`, `minTicks`) + `extra` (the guard runs again
+        /// on its tick), and the registry owner (an index into the planned owners) that records it.
+        struct PlannedBand {
+            WorldOp op;
+            uint32_t along = 0;
+            uint32_t minTicks = 0;
+            uint32_t extra = 0;
+            int owner = -1;
+        };
+
         /// A voxel the operators stop at and a fill rests on: not open (a wall reads as support).
         bool IsSupportId(uint8_t id) { return !IsOpenId(id); }
 
@@ -387,13 +397,147 @@ namespace vortex::sim {
                 max = glm::max(max, c + glm::ivec3(1));
             }
         }
+
+        /// Ticks to travel `distQ` (q) at `speedMs`: ceil(dist * 60 / speed); 0 for a speed of 0.
+        uint32_t TravelTicks(const SpellTable& table, uint64_t distQ, uint32_t speedMs) {
+            if (speedMs == 0) return 0;
+            const uint64_t per = uint64_t{speedMs} * std::max<uint32_t>(table.metreQ, 1);
+            return static_cast<uint32_t>(std::min<uint64_t>((distQ * 60 + per - 1) / per, 0xFFFFFFu));
+        }
+
+        int64_t SegmentQ(const glm::ivec3& a, const glm::ivec3& b) {
+            const glm::i64vec3 d = glm::i64vec3(b) - glm::i64vec3(a);
+            return static_cast<int64_t>(math::ISqrt64(static_cast<uint64_t>(Dot(d, d))));
+        }
+
+        /// The point `num / den` of the way from a to b (q, rounded toward a).
+        glm::ivec3 Along(const glm::ivec3& a, const glm::ivec3& b, int64_t num, int64_t den) {
+            const glm::i64vec3 d = glm::i64vec3(b) - glm::i64vec3(a);
+            return a + glm::ivec3(d * num / std::max<int64_t>(den, 1));
+        }
+
+        /// The polyline without repeated points, cut at `maxQ` of length and, when shorter than `minQ`, its last
+        /// segment extended to reach it. `lengthQ`: the length of what is returned (floored segment lengths).
+        std::vector<glm::ivec3> ClampPolyline(std::span<const glm::ivec3> points, uint32_t minQ, uint32_t maxQ, uint32_t& lengthQ) {
+            std::vector<glm::ivec3> out;
+            lengthQ = 0;
+            int64_t total = 0;
+            for (const glm::ivec3& p : points) {
+                if (!out.empty() && p == out.back()) continue;
+                if (out.empty()) {
+                    out.push_back(p);
+                    continue;
+                }
+                const int64_t len = SegmentQ(out.back(), p);
+                if (maxQ > 0 && total + len > int64_t{maxQ}) {
+                    const glm::ivec3 cut = Along(out.back(), p, int64_t{maxQ} - total, len);
+                    if (cut != out.back()) {
+                        total += SegmentQ(out.back(), cut);
+                        out.push_back(cut);
+                    }
+                    break;
+                }
+                out.push_back(p);
+                total += len;
+            }
+            if (out.size() >= 2 && total < int64_t{minQ}) {
+                const glm::ivec3 a = out[out.size() - 2], b = out.back();
+                const int64_t len = SegmentQ(a, b);
+                if (len > 0) {
+                    out.back() = Along(a, b, len + int64_t{minQ} - total, len);
+                    total += SegmentQ(a, out.back()) - len;
+                }
+            }
+            lengthQ = static_cast<uint32_t>(std::max<int64_t>(total, 0));
+            return out;
+        }
+
+        /// A voxel that is not air within `radiusQ` of the point `p` (q): the 27 voxels round it first.
+        bool NearSupport(VoxelCache& cache, const glm::ivec3& p, uint32_t radiusQ) {
+            const glm::ivec3 v = p >> 4;
+            for (int dz = -1; dz <= 1; ++dz)
+                for (int dy = -1; dy <= 1; ++dy)
+                    for (int dx = -1; dx <= 1; ++dx)
+                        if (IsSupportId(cache.Get(v + glm::ivec3(dx, dy, dz)))) return true;
+            const int32_t reach = static_cast<int32_t>((radiusQ + 15) / 16);
+            const int64_t r2 = int64_t{radiusQ} * radiusQ;
+            for (int dz = -reach; dz <= reach; ++dz)
+                for (int dy = -reach; dy <= reach; ++dy)
+                    for (int dx = -reach; dx <= reach; ++dx) {
+                        const glm::ivec3 c = v + glm::ivec3(dx, dy, dz);
+                        int64_t d2 = 0;
+                        for (int a = 0; a < 3; ++a) {
+                            const int64_t lo = int64_t{c[a]} * 16, hi = lo + 16;
+                            const int64_t d = std::max<int64_t>({lo - p[a], 0, int64_t{p[a]} - hi});
+                            d2 += d * d;
+                        }
+                        if (d2 <= r2 && IsSupportId(cache.Get(c))) return true;
+                    }
+            return false;
+        }
+
+        /// One column of a drawn shape: its ground voxel and how far along the line it lies (q).
+        struct DrawnColumn {
+            glm::ivec3 ground{0};
+            size_t segment = 0;
+        };
+
+        /**
+         * The columns of a shape drawn along `line` (q): samples every half voxel along each segment, and across it
+         * (horizontally) every voxel within `halfWidthQ`; each column once, for the first segment that reaches it.
+         * Its ground: the topmost solid voxel under the sample point, searched up `upVoxels` from the point's voxel
+         * when that is solid, else down at most `downVoxels`. A column with no ground in reach is left out.
+         */
+        std::vector<DrawnColumn> DrawnColumns(VoxelCache& cache, std::span<const glm::ivec3> line, uint32_t halfWidthQ, int32_t upVoxels,
+                                              int32_t downVoxels, uint32_t& visits) {
+            std::vector<DrawnColumn> out;
+            std::set<std::pair<int32_t, int32_t>> taken;
+            glm::i64vec3 lastPerp(1, 0, 0);
+            int64_t lastPerpLen = 1;
+            for (size_t s = 0; s + 1 < line.size(); ++s) {
+                const glm::ivec3 a = line[s], b = line[s + 1];
+                const int64_t len = SegmentQ(a, b);
+                glm::i64vec3 perp(-(int64_t{b.z} - a.z), 0, int64_t{b.x} - a.x);
+                int64_t perpLen = static_cast<int64_t>(math::ISqrt64(static_cast<uint64_t>(perp.x * perp.x + perp.z * perp.z)));
+                if (perpLen == 0) {
+                    perp = lastPerp;
+                    perpLen = lastPerpLen;
+                }
+                lastPerp = perp;
+                lastPerpLen = perpLen;
+                const int64_t samples = std::max<int64_t>(1, (len + 7) / 8);
+                const int64_t hw = halfWidthQ;
+                for (int64_t k = 0; k <= samples; ++k) {
+                    const glm::ivec3 p = Along(a, b, k, samples);
+                    for (int64_t o = hw >= 8 ? -hw + 8 : 0; o <= std::max<int64_t>(hw - 8, 0); o += 16) {
+                        const glm::ivec3 q = p + glm::ivec3(perp * o / perpLen);
+                        const glm::ivec3 v = q >> 4;
+                        if (!taken.emplace(v.x, v.z).second) continue;
+                        ++visits;
+                        glm::ivec3 g = v;
+                        bool found = false;
+                        if (IsSupportId(cache.Get(g))) {
+                            for (int32_t i = 0; i < upVoxels && IsSupportId(cache.Get(g + glm::ivec3(0, 1, 0))); ++i) ++g.y;
+                            found = true;
+                        } else {
+                            for (int32_t i = 0; i < downVoxels && !found; ++i) {
+                                --g.y;
+                                found = IsSupportId(cache.Get(g));
+                            }
+                        }
+                        if (found && cache.Get(g) != VoxelCache::kWallId) out.push_back({g, s});
+                    }
+                }
+            }
+            return out;
+        }
     }
 
     const char* ToString(SpellRefusal refusal) {
         switch (refusal) {
         case SpellRefusal::None: return "none";
         case SpellRefusal::NotBuilt: return "not built";
-        case SpellRefusal::FormCooling: return "form cooling";
+        case SpellRefusal::TooSoon: return "too soon";
         case SpellRefusal::NotAttuned: return "not attuned";
         case SpellRefusal::Missed: return "missed";
         case SpellRefusal::Outside: return "outside";
@@ -401,6 +545,8 @@ namespace vortex::sim {
         case SpellRefusal::TooManyZones: return "too many zones";
         case SpellRefusal::NearSpawn: return "near spawn";
         case SpellRefusal::Rooted: return "rooted";
+        case SpellRefusal::NoMana: return "no mana";
+        case SpellRefusal::BadGesture: return "bad gesture";
         }
         return "?";
     }
@@ -434,16 +580,79 @@ namespace vortex::sim {
         if (const auto it = ctx.casters.find(cast.player); it != ctx.casters.end()) caster = it->second;
         const uint8_t element = static_cast<uint8_t>(ElementOf(cast.spell));
         if (element != caster.elementA && element != caster.elementB) return SpellRefusal::NotAttuned;
-        if (tick < caster.formReadyTick[static_cast<size_t>(FormOf(cast.spell))]) return SpellRefusal::FormCooling;
+        if (tick < caster.spellReadyTick) return SpellRefusal::TooSoon;
         return SpellRefusal::None;
     }
 
-    CastSpellResult CastSpell(Simulation& simulation, const SpellTable& table, const SpellCast& cast, CastContext& ctx,
+    void TakeCapture(CastContext& ctx, const SpellTable& table, const SpellCast& cast, uint32_t tick) {
+        ctx.casters[cast.player].spellReadyTick = tick + table.spellGapTicks;
+    }
+
+    uint16_t ManaAt(const SpellTable& table, const CasterState& caster, uint32_t tick) {
+        const uint64_t elapsed = tick > caster.manaTick ? tick - caster.manaTick : 0u;
+        return static_cast<uint16_t>(std::min<uint64_t>(uint64_t{caster.mana} + elapsed * table.manaPerTick, table.manaPool));
+    }
+
+    void RefillMana(const SpellTable& table, CasterState& caster, uint32_t tick) {
+        caster.mana = table.manaPool;
+        caster.manaTick = tick;
+    }
+
+    uint32_t DrawnLengthQ(const SpellTable& table, SpellId spell, const SpellGesture& gesture) {
+        if (spell >= kSpellCount || !table.spells[spell].drawsLine || gesture.kind != GestureKind::Line || gesture.pointsQ.size() < 2) return 0;
+        const SpellDef& def = table.spells[spell];
+        uint32_t length = 0;
+        ClampPolyline(gesture.pointsQ, def.drawMinQ, def.drawMaxQ, length);
+        return length;
+    }
+
+    uint32_t SpellManaCost(const SpellTable& table, SpellId spell, const SpellGesture& gesture) {
+        if (spell >= kSpellCount) return 0;
+        const uint32_t length = DrawnLengthQ(table, spell, gesture);
+        if (length == 0) return table.spells[spell].manaCost;
+        const uint32_t metre = std::max<uint32_t>(table.metreQ, 1);
+        return table.drawBaseMana + static_cast<uint32_t>(uint64_t{table.drawManaPerMetre} * length / metre);
+    }
+
+    SpellRefusal CheckGesture(const voxel::World& world, const OperatorWalls& walls, const SpellTable& table, const glm::ivec3& eyeQ,
+                              const SpellGesture& gesture, uint32_t* chunksRead) {
+        const std::vector<glm::ivec3>& p = gesture.pointsQ;
+        if (p.size() > kMaxGesturePoints || gesture.form > kAutoForm || static_cast<uint8_t>(gesture.kind) > kMaxGestureKind)
+            return SpellRefusal::BadGesture;
+        const int64_t reach = table.gestureReachQ, step = table.gestureStepQ;
+        for (size_t i = 0; i < p.size(); ++i) {
+            const glm::i64vec3 fromEye = glm::i64vec3(p[i]) - glm::i64vec3(eyeQ);
+            if (Dot(fromEye, fromEye) > reach * reach) return SpellRefusal::BadGesture;
+            if (i == 0) continue;
+            const glm::i64vec3 d = glm::i64vec3(p[i]) - glm::i64vec3(p[i - 1]);
+            if (Dot(d, d) > step * step) return SpellRefusal::BadGesture;
+        }
+        if (GesturePathQ(p) > table.gesturePathQ) return SpellRefusal::BadGesture;
+        const size_t supported = gesture.kind == GestureKind::Line ? p.size() : gesture.kind == GestureKind::Rise ? std::min<size_t>(p.size(), 1) : 0;
+        if (supported == 0) return SpellRefusal::None;
+        VoxelCache cache(world, walls);
+        bool ok = true;
+        for (size_t i = 0; i < supported && ok; ++i) ok = NearSupport(cache, p[i], table.gestureSupportQ);
+        if (chunksRead != nullptr) *chunksRead += cache.ChunksRead();
+        return ok ? SpellRefusal::None : SpellRefusal::BadGesture;
+    }
+
+    uint8_t FlightTicks(const SpellTable& table, const glm::ivec3& fromQ, const glm::ivec3& toQ, uint32_t speedMs, bool horizontal) {
+        if (speedMs == 0) return 0;
+        glm::i64vec3 d = glm::i64vec3(toQ) - glm::i64vec3(fromQ);
+        if (horizontal) d.y = 0;
+        return static_cast<uint8_t>(std::min<uint32_t>(TravelTicks(table, math::ISqrt64(static_cast<uint64_t>(Dot(d, d))), speedMs), table.maxFlightTicks));
+    }
+
+    CastSpellResult CastSpell(Simulation& simulation, const SpellTable& table, const SpellCast& request, CastContext& ctx,
                               std::span<const SpellTarget> targets) {
         const auto started = std::chrono::steady_clock::now();
         CastSpellResult out;
         const uint32_t tRun = simulation.Tick();
-        const uint32_t tZ = ZoneStartTick(table, tRun);
+        // The zone tick waits for the flight too: set once the target is known (every zone takes it then).
+        uint32_t tZ = ZoneStartTick(table, tRun);
+        SpellCast cast = request;
+        const SpellGesture& gesture = request.gesture;
         out.runTick = tRun;
         out.zoneTick = tZ;
         const auto finish = [&out, started](SpellRefusal refusal) {
@@ -461,10 +670,37 @@ namespace vortex::sim {
         const float range = ctx.tuning.castRange;
         const glm::dvec3 eyeToFeet(0.0, static_cast<double>(ctx.tuning.eyeHeight), 0.0);
 
+
+        // 0. The gesture: its form is the spell's, its points pass the checks. A drawn shape follows its line; any other
+        //    spell with points casts at the release point, as a tap (a Dash keeps the look its own move took).
+        const glm::ivec3 eyeQ = ToQ(cast.eye, q);
+        const bool hasPoints = !gesture.pointsQ.empty();
+        if (hasPoints && FormOfGesture(gesture) != FormOf(cast.spell)) return finish(SpellRefusal::BadGesture);
+        uint32_t gestureChunks = 0;
+        if (CheckGesture(world, ctx.walls, table, eyeQ, gesture, &gestureChunks) != SpellRefusal::None) return finish(SpellRefusal::BadGesture);
+        out.stats.chunksRead += gestureChunks;
+        const bool line = gesture.kind == GestureKind::Line && gesture.pointsQ.size() >= 2;
+        const bool drawn = line && def.drawsLine;
+        if (hasPoints && !drawn && cast.spell != kDash) {
+            const glm::dvec3 release = glm::dvec3(gesture.pointsQ.back()) / q;
+            if (glm::length(release - cast.eye) > 1.0e-6) cast.dir = glm::vec3(glm::normalize(release - cast.eye));
+        }
+        std::vector<glm::ivec3> drawnLine;
+        if (drawn) {
+            drawnLine = ClampPolyline(gesture.pointsQ, def.drawMinQ, def.drawMaxQ, out.stats.drawnLengthQ);
+            out.drawnPointsQ = drawnLine;
+        }
+        // A drawn shape's segment s lands its line's length before it later, at lineSpeedMs (ceil ticks).
+        std::vector<uint32_t> segmentDelay;
+        uint64_t alongQ = 0;
+        for (size_t s = 0; s + 1 < drawnLine.size(); ++s) {
+            segmentDelay.push_back(TravelTicks(table, alongQ, table.lineSpeedMs));
+            alongQ += static_cast<uint64_t>(SegmentQ(drawnLine[s], drawnLine[s + 1]));
+        }
+
         // 1. Plan: the hit, the operator, the zones and the ops; nothing is applied yet.
         std::vector<PlannedZone> zones;
-        std::vector<WorldOp> bandOps;
-        std::vector<uint8_t> bandIndex;
+        std::vector<PlannedBand> bands;
         bool blow = false;
         WorldOp blowOp;
         bool blowHasVoxel = false;
@@ -531,7 +767,61 @@ namespace vortex::sim {
             return z;
         };
 
-        if (cast.spell == kUpdraft || cast.spell == kBarricadeWave) {
+        if (drawn) {
+            // A shape drawn along the polyline, on the ground under it; segment s lands segmentDelay[s] after the flight.
+            out.hitQ = drawnLine.front();
+            out.face = 2;
+            VoxelCache cache(world, ctx.walls);
+            const int32_t metreVoxels = std::max<int32_t>(1, table.metreQ / 16);
+            const std::vector<DrawnColumn> columns = DrawnColumns(cache, drawnLine, def.drawHalfWidthQ, metreVoxels, 2 * metreVoxels, out.stats.visits);
+            out.stats.front = static_cast<uint32_t>(columns.size());
+            const size_t segments = drawnLine.size() - 1;
+            std::vector<std::vector<glm::ivec3>> fill(segments), floe(segments);
+            const uint8_t water = simulation.WorldMaterialIds().water;
+            for (const DrawnColumn& c : columns) {
+                if (cast.spell == kBarricadeWave) {
+                    for (int32_t j = 1; j <= def.drawHeight; ++j) {
+                        const glm::ivec3 cell = c.ground + glm::ivec3(0, j, 0);
+                        if (!IsOpenId(cache.Get(cell))) break;
+                        fill[c.segment].push_back(cell);
+                    }
+                } else if (cache.Get(c.ground) == water) {
+                    // Over water the floe is the bridge: the surface voxel and the one under it.
+                    floe[c.segment].push_back(c.ground);
+                    if (cache.Get(c.ground - glm::ivec3(0, 1, 0)) == water) floe[c.segment].push_back(c.ground - glm::ivec3(0, 1, 0));
+                } else if (IsOpenId(cache.Get(c.ground + glm::ivec3(0, 1, 0)))) {
+                    fill[c.segment].push_back(c.ground + glm::ivec3(0, 1, 0));
+                }
+            }
+            out.stats.chunksRead += cache.ChunksRead();
+            int fillOwner = -1, floeOwner = -1;
+            // A rising wall keeps its ghost's lead; ice lands where the line reaches.
+            const uint32_t minTicks = cast.spell == kBarricadeWave ? def.bandFirstTick : 0u;
+            for (size_t s = 0; s < segments; ++s) {
+                std::vector<glm::ivec3> kept, keptFloe;
+                if (!guardCells(fill[s], kept) || !guardCells(floe[s], keptFloe)) return finish(SpellRefusal::NearSpawn);
+                if (!kept.empty()) {
+                    if (fillOwner < 0) fillOwner = newOwner(0, def.expiryMap, def.lifetimeTicks, nullptr);
+                    out.stats.planned += static_cast<uint32_t>(kept.size());
+                    bands.push_back({MapCellsOp(def.fillMap, kept), segmentDelay[s], minTicks, 0, fillOwner});
+                }
+                if (!keptFloe.empty()) {
+                    if (floeOwner < 0) floeOwner = newOwner(0, voxel::Map_Unknit, def.floeLifetimeTicks, nullptr);
+                    out.stats.planned += static_cast<uint32_t>(keptFloe.size());
+                    bands.push_back({MapCellsOp(voxel::Map_FreezeWater, keptFloe), segmentDelay[s], 0, 0, floeOwner});
+                }
+            }
+            out.stats.path = out.stats.planned;
+            if (def.zone.kind != ZoneKind::None && def.drawZoneRadiusQ > 0) {
+                voxel::ShapeQ shape;
+                shape.kind = voxel::kShapeCapsule;
+                shape.a = drawnLine.front();
+                shape.b = drawnLine.back();
+                shape.radiusQ = def.drawZoneRadiusQ;
+                zones.push_back({zoneFrom(def.zone, shape), DispelKinds(def.zone.kind) != 0, def.zoneDamage});
+                if (def.zone2.kind != ZoneKind::None) zones.push_back({zoneFrom(def.zone2, shape), DispelKinds(def.zone2.kind) != 0, 0});
+            }
+        } else if (cast.spell == kUpdraft || cast.spell == kBarricadeWave) {
             const FaceHit hit = CastFaceRay(simulation, cast, range);
             if (!hit.hit) return finish(SpellRefusal::Missed);
             out.hitQ = ToQ(hit.point, q);
@@ -580,6 +870,7 @@ namespace vortex::sim {
                             hi = glm::max(hi, c);
                         }
                     const FillGuard guard(simulation, ctx.tuning, targets, lo, hi);
+                    int bandOwner = -1;
                     for (size_t b = 0; b < fill.bands.size(); ++b) {
                         std::vector<glm::ivec3> kept;
                         for (const glm::ivec3& c : fill.bands[b]) {
@@ -590,8 +881,8 @@ namespace vortex::sim {
                         }
                         if (kept.empty()) continue;
                         out.stats.planned += static_cast<uint32_t>(kept.size());
-                        bandOps.push_back(MapCellsOp(def.fillMap, kept));
-                        bandIndex.push_back(static_cast<uint8_t>(b));
+                        if (bandOwner < 0) bandOwner = newOwner(0, def.expiryMap, def.lifetimeTicks, nullptr);
+                        bands.push_back({MapCellsOp(def.fillMap, kept), 0, def.bandFirstTick, static_cast<uint32_t>(b) * def.bandSpacingTicks, bandOwner});
                     }
                 }
             }
@@ -643,8 +934,14 @@ namespace vortex::sim {
             blowOp = WorldOp::Carve(voxel::SphereQ{out.hitQ, def.blowRadiusQ}, def.blowPower);
             voxel::ShapeQ shape;
             shape.kind = voxel::kShapeCapsule;
-            shape.a = ToQ(cast.eye + d * (def.zone.nearQ / 16.0 * vs) - eyeToFeet, q);
-            shape.b = ToQ(cast.eye + d * (def.zone.farQ / 16.0 * vs) - eyeToFeet, q);
+            // A Line points the shove along its last segment.
+            glm::dvec3 shove = d;
+            if (line) {
+                const glm::dvec3 last = glm::dvec3(glm::ivec3(gesture.pointsQ.back()) - gesture.pointsQ[gesture.pointsQ.size() - 2]);
+                if (glm::length(last) > 0.0) shove = glm::normalize(last);
+            }
+            shape.a = ToQ(cast.eye + shove * (def.zone.nearQ / 16.0 * vs) - eyeToFeet, q);
+            shape.b = ToQ(cast.eye + shove * (def.zone.farQ / 16.0 * vs) - eyeToFeet, q);
             shape.radiusQ = def.zone.radiusQ;
             zones.push_back({zoneOf(ZoneKind::Shove, shape), false, def.zoneDamage});
             if (def.release.kind == ZoneKind::Release) zones.push_back({zoneFrom(def.release, shape), false, 0});
@@ -847,7 +1144,19 @@ namespace vortex::sim {
             return finish(SpellRefusal::NotBuilt);
         }
 
-        // 2. The spawn guard: no op box and no zone box may meet an enemy spawn area.
+        // 2. The flight: the effects land on arrival, a zone at max(the arrival, the lead)
+        //    (magic.md "Casting: mana, gestures and projectiles").
+        //    Punch and Dash fly nothing; a drawn shape's projectile flies to the line's first point.
+        if (!def.noProjectile) {
+            const Form form = FormOf(cast.spell);
+            out.flightTicks = FlightTicks(table, eyeQ, out.hitQ, table.forms[static_cast<size_t>(form)].speedMs, form == Form::Flow);
+        }
+        const uint32_t arrival = tRun + out.flightTicks;
+        tZ = std::max(arrival, ZoneStartTick(table, tRun));
+        out.zoneTick = tZ;
+        for (PlannedZone& pz : zones) pz.zone.startTick = tZ;
+
+        // 3. The spawn guard: no op box and no zone box may meet an enemy spawn area.
         for (const PlannedOp& planned : nowOps) {
             glm::ivec3 lo, hi;
             planned.op.Bounds(lo, hi);
@@ -863,9 +1172,9 @@ namespace vortex::sim {
             voxel::SphereVoxelBounds(shatterSphere, lo, hi);
             if (MeetsEnemySpawn(ctx.spawns, cast.team, lo, hi)) return finish(SpellRefusal::NearSpawn);
         }
-        for (const WorldOp& op : bandOps) {
+        for (const PlannedBand& band : bands) {
             glm::ivec3 lo, hi;
-            op.Bounds(lo, hi);
+            band.op.Bounds(lo, hi);
             if (MeetsEnemySpawn(ctx.spawns, cast.team, lo, hi)) return finish(SpellRefusal::NearSpawn);
         }
         if (blow) {
@@ -879,7 +1188,7 @@ namespace vortex::sim {
             if (MeetsEnemySpawn(ctx.spawns, cast.team, lo, hi)) return finish(SpellRefusal::NearSpawn);
         }
 
-        // 3. The caps.
+        // 4. The caps.
         if (out.stats.planned > 0 && ctx.registry.LiveVoxels(0) + out.stats.planned > kMaxConjuredPerRegion)
             return finish(SpellRefusal::TooMuchConjured);
         if (turns && ctx.registry.LiveVoxels(1) >= kMaxTurnedPerRegion) return finish(SpellRefusal::TooMuchConjured);
@@ -898,9 +1207,39 @@ namespace vortex::sim {
             }
         }
 
-        // 4. Apply.
+        // 5. Mana, after every other check: a refusal costs nothing. A script (player 0) pays none.
+        if (cast.player != 0) {
+            const uint32_t cost = SpellManaCost(table, cast.spell, drawn ? gesture : SpellGesture{});
+            CasterState& caster = ctx.casters[cast.player];
+            const uint16_t have = ManaAt(table, caster, tRun);
+            if (have < cost) return finish(SpellRefusal::NoMana);
+            caster.mana = static_cast<uint16_t>(have - cost);
+            caster.manaTick = tRun;
+            out.manaCost = static_cast<uint16_t>(cost);
+        }
+
+        // 6. Apply what lands now, schedule what lands later.
         uint64_t opWork = 0;
-        uint32_t bytes = kCastFxBytes;
+        uint32_t bytes = kCastFxBytes + 2u + 12u * static_cast<uint32_t>(out.drawnPointsQ.size());
+        std::vector<uint32_t> ownerIds(owners.size(), 0);
+        std::vector<bool> ownerMade(owners.size(), false);
+        const auto ownerId = [&](int index) {
+            const size_t i = static_cast<size_t>(index);
+            if (!ownerMade[i]) {
+                ownerIds[i] = ctx.registry.NewOwner(owners[i]);
+                ownerMade[i] = true;
+            }
+            return ownerIds[i];
+        };
+        const auto scheduled = [&](ScheduledKind kind, uint32_t tick) {
+            ScheduledAction a;
+            a.tick = tick;
+            a.kind = kind;
+            a.spell = cast.spell;
+            a.casterTeam = cast.team;
+            a.caster = cast.player;
+            return a;
+        };
         if (cast.spell == kDash && cast.casterState != nullptr) out.dashStarted = StartDash(*cast.casterState, cast.dir);
         // The per-player cap: a script (player 0) is no player.
         if (out.stats.planned > 0 && cast.player != 0) {
@@ -911,7 +1250,7 @@ namespace vortex::sim {
                 out.groups.push_back(GroupOf(std::move(applied)));
             }
         }
-        if (bore) {
+        if (bore && arrival == tRun) {
             // The bore's island search and load check run now, as a blast's, on the cast's work.
             BlastResult carved = Blast(simulation, boreSite);
             const CastWork w = CastWorkOf(carved);
@@ -922,50 +1261,45 @@ namespace vortex::sim {
             out.stats.released += static_cast<uint32_t>(
                 std::count_if(carved.ops.begin(), carved.ops.end(), [](const AppliedOp& a) { return a.op.kind == WorldOpKind::Detach; }));
             out.groups.push_back(std::move(carved));
+        } else if (bore) {
+            // On arrival: its search is not known now and is paid from the structure credit then, as a blow's.
+            ScheduledAction a = scheduled(ScheduledKind::Bore, arrival);
+            a.site = boreSite;
+            opWork += OpWork(boreSite.carve);
+            bytes += static_cast<uint32_t>(OpWireBytes(boreSite.carve));
+            Schedule(ctx, std::move(a));
         }
-        if (!nowOps.empty()) {
-            std::vector<uint32_t> ownerIds;
-            for (const KnitOwnerInfo& info : owners) ownerIds.push_back(ctx.registry.NewOwner(info));
-            for (PlannedOp& planned : nowOps) {
+        for (PlannedOp& planned : nowOps) {
+            opWork += OpWork(planned.op);
+            bytes += static_cast<uint32_t>(OpWireBytes(planned.op));
+            if (arrival == tRun) {
                 AppliedOp applied;
                 applied.op = std::move(planned.op);
                 applied.result = ApplyOp(world, applied.op, &applied.edits);
-                if (planned.owner >= 0) ctx.registry.Record(ownerIds[static_cast<size_t>(planned.owner)], applied.edits, materials);
+                if (planned.owner >= 0) ctx.registry.Record(ownerId(planned.owner), applied.edits, materials);
                 ctx.structure.QueueFromEdits(applied.edits, materials);
-                opWork += OpWork(applied.op);
-                bytes += static_cast<uint32_t>(OpWireBytes(applied.op));
                 out.groups.push_back(GroupOf(std::move(applied)));
-            }
-        }
-        if (!bandOps.empty()) {
-            KnitOwnerInfo info;
-            info.layer = 0;
-            info.expiryMap = def.expiryMap;
-            info.caster = cast.player;
-            info.dueTick = tRun + def.lifetimeTicks;
-            const uint32_t owner = ctx.registry.NewOwner(info);
-            for (size_t i = 0; i < bandOps.size(); ++i) {
-                ScheduledAction a;
-                a.tick = tRun + def.bandFirstTick + uint32_t{bandIndex[i]} * def.bandSpacingTicks;
-                a.kind = ScheduledKind::Band;
-                a.owner = owner;
-                a.op = bandOps[i];
-                a.spell = cast.spell;
-                a.casterTeam = cast.team;
-                a.caster = cast.player;
-                opWork += OpWork(a.op);
-                bytes += static_cast<uint32_t>(OpWireBytes(a.op));
+            } else {
+                // A fill (a mask of conjured cells) is guarded again on its tick, as a band: never entomb who walked in.
+                const bool fill = planned.op.kind == WorldOpKind::MapMask && planned.owner >= 0;
+                ScheduledAction a = scheduled(fill ? ScheduledKind::Band : ScheduledKind::Op, arrival);
+                a.hasOwner = planned.owner >= 0;
+                if (a.hasOwner) a.owner = ownerId(planned.owner);
+                a.op = std::move(planned.op);
                 Schedule(ctx, std::move(a));
             }
         }
+        for (PlannedBand& band : bands) {
+            ScheduledAction a = scheduled(ScheduledKind::Band, tRun + std::max(out.flightTicks + band.along, band.minTicks) + band.extra);
+            a.owner = ownerId(band.owner);
+            a.op = std::move(band.op);
+            opWork += OpWork(a.op);
+            bytes += static_cast<uint32_t>(OpWireBytes(a.op));
+            Schedule(ctx, std::move(a));
+        }
         if (blow) {
-            ScheduledAction a;
-            a.tick = tZ;
-            a.kind = ScheduledKind::Blow;
+            ScheduledAction a = scheduled(ScheduledKind::Blow, tZ);
             a.op = blowOp;
-            a.spell = cast.spell;
-            a.casterTeam = cast.team;
-            a.caster = cast.player;
             a.hasHitVoxel = blowHasVoxel;
             a.hitVoxel = blowVoxel;
             opWork += OpWork(a.op);
@@ -975,13 +1309,8 @@ namespace vortex::sim {
         uint64_t shatterWork = 0;
         if (shatter) {
             // Charged at its cap now: the flood itself runs at T_z on the voxels of that tick.
-            ScheduledAction a;
-            a.tick = tZ;
-            a.kind = ScheduledKind::Shatter;
+            ScheduledAction a = scheduled(ScheduledKind::Shatter, tZ);
             a.op.sphere = shatterSphere;
-            a.spell = cast.spell;
-            a.casterTeam = cast.team;
-            a.caster = cast.player;
             glm::ivec3 lo, hi;
             voxel::SphereVoxelBounds(shatterSphere, lo, hi);
             const glm::ivec3 chunks = glm::max(voxel::VoxelToChunk(hi - glm::ivec3(1)) - voxel::VoxelToChunk(lo) + glm::ivec3(1), glm::ivec3(0));
@@ -1001,19 +1330,24 @@ namespace vortex::sim {
             ctx.zoneOwners[pz.zone.zoneId] = ZoneOwner{cast.team, cast.player, pz.dispellable};
             out.zonesStarted.push_back(pz.zone);
             bytes += ZoneStartBytes(pz.zone);
-            ScheduledAction a;
-            a.tick = pz.zone.startTick;
-            a.kind = ScheduledKind::ZoneTick;
+            ScheduledAction a = scheduled(ScheduledKind::ZoneTick, pz.zone.startTick);
             a.zoneId = pz.zone.zoneId;
             a.damage = pz.damage;
-            a.spell = cast.spell;
-            a.casterTeam = cast.team;
-            a.caster = cast.player;
             Schedule(ctx, std::move(a));
         }
+        if (arrival == tRun) {
+            out.damage.insert(out.damage.end(), direct.begin(), direct.end());
+        } else {
+            for (const SpellDamage& d : direct) {
+                ScheduledAction a = scheduled(ScheduledKind::Hit, arrival);
+                a.target = d.player;
+                a.damage = d.amount;
+                Schedule(ctx, std::move(a));
+            }
+        }
 
-        out.damage.insert(out.damage.end(), direct.begin(), direct.end());
-        out.stats.ops = static_cast<uint32_t>(out.groups.size() + bandOps.size() + (blow ? 1u : 0u) + (shatter ? 1u : 0u));
+        const size_t later = (bore && arrival != tRun ? 1u : 0u) + (arrival != tRun ? nowOps.size() : 0u);
+        out.stats.ops = static_cast<uint32_t>(out.groups.size() + later + bands.size() + (blow ? 1u : 0u) + (shatter ? 1u : 0u));
         out.stats.bytes = bytes;
         out.work.search += uint64_t{out.stats.visits} * kPropagateVisitWork + uint64_t{out.stats.chunksRead} * kColdChunkGraphWork +
                            boreSliceWork + shatterWork;
@@ -1067,6 +1401,24 @@ namespace vortex::sim {
                 out.groups.push_back(std::move(blast));
                 break;
             }
+            case ScheduledKind::Op: {
+                AppliedOp applied;
+                applied.op = std::move(action.op);
+                applied.result = ApplyOp(world, applied.op, &applied.edits);
+                if (action.hasOwner) ctx.registry.Record(action.owner, applied.edits, materials);
+                out.groups.push_back(GroupOf(std::move(applied)));
+                break;
+            }
+            case ScheduledKind::Bore: {
+                BlastResult carved = Blast(simulation, action.site);
+                const CastWork work = CastWorkOf(carved);
+                ctx.structure.credit -= static_cast<int64_t>(work.search + work.neck);
+                out.groups.push_back(std::move(carved));
+                break;
+            }
+            case ScheduledKind::Hit:
+                out.damage.push_back(SpellDamage{action.target, action.damage, action.caster, action.spell});
+                break;
             case ScheduledKind::Shatter: {
                 const ShatterResult flood = ShatterFlood(world, ctx.walls, action.op.sphere, def.shatterDepth, def.shatterVisitCap);
                 if (flood.cells.empty()) break;

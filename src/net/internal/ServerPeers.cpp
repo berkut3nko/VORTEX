@@ -237,7 +237,6 @@ namespace vortex::net {
             if (!consumed && r.cast) CaptureCast(*peer, input, pl.state, false);
             else if (!consumed && (r.pressed & sim::PlayerButton_Cast) != 0) RejectCast(*peer, now);
             if (!consumed && r.spell) CaptureSpell(*peer, input, pl.state);
-            else if (!consumed && (r.pressed & sim::PlayerButton_Spell) != 0 && (r.pressed & sim::PlayerButton_Cast) == 0) RejectCast(*peer, now);
             if (!consumed && (r.pressed & sim::PlayerButton_Use) != 0) PlayerUse(*peer, input, &pl.state, now);
             if ((r.pressed & sim::PlayerButton_Crate) != 0) PlayerCrate(*peer, input, pl.state);
         }

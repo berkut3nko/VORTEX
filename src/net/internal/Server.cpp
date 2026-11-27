@@ -250,6 +250,7 @@ namespace vortex::net {
                         else if (type == MessageType::ModelRequest) ok = OnModelRequest(it->second, e.data);
                         else if (type == MessageType::EntityListRequest) ok = OnEntityListRequest(it->second, e.data);
                         else if (type == MessageType::Attune) ok = OnAttune(it->second, e.data);
+                        else if (type == MessageType::SpellGesture) ok = OnSpellGesture(it->second, e.data);
                         if (!ok) {
                             ++stats.malformedRequests;
                             Log::Warn("Server: client {} sent a malformed or out-of-order sync message: disconnected", e.peer);

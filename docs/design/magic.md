@@ -137,8 +137,9 @@ carries no contradiction. The owner confirms the colours windowed (question 23).
 ### What a player carries
 
 - **LMB, the blast.** The M2a cast (60 damage at the centre, 0 at 1.2 m; carves with power 6), the same for everyone.
-- **RMB, the selected spell.** Keys **1-4** pick the form (FLOW, PLUME, PIERCE, BURST); the mouse wheel cycles forms.
-  **R** swaps between the two attuned elements. The selection is the client's, sent in every input
+- **RMB, the spell, cast by gesture** ([mag-8], "Casting: mana, gestures and projectiles" below). Hold RMB and draw:
+  the gesture picks the form (AUTO); keys **1-4** force a form (FLOW, PLUME, PIERCE, BURST) until the same key is
+  pressed again; the mouse wheel cycles AUTO and the four forms. **R** swaps between the two attuned elements. The selection is the client's, sent in every input
   (`PlayerInput::spell`).
 - **Attunement: 2 of the 4 elements per life**, chosen on the respawn screen (M2a's 3 s). Keys 1-4 toggle elements
   there; exactly 2 must be on; Ready or the timer confirms; the default is the last choice (Metal + Pressure on a
@@ -149,16 +150,98 @@ the enemy stays readable (two element colours glow at the hands); the HUD stays 
 play (a Frost mage primes, a Pressure mage shatters); and the owner's two-axis grammar stays in the player's hands.
 Every combination is one respawn away.
 
+### Casting: mana, gestures and projectiles ([mag-8], the owner's revision of 2026-11-27)
+
+The owner's revision, verbatim in intent: a mana-regulated casting system instead of skill cooldowns, with an
+anti-spam gap of 0.2 s; casting by gesture (hold RMB and draw where the iron wall will stand; a vertical gesture makes
+a bridge or stairs; gesture logic on every other spell where it fits); a visible projectile for every spell, so a
+player sees what the spell does. This section replaces the form cooldowns, the "RMB casts at once" input and the
+"effects land at `T_run`" timing. Where it differs from older text in this document, this section wins.
+
+**Mana** (server only, as the charges; offline the same code in the `CastContext`):
+
+| Value | Number | Why |
+|---|---|---|
+| Pool | 100 mana, full at spawn and at respawn; integers in 1/60 mana (6 000) | One meter, one number per spell |
+| Regeneration | 10 mana/s (10 units per tick), always, also while casting | A full pool refills in 10 s |
+| Anti-spam gap | 12 ticks (0.2 s) after any spell before the next spell; the blast keeps its own 15-tick limit | The owner's 0.2 s |
+| Spell cost | Pierce 20; Flow 30; Updraft and Punch 20; Dash 20; Meteor Leap 45; a drawn shape 10 + 5 per metre of path (a 4.5 m wall 32.5, an 8 m bridge 50) | A big spell is most of a pool; two big spells in a row leave the caster empty |
+| Blast | Unchanged: the M2a charges (3 pips), no mana | The blast is the weapon; mana is the craft |
+
+The cost is charged when the cast runs (`T_run`), after every other check; a refusal costs nothing. A cast over the
+pool is refused `NoMana` (HUD `NO MANA`). The gap refuses `TooSoon` (no HUD line: the client does not send a Spell
+edge inside the gap). The 6 000-voxel conjured cap stays. Sustained spell rate (c): 10 mana/s over about 25 per spell
+is 0.4 spells/s per player; with the blast's 0.83/s, 10 players make about 12 casts/s, over the 10 casts/s design case
+(e): [mag-6]'s stress gate measures it; the first knob is the regeneration.
+
+**Gestures** (the client samples; the server checks and decides):
+
+- **Sampling.** While RMB is held, each tick the client traces the aim (the CPU ray query, 30 m). A hit point is kept
+  when it lies 0.5 m or more from the last kept point; at most 16 points and 12 m of path. The camera pitch at the
+  press and at each kept point is kept too. A press with no hit keeps the point 30 m out along the aim.
+- **Preview.** While held, the path shows as a ghost line in the element's colour, and the HUD shows the gesture's
+  form word and its mana cost (red when over the pool). LMB while RMB is held cancels; nothing is sent.
+- **Release** classifies the gesture (`sim::ClassifyGesture`, integers on the quantised points and pitches, so a
+  test pins it):
+
+| Gesture | Rule (first match) | Form in AUTO |
+|---|---|---|
+| Tap | held under 12 ticks, or path under 1 m with a pitch change under 12 degrees | PIERCE |
+| Rise | pitch rose 12 degrees or more, and the pitch sweep is larger than the yaw sweep | PLUME |
+| Fall | pitch fell 12 degrees or more, and the pitch sweep is larger than the yaw sweep | FLOW |
+| Line | anything else with a path of 1 m or more | BURST |
+
+- **A forced form** (keys 1-4) uses the gesture only where its spell takes a shape (the table below); otherwise it
+  casts at the release point, as a tap.
+- **What a gesture makes, per spell** (a tap casts every spell as before):
+
+| Spell | Gesture | Shape |
+|---|---|---|
+| Barricade Wave (Burst x Metal) | Line | A knit wall 1.5 m high and 0.5 m thick along the drawn polyline, on the ground under each point; 1.5-10 m |
+| Firestorm Sweep (Burst x Thermal) | Line | The fire curtain along the polyline |
+| Flash Freeze (Burst x Frost) | Line | The ice strip along the polyline (floe on water): a drawn ice bridge |
+| Punch (Burst x Pressure) | Line | As a tap; the shove points along the stroke's last segment |
+| Rising Spire (Plume x Metal) | Rise | From the start point S to the end point E: **stairs** when E is 1 m or more above S (knit steps 1 m wide, 0.375 m rise, 0.5 m run, along the horizontal S-E line); a **bridge** when E is within 1 m of S's height and 3 m or more away (a knit deck 1.5 m wide and 0.25 m thick, level at the lower end's height, each end on the ground or on a wall within 0.5 m); else the pillar at S. At most 10 m along the path |
+| Permafrost Climb (Plume x Frost) | Rise | Ice ledges from S up to E on the face, every 0.75 m (the stairs rule in ice) |
+| Wildfire (Plume x Thermal) | Rise | Pitch up the face from S to E |
+| Updraft (Plume x Pressure) | Rise | The Lift column at S; its height reaches E's height (3-8 m) |
+| Molten Pour, Pitchfall, Rune Trap (Flow) | Fall | Lobbed at E, the release point |
+| Meteor Leap (Flow x Pressure) | Fall | The leap lands at E |
+| Pierce spells, Dash | Tap | As before (the aim at the release) |
+
+- **On the wire** (`SpellGesture`, [mag-8]'s protocol bump): the client sends the kind, the forced form (or AUTO) and
+  the points (int32 x 3 each, in q; the pitches are not sent) reliably, in the same tick as the Spell edge it belongs
+  to; the server pairs them by the input tick. The server checks each point: within 31 m of the eye at the input's
+  tick, at most 2 m from the last, the path at most 12 m; a Line point and a Rise's S must lie within 1 m of a solid
+  voxel. A failed check refuses `BadGesture`. The spawn guard applies to every voxel of the shape.
+
+**Projectiles** (presentation; the timing is the server's):
+
+- Every spell that acts at a point flies a projectile from the caster's hand to that point. The server computes the
+  flight in ticks from the quantised distance: `flight = ceil(dist * 60 / speed)`, at most 60 ticks. Speeds:
+  Pierce 80 m/s (a thin streak), Burst 40 m/s (a disc to the line's first point; then the shape grows along the line
+  at 20 m/s, segment by segment), Plume 30 m/s (a rising wisp to S), Flow on its arc (the Flow operator's arc trace;
+  until [mag-4], a parabola 2 m over the straight line at 20 m/s horizontal). Punch, Dash and Meteor Leap fly no
+  projectile (the caster is the projectile).
+- **Effects land on arrival.** A spell's ops run at `T_run + flight` (`RunScheduled`); a drawn shape's segment
+  runs at its arrival along the line. A zone starts at `max(T_run + flight, T_run + lead)` (the 0.4 s readability rule
+  stays). Rising matter keeps its ghost (rule 3) from `T_run`, so the ghost and the projectile are seen together.
+- `CastFx` carries the flight ticks and, for drawn shapes, the gesture's points, so every client draws the same
+  flight and the same ghost. The projectile is not a body: it meets nothing, and the target is decided at `T_run`.
+- **Offline** runs the same server code (M2a's in-process server): the same mana, gesture checks and flight timing.
+
 ### Resources
 
 | Resource | Value | Shown as | Why |
 |---|---|---|---|
 | Charges (M2a) | 3 at most, 1 back every 1.2 s; the 15-tick cooldown is the burst limit. The blast and every spell cost 1 | 3 pips under the crosshair | One pool keeps the sustained rate at about 0.83 casts/s per player (c), so 10 players make about 8.3 casts/s, inside the 10 casts/s design case. Shooting and weaving compete for the same pips |
-| Form cooldown | Pierce 300 ticks (5 s), Burst 420 (7 s), Flow 540 (9 s), Plume 540 (9 s); shared by both elements of a form | A shrinking fill on each slot of the spell bar, with the seconds left | A big spell is a decision with a readable window ("his BURST is down"); it stops chaining Barricade Wave into Punch |
+| Charges (M2a) for the blast only ([mag-8]) | As above; spells no longer cost a charge | 3 pips | The blast is the weapon |
+| Mana ([mag-8]) | 100, 10/s back, a cost per spell and per metre drawn; 0.2 s between spells | A bar under the spell bar with the number | The owner's revision: one meter regulates the craft |
 | Conjured matter | 6 000 live conjured voxels per player (about four walls) | `KNIT 1840/6000` above the element panel while above 0 | Over it, the player's oldest conjuring crumbles at once (an info line, not a refusal) |
 
-Rejected: a mana bar (a second meter beside the charges), per-spell cooldowns (8 timers), costs that differ per spell
-(players misjudge them). The first knob if the heavy spells feel cheap: Meltdown Beam and Meteor Leap cost 2 charges
+The charges row above is the [mag-2] design; [mag-8] keeps it for the blast and replaces the form cooldowns with mana.
+Rejected at first and taken by the owner's revision on 2026-11-27: a mana bar and costs that differ per spell.
+Still rejected: per-spell cooldowns (8 timers). The first knob if the heavy spells feel cheap: Meltdown Beam and Meteor Leap cost 2 charges
 (question 11).
 
 ### Readability rules (they bind every spell)
@@ -262,7 +345,8 @@ plating's 25 s life and its 2 s crack set the rhythm: a breach window opens ever
 
 ### Input and HUD (game-ui.md: `HudCanvas` quads and the 5 x 9 font, no ImGui)
 
-- **Keys:** LMB blast; RMB spell; 1-4 form (wheel cycles); R swaps the element; E use and Q crate (mechanisms.md); V
+- **Keys:** LMB blast; RMB held draws a gesture, released casts it, LMB while held cancels; 1-4 force a form (the same
+  key again: AUTO; the wheel cycles AUTO and the forms); R swaps the element; E use and Q crate (mechanisms.md); V
   view. The editor keeps its keys while F1 is open.
 - **Spell bar** (bottom centre, 4 slots of 84 x 48 px at 720p, scaled by `TextScale`): each slot shows its key digit
   and the form word (6 glyphs at most, which fits 70 px at scale 2); the slot's border takes the active element's
@@ -276,7 +360,8 @@ plating's 25 s life and its 2 s crack set the rhythm: a breach window opens ever
   marker on its arc (presentation only: a few particles on the client's own arc).
 - **Statuses** beside M2a's health bar: `ROOTED 0.8`, `CHILLED`, `PINNED`, `BURNING`, `LIFTED`, `FREE 1.2` (the
   control guard), in element colours.
-- **Refusals** reuse M2a's "Cast not run" line with new words: `PIERCE COOLING`, `NO CHARGE`, `NOT ATTUNED`,
+- **Refusals** reuse M2a's "Cast not run" line with new words: `NO MANA`, `BAD GESTURE` ([mag-8]; `PIERCE COOLING`
+  goes with the form cooldowns), `NO CHARGE`, `NOT ATTUNED`,
   `TOO MUCH MATTER`, `TOO MANY ZONES`, `TOO MUCH FIRE`, `NEAR SPAWN`; `KNIT CAP: OLDEST CRUMBLED` is an info line.
 - **What the HUD reads:** the form cooldowns, the attunement pair and the statuses come from the snapshot's owner
   block ("Wire values"); the client never guesses them from `CastFx` or rejections.
@@ -1461,7 +1546,8 @@ it wraps in about 25-30 s (c); spread adds about 10 parts/s. L12 holds: no fallb
 | [mag-4] | **Flow, climbing, the rune and the rest of Metal.** The Flow operator and its fine fixed-point arc trace; `slag`, the Slag and Set maps, the hazard scan (slag); Plume's bands and ledges with the band timing rule and the lead-tied hover; Rebar Lance's two sockets; the Rune zone and the server's trigger test, one rune per caster. Spells: **Molten Pour, Rising Spire, Rebar Lance, Rune Trap**. No protocol bump | [mag-3] (the bore for Rebar Lance; ice, Root and Chill for Rune Trap) | Their tests and demo lines (`Spire: rider on top`, `Rebar: ledge reached`, `Rune: burst under bot N`); `Movement.SpireRiderNoCorrection`; `Magic.ARuneBurstsOnceUnderTheFirstEnemy`; drills agree | 6-8 d | Designed |
 | [mag-5] | **Thermal.** The pitch class in `SpreadTable`, `knit_iron_hot`, `iron_hot`, the Pitch, Heat and Cool maps, the hazard scan for pitch and hot metal, Burning. Spells: **Pitchfall, Wildfire, Meltdown Beam, Firestorm Sweep** | [spread-S1] (headless and scripts); [spread-S2] / [spread-S3] for play (offline practice and sessions both run the server path); rides S2's bump if they land together | spread.md's gates plus the Thermal lines; `Magic.HeatUnderAFloeBridgeReleasesWhatItCarried`; the ten-fires case with Thermal spells inside the spread credit | 4-6 d | Designed |
 | [mag-6] | **Presentation and tuning.** `FxDirector` effects per element, rings, ghosts, crumble warnings, steam and frost mist (fog when built), the landing marker, team panel letters, audio hooks once audio exists; a 10-bot spell fight measured; lifetimes, strengths, charges and cooldowns after the owner's taste check | [fx-1], [fx-2] ([wp-8]) | the stress gate (`--stress-spells` inside 4 ms CPU / 4 ms GPU); fight frame within [wp-8]'s margin on the UHD 620; server p99 < 16.7 ms; the owner's windowed checks | 4-6 d + owner | Designed |
-| [mag-7] | **Meteor Leap.** `extraLoad` in Part 4b's check, run as a site check on the structure credit; the Pin zone and the leap's launch at the cast edge (`kPlayerRuleRevision` 5); the slam's arc trace (Flow's). Spell: **Meteor Leap**. No protocol bump. It can land before [mag-5] once [si-2] is done | [si-2] (the `NeckCheck` split), [mag-4] (Flow) | `--crush-demo`; `Neck.ExtraLoad*`; `--neck-blast`, `--tower-blast` and the castle case unchanged; drills agree | 2-3 d | Designed |
+| [mag-7] | **Meteor Leap.** `extraLoad` in Part 4b's check, run as a site check on the structure credit; the Pin zone and the leap's launch at the cast edge (`kPlayerRuleRevision` 6); the slam's arc trace (Flow's). Spell: **Meteor Leap**. No protocol bump. It can land before [mag-5] once [si-2] is done | [si-2] (the `NeckCheck` split), [mag-4] (Flow) | `--crush-demo`; `Neck.ExtraLoad*`; `--neck-blast`, `--tower-blast` and the castle case unchanged; drills agree | 2-3 d | Designed |
+| [mag-8] | **Mana, gestures and projectiles** (the owner's revision of 2026-11-27, "Casting: mana, gestures and projectiles"). The mana pool, regeneration, costs and the 12-tick gap in the server's cast check (offline the same code), replacing the form cooldowns; `sim::ClassifyGesture`; the `SpellGesture` message and its checks; drawn shapes for Barricade Wave, Flash Freeze and Punch's direction now, and for the rest as their spells land; Rising Spire's stairs and bridge with [mag-4]; flight ticks in `CastFx` and effects at arrival; the client's sampling, the ghost line, the mana bar and the projectiles. One protocol bump (the owner block: the form cooldowns become `mana` and `spellGap`; `CastRejection` `NoMana`, `TooSoon`, `BadGesture`) | [mag-3] | `Mana.*`, `Gesture.*` (classification, checks, a drawn wall's voxels equal offline and on the server), `Projectile.EffectsLandOnArrival`; G23 with a drawn wall; a session test that a gesture cast replicates with equal hashes | 4-6 days | Engine built (2026-11-27), not reviewed: mana, the gap, `sim::ClassifyGesture`, the gesture checks, the drawn wall, ice strip and Punch stroke, flight ticks with effects on arrival, `SpellGesture` and the owner block (protocol 15, `kPlayerRuleRevision` 5); the game (sampling, the ghost line, the mana bar, the projectiles, G23 with a drawn wall) not built |
 | later | Knit tiers from progression (the 3 reserved ids), M7 | M7 | - | - | Not started |
 
 Commits (engine / game) and history files are added to each row as its stage lands.

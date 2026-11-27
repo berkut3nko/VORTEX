@@ -14,6 +14,7 @@ export import :combat;
 export import :mechanism;
 export import :rope;
 export import :spell;
+export import :gesture;
 export import :propagate;
 export import :knit;
 export import :cast;
