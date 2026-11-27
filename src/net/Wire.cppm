@@ -250,7 +250,8 @@ export namespace vortex::net {
                                EntityRelease, ZoneStartEvent, ZoneCancelEvent, CastFx>;
 
     /// Decoder limits of the magic events and ops (magic.md "Wire values").
-    inline constexpr uint16_t kMaxZoneDuration = 600;
+    /// The longest zone: a Rune Trap's rune (60 s).
+    inline constexpr uint16_t kMaxZoneDuration = 3600;
     inline constexpr int32_t kMaxCapsuleLengthQ = 8192;     ///< 64 m at 0.125 m
     inline constexpr uint16_t kMaxCapsuleRadiusQ = 1024;
     /// Zone kinds a decoder accepts (1-9: Impulse .. Rune; the later stages give the reserved ones behaviour).

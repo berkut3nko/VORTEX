@@ -298,13 +298,13 @@ TEST(Wire, ZoneEventsAndCastFxRoundTrip) {
     EXPECT_FALSE(DecodesWhole(bytes, back)) << "17 points";
 }
 
-TEST(Wire, ZoneStartRefusesKind0And10AndDuration601) {
+TEST(Wire, ZoneStartRefusesKind0And10AndALongerDurationThanARune) {
     for (const uint8_t kind : {uint8_t{0}, uint8_t{10}}) {
         net::ZoneStartEvent e{TestZone(voxel::kShapeSphere)};
         e.zone.kind = static_cast<sim::ZoneKind>(kind);
         EXPECT_FALSE(Decodes(e)) << "zone kind " << int(kind);
     }
-    for (const uint16_t duration : {uint16_t{0}, uint16_t{601}}) {
+    for (const uint16_t duration : {uint16_t{0}, uint16_t{3601}}) {
         net::ZoneStartEvent e{TestZone(voxel::kShapeSphere)};
         e.zone.duration = duration;
         EXPECT_FALSE(Decodes(e)) << "duration " << duration;

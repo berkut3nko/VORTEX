@@ -94,6 +94,16 @@ namespace vortex::sim {
             h = voxel::HashMix64(h, s.drawMinQ);
             h = voxel::HashMix64(h, s.drawMaxQ);
             h = voxel::HashMix64(h, s.drawZoneRadiusQ);
+            for (const uint32_t v : {uint32_t{s.flowSeedRadius}, uint32_t{s.fallMax}, uint32_t{s.flowRunPops}, uint32_t{s.flowLateral},
+                                     uint32_t{s.frontCount}, uint32_t{s.flowVisitCap}, uint32_t{s.fillCap}, uint32_t{s.setDelayTicks},
+                                     uint32_t{s.splashRadiusQ}, uint32_t{s.splashDamage}, uint32_t{s.ledgeSpacing}, uint32_t{s.ledgeWidth},
+                                     uint32_t{s.ledgeOut}, uint32_t{s.ledgeThick}, uint32_t{s.bandVoxels}, uint32_t{s.drawsRise ? 1u : 0u},
+                                     uint32_t{s.stepRise}, uint32_t{s.stepRun}, uint32_t{s.stepWidth}, uint32_t{s.deckWidth}, uint32_t{s.deckThick},
+                                     uint32_t{s.stairsMinRiseQ}, uint32_t{s.bridgeLevelQ}, uint32_t{s.bridgeMinQ}, uint32_t{s.bridgeEndQ},
+                                     uint32_t{s.socketSpacing}, uint32_t{s.pegLengthQ}, uint32_t{s.aimLevel ? 1u : 0u}, uint32_t{s.armTicks},
+                                     uint32_t{s.burstRadiusQ}})
+                h = voxel::HashMix64(h, v);
+            h = MixZone(h, s.zone3);
             return h;
         }
     }
@@ -112,7 +122,7 @@ namespace vortex::sim {
             {m.granite, 120}, {m.graniteQuoin, 120}, {m.ashlar, 48}, {m.rubbleCore, 32}, {m.oakIron, 104},
             {m.slate, 13}, {m.roofTile, 13}, {m.thatch, 5}, {m.wattleDaub, 10}, {m.soot, 48}, {m.graniteDamp, 120},
             {m.knitIron, 112}, {m.ice, 16}, {m.floe, kBoreStop}, {m.knitIronRimed, 56}, {m.stoneRimed, 24},
-            {m.stoneDarkRimed, 32}, {m.brickRimed, 20}, {m.ironRimed, 64},
+            {m.stoneDarkRimed, 32}, {m.brickRimed, 20}, {m.ironRimed, 64}, {m.slag, 112},
         };
         for (const auto& [id, cost] : costs) c[id] = cost;
         return c;
@@ -142,6 +152,126 @@ namespace vortex::sim {
         // drawn shape of its usual size.
         const auto Mana = [](double mana) { return static_cast<uint16_t>(std::lround(mana * 60.0)); };
         t.boreCost = BoreCostTable();
+        // Flow's arc in 1/4096 voxel: 22 m/s per tick, and gravity per tick^2 (89 at 0.125 m).
+        t.arcSpeedFine = static_cast<uint32_t>(std::lround(22.0 / vs / 60.0 * 4096.0));
+        t.arcGravity = static_cast<uint32_t>(std::lround(9.81 / vs * 4096.0 / 3600.0));
+        // A bore's budget per metre of stone, scaled with the slices of a metre (8 at 0.125 m).
+        const auto Budget = [&V](uint32_t perMetre) { return static_cast<uint32_t>(perMetre * static_cast<uint32_t>(V(1.0)) / 8u); };
+
+        {   // Molten Pour: a lobbed Flow; slag over its Fall skin cells and its pool, set into knit after a second.
+            SpellDef& s = t.spells[kMoltenPour];
+            s.built = true;
+            s.flowSeedRadius = U8(V(0.5));
+            s.fallMax = U16(V(8.0));
+            s.flowRunPops = 1200;
+            s.flowLateral = U16(V(3.0));
+            s.frontCount = 240;
+            s.flowVisitCap = 12000;
+            // The cap is a volume: 900 voxels at 0.125 m.
+            s.fillCap = U16(static_cast<int32_t>(std::lround(900.0 * (0.125 / vs) * (0.125 / vs) * (0.125 / vs))));
+            s.fillMap = voxel::Map_Slag;
+            s.setDelayTicks = 60;
+            s.lifetimeTicks = 1500;
+            s.expiryMap = voxel::Map_Unknit;
+            s.splashRadiusQ = Q(1.0);
+            s.splashDamage = 20;
+            s.manaCost = Mana(30.0);
+        }
+        {   // Rising Spire: the Plume filled with knit in bands, ledges every metre, a Lift that carries a rider up.
+            SpellDef& s = t.spells[kRisingSpire];
+            s.built = true;
+            s.plumeSeedRadius = U8(V(0.375));
+            s.riseMax = U16(V(6.0));
+            s.plumeRunPops = 400;
+            s.plumeLateral = U16(V(2.0));
+            // The whole column is filled: the cap holds every seed's rise (one test per cell) and the spread's pops.
+            int32_t seeds = 0;
+            for (int32_t a = -s.plumeSeedRadius; a <= s.plumeSeedRadius; ++a)
+                for (int32_t b = -s.plumeSeedRadius; b <= s.plumeSeedRadius; ++b) seeds += a * a + b * b <= s.plumeSeedRadius * s.plumeSeedRadius ? 1 : 0;
+            s.plumeVisitCap = U16(std::min(60000, seeds * (s.riseMax + 2) + 6 * s.plumeRunPops));
+            s.fillMap = voxel::Map_Knit;
+            s.bandCount = 6;
+            s.bandVoxels = U8(V(1.0));
+            s.bandFirstTick = 18;
+            s.lifetimeTicks = 900;
+            s.expiryMap = voxel::Map_Unknit;
+            s.ledgeSpacing = U8(V(1.0));
+            s.ledgeWidth = U8(V(0.75));
+            s.ledgeOut = U8(V(0.5));
+            s.ledgeThick = U8(std::max(1, V(0.25)));
+            s.zone.kind = ZoneKind::Lift;
+            s.zone.place = ZonePlace::SpireLift;
+            s.zone.target = ZoneTarget::Everyone;
+            s.zone.strength[0] = 860;
+            s.zone.radiusQ = Q(0.375 + 0.3);
+            s.zone.rampQ = Q(0.25);
+            s.zone.hoverQ = Q(0.5);
+            s.manaCost = Mana(35.0);
+            s.drawsRise = true;
+            s.stepRise = U8(V(0.375));
+            s.stepRun = U8(V(0.5));
+            s.stepWidth = U8(V(1.0));
+            s.deckWidth = U8(V(1.5));
+            s.deckThick = U8(std::max(1, V(0.25)));
+            s.stairsMinRiseQ = Q(1.0);
+            s.bridgeLevelQ = Q(1.0);
+            s.bridgeMinQ = Q(3.0);
+            s.bridgeEndQ = Q(0.5);
+            s.drawMaxQ = Q(10.0);
+        }
+        {   // Rebar Lance: two level bores 1 m apart up the face, knit filling both sockets and two pegs out of it.
+            SpellDef& s = t.spells[kRebarLance];
+            s.built = true;
+            s.aimLevel = true;
+            s.pierceRadiusQ = 24;   // 1.5 voxels: a bore is counted in voxels
+            s.piercePower = 64;
+            s.pierceMaxSlices = U16(V(3.0));
+            // 1.25 m of stone at 0.125 m: 10 slices of about 7 voxels at 48.
+            s.pierceBudget = Budget(3360);
+            s.socketSpacing = U8(V(1.0));
+            s.pegLengthQ = Q(1.25);
+            s.fillMap = voxel::Map_Knit;
+            s.lifetimeTicks = 1200;
+            s.expiryMap = voxel::Map_Unknit;
+            s.zone.kind = ZoneKind::Root;
+            s.zone.place = ZonePlace::HitCylinder;
+            s.zone.target = ZoneTarget::Enemies;
+            s.zone.durationTicks = 45;
+            s.zone.radiusQ = Q(0.5);
+            s.zone.halfHeightQ = Q(2.0);
+            s.directDamage = 30;
+            s.manaCost = Mana(20.0);
+        }
+        {   // Rune Trap: a lobbed Flow lands a static rune; the first enemy on it bursts it: Root, Chill and an ice patch.
+            SpellDef& s = t.spells[kRuneTrap];
+            s.built = true;
+            s.fallMax = U16(V(8.0));
+            s.armTicks = 60;
+            s.zone.kind = ZoneKind::Rune;
+            s.zone.place = ZonePlace::RuneFloor;
+            s.zone.target = ZoneTarget::Enemies;
+            s.zone.durationTicks = 3600;
+            s.zone.radiusQ = Q(1.5);
+            s.zone.halfHeightQ = Q(1.0);
+            s.burstRadiusQ = Q(2.0);
+            s.zone2.kind = ZoneKind::Root;
+            s.zone2.place = ZonePlace::RuneFloor;
+            s.zone2.target = ZoneTarget::Enemies;
+            s.zone2.durationTicks = 90;
+            s.zone2.radiusQ = Q(2.0);
+            s.zone2.halfHeightQ = Q(1.0);
+            s.zone3 = s.zone2;
+            s.zone3.kind = ZoneKind::Chill;
+            s.zone3.durationTicks = 180;
+            s.zone3.strength[0] = 6;
+            s.zone3.strength[1] = 60;
+            s.zoneDamage = 15;
+            s.fillMap = voxel::Map_Freeze;
+            s.fillCap = 400;
+            s.lifetimeTicks = 720;
+            s.expiryMap = voxel::Map_Unknit;
+            s.manaCost = Mana(30.0);
+        }
 
         {   // Updraft: a Lift over a single Plume column, everyone.
             SpellDef& s = t.spells[kUpdraft];
@@ -241,7 +371,7 @@ namespace vortex::sim {
             s.piercePower = 64;
             s.pierceMaxSlices = U16(V(3.0));
             // One metre of stone at 0.125 m (8 slices of about 7 voxels at 48), scaled with the slices of a metre.
-            s.pierceBudget = static_cast<uint32_t>(2688 * V(1.0) / 8);
+            s.pierceBudget = Budget(2688);
             s.rimeRadiusQ = Q(0.75);
             s.rimeLifetimeTicks = 480;
             s.zone.kind = ZoneKind::Chill;
@@ -330,7 +460,8 @@ namespace vortex::sim {
         for (const uint32_t v : {uint32_t{table.metreQ}, uint32_t{table.manaPool}, uint32_t{table.manaPerTick}, uint32_t{table.spellGapTicks},
                                  uint32_t{table.drawBaseMana}, uint32_t{table.drawManaPerMetre}, uint32_t{table.maxFlightTicks},
                                  uint32_t{table.lineSpeedMs}, table.gestureReachQ, table.gestureStepQ, table.gesturePathQ,
-                                 uint32_t{table.gestureSupportQ}})
+                                 uint32_t{table.gestureSupportQ}, table.arcSpeedFine, table.arcGravity, uint32_t{table.arcMaxTicks},
+                                 uint32_t{table.lobMinTicks}, uint32_t{table.hazardTicks}, uint32_t{table.hazardDamage}})
             h = voxel::HashMix64(h, v);
         for (const SpellDef& spell : table.spells) h = MixSpell(h, spell);
         for (const uint16_t cost : table.boreCost) h = voxel::HashMix64(h, cost);

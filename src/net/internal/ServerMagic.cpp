@@ -220,8 +220,7 @@ namespace vortex::net {
             ++stats.zonesCancelled;
         }
         if (!failed)
-            for (const sim::SpellDamage& d : r.damage)
-                DealDamage({d.player, d.source, static_cast<int16_t>(d.amount), static_cast<uint8_t>(sim::DamageCause::Blast)});
+            for (const sim::SpellDamage& d : r.damage) DealDamage({d.player, d.source, static_cast<int16_t>(d.amount), d.cause});
         stats.spellBytes += stats.eventBytes - bytesBefore;
         const uint32_t delay = Tick() - q.queuedTick;
         ++stats.castDelay[std::min<uint32_t>(delay, 7)];
@@ -239,9 +238,21 @@ namespace vortex::net {
             ++scheduledGroups;
         }
         sitesRun += r.sitesRun;
+        // A rune that burst or broke ends now; its burst's Root and Chill start a lead later.
+        for (const auto& [zoneId, endTick] : r.zonesCancelled) {
+            if (failed) break;
+            Emit(ZoneCancelEvent{zoneId, endTick});
+            ++stats.zonesCancelled;
+        }
+        for (const sim::Zone& zone : r.zonesStarted) {
+            if (failed) break;
+            Emit(ZoneStartEvent{zone});
+            ++stats.zonesEmitted;
+        }
+        stats.runeBursts += static_cast<uint32_t>(r.runeBursts.size());
+        for (const auto& [zoneId, player] : r.runeBursts) Log::Info("Rune: burst under bot {} (zone {})", static_cast<int>(player) - 1, zoneId);
         if (!failed)
-            for (const sim::SpellDamage& d : r.damage)
-                DealDamage({d.player, d.source, static_cast<int16_t>(d.amount), static_cast<uint8_t>(sim::DamageCause::Blast)});
+            for (const sim::SpellDamage& d : r.damage) DealDamage({d.player, d.source, static_cast<int16_t>(d.amount), d.cause});
         stats.spellBytes += stats.eventBytes - bytesBefore;
     }
 

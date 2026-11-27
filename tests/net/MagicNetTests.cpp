@@ -601,3 +601,78 @@ TEST(Magic, AGestureCastReplicatesWithEqualHashes) {
     EXPECT_EQ(other.client->Stats().castFx, caster.client->Stats().castFx);
     EXPECT_TRUE(y.HashesEqual());
 }
+
+// --- Flow, climbing, the rune and the rest of Metal ([mag-4]) ------------------------------------------------------
+
+// Molten Pour, Rising Spire and Rebar Lance cast by a client: the server runs them, the stream carries their slag, its Set,
+// the knit bands, the bores and the pegs, and both clients end with the server's voxels.
+TEST(Magic, MetalSpellsReplicateWithEqualHashes) {
+    SpellYard y;
+    ASSERT_TRUE(y.started);
+    SpellPlan plan;
+    SpellYard::Bot& caster = y.AddBot(plan.Controls());
+    SpellYard::Bot& other = y.AddBot();
+    ASSERT_TRUE(y.Join());
+    y.Passes(30);
+    uint32_t tick = caster.client->PredictTick() + 5;
+    plan.casts[tick] = {sim::kMoltenPour, glm::vec3(3.0f, -1.6f, 0.0f)};
+    plan.casts[tick + 40] = {sim::kRisingSpire, glm::vec3(-3.0f, -1.6f, 2.0f)};
+    plan.casts[tick + 80] = {sim::kRebarLance, glm::vec3(0.0f, -1.6f, -2.0f)};
+    y.Passes(300);
+    EXPECT_EQ(y.server.Stats().spellCasts, 3u);
+    EXPECT_EQ(y.server.Stats().spellsRefused, 0u);
+    EXPECT_EQ(other.client->Stats().castFx, 3u);
+    EXPECT_TRUE(y.HashesEqual());
+}
+
+// A Rune Trap in a fight: the caster attunes Frost, lobs the rune ahead of itself, and the enemy who walks onto it once it
+// is armed bursts it: the server ends the rune (ZoneCancel), starts its Root and Chill with the lead, deals 15 and lays
+// the ice; both clients hold the same zones and voxels.
+TEST(Magic, ARuneBurstsUnderAnEnemyInASession) {
+    SpellYard y(Settings(Duel()));
+    ASSERT_TRUE(y.started);
+    SpellPlan plan;
+    SpellYard::Bot& a = y.AddBot(plan.Controls());
+    ASSERT_TRUE(y.Until([&] { return a.client->State() == net::ClientState::Playing; }, 600));
+    y.Passes(10);
+    a.client->SendAttune(static_cast<uint8_t>(sim::Element::Metal), static_cast<uint8_t>(sim::Element::Frost));
+    glm::vec3 walkTo(0.0f);
+    bool walk = false;
+    SpellYard::Bot& b = y.AddBot([&](SpellYard::Bot& bot) {
+        sim::PlayerInput in;
+        if (!walk) return in;
+        const glm::vec3 feet = bot.client->Player().position;
+        const glm::vec3 to(walkTo.x - feet.x, 0.0f, walkTo.z - feet.z);
+        if (glm::length(to) < 0.2f) return in;
+        sim::AimAngles(glm::normalize(to), in.yaw, in.pitch);
+        in.moveZ = 127;
+        return in;
+    });
+    ASSERT_TRUE(y.Join());
+    ASSERT_TRUE(y.Until([&] { return y.server.RoundState().phase == sim::RoundPhase::Live; }, 600));
+    y.Passes(150);   // past the spawn protection
+    const uint8_t slotA = a.client->Slot(), slotB = b.client->Slot();
+    ASSERT_EQ(y.server.Caster(slotA).elementB, static_cast<uint8_t>(sim::Element::Frost));
+    // A tap: the arc along the look lands about 3 m ahead of the caster, in its own half (the enemy's spawn is guarded).
+    const glm::vec3 feetA = y.Feet(slotA);
+    const glm::vec3 toward = glm::normalize(glm::vec3(y.Feet(slotB).x - feetA.x, 0.0f, y.Feet(slotB).z - feetA.z));
+    const uint32_t tick = a.client->PredictTick() + 5;
+    plan.casts[tick] = {sim::kRuneTrap, toward * 3.0f + glm::vec3(0.0f, -1.62f, 0.0f)};
+    y.Passes(30);
+    ASSERT_EQ(y.server.Stats().spellCasts, 1u) << "refused: " << static_cast<int>(a.rejections[tick]);
+    const int16_t healthBefore = y.server.Fighter(slotB).health;
+    // Onto the rune where it landed (the tap's arc carries past the aimed point).
+    for (const sim::Zone& z : y.server.Simulation().Zones().All())
+        if (z.kind == sim::ZoneKind::Rune) walkTo = glm::vec3(z.shape.a) * (0.125f / 16.0f);
+    ASSERT_NE(walkTo, glm::vec3(0.0f)) << "the rune";
+    walk = true;
+    const bool burst = y.Until([&] { return y.server.Stats().runeBursts > 0; }, 900);
+    ASSERT_TRUE(burst) << "the enemy walked onto the armed rune";
+    walk = false;
+    y.Passes(60);
+    EXPECT_EQ(y.server.Stats().runeBursts, 1u);
+    EXPECT_EQ(y.server.Fighter(slotB).health, healthBefore - 15);
+    EXPECT_GE(b.client->Stats().zoneCancels, 1u);
+    EXPECT_GE(b.client->Stats().zonesApplied, 3u) << "the rune, its Root and its Chill";
+    EXPECT_TRUE(y.HashesEqual());
+}

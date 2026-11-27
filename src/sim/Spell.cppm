@@ -23,8 +23,12 @@ export namespace vortex::sim {
     constexpr Form FormOf(SpellId s) { return static_cast<Form>(s / 4); }
     constexpr Element ElementOf(SpellId s) { return static_cast<Element>(s % 4); }
 
+    inline constexpr SpellId kMoltenPour = MakeSpell(Form::Flow, Element::Metal);         // 0
+    inline constexpr SpellId kRuneTrap = MakeSpell(Form::Flow, Element::Frost);           // 3
+    inline constexpr SpellId kRisingSpire = MakeSpell(Form::Plume, Element::Metal);       // 4
     inline constexpr SpellId kUpdraft = MakeSpell(Form::Plume, Element::Pressure);       // 6
     inline constexpr SpellId kPermafrostClimb = MakeSpell(Form::Plume, Element::Frost);  // 7
+    inline constexpr SpellId kRebarLance = MakeSpell(Form::Pierce, Element::Metal);      // 8
     inline constexpr SpellId kDash = MakeSpell(Form::Pierce, Element::Pressure);         // 10
     inline constexpr SpellId kShatterSpike = MakeSpell(Form::Pierce, Element::Frost);    // 11
     inline constexpr SpellId kBarricadeWave = MakeSpell(Form::Burst, Element::Metal);    // 12
@@ -43,6 +47,8 @@ export namespace vortex::sim {
         HitCylinder = 4,     ///< a y-cylinder of `radiusQ` and `halfHeightQ` round the hit (Shatter Spike)
         DiscCylinder = 5,    ///< a y-cylinder of `radiusQ` and `halfHeightQ` over the Burst disc's seed
         PlumeBox = 6,        ///< the Plume's cells' box, grown by `radiusQ` (voxels) sideways and `halfHeightQ` (voxels) down
+        SpireLift = 7,       ///< a y-cylinder of `radiusQ` over the spire's column, up to `hoverQ` over its top (Rising Spire)
+        RuneFloor = 8,       ///< a y-cylinder of `radiusQ` and `halfHeightQ` standing on the landing's floor (Rune Trap)
     };
     /// @brief Which players a zone acts on, seen from the caster's team.
     enum class ZoneTarget : uint8_t { Enemies = 0, Everyone = 1, Allies = 2 };
@@ -87,6 +93,38 @@ export namespace vortex::sim {
         uint16_t plumeLateral = 0;         ///< voxels from the hit column
         uint16_t plumeVisitCap = 0;
         uint8_t supportReach = 0;          ///< voxels: a Rise cell this close to support takes the fill
+        // Flow (magic.md "Flow (Liquid): down, then lowest-first")
+        uint8_t flowSeedRadius = 0;        ///< voxels: the seed disc (0: the single seed under the hit)
+        uint16_t fallMax = 0;              ///< voxels a column falls at most
+        uint16_t flowRunPops = 0;
+        uint16_t flowLateral = 0;          ///< voxels from the hit column in x and z
+        uint16_t frontCount = 0;           ///< the lowest popped cells: the pool
+        uint16_t flowVisitCap = 0;
+        uint16_t fillCap = 0;              ///< voxels a Flow fill (slag, the rune's ice) takes at most, lowest key first
+        uint8_t setDelayTicks = 0;         ///< Molten Pour: the slag sets into knit this long after it lands
+        uint16_t splashRadiusQ = 0;        ///< Molten Pour: enemies within this of the landing take splashDamage
+        uint16_t splashDamage = 0;
+        // Rising Spire (magic.md spell 2): ledges every `ledgeSpacing` voxels of height on the side facing the caster
+        uint8_t ledgeSpacing = 0;
+        uint8_t ledgeWidth = 0;            ///< voxels across
+        uint8_t ledgeOut = 0;              ///< voxels out of the column
+        uint8_t ledgeThick = 0;            ///< voxels
+        uint8_t bandVoxels = 0;            ///< voxels of height per band (band k: [k, k + 1) of them over the seed)
+        // Rising Spire's Rise gesture: stairs or a bridge (magic.md "Casting: mana, gestures and projectiles")
+        bool drawsRise = false;
+        uint8_t stepRise = 0, stepRun = 0, stepWidth = 0;    ///< voxels
+        uint8_t deckWidth = 0, deckThick = 0;                ///< voxels
+        uint16_t stairsMinRiseQ = 0;       ///< E at least this above S: stairs
+        uint16_t bridgeLevelQ = 0;         ///< E within this of S's height ...
+        uint16_t bridgeMinQ = 0;           ///< ... and at least this far: a bridge
+        uint16_t bridgeEndQ = 0;           ///< each end of a bridge this close to a solid voxel
+        // Rebar Lance (magic.md spell 3): two sockets along the face and their pegs
+        uint8_t socketSpacing = 0;         ///< voxels from the lower socket to the upper one
+        uint16_t pegLengthQ = 0;           ///< the pegs reach this far out of the face
+        bool aimLevel = false;             ///< the bore's aim is made horizontal (yaw only)
+        // Rune Trap (magic.md spell 13)
+        uint16_t armTicks = 0;             ///< the rune arms this long after the cast
+        uint16_t burstRadiusQ = 0;         ///< the burst's zones and its ice round the rune
         // Pierce (magic.md "Pierce (Solid): a bore that pays for every voxel it adds")
         uint16_t pierceRadiusQ = 0;
         uint16_t piercePower = 0;          ///< 1/16 hardness
@@ -123,6 +161,7 @@ export namespace vortex::sim {
         ZoneDef zone;
         ZoneDef zone2;                     ///< a second zone of the same place (a Chill after a Root)
         ZoneDef release;                   ///< an ally Release of the same place (Punch)
+        ZoneDef zone3;                     ///< a third zone (Rune Trap's burst: zone2 the Root, zone3 the Chill)
         // the server only
         uint16_t directDamage = 0;
         uint16_t zoneDamage = 0;
@@ -158,6 +197,14 @@ export namespace vortex::sim {
         // Projectiles.
         uint8_t maxFlightTicks = 60;
         uint8_t lineSpeedMs = 20;          ///< a drawn shape grows along its line at this speed
+        // Flow's arc (magic.md "Inputs every operator shares"): 1/4096 voxel units.
+        uint32_t arcSpeedFine = 0;         ///< a tap's launch speed per tick (22 m/s)
+        uint32_t arcGravity = 0;           ///< per tick^2: round(9.81 / voxelSize * 4096 / 3600)
+        uint16_t arcMaxTicks = 150;        ///< the trace stops after this many ticks
+        uint8_t lobMinTicks = 6;           ///< a lob to a gesture's release point flies at least this long
+        // The server's hazard scan (magic.md "Damage and hazards"): every hazardTicks, hazardDamage per Hot contact.
+        uint8_t hazardTicks = 6;
+        uint8_t hazardDamage = 1;
         // The server's gesture checks (q).
         uint32_t gestureReachQ = 0;        ///< each point within this of the eye
         uint32_t gestureStepQ = 0;         ///< each point at most this from the last
@@ -171,8 +218,8 @@ export namespace vortex::sim {
     /**
      * @brief The table at `voxelSize`: metres become voxels (`lround(m / vs)`) and q
      * (`lround(m / vs * 16)`) once, in double from the float voxel size, so both sides of a
-     * session hold the same integers. Built: Updraft, Permafrost Climb, Dash, Shatter Spike, Barricade
-     * Wave, Punch and Flash Freeze.
+     * session hold the same integers. Built: Molten Pour, Rune Trap, Rising Spire, Updraft, Permafrost Climb,
+     * Rebar Lance, Dash, Shatter Spike, Barricade Wave, Punch and Flash Freeze.
      */
     SpellTable BuildSpellTable(float voxelSize);
     /// @brief The bore cost of every id of the default world palette (SpellTable::boreCost).

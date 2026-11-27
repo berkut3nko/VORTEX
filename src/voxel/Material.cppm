@@ -23,6 +23,8 @@ export namespace vortex::voxel {
         MaterialFlag_Conjured       = 1u << 4,
         /// Ice: a player standing on it keeps momentum (sim::StepPlayer's slick rule).
         MaterialFlag_Slick          = 1u << 5,
+        /// Hot (slag): the server's hazard scan burns a player whose capsule touches it.
+        MaterialFlag_Hot            = 1u << 6,
     };
 
     /**
@@ -133,6 +135,8 @@ export namespace vortex::voxel {
         /// is), and the rimed ids: their base at half the hardness with the same bonds, until a Thaw turns them back.
         uint8_t ice = 0, floe = 0, knitIronRimed = 0;
         uint8_t stoneRimed = 0, stoneDarkRimed = 0, brickRimed = 0, ironRimed = 0;
+        /// Molten Pour's slag: conjured and hot, as hard as knit; it sets into knit after a second (magic.md).
+        uint8_t slag = 0;
     };
 
     /// @brief Fills the world palette with a starter set of natural and building materials.

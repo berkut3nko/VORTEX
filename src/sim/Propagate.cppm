@@ -153,6 +153,78 @@ export namespace vortex::sim {
      */
     PlumeResult PlumeOperator(const voxel::World& world, const OperatorWalls& walls, const PlumeParams& params);
 
+    // --- Flow's arc (magic.md "Inputs every operator shares") ---------------------------------------------------
+
+    /// Fine fixed point of the arc: 1/4096 voxel (q << 8), so that gravity per tick^2 does not round to 0.
+    inline constexpr int32_t kArcFineShift = 8;
+
+    struct ArcParams {
+        glm::ivec3 startQ{0};          ///< the eye, q
+        glm::i64vec3 velocity{0};      ///< 1/4096 voxel per tick at the launch
+        int64_t gravity = 0;           ///< 1/4096 voxel per tick^2
+        uint32_t maxTicks = 150;
+    };
+    struct ArcHit {
+        bool hit = false;              ///< met a voxel that is not open within maxTicks
+        bool wall = false;             ///< the voxel it met is a wall of the operators (outside the walls, not loaded)
+        glm::ivec3 voxel{0};           ///< the voxel met
+        glm::ivec3 normal{0, 1, 0};    ///< the face it entered through (the DDA's last step, pointing back)
+        glm::ivec3 hitQ{0};            ///< the point on the arc where it entered that voxel, q
+        uint32_t ticks = 0;            ///< the tick of the segment that met it (1 = the first)
+        int32_t apexQ = 0;             ///< the highest point of the arc's positions, q
+        uint32_t visits = 0;           ///< voxels the walk entered
+        uint32_t chunksRead = 0;
+    };
+    /**
+     * @brief The integer arc: P from the start (q << 8), V the launch velocity; the first step takes half gravity
+     * (`V.y -= G / 2` once), then each tick `P += V; V.y -= G`. The segment of each tick, from P >> 8 to the next
+     * P >> 8 (q), is walked voxel by voxel (an integer DDA: the axis whose boundary comes first, ties x before y
+     * before z) until a voxel that is not open; at most maxTicks ticks. Integers only.
+     */
+    ArcHit TraceArc(const voxel::World& world, const OperatorWalls& walls, const ArcParams& params);
+    /// @brief A tap's launch: `round(D * speedFine / 16384)` per axis (D = round(direction * 16384)).
+    glm::i64vec3 ArcLaunch(const glm::ivec3& aim, int64_t speedFine);
+    /**
+     * @brief A lob from `fromQ` that reaches `toQ` after `ticks`: the horizontal distance over the ticks
+     * (`ceil(distance / horizontalFine)`, within [minTicks, maxTicks]), and the vertical speed with which the arc's
+     * height after those ticks is `toQ.y` (P_T.y = P_0.y + T V.y - G T^2 / 2), rounded half away from zero.
+     */
+    glm::i64vec3 LobLaunch(const glm::ivec3& fromQ, const glm::ivec3& toQ, int64_t horizontalFine, int64_t gravity, uint32_t minTicks,
+                           uint32_t maxTicks, uint32_t& ticks);
+
+    // --- Flow (magic.md "Flow (Liquid): down, then lowest-first") ----------------------------------
+
+    struct FlowParams {
+        glm::ivec3 seed{0};          ///< s0 = h + n
+        FaceAxes axes;
+        uint8_t seedRadius = 0;      ///< rf: the seed disc in the hit face's plane (0: the seed alone)
+        uint16_t fallMax = 0;        ///< cells a column falls at most
+        uint16_t runPops = 0;
+        uint16_t lateral = 0;        ///< voxels from the hit column in x and z
+        uint16_t frontCount = 0;
+        uint32_t visitCap = 0;
+    };
+    struct FlowResult {
+        std::vector<glm::ivec3> fall;      ///< the fall phase's cells above each landing, seed order
+        std::vector<glm::ivec3> run;       ///< spread-phase cells that are not Front, in key order
+        std::vector<glm::ivec3> front;     ///< the frontCount popped spread-phase cells with the smallest key, in key order
+        std::vector<glm::ivec3> landings;  ///< where each falling column stopped (support below), seed order
+        uint32_t visits = 0;
+        uint32_t chunksRead = 0;
+    };
+    /// @brief The key of a Flow cell: (y, dx^2 + dz^2 from the hit column, z, x).
+    using FlowKey = std::tuple<int32_t, int64_t, int32_t, int32_t>;
+    FlowKey FlowKeyOf(const glm::ivec3& cell, const glm::ivec3& seed);
+    /**
+     * @brief The Flow: each open seed of the disc, in (a, b) order, falls while the cell below is open (at most
+     * fallMax cells; a column that reaches a cell another column passed stops there); the cell where it stops is a
+     * landing. Landings seed a min-heap on FlowKeyOf; a popped cell whose cell below is open and not visited pushes
+     * only that cell (it falls), any other pushes its open, unvisited sides (+x, -x, +z, -z) within `lateral` of the
+     * hit column. Never up. At most runPops pops and visitCap visits. Its box is x / z +-(lateral + seedRadius + 1),
+     * y from seed - fallMax - seedRadius - 1 to seed + seedRadius + 1.
+     */
+    FlowResult FlowOperator(const voxel::World& world, const OperatorWalls& walls, const FlowParams& params);
+
     // --- Pierce (magic.md "Pierce (Solid): a bore that pays for every voxel it adds") ------------
 
     /// A bore reaches at most this many voxels from the hit, with a radius of at most kMaxPierceRadiusVoxels.

@@ -232,7 +232,7 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
   - Decoder limits: map 1-15; axis 0-2; a sphere's or cylinder's radius at most `sim::kMaxCastRadiusQ`; a capsule at most
     8 192 q (64 m) long with a radius of at most 1 024 q; box corners within `kMaxSyncChunkCoordinate` chunks; mask voxels
     charged against the batch's budget before the mask is made; zone kinds 1-9 (Impulse 1 .. Block 7, Shove 8, Rune 9;
-    the kinds without behaviour are reserved and decode); duration 1-600; `CastFx` spell 0-17, face 0-5. A `ZoneCancel`
+    the kinds without behaviour are reserved and decode); duration 1-3600 (a rune lasts 60 s; [mag-4] raised it from 600 with no byte change); `CastFx` spell 0-17, face 0-5. A `ZoneCancel`
     decodes with any values: the client ignores one that ends before its zone's start (logged).
   - Reserved by this protocol (decoders accept, the later stages give them use): zone kinds 1-9, shapes 0-3, maps 1-15,
     `SpellId` 0-17 (16 and 17 spread's drills), the whole owner block below.

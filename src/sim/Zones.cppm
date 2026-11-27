@@ -24,7 +24,7 @@ export namespace vortex::sim {
         Release = 6,   ///< on its start tick, inside: root, pin and chill end (the control guard starts)
         Block = 7,     ///< reserved: no behaviour yet
         Shove = 8,     ///< on its start tick: a push along the capsule's axis plus a lift, both falling to 0 at the rim
-        Rune = 9,      ///< reserved: no behaviour yet
+        Rune = 9,      ///< no effect on a step: the server alone tests it (RunScheduled) and bursts it under the first enemy
     };
 
     /**

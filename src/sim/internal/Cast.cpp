@@ -476,6 +476,62 @@ namespace vortex::sim {
             return false;
         }
 
+        /// The topmost solid voxel under `v`: searched up at most `up` voxels while the one above is solid when `v`
+        /// is solid, else down at most `down`. False when there is none in reach, or it is a wall.
+        bool GroundUnder(VoxelCache& cache, const glm::ivec3& v, int32_t up, int32_t down, glm::ivec3& ground) {
+            glm::ivec3 g = v;
+            bool found = false;
+            if (IsSupportId(cache.Get(g))) {
+                for (int32_t i = 0; i < up && IsSupportId(cache.Get(g + glm::ivec3(0, 1, 0))); ++i) ++g.y;
+                found = true;
+            } else {
+                for (int32_t i = 0; i < down && !found; ++i) {
+                    --g.y;
+                    found = IsSupportId(cache.Get(g));
+                }
+            }
+            if (!found || cache.Get(g) == VoxelCache::kWallId) return false;
+            ground = g;
+            return true;
+        }
+
+        /**
+         * The ticks after a Lift's start at which a rider's feet, lifted from `baseQ` toward the Lift's top `topQ`,
+         * first reach each of `levelsQ` (q): the nominal floor of Rising Spire's band timing (magic.md spell 2). The
+         * rider's vertical speed each tick is max(the last less gravity, the Lift's target), the target eased to 0 at
+         * the top over the longer of `hoverQ` and the coasting height, as StepPlayer's Lift computes it. Entry k is j
+         * when the floor first reaches level k after j + 1 ticks of the Lift (the band at T_z + j); at most maxTicks.
+         * A server decision (the bands' ticks), in double.
+         */
+        std::vector<uint32_t> LiftReachTicks(double qPerMetre, int64_t baseQ, int64_t topQ, int64_t strengthCmS, int64_t hoverQ,
+                                             std::span<const int64_t> levelsQ, uint32_t maxTicks) {
+            constexpr double kGravity = 9.81, kDt = 1.0 / 60.0;
+            const double s = static_cast<double>(strengthCmS) / 100.0;
+            const double ease = std::max(static_cast<double>(hoverQ), s * s / (2.0 * kGravity) * qPerMetre);
+            std::vector<uint32_t> out(levelsQ.size(), maxTicks);
+            std::vector<bool> reached(levelsQ.size(), false);
+            double h = static_cast<double>(baseQ), vy = 0.0;
+            for (uint32_t i = 1; i <= maxTicks + 1; ++i) {
+                const double left = std::max(static_cast<double>(topQ) - h, 0.0);
+                const double target = ease > 0.0 ? s * std::min(left, ease) / ease : s;
+                vy = std::max(vy - kGravity * kDt, target);
+                h += vy * kDt * qPerMetre;
+                for (size_t k = 0; k < levelsQ.size(); ++k)
+                    if (!reached[k] && h >= static_cast<double>(levelsQ[k])) {
+                        reached[k] = true;
+                        out[k] = i - 1;
+                    }
+            }
+            return out;
+        }
+
+        /// The distance (metres) from `centre` to an upright capsule (feet, radius r, height h): 0 inside.
+        double CapsuleDistance(const glm::dvec3& centre, const glm::dvec3& feet, double r, double h) {
+            const double y0 = feet.y + r, y1 = feet.y + std::max(h - r, r);
+            const glm::dvec3 axis(feet.x, std::clamp(centre.y, y0, y1), feet.z);
+            return std::max(glm::length(centre - axis) - r, 0.0);
+        }
+
         /// One column of a drawn shape: its ground voxel and how far along the line it lies (q).
         struct DrawnColumn {
             glm::ivec3 ground{0};
@@ -514,18 +570,8 @@ namespace vortex::sim {
                         const glm::ivec3 v = q >> 4;
                         if (!taken.emplace(v.x, v.z).second) continue;
                         ++visits;
-                        glm::ivec3 g = v;
-                        bool found = false;
-                        if (IsSupportId(cache.Get(g))) {
-                            for (int32_t i = 0; i < upVoxels && IsSupportId(cache.Get(g + glm::ivec3(0, 1, 0))); ++i) ++g.y;
-                            found = true;
-                        } else {
-                            for (int32_t i = 0; i < downVoxels && !found; ++i) {
-                                --g.y;
-                                found = IsSupportId(cache.Get(g));
-                            }
-                        }
-                        if (found && cache.Get(g) != VoxelCache::kWallId) out.push_back({g, s});
+                        glm::ivec3 g;
+                        if (GroundUnder(cache, v, upVoxels, downVoxels, g)) out.push_back({g, s});
                     }
                 }
             }
@@ -606,9 +652,33 @@ namespace vortex::sim {
         return length;
     }
 
+    RiseShape RiseShapeOf(const SpellTable& table, SpellId spell, const SpellGesture& gesture) {
+        RiseShape out;
+        if (spell >= kSpellCount || !table.spells[spell].drawsRise || gesture.kind != GestureKind::Rise || gesture.pointsQ.size() < 2) return out;
+        const SpellDef& def = table.spells[spell];
+        const glm::i64vec3 s(gesture.pointsQ.front()), e(gesture.pointsQ.back());
+        const int64_t dy = e.y - s.y;
+        const int64_t horizontal = static_cast<int64_t>(math::ISqrt64(static_cast<uint64_t>((e.x - s.x) * (e.x - s.x) + (e.z - s.z) * (e.z - s.z))));
+        if (dy >= int64_t{def.stairsMinRiseQ} && def.stepRise > 0 && def.stepRun > 0) {
+            const int64_t rise = int64_t{def.stepRise} * 16, run = int64_t{def.stepRun} * 16;
+            const int64_t slope = static_cast<int64_t>(math::ISqrt64(static_cast<uint64_t>(rise * rise + run * run)));
+            const int64_t most = std::max<int64_t>(int64_t{def.drawMaxQ} / std::max<int64_t>(slope, 1), 1);
+            out.kind = RiseKind::Stairs;
+            out.steps = static_cast<uint32_t>(std::min((dy + rise - 1) / rise, most));
+            out.lengthQ = static_cast<uint32_t>(out.steps * slope);
+        } else if ((dy < 0 ? -dy : dy) < int64_t{def.bridgeLevelQ} && horizontal >= int64_t{def.bridgeMinQ}) {
+            out.kind = RiseKind::Bridge;
+            out.lengthQ = static_cast<uint32_t>(std::min<int64_t>(horizontal, def.drawMaxQ));
+        } else {
+            out.kind = RiseKind::Pillar;
+        }
+        return out;
+    }
+
     uint32_t SpellManaCost(const SpellTable& table, SpellId spell, const SpellGesture& gesture) {
         if (spell >= kSpellCount) return 0;
-        const uint32_t length = DrawnLengthQ(table, spell, gesture);
+        const RiseShape rise = RiseShapeOf(table, spell, gesture);
+        const uint32_t length = rise.kind == RiseKind::Stairs || rise.kind == RiseKind::Bridge ? rise.lengthQ : DrawnLengthQ(table, spell, gesture);
         if (length == 0) return table.spells[spell].manaCost;
         const uint32_t metre = std::max<uint32_t>(table.metreQ, 1);
         return table.drawBaseMana + static_cast<uint32_t>(uint64_t{table.drawManaPerMetre} * length / metre);
@@ -681,8 +751,20 @@ namespace vortex::sim {
         out.stats.chunksRead += gestureChunks;
         const bool line = gesture.kind == GestureKind::Line && gesture.pointsQ.size() >= 2;
         const bool drawn = line && def.drawsLine;
-        if (hasPoints && !drawn && cast.spell != kDash) {
-            const glm::dvec3 release = glm::dvec3(gesture.pointsQ.back()) / q;
+        // A Flow spell is lobbed at the release point; Rising Spire's Rise makes stairs or a bridge from S to E, else
+        // the pillar at S.
+        const bool lob = hasPoints && FormOf(cast.spell) == Form::Flow;
+        RiseShape riseShape = RiseShapeOf(table, cast.spell, gesture);
+        if (riseShape.kind == RiseKind::Bridge) {
+            VoxelCache ends(world, ctx.walls);
+            if (!NearSupport(ends, gesture.pointsQ.front(), def.bridgeEndQ) || !NearSupport(ends, gesture.pointsQ.back(), def.bridgeEndQ))
+                riseShape = RiseShape{RiseKind::Pillar, 0, 0};
+            out.stats.chunksRead += ends.ChunksRead();
+        }
+        const bool riseDrawn = riseShape.kind == RiseKind::Stairs || riseShape.kind == RiseKind::Bridge;
+        out.stats.riseShape = static_cast<uint8_t>(riseShape.kind);
+        if (hasPoints && !drawn && !lob && !riseDrawn && cast.spell != kDash) {
+            const glm::dvec3 release = glm::dvec3(riseShape.kind == RiseKind::Pillar ? gesture.pointsQ.front() : gesture.pointsQ.back()) / q;
             if (glm::length(release - cast.eye) > 1.0e-6) cast.dir = glm::vec3(glm::normalize(release - cast.eye));
         }
         std::vector<glm::ivec3> drawnLine;
@@ -709,9 +791,14 @@ namespace vortex::sim {
         std::vector<std::pair<uint16_t, uint32_t>> cancels;
         std::vector<KnitOwnerInfo> owners;
         std::vector<PlannedOp> nowOps;
-        bool bore = false;
-        BlastSite boreSite;
+        std::vector<BlastSite> bores;
         uint64_t boreSliceWork = 0;
+        // Ops planned now that land later than the arrival: (op, ticks after the arrival). Never recorded.
+        std::vector<std::pair<WorldOp, uint32_t>> laterOps;
+        bool splash = false;
+        bool slag = false;
+        int32_t arcFlight = -1;                 // a Flow spell: its arc's ticks (the flight), else -1
+        uint32_t shapeLengthQ = 0;              // a Rise's stairs or bridge: the mana counts its length
         bool shatter = false;
         voxel::SphereQ shatterSphere;
         bool turns = false;
@@ -732,6 +819,7 @@ namespace vortex::sim {
             info.layer = layer;
             info.expiryMap = expiryMap;
             info.caster = cast.player;
+            info.casterTeam = cast.team;
             info.dueTick = tRun + lifetime;
             if (shape != nullptr) {
                 info.hasShape = true;
@@ -740,13 +828,21 @@ namespace vortex::sim {
             owners.push_back(info);
             return static_cast<int>(owners.size() - 1);
         };
+        // A zone that waits at least `minStart` ticks after T_run (a rune arms after a second).
+        struct ZoneExtra {
+            uint32_t minStart = 0;
+            bool rune = false;
+            glm::ivec3 runeFloor{0};
+        };
+        std::vector<ZoneExtra> zoneExtras;   // by index into `zones`, filled up to its size when used
         // The cells of a fill a player or a body may keep and none in a spawn area: false when one lies in an
         // enemy's (the cast is refused).
-        const auto guardCells = [&](std::span<const glm::ivec3> cells, std::vector<glm::ivec3>& kept) {
+        // `atRun` false: the cells players hold now stay in (bands timed against a rider, guarded again on their tick).
+        const auto guardCells = [&](std::span<const glm::ivec3> cells, std::vector<glm::ivec3>& kept, bool atRun = true) {
             if (cells.empty()) return true;
             glm::ivec3 lo, hi;
             CellBox(cells, lo, hi);
-            const FillGuard guard(simulation, ctx.tuning, targets, lo, hi - glm::ivec3(1));
+            const FillGuard guard(simulation, ctx.tuning, atRun ? targets : std::span<const SpellTarget>{}, lo, hi - glm::ivec3(1));
             for (const glm::ivec3& c : cells) {
                 const SpawnCell spawn = SpawnCellOf(ctx.spawns, cast.team, c);
                 if (spawn == SpawnCell::Enemy) return false;
@@ -821,6 +917,349 @@ namespace vortex::sim {
                 zones.push_back({zoneFrom(def.zone, shape), DispelKinds(def.zone.kind) != 0, def.zoneDamage});
                 if (def.zone2.kind != ZoneKind::None) zones.push_back({zoneFrom(def.zone2, shape), DispelKinds(def.zone2.kind) != 0, 0});
             }
+        } else if (riseDrawn) {
+            // Rising Spire's stairs or bridge from S toward E, on the ground under S (magic.md "Casting: mana, gestures and
+            // projectiles"); the projectile flies to S, and the shape grows along its line from there.
+            const glm::ivec3 S = gesture.pointsQ.front(), E = gesture.pointsQ.back();
+            out.hitQ = S;
+            out.face = 2;
+            out.drawnPointsQ = {S, E};
+            VoxelCache cache(world, ctx.walls);
+            const int32_t metreVoxels = std::max<int32_t>(1, table.metreQ / 16);
+            glm::ivec3 groundS;
+            if (!GroundUnder(cache, S >> 4, metreVoxels, 2 * metreVoxels, groundS)) return finish(SpellRefusal::Missed);
+            int32_t floorY = groundS.y + 1;   // the air row over S's ground
+            glm::i64vec3 dir(int64_t{E.x} - S.x, 0, int64_t{E.z} - S.z);
+            if (dir.x == 0 && dir.z == 0) dir = glm::i64vec3(int64_t{S.x} - eyeQ.x, 0, int64_t{S.z} - eyeQ.z);
+            const int64_t dirLen = static_cast<int64_t>(math::ISqrt64(static_cast<uint64_t>(dir.x * dir.x + dir.z * dir.z)));
+            if (dirLen == 0) return finish(SpellRefusal::Missed);
+            const glm::i64vec3 perp(-dir.z, 0, dir.x);
+            const bool stairs = riseShape.kind == RiseKind::Stairs;
+            const int64_t rise = int64_t{def.stepRise}, runQ = int64_t{def.stepRun} * 16;
+            int64_t lengthQ = 0;
+            int32_t width = 0;
+            if (stairs) {
+                lengthQ = int64_t{riseShape.steps} * runQ;
+                width = def.stepWidth;
+                out.stats.steps = riseShape.steps;
+            } else {
+                // The deck lies level at the lower end's height.
+                glm::ivec3 groundE;
+                if (GroundUnder(cache, E >> 4, metreVoxels, 2 * metreVoxels, groundE)) floorY = std::min(floorY, groundE.y + 1);
+                lengthQ = riseShape.lengthQ;
+                width = def.deckWidth;
+            }
+            shapeLengthQ = riseShape.lengthQ;
+            out.stats.drawnLengthQ = riseShape.lengthQ;
+            const uint32_t bandCount = std::max<uint32_t>(1, std::min<uint32_t>(def.bandCount, stairs ? riseShape.steps : 6u));
+            std::vector<std::vector<glm::ivec3>> fill(bandCount);
+            std::vector<int64_t> bandAlong(bandCount, -1);
+            std::set<std::pair<int32_t, int32_t>> taken;
+            const int64_t halfQ = int64_t{width} * 8;
+            for (int64_t along = 0; along <= lengthQ; along += 8) {
+                const int64_t at = std::min(along, std::max<int64_t>(lengthQ - 1, 0));
+                const uint32_t band = static_cast<uint32_t>(std::min<int64_t>(at * bandCount / std::max<int64_t>(lengthQ, 1), bandCount - 1));
+                for (int64_t o = -halfQ + 8; o <= halfQ - 8; o += 16) {
+                    const glm::i64vec3 p = glm::i64vec3(S) + dir * at / dirLen + perp * o / dirLen;
+                    const glm::ivec3 v(static_cast<int32_t>(p.x >> 4), 0, static_cast<int32_t>(p.z >> 4));
+                    if (!taken.emplace(v.x, v.z).second) continue;
+                    ++out.stats.visits;
+                    int32_t lo = floorY - static_cast<int32_t>(def.deckThick), hi = floorY;
+                    if (stairs) {
+                        const int64_t step = std::min<int64_t>(at / std::max<int64_t>(runQ, 1), int64_t{riseShape.steps} - 1);
+                        hi = floorY + static_cast<int32_t>((step + 1) * rise);
+                        lo = hi - static_cast<int32_t>(2 * rise);
+                    }
+                    for (int32_t y = lo; y < hi; ++y) {
+                        const glm::ivec3 cell(v.x, y, v.z);
+                        if (IsOpenId(cache.Get(cell))) fill[band].push_back(cell);
+                    }
+                    if (bandAlong[band] < 0) bandAlong[band] = at;
+                }
+            }
+            out.stats.chunksRead += cache.ChunksRead();
+            int owner = -1;
+            for (uint32_t b = 0; b < bandCount; ++b) {
+                std::vector<glm::ivec3> kept;
+                if (!guardCells(fill[b], kept)) return finish(SpellRefusal::NearSpawn);
+                if (kept.empty()) continue;
+                if (owner < 0) owner = newOwner(0, def.expiryMap, def.lifetimeTicks, nullptr);
+                out.stats.planned += static_cast<uint32_t>(kept.size());
+                const uint32_t delay = TravelTicks(table, static_cast<uint64_t>(std::max<int64_t>(bandAlong[b], 0)), table.lineSpeedMs);
+                bands.push_back({MapCellsOp(def.fillMap, kept), delay, def.bandFirstTick, 0, owner});
+            }
+            if (out.stats.planned == 0) return finish(SpellRefusal::Missed);
+            out.stats.path = out.stats.planned;
+            out.stats.front = static_cast<uint32_t>(taken.size());
+        } else if (FormOf(cast.spell) == Form::Flow) {
+            // The arc: a lob to the gesture's release point, or a tap launched along the aim (magic.md "Inputs every operator shares").
+            ArcParams arcParams;
+            arcParams.startQ = eyeQ;
+            arcParams.gravity = table.arcGravity;
+            arcParams.maxTicks = table.arcMaxTicks;
+            if (lob) {
+                uint32_t ticks = 0;
+                const int64_t horizontal = (int64_t{table.forms[static_cast<size_t>(Form::Flow)].speedMs} * table.metreQ << kArcFineShift) / 60;
+                arcParams.velocity = LobLaunch(eyeQ, gesture.pointsQ.back(), horizontal, arcParams.gravity, table.lobMinTicks, table.maxFlightTicks, ticks);
+            } else {
+                arcParams.velocity = ArcLaunch(AimOf(cast.dir), table.arcSpeedFine);
+            }
+            const ArcHit arc = TraceArc(world, ctx.walls, arcParams);
+            out.stats.visits += arc.visits;
+            out.stats.chunksRead += arc.chunksRead;
+            if (!arc.hit) return finish(SpellRefusal::Missed);
+            if (arc.wall) return finish(SpellRefusal::Outside);
+            out.hitQ = arc.hitQ;
+            out.face = FaceOf(arc.normal);
+            out.stats.arcTicks = arc.ticks;
+            arcFlight = static_cast<int32_t>(std::min<uint32_t>(arc.ticks, table.maxFlightTicks));
+            const glm::ivec3 s0 = arc.voxel + arc.normal;
+            if (!InsideWalls(ctx.walls, s0)) return finish(SpellRefusal::Outside);
+            if (!IsOpenId(world.GetVoxel(s0))) return finish(SpellRefusal::Missed);
+            VoxelCache cache(world, ctx.walls);
+            if (cast.spell == kMoltenPour) {
+                FlowParams fp;
+                fp.seed = s0;
+                fp.axes = FaceAxesOf(arc.normal);
+                fp.seedRadius = def.flowSeedRadius;
+                fp.fallMax = def.fallMax;
+                fp.runPops = def.flowRunPops;
+                fp.lateral = def.flowLateral;
+                fp.frontCount = def.frontCount;
+                fp.visitCap = def.flowVisitCap;
+                const FlowResult flow = FlowOperator(world, ctx.walls, fp);
+                out.stats.visits += flow.visits;
+                out.stats.chunksRead += flow.chunksRead;
+                out.stats.path = static_cast<uint32_t>(flow.fall.size() + flow.run.size());
+                out.stats.front = static_cast<uint32_t>(flow.front.size());
+                // Slag: the Fall cells that are skin (the shell down a face) and the pool, lowest key first.
+                static constexpr std::array<glm::ivec3, 6> kFaces = {glm::ivec3(1, 0, 0), glm::ivec3(-1, 0, 0), glm::ivec3(0, 1, 0),
+                                                                     glm::ivec3(0, -1, 0), glm::ivec3(0, 0, 1), glm::ivec3(0, 0, -1)};
+                std::vector<std::pair<FlowKey, glm::ivec3>> candidates;
+                for (const glm::ivec3& c : flow.fall) {
+                    bool skin = false;
+                    for (const glm::ivec3& f : kFaces) skin = skin || IsSupportId(cache.Get(c + f));
+                    if (skin) candidates.emplace_back(FlowKeyOf(c, s0), c);
+                }
+                for (const glm::ivec3& c : flow.front) candidates.emplace_back(FlowKeyOf(c, s0), c);
+                std::sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+                if (candidates.size() > def.fillCap) candidates.resize(def.fillCap);
+                std::vector<glm::ivec3> cells;
+                for (const auto& [key, c] : candidates) cells.push_back(c);
+                std::vector<glm::ivec3> kept;
+                if (!guardCells(cells, kept)) return finish(SpellRefusal::NearSpawn);
+                if (kept.empty()) return finish(SpellRefusal::Missed);
+                out.stats.planned += static_cast<uint32_t>(kept.size());
+                nowOps.push_back({MapCellsOp(def.fillMap, kept), newOwner(0, def.expiryMap, def.lifetimeTicks, nullptr)});
+                // The slag sets into knit over the mask's box: a voxel carved meanwhile is air and stays air.
+                glm::ivec3 lo, hi;
+                CellBox(kept, lo, hi);
+                voxel::ShapeQ box;
+                box.kind = voxel::kShapeBox;
+                box.a = lo;
+                box.b = hi;
+                laterOps.emplace_back(WorldOp::Map(voxel::Map_Set, box), def.setDelayTicks);
+                splash = def.splashDamage > 0;
+                slag = true;
+                out.stats.chunksRead += cache.ChunksRead();
+            } else {
+                // Rune Trap: the fall phase from the hit's single seed gives the landing; the rune lies on its floor.
+                glm::ivec3 landing = s0;
+                uint32_t fell = 0;
+                while (IsOpenId(cache.Get(landing - glm::ivec3(0, 1, 0)))) {
+                    if (++fell > def.fallMax) return finish(SpellRefusal::Missed);
+                    landing.y -= 1;
+                }
+                out.stats.visits += fell + 1;
+                out.stats.path = fell;
+                out.stats.front = 1;
+                const glm::ivec3 floor = landing - glm::ivec3(0, 1, 0);
+                if (cache.Get(floor) == VoxelCache::kWallId) return finish(SpellRefusal::Outside);
+                out.stats.chunksRead += cache.ChunksRead();
+                voxel::ShapeQ shape;
+                shape.kind = voxel::kShapeCylinder;
+                shape.a = {16 * landing.x + 8, 16 * landing.y - 8 + def.zone.halfHeightQ, 16 * landing.z + 8};
+                shape.radiusQ = def.zone.radiusQ;
+                shape.halfHeightQ = def.zone.halfHeightQ;
+                zones.push_back({zoneFrom(def.zone, shape), true, 0});
+                zoneExtras.resize(zones.size());
+                zoneExtras.back() = ZoneExtra{def.armTicks, true, floor};
+                // One rune per caster: the old one ends now (a pending one before it starts).
+                for (const Zone& z : simulation.Zones().All()) {
+                    const auto owner = ctx.zoneOwners.find(z.zoneId);
+                    if (owner == ctx.zoneOwners.end() || !owner->second.rune || owner->second.caster != cast.player || z.EndTick() <= tRun) continue;
+                    cancels.emplace_back(z.zoneId, std::max(tRun, z.startTick));
+                }
+            }
+        } else if (cast.spell == kRebarLance) {
+            // Two level bores 1 m apart up the face; knit fills both sockets and two pegs that stand out of it.
+            const glm::dvec3 d = glm::normalize(glm::dvec3(cast.dir));
+            glm::dvec3 level(d.x, 0.0, d.z);
+            if (glm::length(level) < 1.0e-3) return finish(SpellRefusal::Missed);
+            level = glm::normalize(level);
+            const voxel::WorldRayHit terrain = world.Raycast(cast.eye, cast.dir, range);
+            double nearest = terrain.hit ? static_cast<double>(terrain.distance) : static_cast<double>(range);
+            uint8_t victim = 0;
+            for (const SpellTarget& t : targets) {
+                if (t.player == cast.player || t.team == cast.team) continue;
+                const double hitT = RayCapsule(cast.eye, d, glm::dvec3(t.feet), ctx.tuning.radius, ctx.tuning.height, nearest);
+                if (hitT >= 0.0 && hitT < nearest) {
+                    nearest = hitT;
+                    victim = t.player;
+                }
+            }
+            if (!terrain.hit && victim == 0) return finish(SpellRefusal::Missed);
+            const glm::dvec3 point = victim != 0 ? cast.eye + d * nearest : terrain.position;
+            out.hitQ = ToQ(point, q);
+            if (!InsideWalls(ctx.walls, out.hitQ >> 4)) return finish(SpellRefusal::Outside);
+            if (victim != 0) {
+                direct.push_back(SpellDamage{victim, def.directDamage, cast.player, cast.spell});
+            } else {
+                out.face = FaceOf(AxisNormal(terrain.normal));
+                PierceParams pp;
+                pp.aim = AimOf(glm::vec3(level));
+                pp.radiusQ = def.pierceRadiusQ;
+                pp.power = def.piercePower;
+                pp.budget = def.pierceBudget;
+                pp.maxSlices = def.pierceMaxSlices;
+                pp.boreCost = &table.boreCost;
+                pp.materials = &materials;
+                const std::array<bool, 256> carvable = voxel::CarvableIdsFor(&materials, def.piercePower);
+                // The upper socket only where the voxel a spacing above the hit is solid and within the power.
+                std::vector<glm::ivec3> sockets = {out.hitQ};
+                if (const uint8_t above = world.GetVoxel(terrain.voxel + glm::ivec3(0, def.socketSpacing, 0)); carvable[above] && IsCollider(materials, above))
+                    sockets.push_back(out.hitQ + glm::ivec3(0, 16 * def.socketSpacing, 0));
+                std::vector<glm::ivec3> pegs;
+                std::set<std::tuple<int32_t, int32_t, int32_t>> taken;
+                for (const glm::ivec3& at : sockets) {
+                    pp.hitQ = at;
+                    const PierceResult bored = Pierce(world, ctx.walls, pp);
+                    out.stats.visits += bored.visits;
+                    out.stats.chunksRead += bored.chunksRead;
+                    out.stats.path += bored.paidVoxels;
+                    out.stats.front += bored.frontVoxels;
+                    out.stats.boreSlices += bored.slices;
+                    boreSliceWork += uint64_t{bored.scanned} * kPierceSliceWork;
+                    if (!bored.bored) continue;
+                    bores.push_back(CapsuleSite(world, bored.capsule, def.piercePower, at));
+                    ++out.stats.sockets;
+                    // The peg: the socket's capsule drawn out of the face to pegLengthQ; it takes the air and what the bore
+                    // carves.
+                    voxel::ShapeQ peg = bored.capsule;
+                    const glm::i64vec3 stepQ(bored.step);
+                    const int64_t stepLen = std::max<int64_t>(Length(stepQ), 1);
+                    peg.a = glm::ivec3(glm::i64vec3(at) - stepQ * int64_t{def.pegLengthQ} / stepLen);
+                    glm::ivec3 lo, hi;
+                    voxel::ShapeVoxelBounds(peg, lo, hi);
+                    for (int z = lo.z; z < hi.z; ++z)
+                        for (int y = lo.y; y < hi.y; ++y)
+                            for (int x = lo.x; x < hi.x; ++x) {
+                                const glm::ivec3 v(x, y, z);
+                                if (!voxel::InShapeQ(peg, v)) continue;
+                                const uint8_t id = world.GetVoxel(v);
+                                const bool socket = voxel::InShapeQ(bored.capsule, v) && carvable[id];
+                                if ((id == 0 || socket) && taken.emplace(x, y, z).second) pegs.push_back(v);
+                            }
+                }
+                if (bores.empty()) return finish(SpellRefusal::Missed);
+                std::vector<glm::ivec3> kept;
+                if (!guardCells(pegs, kept)) return finish(SpellRefusal::NearSpawn);
+                if (!kept.empty()) {
+                    out.stats.planned += static_cast<uint32_t>(kept.size());
+                    // A band on the arrival: after the bores (scheduled first, so they run first on that tick).
+                    bands.push_back({MapCellsOp(def.fillMap, kept), 0, 0, 0, newOwner(0, def.expiryMap, def.lifetimeTicks, nullptr)});
+                }
+            }
+            voxel::ShapeQ shape;
+            shape.kind = voxel::kShapeCylinder;
+            shape.a = out.hitQ;
+            shape.radiusQ = def.zone.radiusQ;
+            shape.halfHeightQ = def.zone.halfHeightQ;
+            zones.push_back({zoneFrom(def.zone, shape), false, 0});
+        } else if (cast.spell == kRisingSpire) {
+            // The pillar: the Plume filled with knit, in bands timed against the Lift that carries a rider up.
+            const FaceHit hit = CastFaceRay(simulation, cast, range);
+            if (!hit.hit) return finish(SpellRefusal::Missed);
+            out.hitQ = ToQ(hit.point, q);
+            out.face = FaceOf(hit.normal);
+            if (!InsideWalls(ctx.walls, out.hitQ >> 4)) return finish(SpellRefusal::Outside);
+            if (!IsOpenId(world.GetVoxel(hit.seed))) return finish(SpellRefusal::Missed);
+            const glm::ivec3 s0 = hit.seed;
+            PlumeParams pp;
+            pp.seed = s0;
+            pp.axes = FaceAxesOf(hit.normal);
+            pp.seedRadius = def.plumeSeedRadius;
+            pp.riseMax = def.riseMax;
+            pp.runPops = def.plumeRunPops;
+            pp.lateral = def.plumeLateral;
+            pp.visitCap = def.plumeVisitCap;
+            const PlumeResult plume = PlumeOperator(world, ctx.walls, pp);
+            out.stats.visits += plume.visits;
+            out.stats.chunksRead += plume.chunksRead;
+            out.stats.path = static_cast<uint32_t>(plume.rise.size() + plume.run.size());
+            out.stats.front = static_cast<uint32_t>(plume.front.size());
+            if (plume.front.empty()) return finish(SpellRefusal::Missed);
+            std::set<std::tuple<int32_t, int32_t, int32_t>> taken;
+            std::vector<glm::ivec3> cells;
+            const auto take = [&](const glm::ivec3& c) {
+                if (taken.emplace(c.x, c.y, c.z).second) cells.push_back(c);
+            };
+            for (const glm::ivec3& c : plume.rise) take(c);
+            for (const glm::ivec3& c : plume.front) take(c);
+            int32_t topY = s0.y;
+            for (const glm::ivec3& c : cells) topY = std::max(topY, c.y);
+            // Ledges every ledgeSpacing of height on the side facing the caster (a floor hit only).
+            if (hit.normal.y > 0 && def.ledgeSpacing > 0) {
+                const glm::dvec3 toCaster = -glm::dvec3(cast.dir);
+                const bool alongX = std::abs(toCaster.x) >= std::abs(toCaster.z);
+                const int32_t sign = (alongX ? toCaster.x : toCaster.z) >= 0.0 ? 1 : -1;
+                const glm::ivec3 out3 = alongX ? glm::ivec3(sign, 0, 0) : glm::ivec3(0, 0, sign);
+                const glm::ivec3 across = alongX ? glm::ivec3(0, 0, 1) : glm::ivec3(1, 0, 0);
+                VoxelCache cache(world, ctx.walls);
+                for (int32_t m = 1; s0.y + m * def.ledgeSpacing <= topY; ++m) {
+                    const int32_t ledgeTop = s0.y + m * def.ledgeSpacing;
+                    for (int32_t y = ledgeTop - def.ledgeThick; y < ledgeTop; ++y)
+                        for (int32_t a = -def.ledgeWidth / 2; a < def.ledgeWidth - def.ledgeWidth / 2; ++a)
+                            for (int32_t o = def.plumeSeedRadius + 1; o <= def.plumeSeedRadius + def.ledgeOut; ++o) {
+                                const glm::ivec3 c = glm::ivec3(s0.x, y, s0.z) + out3 * o + across * a;
+                                if (IsOpenId(cache.Get(c))) take(c);
+                            }
+                }
+                out.stats.chunksRead += cache.ChunksRead();
+            }
+            // The Lift: from the floor under the seed to hoverQ over the spire's top, until the last band plus the lead.
+            const uint32_t flight = FlightTicks(table, eyeQ, out.hitQ, table.forms[static_cast<size_t>(Form::Plume)].speedMs);
+            const uint32_t zoneLead = std::max(flight, table.zoneLeadTicks);
+            const int64_t baseQ = int64_t{s0.y} * 16, topQ = (int64_t{topY} + 1) * 16;
+            const int64_t liftTop = topQ + def.zone.hoverQ;
+            const uint32_t bandCount = std::max<uint32_t>(1, def.bandCount);
+            const int32_t bandVoxels = std::max<int32_t>(1, def.bandVoxels);
+            std::vector<int64_t> levels;
+            for (uint32_t k = 0; k < bandCount; ++k) levels.push_back(std::min<int64_t>(baseQ + (int64_t{k} + 1) * bandVoxels * 16, topQ) + 32);
+            const std::vector<uint32_t> reach = LiftReachTicks(q, baseQ, liftTop, def.zone.strength[0], def.zone.hoverQ, levels, 240);
+            std::vector<std::vector<glm::ivec3>> fill(bandCount);
+            for (const glm::ivec3& c : cells) fill[static_cast<size_t>(std::clamp<int32_t>((c.y - s0.y) / bandVoxels, 0, static_cast<int32_t>(bandCount) - 1))].push_back(c);
+            int owner = -1;
+            uint32_t lastBand = 0;
+            for (uint32_t k = 0; k < bandCount; ++k) {
+                std::vector<glm::ivec3> kept;
+                if (!guardCells(fill[k], kept, false)) return finish(SpellRefusal::NearSpawn);
+                if (kept.empty()) continue;
+                if (owner < 0) owner = newOwner(0, def.expiryMap, def.lifetimeTicks, nullptr);
+                out.stats.planned += static_cast<uint32_t>(kept.size());
+                lastBand = std::max(lastBand, reach[k]);
+                bands.push_back({MapCellsOp(def.fillMap, kept), 0, zoneLead + reach[k], 0, owner});
+            }
+            if (out.stats.planned == 0) return finish(SpellRefusal::Missed);
+            voxel::ShapeQ shape;
+            shape.kind = voxel::kShapeCylinder;
+            const int64_t bottom = baseQ - 16;
+            shape.a = {16 * s0.x + 8, static_cast<int32_t>((bottom + liftTop) / 2), 16 * s0.z + 8};
+            shape.radiusQ = def.zone.radiusQ;
+            shape.halfHeightQ = static_cast<uint16_t>((liftTop - bottom) / 2);
+            Zone lift = zoneFrom(def.zone, shape);
+            lift.duration = static_cast<uint16_t>(std::min<uint32_t>(lastBand + table.zoneLeadTicks, 0xFFFFu));
+            zones.push_back({lift, false, 0});
         } else if (cast.spell == kUpdraft || cast.spell == kBarricadeWave) {
             const FaceHit hit = CastFaceRay(simulation, cast, range);
             if (!hit.hit) return finish(SpellRefusal::Missed);
@@ -996,8 +1435,7 @@ namespace vortex::sim {
                 out.stats.boreSlices = bored.slices;
                 boreSliceWork = uint64_t{bored.scanned} * kPierceSliceWork;
                 if (bored.bored) {
-                    bore = true;
-                    boreSite = CapsuleSite(world, bored.capsule, def.piercePower, out.hitQ);
+                    bores.push_back(CapsuleSite(world, bored.capsule, def.piercePower, out.hitQ));
                     // The Rime capsule from the hit to the bore's end: the bore's rim and the matter past its end.
                     voxel::ShapeQ rime = bored.capsule;
                     rime.a = out.hitQ;
@@ -1147,14 +1585,17 @@ namespace vortex::sim {
         // 2. The flight: the effects land on arrival, a zone at max(the arrival, the lead)
         //    (magic.md "Casting: mana, gestures and projectiles").
         //    Punch and Dash fly nothing; a drawn shape's projectile flies to the line's first point.
-        if (!def.noProjectile) {
+        if (arcFlight >= 0) {
+            out.flightTicks = static_cast<uint8_t>(arcFlight);
+        } else if (!def.noProjectile) {
             const Form form = FormOf(cast.spell);
             out.flightTicks = FlightTicks(table, eyeQ, out.hitQ, table.forms[static_cast<size_t>(form)].speedMs, form == Form::Flow);
         }
         const uint32_t arrival = tRun + out.flightTicks;
         tZ = std::max(arrival, ZoneStartTick(table, tRun));
         out.zoneTick = tZ;
-        for (PlannedZone& pz : zones) pz.zone.startTick = tZ;
+        zoneExtras.resize(zones.size());
+        for (size_t i = 0; i < zones.size(); ++i) zones[i].zone.startTick = std::max(tZ, tRun + zoneExtras[i].minStart);
 
         // 3. The spawn guard: no op box and no zone box may meet an enemy spawn area.
         for (const PlannedOp& planned : nowOps) {
@@ -1162,9 +1603,14 @@ namespace vortex::sim {
             planned.op.Bounds(lo, hi);
             if (MeetsEnemySpawn(ctx.spawns, cast.team, lo, hi)) return finish(SpellRefusal::NearSpawn);
         }
-        if (bore) {
+        for (const BlastSite& site : bores) {
             glm::ivec3 lo, hi;
-            boreSite.carve.Bounds(lo, hi);
+            site.carve.Bounds(lo, hi);
+            if (MeetsEnemySpawn(ctx.spawns, cast.team, lo, hi)) return finish(SpellRefusal::NearSpawn);
+        }
+        for (const auto& [op, delay] : laterOps) {
+            glm::ivec3 lo, hi;
+            op.Bounds(lo, hi);
             if (MeetsEnemySpawn(ctx.spawns, cast.team, lo, hi)) return finish(SpellRefusal::NearSpawn);
         }
         if (shatter) {
@@ -1194,14 +1640,15 @@ namespace vortex::sim {
         if (turns && ctx.registry.LiveVoxels(1) >= kMaxTurnedPerRegion) return finish(SpellRefusal::TooMuchConjured);
         if (!zones.empty()) {
             ZoneSet& set = simulation.Zones();
-            if (set.LiveOrPendingAt(tRun) + zones.size() > ctx.maxZones || set.Size() + zones.size() > kMaxZoneRecords)
+            if (set.LiveOrPendingAt(tRun) + zones.size() > ctx.maxZones + cancels.size() || set.Size() + zones.size() > kMaxZoneRecords)
                 return finish(SpellRefusal::TooManyZones);
             if (cast.player != 0) {
                 size_t own = 0;
                 for (const auto& [id, owner] : ctx.zoneOwners) {
                     if (owner.caster != cast.player) continue;
                     const Zone* z = set.Find(id);
-                    if (z != nullptr && z->EndTick() > tRun) ++own;
+                    const bool ending = std::any_of(cancels.begin(), cancels.end(), [id](const auto& c) { return c.first == id; });
+                    if (z != nullptr && z->EndTick() > tRun && !ending) ++own;
                 }
                 if (own + zones.size() > ctx.maxZonesPerPlayer) return finish(SpellRefusal::TooManyZones);
             }
@@ -1209,7 +1656,9 @@ namespace vortex::sim {
 
         // 5. Mana, after every other check: a refusal costs nothing. A script (player 0) pays none.
         if (cast.player != 0) {
-            const uint32_t cost = SpellManaCost(table, cast.spell, drawn ? gesture : SpellGesture{});
+            const uint32_t metre = std::max<uint32_t>(table.metreQ, 1);
+            const uint32_t cost = shapeLengthQ > 0 ? table.drawBaseMana + static_cast<uint32_t>(uint64_t{table.drawManaPerMetre} * shapeLengthQ / metre)
+                                                   : SpellManaCost(table, cast.spell, drawn ? gesture : SpellGesture{});
             CasterState& caster = ctx.casters[cast.player];
             const uint16_t have = ManaAt(table, caster, tRun);
             if (have < cost) return finish(SpellRefusal::NoMana);
@@ -1250,24 +1699,26 @@ namespace vortex::sim {
                 out.groups.push_back(GroupOf(std::move(applied)));
             }
         }
-        if (bore && arrival == tRun) {
-            // The bore's island search and load check run now, as a blast's, on the cast's work.
-            BlastResult carved = Blast(simulation, boreSite);
-            const CastWork w = CastWorkOf(carved);
-            out.work.search += w.search;
-            out.work.neck += w.neck;
-            opWork += w.ops;
-            for (const AppliedOp& applied : carved.ops) bytes += static_cast<uint32_t>(OpWireBytes(applied.op));
-            out.stats.released += static_cast<uint32_t>(
-                std::count_if(carved.ops.begin(), carved.ops.end(), [](const AppliedOp& a) { return a.op.kind == WorldOpKind::Detach; }));
-            out.groups.push_back(std::move(carved));
-        } else if (bore) {
-            // On arrival: its search is not known now and is paid from the structure credit then, as a blow's.
-            ScheduledAction a = scheduled(ScheduledKind::Bore, arrival);
-            a.site = boreSite;
-            opWork += OpWork(boreSite.carve);
-            bytes += static_cast<uint32_t>(OpWireBytes(boreSite.carve));
-            Schedule(ctx, std::move(a));
+        for (const BlastSite& site : bores) {
+            if (arrival == tRun) {
+                // The bore's island search and load check run now, as a blast's, on the cast's work.
+                BlastResult carved = Blast(simulation, site);
+                const CastWork w = CastWorkOf(carved);
+                out.work.search += w.search;
+                out.work.neck += w.neck;
+                opWork += w.ops;
+                for (const AppliedOp& applied : carved.ops) bytes += static_cast<uint32_t>(OpWireBytes(applied.op));
+                out.stats.released += static_cast<uint32_t>(
+                    std::count_if(carved.ops.begin(), carved.ops.end(), [](const AppliedOp& a) { return a.op.kind == WorldOpKind::Detach; }));
+                out.groups.push_back(std::move(carved));
+            } else {
+                // On arrival: its search is not known now and is paid from the structure credit then, as a blow's.
+                ScheduledAction a = scheduled(ScheduledKind::Bore, arrival);
+                a.site = site;
+                opWork += OpWork(site.carve);
+                bytes += static_cast<uint32_t>(OpWireBytes(site.carve));
+                Schedule(ctx, std::move(a));
+            }
         }
         for (PlannedOp& planned : nowOps) {
             opWork += OpWork(planned.op);
@@ -1288,6 +1739,21 @@ namespace vortex::sim {
                 a.op = std::move(planned.op);
                 Schedule(ctx, std::move(a));
             }
+        }
+        for (auto& [op, delay] : laterOps) {
+            ScheduledAction a = scheduled(ScheduledKind::Op, arrival + delay);
+            a.hasOwner = false;
+            opWork += OpWork(op);
+            bytes += static_cast<uint32_t>(OpWireBytes(op));
+            a.op = std::move(op);
+            Schedule(ctx, std::move(a));
+        }
+        if (slag) ctx.hotUntil = std::max(ctx.hotUntil, arrival + def.setDelayTicks + 1u);
+        if (splash) {
+            ScheduledAction a = scheduled(ScheduledKind::Splash, arrival);
+            a.op.sphere = voxel::SphereQ{out.hitQ, def.splashRadiusQ};
+            a.damage = def.splashDamage;
+            Schedule(ctx, std::move(a));
         }
         for (PlannedBand& band : bands) {
             ScheduledAction a = scheduled(ScheduledKind::Band, tRun + std::max(out.flightTicks + band.along, band.minTicks) + band.extra);
@@ -1324,10 +1790,11 @@ namespace vortex::sim {
             out.zonesCancelled.emplace_back(id, endTick);
             bytes += kZoneCancelBytes;
         }
-        for (PlannedZone& pz : zones) {
+        for (size_t i = 0; i < zones.size(); ++i) {
+            PlannedZone& pz = zones[i];
             pz.zone.zoneId = TakeZoneId(ctx, simulation.Zones());
             if (pz.zone.zoneId == 0 || !simulation.Zones().Insert(pz.zone)) continue;
-            ctx.zoneOwners[pz.zone.zoneId] = ZoneOwner{cast.team, cast.player, pz.dispellable};
+            ctx.zoneOwners[pz.zone.zoneId] = ZoneOwner{cast.team, cast.player, pz.dispellable, zoneExtras[i].rune, zoneExtras[i].runeFloor};
             out.zonesStarted.push_back(pz.zone);
             bytes += ZoneStartBytes(pz.zone);
             ScheduledAction a = scheduled(ScheduledKind::ZoneTick, pz.zone.startTick);
@@ -1346,13 +1813,19 @@ namespace vortex::sim {
             }
         }
 
-        const size_t later = (bore && arrival != tRun ? 1u : 0u) + (arrival != tRun ? nowOps.size() : 0u);
+        const size_t later = (arrival != tRun ? bores.size() + nowOps.size() : 0u) + laterOps.size();
         out.stats.ops = static_cast<uint32_t>(out.groups.size() + later + bands.size() + (blow ? 1u : 0u) + (shatter ? 1u : 0u));
         out.stats.bytes = bytes;
         out.work.search += uint64_t{out.stats.visits} * kPropagateVisitWork + uint64_t{out.stats.chunksRead} * kColdChunkGraphWork +
                            boreSliceWork + shatterWork;
         out.work.ops = opWork;
         return finish(SpellRefusal::None);
+    }
+
+    namespace {
+        constexpr uint8_t kLavaCause = 3;   // sim::DamageCause::Lava
+        void RunRunes(Simulation& simulation, const SpellTable& table, CastContext& ctx, uint32_t tick, std::span<const SpellTarget> targets,
+                      ScheduledResult& out);
     }
 
     ScheduledResult RunScheduled(Simulation& simulation, const SpellTable& table, CastContext& ctx, uint32_t tick,
@@ -1419,6 +1892,17 @@ namespace vortex::sim {
             case ScheduledKind::Hit:
                 out.damage.push_back(SpellDamage{action.target, action.damage, action.caster, action.spell});
                 break;
+            case ScheduledKind::Splash: {
+                const double vs = static_cast<double>(world.VoxelSize());
+                const glm::dvec3 centre = glm::dvec3(action.op.sphere.center) / q;
+                const double radius = action.op.sphere.radius / 16.0 * vs;
+                for (const SpellTarget& t : targets) {
+                    if (t.player == action.caster || (action.casterTeam != kNoTeam && t.team == action.casterTeam)) continue;
+                    if (CapsuleDistance(centre, glm::dvec3(t.feet), ctx.tuning.radius, ctx.tuning.height) <= radius)
+                        out.damage.push_back(SpellDamage{t.player, action.damage, action.caster, action.spell});
+                }
+                break;
+            }
             case ScheduledKind::Shatter: {
                 const ShatterResult flood = ShatterFlood(world, ctx.walls, action.op.sphere, def.shatterDepth, def.shatterVisitCap);
                 if (flood.cells.empty()) break;
@@ -1480,6 +1964,38 @@ namespace vortex::sim {
         for (size_t i = firstGroup; i < out.groups.size(); ++i)
             for (const AppliedOp& applied : out.groups[i].ops) ctx.structure.QueueFromEdits(applied.edits, materials);
 
+        // Runes (magic.md spell 13): a rune whose floor turned to air breaks; the first enemy whose feet lie in a live
+        // rune bursts it now, its Root, Chill, damage and ice from this tick plus the lead.
+        RunRunes(simulation, table, ctx, tick, targets, out);
+
+        // The hazard scan (magic.md "Damage and hazards"): every hazardTicks while slag may lie, a Hot voxel within two
+        // voxels of a player's capsule box burns it, credited to the caster who conjured it. Two, not one: a fill leaves
+        // the box grown by one voxel free, so slag poured round a player lies one voxel further out.
+        if (tick <= ctx.hotUntil && table.hazardTicks > 0 && tick % table.hazardTicks == 0) {
+            const double vs = static_cast<double>(world.VoxelSize());
+            for (const SpellTarget& t : targets) {
+                const math::AABB bounds = PlayerBounds(t.feet, ctx.tuning);
+                const glm::ivec3 lo = glm::ivec3(glm::floor(glm::dvec3(bounds.min) / vs)) - glm::ivec3(2);
+                const glm::ivec3 hi = glm::ivec3(glm::floor(glm::dvec3(bounds.max) / vs)) + glm::ivec3(2);
+                bool burnt = false;
+                for (int z = lo.z; z <= hi.z && !burnt; ++z)
+                    for (int y = lo.y; y <= hi.y && !burnt; ++y)
+                        for (int x = lo.x; x <= hi.x && !burnt; ++x) {
+                            const glm::ivec3 v(x, y, z);
+                            const uint8_t id = world.GetVoxel(v);
+                            if (id == 0 || (materials.Get(voxel::kWorldPalette, id).flags & voxel::MaterialFlag_Hot) == 0) continue;
+                            if (!VoxelInBox(v, vs, bounds, 2.0 * vs)) continue;
+                            // Friendly fire is off: the caster and its team are not burnt by its own slag.
+                            const KnitOwnerInfo* owner = ctx.registry.OwnerAt(v, 0);
+                            const uint8_t caster = owner != nullptr ? owner->caster : uint8_t{0};
+                            if (owner != nullptr && (t.player == caster || (owner->casterTeam != kNoTeam && owner->casterTeam == t.team))) continue;
+                            out.damage.push_back(SpellDamage{t.player, table.hazardDamage, caster, kMoltenPour, kLavaCause});
+                            ++out.hazardHits;
+                            burnt = true;
+                        }
+            }
+        }
+
         // 2. Expiries of conjured matter.
         for (AppliedOp& applied : ctx.registry.RunExpiries(simulation, tick)) {
             ctx.structure.QueueFromEdits(applied.edits, materials);
@@ -1496,6 +2012,114 @@ namespace vortex::sim {
     }
 
     CastWork CastWorkOf(const CastSpellResult& spell) { return spell.work; }
+
+    namespace {
+    void RunRunes(Simulation& simulation, const SpellTable& table, CastContext& ctx, uint32_t tick, std::span<const SpellTarget> targets,
+                  ScheduledResult& out) {
+        const voxel::World& world = simulation.World();
+        const double q = QPerMetre(world);
+        const SpellDef& def = table.spells[kRuneTrap];
+        std::vector<Zone> live;
+        for (const Zone& z : simulation.Zones().All())
+            if (z.kind == ZoneKind::Rune && z.startTick <= tick && tick < z.EndTick()) live.push_back(z);
+        for (const Zone& rune : live) {
+            const auto found = ctx.zoneOwners.find(rune.zoneId);
+            if (found == ctx.zoneOwners.end() || !found->second.rune) continue;
+            const ZoneOwner owner = found->second;
+            if (world.GetVoxel(owner.runeFloor) == 0) {
+                simulation.Zones().Cancel(rune.zoneId, tick);
+                out.zonesCancelled.emplace_back(rune.zoneId, tick);
+                ++out.runesBroken;
+                continue;
+            }
+            const SpellTarget* victim = nullptr;
+            for (const SpellTarget& t : targets) {
+                if ((rune.teamMask & TeamBit(t.team)) == 0) continue;
+                if (ZoneShapeHolds(rune, ToQ(glm::dvec3(t.feet), q))) {
+                    victim = &t;
+                    break;
+                }
+            }
+            if (victim == nullptr) continue;
+            simulation.Zones().Cancel(rune.zoneId, tick);
+            out.zonesCancelled.emplace_back(rune.zoneId, tick);
+            out.runeBursts.emplace_back(rune.zoneId, victim->player);
+            const uint32_t at = tick + table.zoneLeadTicks;
+            // Root and Chill round the rune from the lead on (its fuse), the damage with the Root.
+            voxel::ShapeQ shape = rune.shape;
+            shape.radiusQ = def.burstRadiusQ;
+            for (const ZoneDef* zd : {&def.zone2, &def.zone3}) {
+                if (zd->kind == ZoneKind::None) continue;
+                Zone z;
+                z.kind = zd->kind;
+                z.teamMask = rune.teamMask;
+                z.shape = shape;
+                z.startTick = at;
+                z.duration = zd->durationTicks;
+                z.strength[0] = zd->strength[0];
+                z.strength[1] = zd->strength[1];
+                z.zoneId = TakeZoneId(ctx, simulation.Zones());
+                if (z.zoneId == 0 || !simulation.Zones().Insert(z)) continue;
+                ctx.zoneOwners[z.zoneId] = ZoneOwner{owner.casterTeam, owner.caster, DispelKinds(z.kind) != 0};
+                out.zonesStarted.push_back(z);
+                ScheduledAction a;
+                a.tick = at;
+                a.kind = ScheduledKind::ZoneTick;
+                a.spell = kRuneTrap;
+                a.casterTeam = owner.casterTeam;
+                a.caster = owner.caster;
+                a.zoneId = z.zoneId;
+                a.damage = zd == &def.zone2 ? def.zoneDamage : uint16_t{0};
+                Schedule(ctx, std::move(a));
+            }
+            // The ice: the floor's skin within the burst's radius (air over it to ice, water to floe), nearest the rune
+            // first, at most fillCap; none in a spawn area. A band: the players of its tick keep their cells.
+            VoxelCache cache(world, ctx.walls);
+            const glm::ivec3 centre((rune.shape.a.x - 8) >> 4, owner.runeFloor.y + 1, (rune.shape.a.z - 8) >> 4);
+            const int32_t reach = (def.burstRadiusQ + 15) / 16;
+            const int64_t r2 = int64_t{def.burstRadiusQ} * def.burstRadiusQ;
+            const uint8_t water = simulation.WorldMaterialIds().water;
+            std::vector<std::tuple<int64_t, int32_t, int32_t, glm::ivec3>> cells;
+            for (int32_t dz = -reach; dz <= reach; ++dz)
+                for (int32_t dx = -reach; dx <= reach; ++dx) {
+                    const int64_t d2 = int64_t{dx} * dx * 256 + int64_t{dz} * dz * 256;
+                    if (d2 > r2) continue;
+                    // The skin nearest the rune's row: an open cell with support under it, within two voxels up or down.
+                    for (const int32_t dy : {0, 1, -1, 2, -2}) {
+                        const glm::ivec3 c = centre + glm::ivec3(dx, dy, dz);
+                        if (!IsOpenId(cache.Get(c))) continue;
+                        const uint8_t below = cache.Get(c - glm::ivec3(0, 1, 0));
+                        if (!IsSupportId(below) || below == VoxelCache::kWallId) continue;
+                        const glm::ivec3 cell = below == water ? c - glm::ivec3(0, 1, 0) : c;
+                        if (SpawnCellOf(ctx.spawns, owner.casterTeam, cell) == SpawnCell::Free) cells.emplace_back(d2, cell.z, cell.x, cell);
+                        break;
+                    }
+                }
+            std::sort(cells.begin(), cells.end(), [](const auto& a, const auto& b) {
+                return std::tie(std::get<0>(a), std::get<1>(a), std::get<2>(a)) < std::tie(std::get<0>(b), std::get<1>(b), std::get<2>(b));
+            });
+            if (cells.size() > def.fillCap) cells.resize(def.fillCap);
+            std::vector<glm::ivec3> ice;
+            for (const auto& c : cells) ice.push_back(std::get<3>(c));
+            if (ice.empty()) continue;
+            KnitOwnerInfo info;
+            info.layer = 0;
+            info.expiryMap = def.expiryMap;
+            info.caster = owner.caster;
+            info.casterTeam = owner.casterTeam;
+            info.dueTick = at + def.lifetimeTicks;
+            ScheduledAction band;
+            band.tick = at;
+            band.kind = ScheduledKind::Band;
+            band.spell = kRuneTrap;
+            band.casterTeam = owner.casterTeam;
+            band.caster = owner.caster;
+            band.owner = ctx.registry.NewOwner(info);
+            band.op = MapCellsOp(def.fillMap, ice);
+            Schedule(ctx, std::move(band));
+        }
+    }
+    }
 
     std::vector<SpawnArea> SpawnAreasOf(std::span<const std::pair<TeamId, glm::dvec3>> spawns, const voxel::World& world) {
         std::vector<SpawnArea> out;

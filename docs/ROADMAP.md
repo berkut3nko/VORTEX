@@ -14,6 +14,18 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
 
 ## Now
 
+- **[mag-4] Flow, climbing, the rune and the rest of Metal: built, not reviewed** (2026-11-27). Molten Pour, Rising
+  Spire, Rebar Lance and Rune Trap through the shared cast path (offline and the server). The integer arc
+  (`sim::TraceArc`: a lob to the gesture's release point, or a tap along the aim at 22 m/s) replaces Flow's
+  placeholder flight; the Flow operator (`sim::FlowOperator`); `slag` (id 52, the `Hot` flag), the Slag and Set maps,
+  the splash and the hazard scan; Rising Spire's bands timed against its Lift, its ledges, and the Rise gesture's
+  stairs and bridge (`sim::RiseShapeOf`); Rebar Lance's two level sockets and pegs; the Rune zone, the server's
+  trigger test, one rune per caster and the burst (Root, Chill, 15 damage, ice), the rune's glow by team in the game.
+  No protocol bump (the decoder's zone duration limit rises to 3600 ticks), `kPlayerRuleRevision` stays 5. G23 runs 11
+  rows with `--frames 2800`: `Pour:`, `Spire: rider on top`, `Rebar: ledge reached` (a scripted climb up three
+  lances' pegs to a 4 m ledge), `Rune: burst under bot N`, `Gesture: rise stairs`, `Gesture: rise bridge`.
+  [As built](history/magic/mag-4-as-built.md). Not run: `verify.sh full --ci`, the soak. Windowed feel (the climb,
+  the stairs, the rune's glow): owner checks.
 - **[mag-8] Mana, gestures and projectiles: built, not reviewed** (2026-11-27). The
   owner's revision ([design/magic.md](design/magic.md) "Casting: mana, gestures and projectiles") in sim and net. Mana
   in the cast check (`sim::ManaAt`, `sim::SpellManaCost`): a pool of 6 000 (1/60 mana), 10 back each tick, full at
@@ -30,8 +42,8 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
   (a point each 0.5 m, at most 16 and 12 m), LMB cancels, 1-4 force a form and AUTO is the default; a ghost line, the
   form word and the cost while held; a mana bar; projectiles and drawn-shape ghosts from `CastFx` (particles only);
   the same casting in sessions (`Client::SetSpellGesture`). G23 casts a drawn Barricade Wave (`Gesture: line wall N
-  knit voxels over X m`) and checks the classification. Not built: Rising Spire's stairs and bridge ([mag-4]), the
-  session attune menu. Not run: `verify.sh full --ci`, the soak. Windowed feel: owner check 31.
+  knit voxels over X m`) and checks the classification. Rising Spire's stairs and bridge came with [mag-4]. Not built:
+  the session attune menu. Not run: `verify.sh full --ci`, the soak. Windowed feel: owner check 31.
 - **[audio-1] Audio first pass: built, not reviewed** (2026-11-26). The new module `vortex.audio` (`Vortex::Audio`,
   miniaudio 0.11.25 with stb_vorbis; linked by the engine only, checked by `vortex_assert_no_audio`): the manifest,
   a mixer with five buses (master, sfx, ambience, ui, music), 32 voices with priority and steal rules, at most 4 per
@@ -334,7 +346,7 @@ never been measured.
 
 ## State
 
-Tests: **1129** in ctest: 1121 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
+Tests: **1148** in ctest: 1140 GoogleTest cases (6 disabled measurements), `CpuCheck.RefusesAMissingFeature` and the
 game's `CpuCheck.GameRefusesAMissingFeature` (CMake scripts), `Tools.LocksAndInstallLive` (`tools/selftest-locks.sh`),
 `Tools.DocCheck`, `Tools.DocCheckSelftest`, `Tools.SessionCheckVerdict` and `Tools.VerifyAssertions` (WP2's checks
 and their self-tests), `Tools.RendezvousWorker` (the rendezvous Worker under `node --test`, registered when `node` is

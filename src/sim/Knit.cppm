@@ -35,6 +35,7 @@ export namespace vortex::sim {
         uint8_t layer = 0;        ///< 0 conjure (knit and the other conjured ids), 1 turn (rime, heat)
         uint8_t expiryMap = 0;    ///< a voxel::TurningMapId: Map_Unknit for conjured matter
         uint8_t caster = 0;       ///< player slot + 1; 0 none
+        uint8_t casterTeam = 0;   ///< the caster's sim::TeamId (0: no team)
         uint32_t dueTick = 0;
         bool hasShape = false;    ///< its matter came from one MapShape: it can expire with that shape
         voxel::ShapeQ shape;
@@ -64,6 +65,8 @@ export namespace vortex::sim {
         std::vector<AppliedOp> MakeRoom(Simulation& simulation, uint8_t caster, uint32_t incoming);
         uint32_t LiveVoxels(uint8_t layer) const;
         uint32_t LiveVoxelsOf(uint8_t caster) const;     ///< its conjure layer
+        /// @brief The owner of voxel `v` in `layer` (null: none).
+        const KnitOwnerInfo* OwnerAt(const glm::ivec3& v, uint8_t layer) const;
         size_t Owners() const { return m_Owners.size(); }
 
     private:

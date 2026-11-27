@@ -205,6 +205,18 @@ namespace vortex::sim {
         return n;
     }
 
+    const KnitOwnerInfo* KnitRegistry::OwnerAt(const glm::ivec3& v, uint8_t layer) const {
+        const glm::ivec3 c = voxel::VoxelToChunk(v);
+        const auto chunk = m_Chunks.find(ChunkKey(c.x, c.y, c.z));
+        if (chunk == m_Chunks.end()) return nullptr;
+        const std::vector<Entry>& entries = chunk->second[layer < 2 ? layer : 1];
+        const uint16_t index = LocalIndex(v);
+        const auto at = std::lower_bound(entries.begin(), entries.end(), index, [](const Entry& e, uint16_t i) { return e.first < i; });
+        if (at == entries.end() || at->first != index) return nullptr;
+        const auto owner = m_Owners.find(at->second);
+        return owner == m_Owners.end() ? nullptr : &owner->second.info;
+    }
+
     bool IsCollider(const voxel::MaterialLibrary& materials, uint8_t id) {
         return id != 0 && (materials.Get(voxel::kWorldPalette, id).flags & voxel::MaterialFlag_Liquid) == 0;
     }

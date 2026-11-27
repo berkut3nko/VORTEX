@@ -464,6 +464,182 @@ namespace vortex::sim {
         return out;
     }
 
+    namespace {
+        int64_t FloorShift(int64_t v, int s) { return v >> s; }   // arithmetic: rounds toward minus infinity
+
+        int64_t RoundDivArc(int64_t n, int64_t d) { return n >= 0 ? (2 * n + d) / (2 * d) : (2 * n - d) / (2 * d); }
+    }
+
+    glm::i64vec3 ArcLaunch(const glm::ivec3& aim, int64_t speedFine) {
+        return {RoundDivArc(int64_t{aim.x} * speedFine, 16384), RoundDivArc(int64_t{aim.y} * speedFine, 16384),
+                RoundDivArc(int64_t{aim.z} * speedFine, 16384)};
+    }
+
+    glm::i64vec3 LobLaunch(const glm::ivec3& fromQ, const glm::ivec3& toQ, int64_t horizontalFine, int64_t gravity, uint32_t minTicks,
+                           uint32_t maxTicks, uint32_t& ticks) {
+        const int64_t dx = (int64_t{toQ.x} - fromQ.x) << kArcFineShift, dz = (int64_t{toQ.z} - fromQ.z) << kArcFineShift;
+        const int64_t dy = (int64_t{toQ.y} - fromQ.y) << kArcFineShift;
+        const int64_t dist = static_cast<int64_t>(math::ISqrt64(static_cast<uint64_t>(dx * dx + dz * dz)));
+        const int64_t speed = std::max<int64_t>(horizontalFine, 1);
+        const int64_t t = std::clamp<int64_t>((dist + speed - 1) / speed, std::max<uint32_t>(minTicks, 1u), std::max<uint32_t>(maxTicks, 1u));
+        ticks = static_cast<uint32_t>(t);
+        return {RoundDivArc(dx, t), RoundDivArc(2 * dy + gravity * t * t, 2 * t), RoundDivArc(dz, t)};
+    }
+
+    ArcHit TraceArc(const voxel::World& world, const OperatorWalls& walls, const ArcParams& params) {
+        ArcHit out;
+        VoxelCache cache(world, walls);
+        glm::i64vec3 p = glm::i64vec3(params.startQ) * int64_t{1 << kArcFineShift};
+        glm::i64vec3 v = params.velocity;
+        v.y -= params.gravity / 2;
+        glm::ivec3 voxel(static_cast<int32_t>(FloorShift(params.startQ.x, 4)), static_cast<int32_t>(FloorShift(params.startQ.y, 4)),
+                         static_cast<int32_t>(FloorShift(params.startQ.z, 4)));
+        out.apexQ = params.startQ.y;
+        const auto stop = [&](const glm::ivec3& at, const glm::ivec3& normal, const glm::ivec3& pointQ, uint32_t tick, uint8_t id) {
+            out.hit = true;
+            out.wall = id == VoxelCache::kWallId;
+            out.voxel = at;
+            out.normal = normal;
+            out.hitQ = pointQ;
+            out.ticks = tick;
+        };
+        ++out.visits;
+        if (const uint8_t id = cache.Get(voxel); !IsOpenId(id)) {
+            stop(voxel, glm::ivec3(0, 1, 0), params.startQ, 0, id);
+            out.chunksRead = cache.ChunksRead();
+            return out;
+        }
+        for (uint32_t tick = 1; tick <= params.maxTicks && !out.hit; ++tick) {
+            const glm::i64vec3 aFine = p, bFine = p + v;
+            p = bFine;
+            v.y -= params.gravity;
+            const glm::i64vec3 a(FloorShift(aFine.x, kArcFineShift), FloorShift(aFine.y, kArcFineShift), FloorShift(aFine.z, kArcFineShift));
+            const glm::i64vec3 b(FloorShift(bFine.x, kArcFineShift), FloorShift(bFine.y, kArcFineShift), FloorShift(bFine.z, kArcFineShift));
+            out.apexQ = std::max<int32_t>(out.apexQ, static_cast<int32_t>(b.y));
+            // The segment a-b (q) from the current voxel: t = num[i] / den[i] of the next boundary on each axis.
+            const glm::i64vec3 d = b - a;
+            glm::i64vec3 num(0), den(0);
+            glm::ivec3 step(0);
+            for (int i = 0; i < 3; ++i) {
+                den[i] = d[i] < 0 ? -d[i] : d[i];
+                step[i] = d[i] > 0 ? 1 : d[i] < 0 ? -1 : 0;
+                if (step[i] > 0) num[i] = (int64_t{voxel[i]} + 1) * 16 - a[i];
+                else if (step[i] < 0) num[i] = a[i] - int64_t{voxel[i]} * 16;
+            }
+            while (true) {
+                // The axis whose boundary comes first (num / den smallest, within the segment: num <= den).
+                int axis = -1;
+                for (int i = 0; i < 3; ++i) {
+                    if (step[i] == 0 || num[i] > den[i]) continue;
+                    if (axis < 0 || num[i] * den[axis] < num[axis] * den[i]) axis = i;
+                }
+                if (axis < 0) break;
+                voxel[axis] += step[axis];
+                ++out.visits;
+                const uint8_t id = cache.Get(voxel);
+                if (!IsOpenId(id)) {
+                    glm::ivec3 normal(0);
+                    normal[axis] = -step[axis];
+                    const glm::i64vec3 at = a + d * num[axis] / std::max<int64_t>(den[axis], 1);
+                    stop(voxel, normal, glm::ivec3(at), tick, id);
+                    break;
+                }
+                num[axis] += 16;
+            }
+        }
+        out.chunksRead = cache.ChunksRead();
+        return out;
+    }
+
+    FlowKey FlowKeyOf(const glm::ivec3& c, const glm::ivec3& seed) {
+        const int64_t dx = c.x - seed.x, dz = c.z - seed.z;
+        return {c.y, dx * dx + dz * dz, c.z, c.x};
+    }
+
+    FlowResult FlowOperator(const voxel::World& world, const OperatorWalls& walls, const FlowParams& params) {
+        FlowResult out;
+        VoxelCache cache(world, walls);
+        const glm::ivec3 s0 = params.seed;
+        const int32_t rf = params.seedRadius;
+        const int32_t side = static_cast<int32_t>(params.lateral) + rf + 1;
+        const glm::ivec3 boxMin = s0 - glm::ivec3(side, static_cast<int32_t>(params.fallMax) + rf + 1, side);
+        const glm::ivec3 boxMax = s0 + glm::ivec3(side, rf + 1, side);   // inclusive
+        const glm::ivec3 size = boxMax - boxMin + glm::ivec3(1);
+        std::vector<uint64_t> visited(static_cast<size_t>((int64_t{size.x} * size.y * size.z + 63) / 64), 0u);
+        const auto inBox = [&](const glm::ivec3& c) { return glm::all(glm::greaterThanEqual(c, boxMin)) && glm::all(glm::lessThanEqual(c, boxMax)); };
+        const auto bit = [&](const glm::ivec3& c) {
+            const glm::ivec3 l = c - boxMin;
+            return static_cast<size_t>((int64_t{l.z} * size.y + l.y) * size.x + l.x);
+        };
+        const auto seen = [&](const glm::ivec3& c) { const size_t i = bit(c); return ((visited[i >> 6] >> (i & 63)) & 1u) != 0; };
+        const auto mark = [&](const glm::ivec3& c) { const size_t i = bit(c); visited[i >> 6] |= uint64_t{1} << (i & 63); };
+        const auto open = [&](const glm::ivec3& c) {
+            ++out.visits;
+            return inBox(c) && IsOpenId(cache.Get(c));
+        };
+        std::priority_queue<FlowKey, std::vector<FlowKey>, std::greater<FlowKey>> heap;
+        const glm::ivec3 down(0, -1, 0);
+
+        // 1. Fall: each seed of the disc, in (a, b) order, down while the cell below is open.
+        for (int32_t a = -rf; a <= rf; ++a)
+            for (int32_t b = -rf; b <= rf; ++b) {
+                if (a * a + b * b > rf * rf || out.visits >= params.visitCap) continue;
+                const glm::ivec3 seed = s0 + params.axes.u * a + params.axes.v * b;
+                if (!inBox(seed) || seen(seed) || !open(seed)) continue;
+                mark(seed);
+                glm::ivec3 c = seed;
+                bool landed = false;
+                for (uint32_t fell = 0;; ++fell) {
+                    const glm::ivec3 below = c + down;
+                    if (!open(below)) {
+                        landed = true;
+                        break;
+                    }
+                    // Another column passed or landed here: it carries on from there.
+                    if (fell >= params.fallMax || seen(below)) break;
+                    out.fall.push_back(c);
+                    mark(below);
+                    c = below;
+                }
+                if (!landed) continue;
+                out.landings.push_back(c);
+                heap.push(FlowKeyOf(c, s0));
+            }
+
+        // 2. Spread: lowest first, then nearest the hit column; a cell over open space falls.
+        const std::array<glm::ivec3, 4> sides = {glm::ivec3(1, 0, 0), glm::ivec3(-1, 0, 0), glm::ivec3(0, 0, 1), glm::ivec3(0, 0, -1)};
+        std::vector<FlowKey> popped;
+        while (!heap.empty() && popped.size() < params.runPops && out.visits < params.visitCap) {
+            const FlowKey key = heap.top();
+            heap.pop();
+            popped.push_back(key);
+            const glm::ivec3 c(std::get<3>(key), std::get<0>(key), std::get<2>(key));
+            const glm::ivec3 below = c + down;
+            if (inBox(below) && !seen(below) && open(below)) {
+                mark(below);
+                heap.push(FlowKeyOf(below, s0));
+                continue;
+            }
+            for (const glm::ivec3& e : sides) {
+                const glm::ivec3 n = c + e;
+                if (std::abs(n.x - s0.x) > static_cast<int32_t>(params.lateral) || std::abs(n.z - s0.z) > static_cast<int32_t>(params.lateral))
+                    continue;
+                if (!inBox(n) || seen(n) || !open(n)) continue;
+                mark(n);
+                heap.push(FlowKeyOf(n, s0));
+            }
+        }
+
+        // 3. Roles: the frontCount smallest keys are the pool; the rest ran.
+        std::sort(popped.begin(), popped.end());
+        for (size_t i = 0; i < popped.size(); ++i) {
+            const glm::ivec3 c(std::get<3>(popped[i]), std::get<0>(popped[i]), std::get<2>(popped[i]));
+            (i < params.frontCount ? out.front : out.run).push_back(c);
+        }
+        out.chunksRead = cache.ChunksRead();
+        return out;
+    }
+
     WorldOp MapCellsOp(uint8_t map, std::span<const glm::ivec3> cells) {
         if (cells.empty()) return WorldOp::MapMasked(map, glm::ivec3(0), voxel::VoxelMask(glm::ivec3(0)));
         glm::ivec3 lo(std::numeric_limits<int32_t>::max()), hi(std::numeric_limits<int32_t>::min());

@@ -193,6 +193,7 @@ namespace vortex::voxel {
         ids.stoneDarkRimed = add("stone_dark_rimed", Srgb(124, 132, 146), 0.80f, 2800.0f, 2.0f, 0.14f);
         ids.brickRimed   = add("brick_rimed",  Srgb(188, 140, 138),   0.80f, 1900.0f,  1.25f, 0.14f);
         ids.ironRimed    = add("iron_rimed",   Srgb(184, 190, 202),   0.35f, 7800.0f,  4.0f, 0.06f, 0, 0.0f, 1.0f);
+        ids.slag         = add("slag",         Srgb(255, 132, 40),    0.60f, 2000.0f,  7.0f, 0.12f, MaterialFlag_Conjured | MaterialFlag_Hot, 5.0f, 0.4f);
 
         // Bond strengths, kg/m^2: compression / shear / tension (docs/design/shred.md Part 4b,
         // "Material strengths"). A free column of height h holds while density x h <= C, a
@@ -252,6 +253,7 @@ namespace vortex::voxel {
         strength(ids.stoneDarkRimed, 150000, 60000, 20000);
         strength(ids.brickRimed, 80000, 30000, 8000);
         strength(ids.ironRimed, 1000000, 600000, 600000);
+        strength(ids.slag, 100000, 40000, 15000);
         for (const uint8_t soft : {ids.needles, ids.reed, ids.fern, ids.flowerYellow, ids.flowerViolet, ids.mushroom}) strength(soft, 10000, 5000, 5000);
         return ids;
     }

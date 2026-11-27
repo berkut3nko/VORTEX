@@ -77,6 +77,7 @@ export namespace vortex::sim {
         uint16_t amount = 0;
         uint8_t source = 0;                   ///< the caster (slot + 1; 0 a script)
         SpellId spell = 0;
+        uint8_t cause = 1;                    ///< a sim::DamageCause: Blast (1), or Lava (3) for the hazard scan's slag
     };
     /// @brief A team's spawn area: the voxel box [min, max) (magic.md "Readability rules" 10).
     struct SpawnArea {
@@ -96,7 +97,9 @@ export namespace vortex::sim {
     struct ZoneOwner {
         TeamId casterTeam = kNoTeam;
         uint8_t caster = 0;                   ///< slot + 1; 0 a script
-        bool dispellable = false;             ///< a kind that lasts (Updraft's Lift, a Chill): a Punch ends it
+        bool dispellable = false;             ///< a kind that lasts (Updraft's Lift, a Chill, a rune): a Punch ends it
+        bool rune = false;                    ///< a Rune Trap's rune: the trigger test in RunScheduled reads it
+        glm::ivec3 runeFloor{0};              ///< the voxel the rune lies on: when it turns to air, the rune breaks
     };
 
     enum class ScheduledKind : uint8_t {
@@ -107,6 +110,7 @@ export namespace vortex::sim {
         Op = 4,         ///< an op planned at T_run, applied on its arrival (recorded under `owner` when `hasOwner`)
         Bore = 5,       ///< a bore planned at T_run (`site`), carved with its island search on its arrival
         Hit = 6,        ///< a projectile's direct damage to `target` on its arrival
+        Splash = 7,     ///< `damage` to the enemies within `op.sphere` (its centre and radius, q) on its arrival
     };
     /// @brief A follow-up, run by RunScheduled in (tick, seq) order.
     struct ScheduledAction {
@@ -141,6 +145,7 @@ export namespace vortex::sim {
         PlayerTuning tuning;                            ///< the capsule, the eye height and castRange
         uint32_t maxZones = 32;                         ///< live or pending in the region
         uint32_t maxZonesPerPlayer = 4;                 ///< live or pending per player (not for scripts)
+        uint32_t hotUntil = 0;                          ///< the hazard scan runs up to this tick (slag may lie until then)
     };
 
     /// @brief Counters of one cast (logged; `visits` and `chunksRead` are charged as work).
@@ -156,6 +161,10 @@ export namespace vortex::sim {
         uint32_t released = 0;                ///< Detach operations of the bore's island search
         uint32_t dashSteps = 0;               ///< Dash: path steps the trace kept
         uint32_t drawnLengthQ = 0;            ///< a drawn shape: its length after the 1.5-10 m rule (q)
+        uint32_t steps = 0;                   ///< Rising Spire's stairs: the steps
+        uint8_t riseShape = 0;                ///< a RiseKind: what Rising Spire made
+        uint32_t sockets = 0;                 ///< Rebar Lance: the sockets bored (pegs set)
+        uint32_t arcTicks = 0;                ///< a Flow spell: the ticks of its arc to the hit
     };
 
     struct CastSpellResult {
@@ -183,7 +192,28 @@ export namespace vortex::sim {
         std::vector<SpellDamage> damage;
         uint32_t sitesRun = 0;
         uint32_t bodiesPushed = 0;
+        std::vector<Zone> zonesStarted;                                  ///< a rune's burst: its Root and Chill
+        std::vector<std::pair<uint16_t, uint32_t>> zonesCancelled;       ///< (zoneId, endTick): a rune that burst or broke
+        std::vector<std::pair<uint16_t, uint8_t>> runeBursts;            ///< (the rune's zoneId, the player under it)
+        uint32_t runesBroken = 0;
+        uint32_t hazardHits = 0;              ///< the hazard scan's damage entries
     };
+
+    /// @brief What Rising Spire's Rise gesture makes (magic.md "Casting: mana, gestures and projectiles").
+    enum class RiseKind : uint8_t { None = 0, Stairs = 1, Bridge = 2, Pillar = 3 };
+    struct RiseShape {
+        RiseKind kind = RiseKind::None;
+        uint32_t lengthQ = 0;                 ///< the stairs' or the deck's length (q), at most drawMaxQ
+        uint32_t steps = 0;                   ///< the stairs' steps
+    };
+    /**
+     * @brief The shape of a Rise gesture from its first point S to its last point E, from the points only: stairs when E
+     * is stairsMinRiseQ or more above S (ceil(rise / stepRise) steps of stepRun, cut to drawMaxQ along their slope);
+     * a bridge when E is within bridgeLevelQ of S's height and bridgeMinQ or more away horizontally (the deck cut to
+     * drawMaxQ); else the pillar at S. None for a spell that draws no rise, another gesture or fewer than 2 points.
+     * CastSpell also makes a bridge a pillar when one of its ends lies over nothing.
+     */
+    RiseShape RiseShapeOf(const SpellTable& table, SpellId spell, const SpellGesture& gesture);
 
     /// @brief The zone lead's start tick of a cast at `runTick`.
     uint32_t ZoneStartTick(const SpellTable& table, uint32_t runTick);
@@ -207,7 +237,7 @@ export namespace vortex::sim {
     /// [drawMinQ, drawMaxQ]; 0 when the spell draws no line or the gesture is not a Line of two points or more.
     uint32_t DrawnLengthQ(const SpellTable& table, SpellId spell, const SpellGesture& gesture);
     /// @brief The mana a cast costs (1/60 mana): a drawn shape drawBaseMana + drawManaPerMetre per metre of
-    /// DrawnLengthQ (rounded down), else the spell's tap cost.
+    /// DrawnLengthQ (rounded down), or of a Rise's stairs or bridge (RiseShapeOf), else the spell's tap cost.
     uint32_t SpellManaCost(const SpellTable& table, SpellId spell, const SpellGesture& gesture);
 
     /**
@@ -252,7 +282,16 @@ export namespace vortex::sim {
      * becomes a floe slab (FreezeWater over a y-cylinder, two voxels deep), the disc's Path cells over dry ground an
      * ice film (Freeze); Root, then Chill over the disc. Permafrost Climb: the full Plume; ice on its Rise cells
      * near support and its Front cells that are skin or join the ice, a Rime box over the face; Root, then Chill
-     * over the plume's box. Barricade Wave: a Burst strip extruded into knit bands at their ticks; no band cell
+     * over the plume's box. Molten Pour and Rune Trap: the integer arc (TraceArc; a lob to a gesture's release
+     * point, else launched along the aim) gives the hit and the flight. Molten Pour: the Flow operator; slag over its
+     * Fall skin cells and its pool, lowest key first (fillCap), Set into knit setDelayTicks after the landing, a splash
+     * round the landing; the hazard scan burns while slag lies. Rune Trap: the single seed's fall gives the landing; a
+     * Rune zone on its floor, armed armTicks after the cast; the caster's older rune ends now. Rising Spire: the
+     * Plume filled with knit in bands, ledges on the caster's side (a floor hit), a Lift over the column whose
+     * floor each band waits for (the band timing rule), ending a lead after the last band; a Rise gesture makes
+     * stairs or a bridge instead (RiseShapeOf). Rebar Lance: two level bores a socketSpacing apart up the face and one
+     * knit band over both sockets and their pegs, a Root at the hit; a direct hit on an enemy bores nothing.
+     * Barricade Wave: a Burst strip extruded into knit bands at their ticks; no band cell
      * in a player's capsule grown by one voxel, a rigid body's box or a spawn area (a cell in an
      * enemy's refuses the cast). Work: operator visits and chunks read, and every op now or
      * scheduled, charged at T_run.
@@ -264,7 +303,10 @@ export namespace vortex::sim {
                               std::span<const SpellTarget> targets);
 
     /**
-     * @brief The follow-ups due at `tick` in (tick, seq) order, then the registry's expiries, the site
+     * @brief The follow-ups due at `tick` in (tick, seq) order, the runes (one whose floor voxel turned to air breaks;
+     * the first target of the rune's teams whose feet lie in it bursts it: the rune ends at `tick`, Root and Chill round it
+     * and the damage start a lead later, an ice band on the floor's skin lands then), the hazard scan (every hazardTicks
+     * while slag may lie), then the registry's expiries, the site
      * checks on the structure credit (it refills once per call: call it once per tick, after the
      * players' step of that tick) and the pruning of ended zones. A blow's island search is not
      * known at T_run: its work is paid from the structure credit.

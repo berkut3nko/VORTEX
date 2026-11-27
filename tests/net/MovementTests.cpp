@@ -1081,3 +1081,37 @@ TEST(Movement, APlayerOnARampAtThePlayBoundsStaysOnTheGround) { EdgeWalk("Edge, 
 // air; the prediction agrees. (It walks back out over the voxel steps here; a pit wall need not let
 // it, so the walk back is not checked.)
 TEST(Movement, APlayerOnASteepFaceAtThePlayBoundsFallsAgainstTheWall) { EdgeWalk("Edge, steep face", {}, 4); }
+
+// magic.md spell 2 and "What can still cause a correction": the caster of a Rising Spire at its own feet rides the
+// announced Lift up ahead of every band, on G16's link (40 ms + 0-30 ms each way, 5 % loss): the bands fill under the
+// rider, never where its predicted capsule stands, so its client makes no correction.
+TEST(Movement, SpireRiderNoCorrection) {
+    Match m(Settings(), Lossy());
+    ASSERT_TRUE(m.started);
+    uint32_t castAt = 0;
+    Match::Bot& bot = m.AddBot(Scripted([&castAt](uint32_t tick) {
+        sim::PlayerInput in;
+        if (castAt != 0 && tick == castAt) {
+            sim::AimAngles(glm::vec3(0.02f, -1.0f, 0.0f), in.yaw, in.pitch);
+            in.buttons = sim::PlayerButton_Spell;
+            in.spell = sim::kRisingSpire;
+        }
+        return in;
+    }));
+    ASSERT_TRUE(m.Join());
+    m.Passes(90);
+    const uint8_t slot = bot.client->Slot();
+    const uint64_t before = bot.client->Prediction().corrections;
+    const float ground = m.server.GetPlayer(slot).value_or(sim::PlayerState{}).position.y;
+    castAt = bot.client->PredictTick() + 5;
+    float top = ground;
+    for (int i = 0; i < 420; ++i) {
+        m.Pass();
+        top = std::max(top, m.server.GetPlayer(slot).value_or(sim::PlayerState{}).position.y);
+    }
+    EXPECT_EQ(m.server.Stats().spellCasts, 1u);
+    EXPECT_EQ(m.server.Stats().spellsRefused, 0u);
+    EXPECT_GT(top - ground, 5.5f) << "carried up the spire";
+    EXPECT_EQ(bot.client->Prediction().corrections, before) << "the rider is never corrected";
+    EXPECT_LT(Disagreement(m, bot), 0.05f) << "both sides agree where the rider stands";
+}

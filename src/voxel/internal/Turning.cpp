@@ -15,11 +15,16 @@ namespace vortex::voxel {
         // Maps without an entry here stay the identity until the ids they name exist.
         table.maps[Map_Knit][0] = ids.knitIron;
         table.maps[Map_Ablate][ids.knitIron] = 0;
-        // Every conjuring's expiry: knit (plain or rimed) and ice go, floe turns back into water.
+        table.maps[Map_Ablate][ids.slag] = 0;
+        // Molten Pour: air into slag, and slag sets into knit.
+        table.maps[Map_Slag][0] = ids.slag;
+        table.maps[Map_Set][ids.slag] = ids.knitIron;
+        // Every conjuring's expiry: knit (plain or rimed), slag and ice go, floe turns back into water.
         TurningMap& unknit = table.maps[Map_Unknit];
         unknit[ids.knitIron] = 0;
         unknit[ids.knitIronRimed] = 0;
         unknit[ids.ice] = 0;
+        unknit[ids.slag] = 0;
         unknit[ids.floe] = ids.water;
         // Rime and its Thaw: each rimeable id and its rimed twin; Shatter breaks every rimed id.
         const std::pair<uint8_t, uint8_t> rimed[] = {{ids.stone, ids.stoneRimed},

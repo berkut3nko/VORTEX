@@ -67,9 +67,26 @@ TEST(SpellTable, SizesHoldWithinOneVoxelAcrossVoxelSizes) {
         ExpectWithinAVoxel(climb.riseMax * static_cast<double>(vs), 6.0, vs, "Permafrost Climb's rise");
         ExpectWithinAVoxel(Metres(punch.shatterRadiusQ, vs), 1.0, vs, "Punch's Shatter flood");
         EXPECT_EQ(spike.pierceRadiusQ, 24) << "a bore's radius is counted in voxels";
+        const sim::SpellDef& pour = t.spells[sim::kMoltenPour];
+        const sim::SpellDef& spire = t.spells[sim::kRisingSpire];
+        const sim::SpellDef& rebar = t.spells[sim::kRebarLance];
+        const sim::SpellDef& rune = t.spells[sim::kRuneTrap];
+        ExpectWithinAVoxel(pour.fallMax * static_cast<double>(vs), 8.0, vs, "Molten Pour's fall");
+        ExpectWithinAVoxel(spire.riseMax * static_cast<double>(vs), 6.0, vs, "Rising Spire's rise");
+        ExpectWithinAVoxel(spire.ledgeSpacing * static_cast<double>(vs), 1.0, vs, "Rising Spire's ledges");
+        ExpectWithinAVoxel(spire.stepRise * static_cast<double>(vs), 0.375, vs, "a step's rise");
+        ExpectWithinAVoxel(spire.stepRun * static_cast<double>(vs), 0.5, vs, "a step's run");
+        ExpectWithinAVoxel(spire.deckWidth * static_cast<double>(vs), 1.5, vs, "a bridge's deck");
+        ExpectWithinAVoxel(rebar.socketSpacing * static_cast<double>(vs), 1.0, vs, "Rebar Lance's sockets");
+        ExpectWithinAVoxel(Metres(rebar.pegLengthQ, vs), 1.25, vs, "Rebar Lance's pegs");
+        ExpectWithinAVoxel(Metres(rune.zone.radiusQ, vs), 1.5, vs, "the rune");
+        ExpectWithinAVoxel(Metres(rune.burstRadiusQ, vs), 2.0, vs, "the rune's burst");
+        // Flow's gravity in 1/4096 voxel per tick^2 (magic.md "Inputs every operator shares"): 89, 112 and 74.
+        EXPECT_EQ(t.arcGravity, vs == 0.125f ? 89u : vs == 0.1f ? 112u : 74u);
         for (sim::SpellId id = 0; id < sim::kSpellCount; ++id) {
             const bool built = id == sim::kUpdraft || id == sim::kDash || id == sim::kBarricadeWave || id == sim::kPunch ||
-                               id == sim::kShatterSpike || id == sim::kFlashFreeze || id == sim::kPermafrostClimb;
+                               id == sim::kShatterSpike || id == sim::kFlashFreeze || id == sim::kPermafrostClimb || id == sim::kMoltenPour ||
+                               id == sim::kRisingSpire || id == sim::kRebarLance || id == sim::kRuneTrap;
             EXPECT_EQ(t.spells[id].built, built) << "spell " << int(id);
         }
     }
@@ -194,7 +211,45 @@ TEST(SpellTable, HashCoversEveryField) {
         {"drawMinQ", [&S](sim::SpellTable& t) { ++S(t).drawMinQ; }},
         {"drawMaxQ", [&S](sim::SpellTable& t) { ++S(t).drawMaxQ; }},
         {"drawZoneRadiusQ", [&S](sim::SpellTable& t) { ++S(t).drawZoneRadiusQ; }},
-        {"a spell not built", [](sim::SpellTable& t) { t.spells[0].built = true; }},
+        {"a spell not built", [](sim::SpellTable& t) { t.spells[1].built = true; }},
+        {"arcSpeedFine", [](sim::SpellTable& t) { ++t.arcSpeedFine; }},
+        {"arcGravity", [](sim::SpellTable& t) { ++t.arcGravity; }},
+        {"arcMaxTicks", [](sim::SpellTable& t) { ++t.arcMaxTicks; }},
+        {"lobMinTicks", [](sim::SpellTable& t) { ++t.lobMinTicks; }},
+        {"hazardTicks", [](sim::SpellTable& t) { ++t.hazardTicks; }},
+        {"hazardDamage", [](sim::SpellTable& t) { ++t.hazardDamage; }},
+        {"flowSeedRadius", [&S](sim::SpellTable& t) { ++S(t).flowSeedRadius; }},
+        {"fallMax", [&S](sim::SpellTable& t) { ++S(t).fallMax; }},
+        {"flowRunPops", [&S](sim::SpellTable& t) { ++S(t).flowRunPops; }},
+        {"flowLateral", [&S](sim::SpellTable& t) { ++S(t).flowLateral; }},
+        {"frontCount", [&S](sim::SpellTable& t) { ++S(t).frontCount; }},
+        {"flowVisitCap", [&S](sim::SpellTable& t) { ++S(t).flowVisitCap; }},
+        {"fillCap", [&S](sim::SpellTable& t) { ++S(t).fillCap; }},
+        {"setDelayTicks", [&S](sim::SpellTable& t) { ++S(t).setDelayTicks; }},
+        {"splashRadiusQ", [&S](sim::SpellTable& t) { ++S(t).splashRadiusQ; }},
+        {"splashDamage", [&S](sim::SpellTable& t) { ++S(t).splashDamage; }},
+        {"ledgeSpacing", [&S](sim::SpellTable& t) { ++S(t).ledgeSpacing; }},
+        {"ledgeWidth", [&S](sim::SpellTable& t) { ++S(t).ledgeWidth; }},
+        {"ledgeOut", [&S](sim::SpellTable& t) { ++S(t).ledgeOut; }},
+        {"ledgeThick", [&S](sim::SpellTable& t) { ++S(t).ledgeThick; }},
+        {"bandVoxels", [&S](sim::SpellTable& t) { ++S(t).bandVoxels; }},
+        {"drawsRise", [&S](sim::SpellTable& t) { S(t).drawsRise = !S(t).drawsRise; }},
+        {"stepRise", [&S](sim::SpellTable& t) { ++S(t).stepRise; }},
+        {"stepRun", [&S](sim::SpellTable& t) { ++S(t).stepRun; }},
+        {"stepWidth", [&S](sim::SpellTable& t) { ++S(t).stepWidth; }},
+        {"deckWidth", [&S](sim::SpellTable& t) { ++S(t).deckWidth; }},
+        {"deckThick", [&S](sim::SpellTable& t) { ++S(t).deckThick; }},
+        {"stairsMinRiseQ", [&S](sim::SpellTable& t) { ++S(t).stairsMinRiseQ; }},
+        {"bridgeLevelQ", [&S](sim::SpellTable& t) { ++S(t).bridgeLevelQ; }},
+        {"bridgeMinQ", [&S](sim::SpellTable& t) { ++S(t).bridgeMinQ; }},
+        {"bridgeEndQ", [&S](sim::SpellTable& t) { ++S(t).bridgeEndQ; }},
+        {"socketSpacing", [&S](sim::SpellTable& t) { ++S(t).socketSpacing; }},
+        {"pegLengthQ", [&S](sim::SpellTable& t) { ++S(t).pegLengthQ; }},
+        {"aimLevel", [&S](sim::SpellTable& t) { S(t).aimLevel = !S(t).aimLevel; }},
+        {"armTicks", [&S](sim::SpellTable& t) { ++S(t).armTicks; }},
+        {"burstRadiusQ", [&S](sim::SpellTable& t) { ++S(t).burstRadiusQ; }},
+        {"zone3.kind", [&S](sim::SpellTable& t) { S(t).zone3.kind = sim::ZoneKind::Chill; }},
+        {"zone3.durationTicks", [&S](sim::SpellTable& t) { ++S(t).zone3.durationTicks; }},
         {"built", [&S](sim::SpellTable& t) { S(t).built = false; }},
         {"burstHalfWidth", [&S](sim::SpellTable& t) { ++S(t).burstHalfWidth; }},
         {"burstHalfThickness", [&S](sim::SpellTable& t) { ++S(t).burstHalfThickness; }},
