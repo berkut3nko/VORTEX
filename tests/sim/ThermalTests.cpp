@@ -299,9 +299,61 @@ TEST(Magic, MeltdownBeamBoresAndBurns) {
     EXPECT_TRUE(yard.ctx.burning.empty()) << "it burnt out";
 }
 
-// Firestorm Sweep drawn along a Line on the floor: a curtain of pitch 0.75 m high stands along the polyline, the floor
-// under it is no different (stone does not heat), and an enemy beside the line takes 30 at the zone tick and burns on.
-TEST(Magic, FirestormSweepAlongALine) {
+// Firestorm Sweep tapped along +x (magic.md spell 8): no projectile; the front starts 1.5 m ahead of the feet at T_run +
+// the lead and travels 8 m at 8 m/s in 0.5 m steps. Pitch lies only behind the front, one voxel high on the floor; an
+// enemy the front passes takes 15 once and Burning 3 s; two Shove capsules push along +x; each band goes 1 s after it
+// landed.
+TEST(Magic, FirestormSweepTravelsAndBurnsOut) {
+    ThermalYard yard;
+    ASSERT_TRUE(yard.initialized);
+    const voxel::WorldMaterials& ids = yard.Ids();
+    const glm::dvec3 eye(0.0625, kGround + kEye, 0.0625);
+    const std::vector<sim::SpellTarget> enemy = {{2, 2, glm::vec3(6.0f, static_cast<float>(kGround), 0.5f)}};
+    const uint32_t t0 = yard.simulation.Tick();
+    const sim::CastSpellResult r = yard.Cast(sim::kFirestormSweep, 1, 1, eye, eye + glm::dvec3(1.0, -0.2, 0.0), {}, enemy);
+    ASSERT_EQ(r.refusal, sim::SpellRefusal::None) << sim::ToString(r.refusal);
+    EXPECT_EQ(r.manaCost, 35u * 60u);
+    EXPECT_EQ(r.flightTicks, 0u) << "the front is the projectile";
+    EXPECT_EQ(r.zoneTick, t0 + yard.table.zoneLeadTicks);
+    ASSERT_EQ(r.drawnPointsQ.size(), 2u) << "the path every client draws";
+    EXPECT_EQ(r.drawnPointsQ[0], ThermalYard::Q({1.5625, kGround, 0.0625}));
+    EXPECT_NEAR(static_cast<double>(r.stats.drawnLengthQ), 8.0 * 128.0, 2.0);
+    EXPECT_EQ(r.stats.front, 17u) << "the front stands at 0, 0.5 .. 8 m";
+    EXPECT_GT(r.stats.planned, 1900u) << "8 m x 4 m of floor, one voxel high";
+    EXPECT_LT(r.stats.planned, 2100u);
+    ASSERT_EQ(r.zonesStarted.size(), 2u);
+    for (const sim::Zone& z : r.zonesStarted) {
+        EXPECT_EQ(z.kind, sim::ZoneKind::Shove);
+        EXPECT_EQ(z.strength[0], 400);
+        EXPECT_GT(z.shape.b.x, z.shape.a.x) << "along the sweep";
+        EXPECT_GE(z.startTick, r.zoneTick);
+    }
+
+    const glm::ivec3 lo(0, G, -24), hi(96, G + 16, 24);
+    yard.RunTo(t0 + yard.table.zoneLeadTicks, enemy);
+    EXPECT_EQ(yard.Count(lo, hi, ids.pitch), 0u) << "nothing burns before the front has moved";
+    // Half way (4 m travelled, 0.5 s): pitch from 1.5 m to the front at 5.5 m, none beyond it, none above the floor.
+    const uint32_t half = t0 + yard.table.zoneLeadTicks + 30;
+    std::vector<sim::ScheduledResult> results = yard.RunTo(half, enemy);
+    EXPECT_GT(yard.Count({12, G, -24}, {44, G + 1, 24}, ids.pitch), 900u);
+    EXPECT_EQ(yard.Count({45, G, -24}, {96, G + 16, 24}, ids.pitch), 0u) << "nothing ahead of the front";
+    EXPECT_EQ(yard.Count({0, G + 1, -24}, {96, G + 16, 24}, ids.pitch), 0u) << "one voxel high";
+    const uint32_t end = t0 + yard.table.zoneLeadTicks + 60;
+    for (sim::ScheduledResult& s : yard.RunTo(end + 2, enemy)) results.push_back(std::move(s));
+    EXPECT_GT(yard.Count({72, G, -24}, {80, G + 1, 24}, ids.pitch), 100u) << "the last band, 9 to 9.5 m out";
+    const auto [hit, burn] = DamageTo(results, 2);
+    EXPECT_EQ(hit, 15u) << "once, though the front passed over the enemy in several steps";
+    EXPECT_TRUE(yard.ctx.burning.contains(2));
+    EXPECT_GE(yard.ctx.burning.at(2).untilTick, t0 + yard.table.zoneLeadTicks + 180u);
+    EXPECT_TRUE(yard.ctx.sweepHits.empty()) << "the hit list goes with the last step";
+    yard.RunTo(end + yard.table.spells[sim::kFirestormSweep].lifetimeTicks + 2, enemy);
+    EXPECT_EQ(yard.Count(lo, hi, ids.pitch), 0u) << "each band goes 1 s after it landed";
+    std::printf("firestorm: front travelled %.2f m, %u pitch voxels planned\n", r.stats.drawnLengthQ / 128.0, r.stats.planned);
+}
+
+// Firestorm Sweep along a Line: the front travels along the polyline from its first point, perpendicular to each segment;
+// pitch lies along the line on the floor, an enemy beside the line takes 15 once and burns on, and it all burns out.
+TEST(Magic, FirestormSweepFollowsALine) {
     ThermalYard yard;
     ASSERT_TRUE(yard.initialized);
     const voxel::WorldMaterials& ids = yard.Ids();
@@ -312,19 +364,20 @@ TEST(Magic, FirestormSweepAlongALine) {
     const uint32_t t0 = yard.simulation.Tick();
     const sim::CastSpellResult r = yard.Cast(sim::kFirestormSweep, 1, 1, eye, glm::dvec3(3.0, kGround, -2.0), line, enemy);
     ASSERT_EQ(r.refusal, sim::SpellRefusal::None) << sim::ToString(r.refusal);
+    EXPECT_EQ(r.manaCost, 35u * 60u) << "a Line costs as a tap";
     EXPECT_GE(r.stats.drawnLengthQ, 4u * 128u);
     EXPECT_EQ(r.drawnPointsQ.size(), 4u);
-    const std::vector<sim::ScheduledResult> first = yard.RunTo(r.zoneTick + 1, enemy);
-    const glm::ivec3 lo(16, G, -32), hi(40, G + 12, 32);
-    const uint32_t curtain = yard.Count(lo, hi, ids.pitch);
-    EXPECT_GT(curtain, 150u) << "a curtain about 4 m long and 6 voxels high";
-    EXPECT_EQ(yard.Count({16, G + 6, -32}, {40, G + 12, 32}, ids.pitch), 0u) << "0.75 m high";
-    const auto [scorch, burn] = DamageTo(first, 2);
-    EXPECT_EQ(scorch, 30u) << "the scorch at the zone tick";
+    std::vector<sim::ScheduledResult> results = yard.RunTo(t0 + yard.table.zoneLeadTicks + 40, enemy);
+    // Across each segment 2 m each side: x from about 1 m to 5.5 m, z over the line's -2 .. 2 m.
+    const uint32_t floor = yard.Count({8, G, -24}, {48, G + 1, 24}, ids.pitch);
+    EXPECT_GT(floor, 700u);
+    EXPECT_EQ(yard.Count({48, G, -40}, {96, G + 16, 40}, ids.pitch), 0u) << "no further than 2 m across the line";
+    const auto [hit, burn] = DamageTo(results, 2);
+    EXPECT_EQ(hit, 15u);
     EXPECT_TRUE(yard.ctx.burning.contains(2));
     yard.RunTo(t0 + 400, enemy);
-    EXPECT_EQ(yard.Count(lo, hi, ids.pitch), 0u) << "it burns out";
-    std::printf("firestorm: curtain %u pitch voxels over %.2f m\n", curtain, r.stats.drawnLengthQ / 128.0);
+    EXPECT_EQ(yard.Count({0, G, -40}, {96, G + 16, 40}, ids.pitch), 0u) << "it burns out";
+    std::printf("firestorm: line %.2f m, %u pitch voxels\n", r.stats.drawnLengthQ / 128.0, floor);
 }
 
 // Wildfire climbs a stone face from S to E on a Rise: pitch up the face, none hanging in the air, and Heat melts the ice
@@ -414,7 +467,7 @@ TEST(Magic, HeatUnderAFloeBridgeReleasesWhatItCarried) {
     ASSERT_EQ(r.refusal, sim::SpellRefusal::None) << sim::ToString(r.refusal);
     EXPECT_GT(r.stats.heated, 100u) << "the slab under the sweep";
     uint32_t released = 0;
-    for (const sim::ScheduledResult& s : yard.RunTo(yard.simulation.Tick() + r.flightTicks + 60))
+    for (const sim::ScheduledResult& s : yard.RunTo(r.zoneTick + 120))
         for (const sim::BlastResult& g : s.groups)
             for (const sim::AppliedOp& a : g.ops) released += a.op.kind == sim::WorldOpKind::Detach ? 1u : 0u;
     EXPECT_EQ(yard.Count({16, G - 1, -8}, {32, G, 8}, ids.floe), 0u) << "melted back into water";

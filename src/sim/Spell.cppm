@@ -55,6 +55,7 @@ export namespace vortex::sim {
         SpireLift = 7,       ///< a y-cylinder of `radiusQ` over the spire's column, up to `hoverQ` over its top (Rising Spire)
         RuneFloor = 8,       ///< a y-cylinder of `radiusQ` and `halfHeightQ` standing on the landing's floor (Rune Trap)
         LeapSlam = 9,        ///< a y-cylinder of `radiusQ` and `halfHeightQ` standing on the floor where the leap lands (Meteor Leap)
+        SweepHalf = 10,      ///< a capsule of `radiusQ` over one half of Firestorm Sweep's path, started as the front reaches its middle
     };
     /// @brief Which players a zone acts on, seen from the caster's team.
     enum class ZoneTarget : uint8_t { Enemies = 0, Everyone = 1, Allies = 2 };
@@ -192,6 +193,11 @@ export namespace vortex::sim {
         uint16_t drawMinQ = 0;             ///< the drawn shape's length: at least this (the last segment is extended)
         uint16_t drawMaxQ = 0;             ///< and at most this (the polyline is cut)
         uint16_t drawZoneRadiusQ = 0;      ///< the zones of a drawn shape: a capsule from its first to its last point
+        // Firestorm Sweep's front (magic.md spell 8): it starts sweepStartQ in front of the feet and moves in steps of
+        // sweepStepQ at sweepSpeedMs; drawHalfWidthQ, drawHeight and drawMaxQ give its width, height and travel.
+        uint16_t sweepStartQ = 0;
+        uint16_t sweepStepQ = 0;
+        uint8_t sweepSpeedMs = 0;
     };
 
     /// @brief One integer table that holds every number of the spells (magic.md "sim::SpellTable").
@@ -244,28 +250,4 @@ export namespace vortex::sim {
     std::array<uint16_t, 256> BoreCostTable();
     /// @brief A hash of every field of the table.
     uint64_t SpellTableHash(const SpellTable& table);
-
-    /**
-     * @brief The respawn screen's choice of two elements (magic.md "What a player carries"): a key toggles its element;
-     * a third element drops the one picked first. `picked[0]` becomes element A (the active one after the spawn),
-     * `picked[1]` element B. Only a complete pick (two elements) goes to the server.
-     */
-    struct AttunePick {
-        std::array<uint8_t, 2> picked{static_cast<uint8_t>(Element::Metal), static_cast<uint8_t>(Element::Pressure)};
-        uint8_t count = 2;
-
-        bool Complete() const { return count == 2; }
-        bool Has(uint8_t element) const { return (count > 0 && picked[0] == element) || (count > 1 && picked[1] == element); }
-        void Toggle(uint8_t element) {
-            if (element > static_cast<uint8_t>(Element::Frost)) return;
-            if (Has(element)) {
-                if (count == 2 && picked[0] == element) picked[0] = picked[1];
-                --count;
-                return;
-            }
-            if (count == 2) picked[0] = picked[1];
-            else ++count;
-            picked[count - 1] = element;
-        }
-    };
 }

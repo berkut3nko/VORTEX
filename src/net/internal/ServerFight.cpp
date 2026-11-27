@@ -133,7 +133,7 @@ namespace vortex::net {
         Roster r;
         for (const auto& [id, p] : PlayersBySlot()) {
             const sim::FighterState& f = fighters[p->slot];
-            if (r.players.size() < kMaxRosterPlayers) r.players.push_back({p->slot, f.team, f.kills, f.deaths, RosterAttuneOf(p->slot)});
+            if (r.players.size() < kMaxRosterPlayers) r.players.push_back({p->slot, f.team, f.kills, f.deaths});
         }
         return r;
     }
@@ -284,7 +284,7 @@ namespace vortex::net {
         const uint32_t k = teamSpawnCount[f.team - 1]++;
         const glm::dvec3 feet = sim::TeamSpawnFeet(*simulation, Rules(), region, f.team, k, glm::dvec3(tmpl.spawn));
         sim::StartLife(f, Rules(), tick);
-        ApplyAttune(slot);   // [mag-2] an Attune taken while dead or before this spawn
+
         sim::RefillMana(spellTable, castContext.casters[static_cast<uint8_t>(slot + 1)], tick);   // [mag-8] a full pool each life
         Player& pl = *p->player;
         // Decision 7: a teleport by the server, standing still, every button held (no edge until released).

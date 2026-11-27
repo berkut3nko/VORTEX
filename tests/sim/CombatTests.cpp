@@ -303,24 +303,6 @@ TEST(Siege, TheDefendersWinWhenTheTimeRunsOutAndKillsNeverEndIt) {
     EXPECT_FALSE(round.overtime);
 }
 
-TEST(Attune, APickKeepsTwoElementsAndDropsTheFirstPicked) {
-    sim::AttunePick pick;   // Metal + Pressure: the first life's
-    EXPECT_TRUE(pick.Complete());
-    pick.Toggle(static_cast<uint8_t>(sim::Element::Frost));
-    EXPECT_EQ(pick.picked, (std::array<uint8_t, 2>{2, 3})) << "Metal (picked first) goes";
-    pick.Toggle(static_cast<uint8_t>(sim::Element::Frost));
-    EXPECT_FALSE(pick.Complete());
-    EXPECT_TRUE(pick.Has(2));
-    pick.Toggle(static_cast<uint8_t>(sim::Element::Thermal));
-    EXPECT_TRUE(pick.Complete());
-    EXPECT_EQ(pick.picked, (std::array<uint8_t, 2>{2, 1}));
-    pick.Toggle(2);
-    pick.Toggle(1);
-    EXPECT_EQ(pick.count, 0);
-    pick.Toggle(4);   // no fifth element
-    EXPECT_EQ(pick.count, 0);
-}
-
 TEST(Combat, AimAnglesInvertLookDirection) {
     const float limit = std::cos(glm::radians(0.1f));
     for (int y = 0; y < 8; ++y)

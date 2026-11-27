@@ -315,7 +315,7 @@ export namespace vortex::net {
         uint32_t zonesEmitted = 0;        ///< ZoneStart events
         uint32_t zonesCancelled = 0;      ///< ZoneCancel events
         uint32_t runeBursts = 0;          ///< Rune Trap runes burst under an enemy
-        uint32_t attunes = 0, attunesRefused = 0;   ///< Attune messages taken / ignored
+
         uint32_t gestures = 0, gesturesDropped = 0; ///< [mag-8] SpellGesture messages kept / dropped (too old, too early, too many)
 
         // Replicated objects (stage 6).

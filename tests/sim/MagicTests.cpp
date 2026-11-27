@@ -582,14 +582,13 @@ TEST(Magic, CaptureChecksTheGapAndOpensEveryElement) {
     sim::SpellCast c;
     c.player = 3;
     c.spell = sim::kPunch;
-    EXPECT_EQ(sim::CheckCapture(ctx, table, c, 10), sim::SpellRefusal::None) << "Metal and Pressure by default";
+    EXPECT_EQ(sim::CheckCapture(ctx, table, c, 10), sim::SpellRefusal::None);
     c.spell = 16;   // spread's Kindle: never built for play
     EXPECT_EQ(sim::CheckCapture(ctx, table, c, 10), sim::SpellRefusal::NotBuilt);
-    sim::CasterState frost;
-    frost.elementB = static_cast<uint8_t>(sim::Element::Frost);
-    ctx.casters[3] = frost;
-    c.spell = sim::kPunch;
-    EXPECT_EQ(sim::CheckCapture(ctx, table, c, 10), sim::SpellRefusal::None) << "every element is open, attuned or not";
+    for (const sim::SpellId spell : {sim::kFirestormSweep, sim::kFlashFreeze, sim::kMeteorLeap}) {
+        c.spell = spell;
+        EXPECT_EQ(sim::CheckCapture(ctx, table, c, 10), sim::SpellRefusal::None) << "every element is open to every caster";
+    }
     c.spell = sim::kBarricadeWave;
     sim::TakeCapture(ctx, table, c, 10);
     EXPECT_EQ(sim::CheckCapture(ctx, table, c, 11), sim::SpellRefusal::TooSoon);

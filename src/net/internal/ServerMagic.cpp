@@ -36,8 +36,8 @@ import vortex.scene;
 import vortex.sim;
 import :server_impl;
 
-// Server::Impl: spells - capture, the run in the cast queue, the follow-ups, zones with the lead, Attune and the owner
-// block's magic state (docs/design/magic.md "The cast pipeline", "Where every effect lives"). Every damage goes through
+// Server::Impl: spells - capture, the run in the cast queue, the follow-ups, zones with the lead, and the owner block's
+// magic state (docs/design/magic.md "The cast pipeline", "Where every effect lives"). Every damage goes through
 // DealDamage; every terrain operation through EmitOp.
 namespace vortex::net {
     using namespace detail;
@@ -46,12 +46,6 @@ namespace vortex::net {
         glm::ivec3 ToQ(const glm::dvec3& metres, double voxelSize) {
             const glm::dvec3 q = metres * (16.0 / voxelSize);
             return {static_cast<int32_t>(std::llround(q.x)), static_cast<int32_t>(std::llround(q.y)), static_cast<int32_t>(std::llround(q.z))};
-        }
-
-        bool ElementBuilt(const sim::SpellTable& table, uint8_t element) {
-            for (sim::SpellId s = 0; s < 16; ++s)
-                if (table.spells[s].built && static_cast<uint8_t>(sim::ElementOf(s)) == element) return true;
-            return false;
         }
     }
 
@@ -256,25 +250,6 @@ namespace vortex::net {
         stats.spellBytes += stats.eventBytes - bytesBefore;
     }
 
-    bool Server::Impl::OnAttune(Peer& p, std::span<const uint8_t> bytes) {
-        Attune a;
-        if (!Decode(bytes, a)) return false;
-        const sim::FighterState& f = fighters[p.slot];
-        // A fight attunes per life (taken at the next spawn); a sandbox has no deaths and takes the pick at once.
-        const bool open = !Fighting() || !f.spawned || f.dead;
-        const bool valid = a.craftA != a.craftB && ElementBuilt(spellTable, a.craftA) && ElementBuilt(spellTable, a.craftB);
-        if (!open || !valid || !p.player) {
-            ++stats.attunesRefused;
-            Log::Info("Server: attune refused from slot {}", p.slot);
-            return true;
-        }
-        p.player->attunePending = true;
-        p.player->attuneA = a.craftA;
-        p.player->attuneB = a.craftB;
-        ++stats.attunes;
-        if (!Fighting()) ApplyAttune(p.slot);
-        return true;
-    }
 
     bool Server::Impl::OnSpellGesture(Peer& p, std::span<const uint8_t> bytes) {
         SpellGesture m;
@@ -294,40 +269,27 @@ namespace vortex::net {
         return true;
     }
 
-    void Server::Impl::ApplyAttune(uint8_t slot) {
-        Peer* p = PeerOfSlot(static_cast<uint8_t>(slot + 1));
-        if (p == nullptr || !p->player->attunePending) return;
-        Player& pl = *p->player;
-        sim::CasterState& c = castContext.casters[static_cast<uint8_t>(slot + 1)];
-        c.elementA = pl.attuneA;
-        c.elementB = pl.attuneB;
-        pl.attunePending = false;
-        pl.spellElement = pl.attuneA;
-        SendRoster();
-    }
 
     void Server::Impl::MagicJoin(uint8_t slot) { castContext.casters[static_cast<uint8_t>(slot + 1)] = sim::CasterState{}; }
 
     void Server::Impl::MagicLeave(uint8_t slot) { castContext.casters.erase(static_cast<uint8_t>(slot + 1)); }
 
-    void Server::Impl::FillMagicOwner(Snapshot& snap, uint8_t slot, const Player& pl) const {
+    void Server::Impl::FillMagicOwner(Snapshot& snap, uint8_t slot) const {
         sim::CasterState c;
         if (const auto it = castContext.casters.find(static_cast<uint8_t>(slot + 1)); it != castContext.casters.end()) c = it->second;
         snap.mana = sim::ManaAt(spellTable, c, snap.tick);
         snap.spellGap = static_cast<uint8_t>(std::min<uint32_t>(c.spellReadyTick > snap.tick ? c.spellReadyTick - snap.tick : 0u, 255));
-        uint8_t attune = static_cast<uint8_t>((c.elementA & 3) | ((c.elementB & 3) << 2));
-        if (pl.spellElement == c.elementB && c.elementB != c.elementA) attune = static_cast<uint8_t>(attune | Snapshot::kAttuneActiveB);
-        snap.attune = attune;
+        snap.burnTicks = 0;
+        if (const auto burn = castContext.burning.find(static_cast<uint8_t>(slot + 1)); burn != castContext.burning.end())
+            snap.burnTicks = static_cast<uint8_t>(std::min<uint32_t>(burn->second.untilTick > snap.tick ? burn->second.untilTick - snap.tick : 0u, 255));
     }
 
-    uint8_t Server::Impl::RemoteStatusOf(const Player& pl) const {
-        return static_cast<uint8_t>((pl.state.status & 15) | ((pl.spellElement & 3) << 4));
-    }
-
-    uint8_t Server::Impl::RosterAttuneOf(uint8_t slot) const {
-        sim::CasterState c;
-        if (const auto it = castContext.casters.find(static_cast<uint8_t>(slot + 1)); it != castContext.casters.end()) c = it->second;
-        return static_cast<uint8_t>((c.elementA & 3) | ((c.elementB & 3) << 2));
+    uint8_t Server::Impl::RemoteStatusOf(uint8_t slot, const Player& pl) const {
+        uint8_t bits = static_cast<uint8_t>((pl.state.status & RemotePlayer::kStatusMask) | ((pl.spellElement & 3) << RemotePlayer::kElementShift));
+        if ((pl.state.status & sim::PlayerStatus_Leaping) != 0) bits = static_cast<uint8_t>(bits | RemotePlayer::kLeapingBit);
+        if (const auto burn = castContext.burning.find(static_cast<uint8_t>(slot + 1)); burn != castContext.burning.end() && burn->second.untilTick > Tick())
+            bits = static_cast<uint8_t>(bits | RemotePlayer::kBurningBit);
+        return bits;
     }
 
     std::vector<sim::Zone> Server::Impl::BaselineZones() const {

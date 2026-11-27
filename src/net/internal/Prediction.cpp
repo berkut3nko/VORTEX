@@ -138,7 +138,7 @@ namespace vortex::net {
                 const double gap = static_cast<double>(tick - t.samples.back().tick);
                 t.interval += (std::min(gap, 60.0) - t.interval) / 8.0;
             }
-            t.samples.push_back({tick, p.position, p.yaw, p.flags, p.fight, p.holdPitch});
+            t.samples.push_back({tick, p.position, p.yaw, p.flags, p.fight, p.holdPitch, p.statusBits});
             while (t.samples.size() > kSamples) t.samples.pop_front();
         }
     }
@@ -160,6 +160,7 @@ namespace vortex::net {
                 v.flags = first.flags;
                 v.fight = first.fight;
                 v.holdPitch = first.holdPitch;
+                v.statusBits = first.statusBits;
             } else if (at >= static_cast<double>(last.tick)) {
                 // Extrapolate along the last motion for up to one update interval, then hold.
                 v.position = last.position;
@@ -167,6 +168,7 @@ namespace vortex::net {
                 v.flags = last.flags;
                 v.fight = last.fight;
                 v.holdPitch = last.holdPitch;
+                v.statusBits = last.statusBits;
                 if (t.samples.size() >= 2 && ((t.samples[t.samples.size() - 2].fight ^ last.fight) & 0x80) == 0) {
                     const RemoteSample& prev = t.samples[t.samples.size() - 2];
                     const double span = static_cast<double>(last.tick - prev.tick);
@@ -186,6 +188,7 @@ namespace vortex::net {
                     v.flags = f < 0.5f ? a.flags : b.flags;
                     v.fight = f < 0.5f ? a.fight : b.fight;
                     v.holdPitch = f < 0.5f ? a.holdPitch : b.holdPitch;
+                    v.statusBits = f < 0.5f ? a.statusBits : b.statusBits;
                     break;
                 }
             }

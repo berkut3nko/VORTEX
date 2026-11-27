@@ -94,6 +94,9 @@ namespace vortex::sim {
             h = voxel::HashMix64(h, s.drawMinQ);
             h = voxel::HashMix64(h, s.drawMaxQ);
             h = voxel::HashMix64(h, s.drawZoneRadiusQ);
+            h = voxel::HashMix64(h, s.sweepStartQ);
+            h = voxel::HashMix64(h, s.sweepStepQ);
+            h = voxel::HashMix64(h, s.sweepSpeedMs);
             for (const uint32_t v : {uint32_t{s.flowSeedRadius}, uint32_t{s.fallMax}, uint32_t{s.flowRunPops}, uint32_t{s.flowLateral},
                                      uint32_t{s.frontCount}, uint32_t{s.flowVisitCap}, uint32_t{s.fillCap}, uint32_t{s.setDelayTicks},
                                      uint32_t{s.splashRadiusQ}, uint32_t{s.splashDamage}, uint32_t{s.ledgeSpacing}, uint32_t{s.ledgeWidth},
@@ -338,31 +341,33 @@ namespace vortex::sim {
             s.burnTicks = 180;
             s.manaCost = Mana(20.0);
         }
-        {   // Firestorm Sweep: a Burst disc whose leading half-rim rises into a fire curtain of pitch; Heat under the sweep;
-            // 30 and Burning to enemies on the disc. A Line draws the curtain along the polyline.
+        {   // Firestorm Sweep (the owner's rework request of 2026-11-27): a front 4 m wide and 1.5 m high travels 8 m at 8 m/s from
+            // 1.5 m in front of the caster, laying a burning band of pitch per 0.5 m step (Unknit 1 s after it lands) and Heat on
+            // what it touches; 15 once and Burning 3 s to the enemies it passes, and a shove along the sweep. A Line steers it.
             SpellDef& s = t.spells[kFirestormSweep];
             s.built = true;
-            s.burstDiscRadius = U16(V(4.0));
-            s.stepMax = U8(V(0.375));
-            s.burstPops = 6000;
-            s.burstVisitCap = U16(std::min(60000, 16 * V(4.0) * V(4.0)));
-            s.burstPlane = U16(V(4.0) + 2);
-            s.burstNormalMin = static_cast<int16_t>(-V(0.5));
-            s.burstNormalMax = static_cast<int16_t>(V(1.75));
             s.fillMap = voxel::Map_Pitch;
-            s.rimHeight = U8(V(0.75));
-            s.lifetimeTicks = kPitchTicks;
+            s.lifetimeTicks = 60;
             s.expiryMap = voxel::Map_Unknit;
             s.heatLifetimeTicks = kHeatTicks;
-            s.scorchDamage = 30;
-            s.burnTicks = 120;
-            s.manaCost = Mana(30.0);
-            s.drawsLine = true;
-            s.drawHalfWidthQ = 8;   // one voxel thick
-            s.drawHeight = U8(V(0.75));
+            s.scorchDamage = 15;
+            s.burnTicks = 180;
+            s.manaCost = Mana(35.0);
+            s.noProjectile = true;
+            s.drawHalfWidthQ = Q(2.0);
+            s.drawHeight = U8(V(1.5));
             s.drawMinQ = Q(1.5);
-            s.drawMaxQ = Q(10.0);
-            s.drawZoneRadiusQ = Q(1.5);
+            s.drawMaxQ = Q(8.0);
+            s.sweepStartQ = Q(1.5);
+            s.sweepStepQ = Q(0.5);
+            s.sweepSpeedMs = 8;
+            s.zone.kind = ZoneKind::Shove;
+            s.zone.place = ZonePlace::SweepHalf;
+            s.zone.target = ZoneTarget::Enemies;
+            s.zone.durationTicks = 1;
+            s.zone.strength[0] = 400;
+            s.zone.strength[1] = 100;
+            s.zone.radiusQ = Q(2.0);
         }
         {   // Updraft: a Lift over a single Plume column, everyone.
             SpellDef& s = t.spells[kUpdraft];

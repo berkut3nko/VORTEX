@@ -1,6 +1,6 @@
 // docs/design/magic.md "Wire values" ([mag-2], protocol 14): the magic ops (MapShape 7, MapMask 8, CarveCapsule 9), the zone events
 // (ZoneStart 38, ZoneCancel 39), CastFx 40, the input's spell byte and the Spell edge, the owner block's magic state,
-// the remote record's status bits, the roster's elements, Attune, Welcome's zone lead and push decays, BaselineEnd's
+// the remote record's status bits, the roster, Attune's retirement, Welcome's zone lead and push decays, BaselineEnd's
 // zones, the spell rejections and the build hash's magic tables. Every value round-trips at its designed size and
 // every decoder refuses its limits, a byte too few and a byte too many.
 
@@ -373,10 +373,10 @@ TEST(Wire, SnapshotOwnerBlockCarriesMagicState) {
     o.dashDir[1] = -127;
     s.mana = 5999;
     s.spellGap = 12;
-    s.attune = 0x1E;
+    s.burnTicks = 179;
     net::RemotePlayer other;
     other.slot = 2;
-    other.statusBits = 0x3F;
+    other.statusBits = 0xFF;   // the four statuses, element 3, Leaping and Burning
     s.others.push_back(other);
     const std::vector<uint8_t> bytes = net::Encode(s);
     net::Snapshot back;
@@ -384,12 +384,12 @@ TEST(Wire, SnapshotOwnerBlockCarriesMagicState) {
     EXPECT_EQ(back.owner, s.owner);
     EXPECT_EQ(back.mana, 5999);
     EXPECT_EQ(back.spellGap, 12);
-    EXPECT_EQ(back.attune, 0x1E);
+    EXPECT_EQ(back.burnTicks, 179);
     ASSERT_EQ(back.others.size(), 1u);
     EXPECT_EQ(back.others[0], other);
 
     // The magic block is the owner block's last 19 bytes: push at +0, the counters at +6, mana at +15, the gap at +17,
-    // attune at +18.
+    // burnTicks at +18.
     const size_t magicAt = net::kSnapshotHeaderBytes - 2 + 44;
     const auto refused = [&](size_t at, uint8_t value) {
         std::vector<uint8_t> bad = bytes;
@@ -404,8 +404,8 @@ TEST(Wire, SnapshotOwnerBlockCarriesMagicState) {
         net::Snapshot b;
         EXPECT_FALSE(net::Decode(bad, b)) << "push 1501";
     }
-    EXPECT_TRUE(refused(magicAt + 18, 0x20)) << "attune bit 5";
-    EXPECT_FALSE(refused(magicAt + 18, 0x1F));
+    EXPECT_FALSE(refused(magicAt + 18, 255)) << "any burnTicks";
+    EXPECT_FALSE(refused(magicAt + 18, 0));
     EXPECT_FALSE(refused(magicAt + 17, 255)) << "any gap";
     net::Snapshot overfull = s;
     overfull.mana = net::Snapshot::kMaxMana + 1;
@@ -413,27 +413,24 @@ TEST(Wire, SnapshotOwnerBlockCarriesMagicState) {
     net::Snapshot retired = s;
     retired.castRejected = static_cast<net::CastRejection>(net::kRetiredCastRejection);
     EXPECT_FALSE(net::Decode(net::Encode(retired), back)) << "rejection 6 is retired";
-    EXPECT_TRUE(refused(bytes.size() - 2, 0x40)) << "a remote status bit 6 (the last byte is the body count)";
+    EXPECT_FALSE(refused(bytes.size() - 2, 0x40)) << "Leaping alone (the last byte is the body count)";
+    EXPECT_FALSE(refused(bytes.size() - 2, 0x80)) << "Burning alone";
     net::Snapshot cut = s;
     cut.others.clear();
     const std::vector<uint8_t> noOthers = net::Encode(cut);
     EXPECT_FALSE(net::Decode(std::span(noOthers).first(noOthers.size() - 1), back));
 }
 
-TEST(Wire, AttuneRoundTrip) {
-    EXPECT_EQ(static_cast<uint8_t>(net::MessageType::Attune), 24u);
-    const net::Attune a{3, 1};
-    const std::vector<uint8_t> bytes = net::Encode(a);
-    EXPECT_EQ(bytes.size(), 3u);
-    net::Attune back;
-    ASSERT_TRUE(net::Decode(bytes, back));
-    EXPECT_EQ(back, a);
-    EXPECT_FALSE(net::Decode(std::span(bytes).first(2), back));
-    std::vector<uint8_t> longer = bytes;
-    longer.push_back(0);
-    EXPECT_FALSE(net::Decode(longer, back));
-    EXPECT_FALSE(net::Decode(net::Encode(net::Attune{4, 0}), back)) << "element 4";
-    EXPECT_TRUE(net::Decode(net::Encode(net::Attune{2, 2}), back)) << "two equal elements are the server's to refuse";
+// Protocol 17 retired Attune (24): the message types around it keep their values, and the remote record's status bits name
+// Leaping and Burning where the sim's status and the HUD read them.
+TEST(Wire, AttuneIsRetiredAndTheStatusBitsAreNamed) {
+    EXPECT_EQ(static_cast<uint8_t>(net::MessageType::KillNotice), 23u);
+    EXPECT_EQ(static_cast<uint8_t>(net::MessageType::SpellGesture), 25u);
+    EXPECT_EQ(net::RemotePlayer::kLeapingBit, sim::PlayerStatus_Leaping) << "the sim's bit travels where it is";
+    EXPECT_EQ(net::RemotePlayer::kBurningBit, 0x80);
+    EXPECT_EQ(net::RemotePlayer::kStatusMask,
+              sim::PlayerStatus_Rooted | sim::PlayerStatus_Pinned | sim::PlayerStatus_Chilled | sim::PlayerStatus_Lifted);
+    EXPECT_EQ(net::RemotePlayer::kElementShift, 4);
 }
 
 // [mag-8] SpellGesture 25: the input tick, the kind, the form (or AUTO) and up to 16 points of int32 x 3.
@@ -475,11 +472,11 @@ TEST(Wire, SpellGestureRoundTrip) {
     EXPECT_FALSE(net::Decode(seventeen, back)) << "17 points";
 }
 
-TEST(Wire, RosterCarriesTheElements) {
+TEST(Wire, RosterCarriesNoElements) {
     net::Roster r;
-    r.players = {{1, 2, 3, 4, 0x8}, {3, 1, 0, 0, 0xF}};
+    r.players = {{1, 2, 3, 4}, {3, 1, 0, 0}};
     const std::vector<uint8_t> bytes = net::Encode(r);
-    EXPECT_EQ(bytes.size(), 2u + 2u * 7u);
+    EXPECT_EQ(bytes.size(), 2u + 2u * 6u);
     net::Roster back;
     ASSERT_TRUE(net::Decode(bytes, back));
     EXPECT_EQ(back, r);

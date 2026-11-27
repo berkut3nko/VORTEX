@@ -144,8 +144,8 @@ carries no contradiction. The owner confirms the colours windowed (question 23).
 - **Every element, all the time** (the owner's decision of 2026-11-27): every player has all 4 elements and all 16
   spells in every session, as offline; R cycles the four. There is no attune menu, and the server's capture no
   longer refuses an element (`SpellRefusal::NotAttuned` is no longer given). Q (crate) and E (use) stay
-  mechanisms'. The `Attune` message and the owner block's attunement byte still exist on the wire, unused by the
-  game.
+  mechanisms'. Protocol 17 removed the `Attune` message (24 is retired), the owner block's attunement byte and the
+  roster's attunement byte.
 
 The first design (replaced by the decision above) was 2 per life. Its reasons: why 2 per life and not all 16 or a loadout of 4: 8 spells is the most a fast first-person fight holds in the hands;
 the enemy stays readable (two element colours glow at the hands); the HUD stays one bar of 4; combos become team
@@ -200,7 +200,7 @@ is 0.4 spells/s per player; with the blast's 0.83/s, 10 players make about 12 ca
 | Spell | Gesture | Shape |
 |---|---|---|
 | Barricade Wave (Burst x Metal) | Line | A knit wall 1.5 m high and 0.5 m thick along the drawn polyline, on the ground under each point; 1.5-10 m |
-| Firestorm Sweep (Burst x Thermal) | Line | The fire curtain along the polyline |
+| Firestorm Sweep (Burst x Thermal) | Line | The fire front travels along the polyline (spell 8) |
 | Flash Freeze (Burst x Frost) | Line | The ice strip along the polyline (floe on water): a drawn ice bridge |
 | Punch (Burst x Pressure) | Line | As a tap; the shove points along the stroke's last segment |
 | Rising Spire (Plume x Metal) | Rise | From the start point S to the end point E: **stairs** when E is 1 m or more above S (knit steps 1 m wide, 0.375 m rise, 0.5 m run, along the horizontal S-E line); a **bridge** when E is within 1 m of S's height and 3 m or more away (a knit deck 1.5 m wide and 0.25 m thick, level at the lower end's height, each end on the ground or on a wall within 0.5 m); else the pillar at S. At most 10 m along the path |
@@ -361,14 +361,23 @@ plating's 25 s life and its 2 s crack set the rhythm: a breach window opens ever
 - **Charges:** 3 pips of 6 x 6 px under the crosshair (M2a).
 - **Crosshair per form:** Pierce a dot; Burst wide brackets; Plume a caret; Flow a ring, plus a predicted landing
   marker on its arc (presentation only: a few particles on the client's own arc).
-- **Statuses** beside M2a's health bar: `ROOTED 0.8`, `CHILLED`, `PINNED`, `BURNING`, `LIFTED`, `FREE 1.2` (the
-  control guard), in element colours.
+- **Statuses** in a row over M2a's health bar (bottom centre; the same place in a sandbox and offline): `ROOTED 0.8`,
+  `PINNED 0.5`, `CHILLED`, `LIFTED`, `LEAPING`, `BURNING 2.4`, `FREE 1.2` (the control guard) or `FRESH 1.9` (the
+  spawn protection), with the seconds left where the owner block holds them (root, pin, guard, Fresh, Burning). Colours
+  by element: Frost cyan (ROOTED, CHILLED), Pressure white (PINNED, LIFTED, LEAPING), Thermal orange (BURNING), grey
+  (FREE, FRESH). Each of ROOTED, CHILLED, PINNED, LIFTED and BURNING also tints the screen's edges in its colour:
+  four thin `HudCanvas` quads, never a full-screen blend (CLAUDE.md L6). Built 2026-11-27 (`DrawStatusRow`,
+  `DrawStatusEdges` in the game's `SpellCasting.cpp`).
+- **Other players' statuses** (protocol 17): a short tag over each remote player's head, projected from its feet plus
+  2.1 m (`ROOTED`, `PINNED`, `CHILLED`, `LIFTED`, `LEAPING`, `BURNING`, the first two that hold, in their colours),
+  and Meteor Leap's trail behind a remote leaper (one trail state per slot). They read the remote record's status
+  bits (`net::RemotePlayerView::statusBits`).
 - **Refusals** reuse M2a's "Cast not run" line with new words: `NO MANA`, `BAD GESTURE` ([mag-8]; `PIERCE COOLING`
   goes with the form cooldowns), `NO CHARGE`, `NOT ATTUNED`,
   `TOO MUCH MATTER`, `TOO MANY ZONES`, `TOO MUCH FIRE`, `NEAR SPAWN`; `KNIT CAP: OLDEST CRUMBLED` is an info line.
-- **What the HUD reads:** the form cooldowns, the attunement pair and the statuses come from the snapshot's owner
-  block ("Wire values"); the client never guesses them from `CastFx` or rejections.
-- **Attune menu** on the respawn screen (the existing `Menu` class): four element items with one-line descriptions.
+- **What the HUD reads:** the mana, the gap and the statuses come from the snapshot's owner block ("Wire values"; the
+  status counters are the predicted `PlayerState`'s, Burning's ticks the owner block's `burnTicks`); the client never
+  guesses them from `CastFx` or rejections.
 - **Cost:** about 110 more quads (e), beside the measured 149-177 quads at 0.01 ms (m). Measured by the default run's
   `HUD: N quads` line with a spell selected.
 - **Owner checks (windowed; an assistant cannot confirm them):** the keys feel right and RMB does not conflict, the
@@ -943,14 +952,45 @@ and timber never catches. Heat has no Ignite rows yet in either (they would leav
   at a neck.
 - Counter: distance (the shortest bore of the anti-metal tools), Frost quenches the hot walls.
 
-**8. Firestorm Sweep (Burst x Thermal): clears a bridge or a courtyard.**
-- Burst disc `R` 32 (4 m), `stepMax` 3; the leading half-rim extruded 6 high (0.75 m).
-- Ops: `MapMask(Pitch)` over the rim (a fire curtain that blocks sight and passage for 3-4 s); `MapMask(Heat)` over
-  `Contact` (a plank deck catches, and later falls by spread S3's burnout site checks).
-- Players: 30 at `T_z` to enemies inside the disc (the contracting ring is the warning) + Burning 2 s.
-- About 600 pitch voxels; bytes: rim 0.25 KB (y-runs: one run per column of the curved curtain), Heat 0.05-0.3 KB,
-  `ZoneStart` 32, `CastFx` 32: **0.35-0.65 KB**, plus spread; work about **0.6 ms**.
-- Counter: leave the ring; Frost.
+**8. Firestorm Sweep (Burst x Thermal): a moving wall of fire that clears a bridge or a courtyard.**
+
+The owner's rework request of 2026-11-27 replaced the disc and its fire curtain with this text. Our decision:
+
+- **The front.** A wall of fire 4 m wide (`drawHalfWidthQ` 2 m) and 1.5 m high (`drawHeight`). It starts 1.5 m
+  (`sweepStartQ`) in front of the caster's feet at `T_run + lead` and travels along the ground at 8 m/s
+  (`sweepSpeedMs`) for 8 m (`drawMaxQ`). The tap's direction is the aim's horizontal direction; an aim with no
+  horizontal part is `Missed`.
+- **A Line gesture.** The front travels along the drawn polyline instead (cut to 1.5-8 m, as `ClampPolyline` cuts a
+  drawn shape), from its first point, perpendicular to each segment. The cost stays the tap's (`drawsLine` is false:
+  the length does not change the cost).
+- **No projectile.** The front is the projectile (`noProjectile`). The readability rule holds: every client draws the
+  ghost of the front's path from `T_run` (`CastFx` carries the path's points) and the front from `T_run + lead`.
+- **Steps (integers).** The front moves in steps of 0.5 m (`sweepStepQ`). Step s stands at `d_s = min(s * step, L)`
+  along the path (L the path's length in q), for s = 0 .. ceil(L / step). Step s lands at
+  `T_run + lead + ceil(d_s * 60 / (8 * metreQ))` (`TravelTicks`). A step's ground follows the terrain: the centre
+  column's ground (up 1 m or down 2 m from the last step's ground row) gives the next step's start row.
+- **Ops.** Each step s below the last lays one `MapMask(Pitch)`: the open cell over the ground of each column the
+  front crosses between `d_s` and `d_s+1`, across its 4 m (a thin burning band, one voxel high). The band runs as a
+  `Band` (`RunScheduled` at the step's tick, the fill guard again on that tick). Its registry owner expires it with
+  Unknit `lifetimeTicks` (60, about 1 s) after it lands. Offline, where the fire rule runs, the pitch burns out by
+  the rule instead. Each step also lays `MapMask(Heat)` over the `Contact` voxels Heat changes (a plank deck catches,
+  metal heats, ice and floe melt), Cool after `heatLifetimeTicks`.
+- **Players.** Each step tests the enemies' quantised feet against the front's slab (half a step on each side of
+  `d_s`, the half width plus the capsule's radius across, from 1 m under the ground row to 1.5 m over it). An enemy the
+  front passes takes 15 (`scorchDamage`) once per cast and Burning 3 s (`burnTicks` 180); `CastContext::sweepHits`
+  remembers who was hit until the last step. Two `Shove` capsules (one per half of the path, radius the half width,
+  400 cm/s along the sweep and 100 cm/s up) start when the front reaches each half's middle, never before the lead
+  (`sim::ZoneSet`; the client predicts them).
+- **Caps.** The spawn guard covers every band, every Heat op and both zones. The planned pitch is about 2 000 voxels
+  at 0.125 m (8 m x 4 m of floor) and 3 200 at 0.1 m: under the per-player cap of 6 000 also offline, where the
+  bands do not expire by Unknit. A 1.5 m wall of voxels for 1 s would hold over 6 000 voxels: the wall's height is
+  the hit test and the flames, not voxels.
+- **Mana:** 35.
+- **Bytes:** 17 bands of 21 B and their runs (about 0.6-1 KB), Heat 0-0.3 KB, 2 `ZoneStart` 84 B, `CastFx` 58 B:
+  **0.8-1.4 KB** over 1 s; work about **0.3 ms** (17 x 64 column searches).
+- **Presentation** (client only): the ghost line of the path from `T_run`; from `T_run + lead` flame particles along
+  the front, 4 m wide and up to 1.5 m, moving at 8 m/s.
+- Counter: step through the front (15 once is the price), or wait 1 s behind it; Frost freezes the burning band.
 
 ### Pressure (Drawing): movement, shoves and blows; no residue
 
@@ -1080,7 +1120,7 @@ other effect on a player does ("Why zones, and why the lead").
 | **Flow** | Molten Pour: slag shell and pool, sets in 1 s, 25 s | Pitchfall: burning carpet, fire climbs | Meteor Leap: the caster's long jump on the lob's arc, a slam: Pin, Shatter, load check with `extraLoad` | Rune Trap: a static rune, 60 s; Root, Chill and an ice patch when an enemy steps on it |
 | **Plume** | Rising Spire: pillar, ledges, ride-up Lift, 15 s | Wildfire: pitch up the face, Heat on contact | Updraft: Lift zone 1.5 s | Permafrost Climb: ice plugs and ledges, rime, Root |
 | **Pierce** | Rebar Lance: two sockets + horizontal pegs, Root | Meltdown Beam: Heat, bore, Burning | Dash: the caster 8 m along the aim in 0.3 s, an Impulse along the path | Shatter Spike: bore, Rime capsule, Chill |
-| **Burst** | Barricade Wave: 4.5 x 1.5 m wall, 20 s | Firestorm Sweep: fire curtain, Heat, ring damage | Punch: a 2.5 m blow, Shove, a light carve, dispel and release | Flash Freeze: floe bridge, ice, Root + Chill |
+| **Burst** | Barricade Wave: 4.5 x 1.5 m wall, 20 s | Firestorm Sweep: a fire front 4 m wide travels 8 m, Heat, 15 and a shove | Punch: a 2.5 m blow, Shove, a light carve, dispel and release | Flash Freeze: floe bridge, ice, Root + Chill |
 
 Interactions fall out of the tables, with no extra code: Thermal melts ice and thaws rime (Heat); Frost quenches hot
 metal and freezes pitch; Pressure and Solid exploit rime (hardness); Metal plates against Solid (knit 7.0) and absorbs
@@ -1278,7 +1318,7 @@ magic's take the next free numbers after them, from the registry, when [mag-2] l
 | `EventKind::ZoneStart` (37) | kind u8; zoneId u16, zone kind u8, teamMask u8, startTick u32, duration u16, strength i16 x 2; shape u8 + its parameters as `MapShape`'s | 30 / 42 / 40 / 32 B (sphere, capsule, box, cylinder) |
 | `EventKind::ZoneCancel` (38) | kind u8; zoneId u16, endTick u32 (a truncation) | 7 B |
 | `EventKind::CastFx` (39) | kind u8; slot u8, spell u8, originQ i32 x 3, hitQ i32 x 3, face u8, tick u32 | 32 B |
-| `MessageType::Attune` | client -> server: craftA u8, craftB u8; accepted while dead or before the first spawn | 3 B |
+| `MessageType::Attune` | client -> server: craftA u8, craftB u8; accepted while dead or before the first spawn. Retired by protocol 17 | 3 B |
 | `PlayerInput::spell` | u8: `SpellId` (0-15; 16, 17 drill-only); read only on the Spell edge | +1 B per input |
 | The Spell edge | M2a's generic action-slot bit for slot 1 (the blast is slot 0) if M2a built one; otherwise `PlayerButton_Spell = 32`, the one exception to the registry rule, written into notes/net.md so mechanisms' `Use = 16` keeps its value whatever lands first (`kPlayerButtonMask` 47, then 63 with [mech-1]) | 0 B |
 | Owner block | `PlayerState` additions: `push` 6, `status` 1, `slowQ` 1, three counters 3, `ccGuardLeft` 1 = 12 B; for the HUD: the four form cooldowns as u8 each in 4-tick units (ticks left until ready; 540 ticks is 135), the attunement pair and the active element 1 B = 5 B. **17 B**: 32 today, 37 with mechanisms, **about 54 B** with both (c), plus whatever M2a adds for health and charges | |
@@ -1306,6 +1346,12 @@ costs, lifetimes, zone parameters, cooldowns, damage); the ids and flags go thro
 
 **`kProtocolVersion`**: the next number when [mag-2] lands: after M2a's 11 and [mech-1]'s 12, so 13 on the ROADMAP
 order the owner set on 2026-11-21.
+
+**Protocol 17** (the status HUD and the end of attunement, 2026-11-27): the owner block's attunement byte becomes
+`burnTicks` (u8: the ticks of Burning left, 0 none; the owner block stays 63 B). The remote record's status byte
+carries bits 0-3 (Rooted, Pinned, Chilled, Lifted), bits 4-5 the element of the last Spell edge, bit 6 Leaping
+(`PlayerStatus_Leaping`) and bit 7 Burning (the record stays 19 B). The `Attune` message (24) is retired, and the
+roster entry loses its attunement byte (7 B to 6 B per player).
 
 ### Apply (`sim::ApplyOp`, every peer, with or without a `ChunkClip`)
 
@@ -1399,7 +1445,7 @@ Bytes are (c) from "How the bytes are counted" (aligned / worst aim with an over
 | Pitchfall | 2 (+ Cool), spread after | 300-900 | 3-5 k | 0.3-0.5 |
 | Wildfire | 2 (+ Cool), spread after | 250-750 | 2 k | 0.2 |
 | Meltdown Beam | 2 + island ops (+ Cool) | 600-1 600 | 3-40 k | 0.3-4.5 |
-| Firestorm Sweep | 2 (+ Cool), 1 zone, spread after | 350-650 | 5 k | 0.6 |
+| Firestorm Sweep | 17 bands + 0-17 Heat (+ Unknit, Cool), 2 zones, spread after | 800-1 400 | 3 k | 0.3 |
 | Meteor Leap | 0 (+ Shatter; the load check on the structure credit), 1 zone | 60-2 400 | 5.5 k (the arc trace + Shatter; + 2-40 k structure) | 0.55 (+ 0.2-4) |
 | Updraft | 0, 1 zone | 65 | 0.1 k | 0.01 |
 | Dash | 0, 1 zone | 75 | 0.2 k (the path trace) | 0.02 |
@@ -1553,7 +1599,7 @@ it wraps in about 25-30 s (c); spread adds about 10 parts/s. L12 holds: no fallb
 | [mag-2] | **First playable.** The one protocol bump (every value in "Wire values" reserved, the whole owner block included), `CastFx`, zone events with the lead and `ZoneCancel`, the join baseline, `PlayerInput::spell` and the Spell edge, the owner block, `Attune`, rejections, `buildHash` additions, `RunScheduled` on the server, caps. Offline through M2a's in-process server and in sessions. HUD: the spell bar, element panel, form crosshairs, statuses, refusals, the attune menu (Metal and Pressure only). `PresentSpell` basics. `--bot-spells`, `--check-spells`, session-check with spells and corrections by cause | [mag-1] | `Movement.ZonesPredictedWithoutCorrection` at 0; `Movement.BarricadeAcrossAWalkerCountsCorrectionsByCause` measured (decides on the Block zone); G11-G17 and G22 with `--bot-spells` (`hashes equal`, 0 check mismatches, tick p99 < 16 ms); G16's bound held; the owner's Felling-duel taste check with 4 spells and the two-PC run (owner) | 6-9 d | Designed |
 | [mag-3] | **Frost, the bore and the Shatter combo.** The Pierce operator (bore boxes, `kMaxBoreVoxels`) and `CarveCapsule`; `ice`, `floe`, the rimed ids, `knit_iron_rimed`; maps Rime, Thaw, Freeze, FreezeWater, Shatter and the Shatter flood (Punch's Shatter and Release become live); Chill, Root and Release zones, the control guard, `Fresh` and the slick rule (`kPlayerRuleRevision` 4); the full Plume operator with its `Front` rule (Permafrost Climb) and the Burst disc (Flash Freeze); `shapeChanged` per voxel if spread S1 has not built it; the attune menu gains Frost. Spells: **Shatter Spike, Flash Freeze, Permafrost Climb**. No protocol bump | [mag-2] | Frost, combo and guard tests and lines; `Combo.ShatterSpikeDeepensABlast`; `Movement.IceFilmNoCorrectionAbove2cm`; drills agree | 5-7 d | Built (2026-11-26; [as built](../history/magic/mag-3-as-built.md)); not reviewed |
 | [mag-4] | **Flow, climbing, the rune and the rest of Metal.** The Flow operator and its fine fixed-point arc trace; `slag`, the Slag and Set maps, the hazard scan (slag); Plume's bands and ledges with the band timing rule and the lead-tied hover; Rebar Lance's two sockets; the Rune zone and the server's trigger test, one rune per caster. Spells: **Molten Pour, Rising Spire, Rebar Lance, Rune Trap**. No protocol bump | [mag-3] (the bore for Rebar Lance; ice, Root and Chill for Rune Trap) | Their tests and demo lines (`Spire: rider on top`, `Rebar: ledge reached`, `Rune: burst under bot N`); `Movement.SpireRiderNoCorrection`; `Magic.ARuneBurstsOnceUnderTheFirstEnemy`; drills agree | 6-8 d | Built (2026-11-27; [as built](../history/magic/mag-4-as-built.md)); not reviewed. Rising Spire's stairs and bridge ([mag-8]) built with it; no protocol bump, `kPlayerRuleRevision` stays 5 |
-| [mag-5] | **Thermal.** The pitch class in `SpreadTable`, `knit_iron_hot`, `iron_hot`, the Pitch, Heat and Cool maps, the hazard scan for pitch and hot metal, Burning. Spells: **Pitchfall, Wildfire, Meltdown Beam, Firestorm Sweep** | [spread-S1] (headless and scripts); [spread-S2] / [spread-S3] for play (offline practice and sessions both run the server path); rides S2's bump if they land together | spread.md's gates plus the Thermal lines; `Magic.HeatUnderAFloeBridgeReleasesWhatItCarried`; the ten-fires case with Thermal spells inside the spread credit | 4-6 d | Built (2026-11-27; [as built](../history/magic/mag-5-as-built.md)) without fire spread (the owner's decision: pitch burns where it lands and expires in 3.5 s, no timber ignition); not reviewed. Offline since [spread-S1] (2026-11-27): pitch burns out by the fire rule and lights timber; sessions keep the expiry until [spread-S2]. `knit_iron_hot`, `iron_hot`, `pitch_b1..b4` (films), the Pitch, Heat and Cool maps, the hazard scan, Burning; no protocol bump |
+| [mag-5] | **Thermal.** The pitch class in `SpreadTable`, `knit_iron_hot`, `iron_hot`, the Pitch, Heat and Cool maps, the hazard scan for pitch and hot metal, Burning. Spells: **Pitchfall, Wildfire, Meltdown Beam, Firestorm Sweep** | [spread-S1] (headless and scripts); [spread-S2] / [spread-S3] for play (offline practice and sessions both run the server path); rides S2's bump if they land together | spread.md's gates plus the Thermal lines; `Magic.HeatUnderAFloeBridgeReleasesWhatItCarried`; the ten-fires case with Thermal spells inside the spread credit | 4-6 d | Built (2026-11-27; [as built](../history/magic/mag-5-as-built.md)) without fire spread (the owner's decision: pitch burns where it lands and expires in 3.5 s, no timber ignition); not reviewed. Offline since [spread-S1] (2026-11-27): pitch burns out by the fire rule and lights timber; sessions keep the expiry until [spread-S2]. `knit_iron_hot`, `iron_hot`, `pitch_b1..b4` (films), the Pitch, Heat and Cool maps, the hazard scan, Burning; no protocol bump. Firestorm Sweep reworked into a moving fire front (the owner's rework request of 2026-11-27, spell 8; `Magic.FirestormSweepTravelsAndBurnsOut`, `Magic.FirestormSweepFollowsALine`) |
 | [mag-6] | **Presentation and tuning.** `FxDirector` effects per element, rings, ghosts, crumble warnings, steam and frost mist (fog when built), the landing marker, team panel letters, audio hooks once audio exists; a 10-bot spell fight measured; lifetimes, strengths, charges and cooldowns after the owner's taste check | [fx-1], [fx-2] ([wp-8]) | the stress gate (`--stress-spells` inside 4 ms CPU / 4 ms GPU); fight frame within [wp-8]'s margin on the UHD 620; server p99 < 16.7 ms; the owner's windowed checks | 4-6 d + owner | Designed |
 | [mag-7] | **Meteor Leap.** `extraLoad` in Part 4b's check, run as a site check on the structure credit; the Pin zone and the leap's launch at the cast edge (`kPlayerRuleRevision` 6); the slam's arc trace (Flow's). Spell: **Meteor Leap**. No protocol bump. It can land before [mag-5] once [si-2] is done | [si-2] (the `NeckCheck` split), [mag-4] (Flow) | `--crush-demo`; `Neck.ExtraLoad*`; `--neck-blast`, `--tower-blast` and the castle case unchanged; drills agree | 2-3 d | Built (2026-11-27; [as built](../history/magic/mag-7-as-built.md)) without `extraLoad` and [si-2] (the owner's decision: the slam fells no floor); not reviewed. The launch at the Spell edge, the flight (`PlayerStatus_Leaping`), the Pin zone, the slam's arc trace, Impulse, damage and Shatter; `kPlayerRuleRevision` 6; no protocol bump |
 | [mag-8] | **Mana, gestures and projectiles** (the owner's revision of 2026-11-27, "Casting: mana, gestures and projectiles"). The mana pool, regeneration, costs and the 12-tick gap in the server's cast check (offline the same code), replacing the form cooldowns; `sim::ClassifyGesture`; the `SpellGesture` message and its checks; drawn shapes for Barricade Wave, Flash Freeze and Punch's direction now, and for the rest as their spells land; Rising Spire's stairs and bridge with [mag-4]; flight ticks in `CastFx` and effects at arrival; the client's sampling, the ghost line, the mana bar and the projectiles. One protocol bump (the owner block: the form cooldowns become `mana` and `spellGap`; `CastRejection` `NoMana`, `TooSoon`, `BadGesture`) | [mag-3] | `Mana.*`, `Gesture.*` (classification, checks, a drawn wall's voxels equal offline and on the server), `Projectile.EffectsLandOnArrival`; G23 with a drawn wall; a session test that a gesture cast replicates with equal hashes | 4-6 days | Engine built (2026-11-27), not reviewed: mana, the gap, `sim::ClassifyGesture`, the gesture checks, the drawn wall, ice strip and Punch stroke, flight ticks with effects on arrival, `SpellGesture` and the owner block (protocol 15, `kPlayerRuleRevision` 5); the game built (sampling, the ghost line, the mana bar, the projectiles, session casting, G23 with a drawn wall); Rising Spire's stairs and bridge built with [mag-4] (2026-11-27) |

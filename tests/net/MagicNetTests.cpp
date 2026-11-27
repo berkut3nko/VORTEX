@@ -389,9 +389,8 @@ TEST(Magic, CastRejectedOverTheCaps) {
     EXPECT_TRUE(y.HashesEqual());
 }
 
-// Decision 12: Attune is taken before the first spawn and while dead (two different, built elements) and applied at the
-// next spawn; while alive, or with one element twice, it is ignored.
-TEST(Magic, AttuneOnlyWhileDeadOrBeforeSpawn) {
+// A new life starts with a full mana pool, refilled at the respawn ([mag-8]).
+TEST(Magic, ARespawnRefillsTheManaPool) {
     SpellYard y(Settings(Duel()));
     ASSERT_TRUE(y.started);
     SpellYard::Bot& a = y.AddBot();
@@ -399,16 +398,8 @@ TEST(Magic, AttuneOnlyWhileDeadOrBeforeSpawn) {
     y.Passes(10);
     const uint8_t slotA = a.client->Slot();
     ASSERT_FALSE(y.server.Fighter(slotA).spawned) << "alone in the warmup: not spawned yet";
-    constexpr uint8_t kMetal = static_cast<uint8_t>(sim::Element::Metal), kPressure = static_cast<uint8_t>(sim::Element::Pressure),
-                      kThermal = static_cast<uint8_t>(sim::Element::Thermal);
-    a.client->SendAttune(kPressure, kMetal);
-    a.client->SendAttune(kThermal, kThermal);                // one element twice: ignored, the first stays
-    y.Passes(10);
-    EXPECT_EQ(y.server.Stats().attunes, 1u);
-    EXPECT_EQ(y.server.Stats().attunesRefused, 1u);
-    EXPECT_EQ(y.server.Caster(slotA).elementA, kMetal) << "applied at the spawn, not before";
 
-    // The second player starts the round: the spawn applies the pair.
+    // The second player starts the round.
     bool fire = false;
     SpellYard::Bot& b = y.AddBot([&](SpellYard::Bot& bot) {
         sim::PlayerInput in = LookAt(*bot.client, y.Feet(slotA) + glm::vec3(0.0f, 0.1f, 0.0f));
@@ -417,35 +408,13 @@ TEST(Magic, AttuneOnlyWhileDeadOrBeforeSpawn) {
     });
     ASSERT_TRUE(y.Join());
     ASSERT_TRUE(y.Until([&] { return y.server.RoundState().phase == sim::RoundPhase::Live; }, 600));
-    y.Passes(10);
-    EXPECT_EQ(y.server.Caster(slotA).elementA, kPressure);
-    EXPECT_EQ(y.server.Caster(slotA).elementB, kMetal);
-    ASSERT_TRUE(y.Until([&] {
-        for (const net::RosterEntry& e : b.client->RosterOf().players)
-            if (e.slot == slotA) return e.attune == (kPressure | kMetal << 2);
-        return false;
-    }, 120)) << "the roster carries the pair";
-    EXPECT_EQ(a.client->Magic().attune & 0x0F, kPressure | kMetal << 2);
-
-    // Alive: ignored.
-    a.client->SendAttune(kMetal, kPressure);
-    y.Passes(10);
-    EXPECT_EQ(y.server.Stats().attunesRefused, 2u);
-    EXPECT_EQ(y.server.Caster(slotA).elementA, kPressure);
-
-    // Dead: taken, and the respawn applies it.
-    y.Passes(130);                                           // past the spawn protection
+    y.Passes(140);                                           // past the spawn protection
+    EXPECT_EQ(a.client->Magic().burnTicks, 0) << "not burning";
     fire = true;
     ASSERT_TRUE(y.Until([&] { return y.server.Fighter(slotA).dead; }, 600));
     fire = false;
-    a.client->SendAttune(kMetal, kPressure);
-    y.Passes(5);
-    EXPECT_EQ(y.server.Stats().attunes, 2u);
-    EXPECT_EQ(y.server.Caster(slotA).elementA, kPressure) << "not before the respawn";
     ASSERT_TRUE(y.Until([&] { return !y.server.Fighter(slotA).dead; }, 600));
-    EXPECT_EQ(y.server.Caster(slotA).elementA, kMetal);
-    EXPECT_EQ(y.server.Caster(slotA).elementB, kPressure);
-    // [mag-8] A new life starts with a full pool, refilled at the respawn.
+    EXPECT_TRUE(b.client->Predicting());
     EXPECT_EQ(y.server.Caster(slotA).mana, 6000);
     EXPECT_EQ(y.server.Caster(slotA).manaTick, y.server.Fighter(slotA).lifeStartTick);
 }
@@ -580,8 +549,6 @@ TEST(Magic, AGestureCastReplicatesWithEqualHashes) {
     plan.spell = sim::kFlashFreeze;
     plan.gesture = LineGesture({GroundPointQ(feet, 2.0f, -3.0f), GroundPointQ(feet, 3.0f, -1.5f), GroundPointQ(feet, 4.0f, 0.0f),
                                 GroundPointQ(feet, 4.0f, 2.0f)});
-    // Frost is not of the default pair: the sandbox caster takes Pressure and Frost at once, before its first spell.
-    caster.client->SendAttune(static_cast<uint8_t>(sim::Element::Pressure), static_cast<uint8_t>(sim::Element::Frost));
     plan.tick = caster.client->PredictTick() + 5;
     y.Passes(120);
     const net::CastRejection first = caster.rejections.contains(plan.tick) ? caster.rejections[plan.tick] : net::CastRejection::None;
@@ -595,34 +562,13 @@ TEST(Magic, AGestureCastReplicatesWithEqualHashes) {
     EXPECT_EQ(y.server.Stats().gestures, 2u);
     EXPECT_GE(y.server.Stats().spellCasts, 1u);
     EXPECT_EQ(caster.rejections[plan.tick], net::CastRejection::None) << "the Punch";
-    EXPECT_EQ(first, net::CastRejection::None) << "the Flash Freeze: the sandbox took Metal and Frost at once";
+    EXPECT_EQ(first, net::CastRejection::None) << "the Flash Freeze: every element is open";
     EXPECT_GT(VoxelsOf(y.server.Simulation().World(), DefaultIds().ice, stripStart - glm::ivec3(48, 4, 48), stripStart + glm::ivec3(48, 4, 48)).size(), 0u)
         << "the ice strip";
     EXPECT_EQ(other.client->Stats().castFx, caster.client->Stats().castFx);
     EXPECT_TRUE(y.HashesEqual());
 }
 
-// A sandbox has no deaths: an Attune is taken at once, while alive, and the owner block carries the pair.
-TEST(Magic, ASandboxTakesAnAttuneAtOnce) {
-    SpellYard y;
-    ASSERT_TRUE(y.started);
-    SpellYard::Bot& a = y.AddBot();
-    SpellYard::Bot& b = y.AddBot();
-    ASSERT_TRUE(y.Join());
-    y.Passes(30);
-    const uint8_t slotA = a.client->Slot();
-    constexpr uint8_t kThermal = static_cast<uint8_t>(sim::Element::Thermal), kFrost = static_cast<uint8_t>(sim::Element::Frost);
-    a.client->SendAttune(kThermal, kFrost);
-    a.client->SendAttune(kFrost, kFrost);                    // one element twice: refused, the pair stays
-    y.Passes(10);
-    EXPECT_EQ(y.server.Stats().attunes, 1u);
-    EXPECT_EQ(y.server.Stats().attunesRefused, 1u);
-    EXPECT_EQ(y.server.Caster(slotA).elementA, kThermal);
-    EXPECT_EQ(y.server.Caster(slotA).elementB, kFrost);
-    ASSERT_TRUE(y.Until([&] { return (a.client->Magic().attune & 0x0F) == (kThermal | kFrost << 2); }, 120)) << "the owner block";
-    EXPECT_TRUE(b.client->Predicting());
-    EXPECT_TRUE(y.HashesEqual());
-}
 
 // --- Flow, climbing, the rune and the rest of Metal ([mag-4]) ------------------------------------------------------
 
@@ -647,7 +593,7 @@ TEST(Magic, MetalSpellsReplicateWithEqualHashes) {
     EXPECT_TRUE(y.HashesEqual());
 }
 
-// A Rune Trap in a fight: the caster attunes Frost, lobs the rune ahead of itself, and the enemy who walks onto it once it
+// A Rune Trap in a fight: the caster lobs the rune ahead of itself, and the enemy who walks onto it once it
 // is armed bursts it: the server ends the rune (ZoneCancel), starts its Root and Chill with the lead, deals 15 and lays
 // the ice; both clients hold the same zones and voxels.
 TEST(Magic, ARuneBurstsUnderAnEnemyInASession) {
@@ -657,7 +603,6 @@ TEST(Magic, ARuneBurstsUnderAnEnemyInASession) {
     SpellYard::Bot& a = y.AddBot(plan.Controls());
     ASSERT_TRUE(y.Until([&] { return a.client->State() == net::ClientState::Playing; }, 600));
     y.Passes(10);
-    a.client->SendAttune(static_cast<uint8_t>(sim::Element::Metal), static_cast<uint8_t>(sim::Element::Frost));
     glm::vec3 walkTo(0.0f);
     bool walk = false;
     SpellYard::Bot& b = y.AddBot([&](SpellYard::Bot& bot) {
@@ -674,7 +619,7 @@ TEST(Magic, ARuneBurstsUnderAnEnemyInASession) {
     ASSERT_TRUE(y.Until([&] { return y.server.RoundState().phase == sim::RoundPhase::Live; }, 600));
     y.Passes(150);   // past the spawn protection
     const uint8_t slotA = a.client->Slot(), slotB = b.client->Slot();
-    ASSERT_EQ(y.server.Caster(slotA).elementB, static_cast<uint8_t>(sim::Element::Frost));
+
     // A tap: the arc along the look lands about 3 m ahead of the caster, in its own half (the enemy's spawn is guarded).
     const glm::vec3 feetA = y.Feet(slotA);
     const glm::vec3 toward = glm::normalize(glm::vec3(y.Feet(slotB).x - feetA.x, 0.0f, y.Feet(slotB).z - feetA.z));
@@ -701,7 +646,7 @@ TEST(Magic, ARuneBurstsUnderAnEnemyInASession) {
 
 // --- Thermal ([mag-5], without fire spread) -------------------------------------------------------------------------
 
-// Pitchfall, Meltdown Beam, Wildfire and Firestorm Sweep cast by a client attuned to Thermal in a fight, aimed out of both
+// Pitchfall, Meltdown Beam, Wildfire and Firestorm Sweep cast by a client in a fight, aimed out of both
 // spawn areas: the server runs them, the stream carries their pitch, Heat, bores, Cool and the pitch's expiry, and both
 // clients end with the server's voxels.
 TEST(Magic, ThermalSpellsReplicateWithEqualHashes) {
@@ -711,13 +656,12 @@ TEST(Magic, ThermalSpellsReplicateWithEqualHashes) {
     SpellYard::Bot& a = y.AddBot(plan.Controls());
     ASSERT_TRUE(y.Until([&] { return a.client->State() == net::ClientState::Playing; }, 600));
     y.Passes(10);
-    a.client->SendAttune(static_cast<uint8_t>(sim::Element::Metal), static_cast<uint8_t>(sim::Element::Thermal));
     SpellYard::Bot& b = y.AddBot();
     ASSERT_TRUE(y.Join());
     ASSERT_TRUE(y.Until([&] { return y.server.RoundState().phase == sim::RoundPhase::Live; }, 600));
     y.Passes(150);   // past the spawn protection
     const uint8_t slotA = a.client->Slot();
-    ASSERT_EQ(y.server.Caster(slotA).elementB, static_cast<uint8_t>(sim::Element::Thermal));
+
     const uint32_t tick = a.client->PredictTick() + 5;
     plan.casts[tick] = {sim::kPitchfall, glm::vec3(0.0f, 0.0f, -11.0f)};
     plan.casts[tick + 60] = {sim::kMeltdownBeam, glm::vec3(2.0f, 0.0f, -9.0f)};
@@ -730,12 +674,42 @@ TEST(Magic, ThermalSpellsReplicateWithEqualHashes) {
                                                   << static_cast<int>(a.rejections[tick + 120]) << ", firestorm "
                                                   << static_cast<int>(a.rejections[tick + 180]);
     const glm::ivec3 centre = glm::ivec3(y.Feet(slotA) / 0.125f) + glm::ivec3(0, 0, -80);
-    EXPECT_GT(VoxelsOf(y.server.Simulation().World(), DefaultIds().pitch, centre - glm::ivec3(48, 8, 40), centre + glm::ivec3(48, 24, 40)).size(), 0u)
-        << "the Firestorm's curtain still burns";
+    EXPECT_GT(VoxelsOf(y.server.Simulation().World(), DefaultIds().pitch, centre - glm::ivec3(48, 8, 40), centre + glm::ivec3(48, 24, 72)).size(), 0u)
+        << "the Firestorm's band still burns behind its front";
     EXPECT_EQ(b.client->Stats().castFx, 4u);
     EXPECT_TRUE(y.HashesEqual());
     // The pitch burns out and the metal cools everywhere alike.
     y.Passes(300);
     EXPECT_EQ(VoxelsOf(y.server.Simulation().World(), DefaultIds().pitch, centre - glm::ivec3(64, 8, 64), centre + glm::ivec3(64, 24, 64)).size(), 0u);
+    EXPECT_TRUE(y.HashesEqual());
+}
+
+// Burning is the server's (protocol 17): a Meltdown Beam's direct hit sets it; the victim's owner block counts its ticks
+// down for the status row, the caster sees the Burning bit in the victim's remote record, and both clear when it ends.
+TEST(Magic, BurningShowsInTheOwnerBlockAndTheRemoteRecord) {
+    SpellYard y(Settings(Duel()));
+    ASSERT_TRUE(y.started);
+    SpellPlan plan;
+    SpellYard::Bot& a = y.AddBot(plan.Controls());
+    ASSERT_TRUE(y.Until([&] { return a.client->State() == net::ClientState::Playing; }, 600));
+    y.Passes(10);
+    SpellYard::Bot& b = y.AddBot();
+    ASSERT_TRUE(y.Join());
+    ASSERT_TRUE(y.Until([&] { return y.server.RoundState().phase == sim::RoundPhase::Live; }, 600));
+    y.Passes(150);   // past the spawn protection
+    const uint8_t slotA = a.client->Slot(), slotB = b.client->Slot();
+    const auto remoteBurning = [&] {
+        for (const net::RemotePlayerView& v : a.client->RemotePlayers())
+            if (v.slot == slotB) return (v.statusBits & net::RemotePlayer::kBurningBit) != 0;
+        return false;
+    };
+    EXPECT_EQ(b.client->Magic().burnTicks, 0);
+    EXPECT_FALSE(remoteBurning());
+    const uint32_t tick = a.client->PredictTick() + 5;
+    plan.casts[tick] = {sim::kMeltdownBeam, y.Feet(slotB) + glm::vec3(0.0f, 1.0f, 0.0f) - y.Feet(slotA)};
+    ASSERT_TRUE(y.Until([&] { return b.client->Magic().burnTicks > 0; }, 180)) << "refused: " << static_cast<int>(a.rejections[tick]);
+    EXPECT_LE(b.client->Magic().burnTicks, 180);
+    EXPECT_TRUE(y.Until(remoteBurning, 60)) << "the caster sees it burn";
+    EXPECT_TRUE(y.Until([&] { return b.client->Magic().burnTicks == 0 && !remoteBurning(); }, 300)) << "it burnt out";
     EXPECT_TRUE(y.HashesEqual());
 }

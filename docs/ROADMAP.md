@@ -14,6 +14,19 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
 
 ## Now
 
+- **Status HUD and Firestorm Sweep's rework: built, not reviewed** (2026-11-27; [design/magic.md](design/magic.md)
+  "Input and HUD", spell 8). The own statuses show as a row over the health bar (the same place in a sandbox and
+  offline: `ROOTED 0.8`, `PINNED`, `CHILLED`, `LIFTED`, `LEAPING`, `BURNING 2.4`, `FREE` or `FRESH` with their seconds)
+  in element colours, with a thin tint at the screen's edges per status (HUD quads, no full-screen blend). Other
+  players carry a status tag over the head and Meteor Leap's trail. Protocol 17: the owner block's attunement byte
+  became `burnTicks`, the remote record's status byte gained Leaping (bit 6) and Burning (bit 7), `Attune` (24) and the
+  roster's attunement byte went (63 B owner block, 19 B remote record, 6 B per roster entry); `sim::AttunePick` and
+  `CasterState`'s elements went with them. Firestorm Sweep (the owner's rework request) is a front 4 m wide and 1.5 m
+  high that sets off 1.5 m ahead at T_run + the lead and travels 8 m at 8 m/s (a Line steers it along the polyline):
+  one burning band of pitch per 0.5 m step (Unknit 1 s after it lands), Heat on what it touches, 15 once and Burning
+  3 s to the enemies it passes, two Shove capsules of 400 cm/s; 35 mana. G23's line is now `Firestorm: front travelled
+  X m, N voxels burning, hit 1`. Not run: `verify.sh full --ci`, the soak. Windowed look (the row, the tints, the tags,
+  the flames of the front): owner checks.
 - **Two session fixes: built, not reviewed** (2026-11-27). (1) A warmup joiner that sees the round's first spawn
   while its prediction starts from a warmup snapshot takes the spawn as a respawn, not as a correction
   (`Client::Impl::StartPrediction`; `Fight.AFirstSpawnSeenBeforeThePredictionStartsIsNotACorrection` failed before

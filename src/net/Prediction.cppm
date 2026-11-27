@@ -151,6 +151,7 @@ export namespace vortex::net {
         uint8_t flags = 0;
         uint8_t fight = 100;              ///< [wp-7] RemotePlayer::fight
         int8_t holdPitch = 0;             ///< [mech-1] RemotePlayer::holdPitch
+        uint8_t statusBits = 0;           ///< RemotePlayer::statusBits
     };
 
     /// @brief Another player as this client draws it: interpolated in the past.
@@ -165,6 +166,9 @@ export namespace vortex::net {
         bool Dead() const { return (fight & 0x80) != 0; }
         /// [mech-1] sim::HoldPitch of its look, from the nearer sample (never blended).
         int8_t holdPitch = 0;
+        /// RemotePlayer::statusBits (Rooted, Pinned, Chilled, Lifted, the element, Leaping, Burning), from the nearer
+        /// sample (never blended).
+        uint8_t statusBits = 0;
         /// The server tick it is drawn at (the interpolation's time).
         double drawnTick = 0.0;
     };

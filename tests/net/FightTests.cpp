@@ -52,7 +52,7 @@ namespace {
 
 TEST(FightWire, MessagesRoundTripAndRefuseBadValues) {
     net::Roster roster;
-    roster.players = {{0, 1, 3, 1, 0x8}, {2, 2, 0, 4, 0}, {5, 1, 65535, 2, 0xF}};
+    roster.players = {{0, 1, 3, 1}, {2, 2, 0, 4}, {5, 1, 65535, 2}};
     {
         const std::vector<uint8_t> bytes = net::Encode(roster);
         net::Roster r;
@@ -60,14 +60,13 @@ TEST(FightWire, MessagesRoundTripAndRefuseBadValues) {
         EXPECT_EQ(r, roster);
         RefusesTrailingAndMissing<net::Roster>(bytes);
         EXPECT_FALSE(DecodesWith<net::Roster>(bytes, 3, 3));        // team 3
-        EXPECT_FALSE(DecodesWith<net::Roster>(bytes, 9, 0));        // slot 0 twice
-        EXPECT_FALSE(DecodesWith<net::Roster>(bytes, 8, 16));       // [mag-2] attune bits above 3
+        EXPECT_FALSE(DecodesWith<net::Roster>(bytes, 8, 0));        // slot 0 twice
         net::Roster many;
         for (uint8_t i = 0; i < 65; ++i) many.players.push_back({i, 1, 0, 0});
         std::vector<uint8_t> tooMany = net::Encode(many);           // the encoder keeps 64
         EXPECT_EQ(tooMany[1], 64);
         tooMany[1] = 65;
-        for (int i = 0; i < 7; ++i) tooMany.push_back(0);
+        for (int i = 0; i < 6; ++i) tooMany.push_back(0);
         net::Roster r2;
         EXPECT_FALSE(net::Decode(tooMany, r2));
     }
@@ -148,17 +147,20 @@ TEST(FightWire, MessagesRoundTripAndRefuseBadValues) {
     }
     EXPECT_STREQ(net::ToString(net::CastRejection::NoCharge), "no charge");
     EXPECT_STREQ(net::ToString(net::CastRejection::Dead), "dead");
-    EXPECT_EQ(net::kProtocolVersion, 16);   // siege
+    EXPECT_EQ(net::kProtocolVersion, 17);   // the status HUD, Attune retired
 }
 
 TEST(FightWire, SizesAreAsDesigned) {
     net::Snapshot none, owner;
     owner.hasOwner = true;
-    EXPECT_EQ(net::Encode(owner).size() - net::Encode(none).size(), 63u);   // [mag-8]: the magic state is 19 B (mana, gap)
+    EXPECT_EQ(net::Encode(owner).size() - net::Encode(none).size(), 63u);   // the magic state is 19 B (mana, gap, burnTicks)
     EXPECT_EQ(net::kSnapshotOwnerBytes, 63u);
     net::Snapshot one = owner;
     one.others.push_back({});
-    EXPECT_EQ(net::Encode(one).size() - net::Encode(owner).size(), 19u);    // [mag-2]: + statusBits
+    EXPECT_EQ(net::Encode(one).size() - net::Encode(owner).size(), 19u);    // + statusBits (Leaping and Burning in bits 6-7)
+    net::Roster roster;
+    roster.players.push_back({});
+    EXPECT_EQ(net::Encode(roster).size(), 2u + 6u) << "6 B per player: no attunement byte";
     EXPECT_EQ(net::kSnapshotPlayerBytes, 19u);
     // The Welcome's fight fields are its 7 bytes before the zone lead ([mag-2]'s last byte): without them it does not
     // decode.
@@ -175,7 +177,7 @@ TEST(FightWire, SizesAreAsDesigned) {
     EXPECT_EQ(bytes[bytes.size() - 1], 24);  // [mag-2] the zone lead
     net::Roster four;
     for (uint8_t i = 0; i < 4; ++i) four.players.push_back({i, static_cast<sim::TeamId>(1 + i % 2), 0, 0});
-    EXPECT_EQ(net::Encode(four).size(), 30u);   // [mag-2]: 7 B per player
+    EXPECT_EQ(net::Encode(four).size(), 26u);   // 6 B per player since protocol 17
     EXPECT_EQ(net::Encode(net::RoundUpdate{}).size(), 22u);   // siege: + holdSince, holdTicks
     EXPECT_EQ(net::kRoundUpdateBytes, 22u);
     EXPECT_EQ(net::Encode(net::KillNotice{}).size(), 9u);

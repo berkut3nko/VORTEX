@@ -357,7 +357,7 @@ namespace vortex::net {
             lastCast = {snap.lastCastTick, snap.castRejected};
         }
         OnOwnerFight(snap);
-        magic = {snap.mana, snap.spellGap, snap.attune, snap.tick};
+        magic = {snap.mana, snap.spellGap, snap.burnTicks, snap.tick};
         lastUseTick = snap.lastUseTick;
         lastUseResult = snap.useResult;
         // Both are ticks of inputs this client made: never at or past the tick it predicts next

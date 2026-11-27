@@ -84,14 +84,12 @@ export namespace vortex::sim {
         TeamId team = kNoTeam;
         glm::ivec3 min{0}, max{0};
     };
-    /// @brief A caster's mana, its gap and its two attuned elements (Metal and Pressure by default). The mana is
-    /// `mana` at `manaTick`, plus SpellTable::manaPerTick each tick since, up to the pool (ManaAt): a new caster is full.
+    /// @brief A caster's mana and its gap. The mana is `mana` at `manaTick`, plus SpellTable::manaPerTick each tick since, up
+    /// to the pool (ManaAt): a new caster is full.
     struct CasterState {
         uint16_t mana = 0xFFFF;
         uint32_t manaTick = 0;
         uint32_t spellReadyTick = 0;          ///< no Spell edge is captured before this tick (the gap)
-        uint8_t elementA = static_cast<uint8_t>(Element::Metal);
-        uint8_t elementB = static_cast<uint8_t>(Element::Pressure);
     };
     /// @brief Who started a zone (server state, never in the zone).
     struct ZoneOwner {
@@ -112,6 +110,10 @@ export namespace vortex::sim {
         Hit = 6,        ///< a projectile's direct damage to `target` on its arrival
         Splash = 7,     ///< `damage` to the enemies within `op.sphere` (its centre and radius, q) on its arrival
         Scorch = 8,     ///< `damage` to the enemies whose feet lie in `op.shape` (a box, a cylinder or a capsule), and the spell's Burning
+        /// One step of Firestorm Sweep's front: `damage` and the spell's Burning to the enemies whose quantised feet lie in the
+        /// front's slab (`op.shape`: a capsule's a-b along the sweep, its radius across, `halfHeightQ` over the ground row a.y,
+        /// `belowQ` under it) and that no earlier step of the same `sweep` hit.
+        Sweep = 9,
     };
     /// @brief A follow-up, run by RunScheduled in (tick, seq) order.
     struct ScheduledAction {
@@ -130,6 +132,9 @@ export namespace vortex::sim {
         glm::ivec3 hitVoxel{0};
         BlastSite site;                       ///< Bore
         uint8_t target = 0;                   ///< Hit: slot + 1
+        uint32_t sweep = 0;                   ///< Sweep: the cast's id in CastContext::sweepHits
+        uint16_t belowQ = 0;                  ///< Sweep: the slab reaches this far under its ground row
+        bool lastStep = false;                ///< Sweep: the front's last step (its hit list goes)
     };
 
     /// @brief A player on fire (server only): Burning deals SpellTable::burnHpPerSecond until `untilTick`.
@@ -156,6 +161,9 @@ export namespace vortex::sim {
         uint32_t maxZonesPerPlayer = 4;                 ///< live or pending per player (not for scripts)
         uint32_t hotUntil = 0;                          ///< the hazard scan runs up to this tick (slag, pitch or hot metal may lie until then)
         std::map<uint8_t, Burning> burning;             ///< by player (slot + 1); ends at its tick or when the player is not a target
+        /// Firestorm Sweep: the players (slot + 1) each moving front has hit, by its id, until its last step.
+        std::map<uint32_t, std::vector<uint8_t>> sweepHits;
+        uint32_t nextSweepId = 1;
     };
 
     /// @brief Counters of one cast (logged; `visits` and `chunksRead` are charged as work).
@@ -312,9 +320,12 @@ export namespace vortex::sim {
      * Plume (a Rise gesture: from S up to E's height), pitch over its Rise and Run skin cells and the Front cells that
      * are skin or join it, Heat on what they touch, a scorch over the plume's box on the arrival. Meltdown Beam: a bore
      * that reads metal through Heat, preceded on its arrival by a Heat capsule of heatRadiusQ round it; a direct hit on
-     * an enemy in front of the terrain deals directDamage and Burning. Firestorm Sweep: a Burst disc whose leading
-     * half-rim is extruded rimHeight up into pitch, Heat under the sweep, a scorch over the disc at T_z with Burning;
-     * a Line draws the curtain on the ground under the polyline, its scorch a capsule from its first to its last point.
+     * an enemy in front of the terrain deals directDamage and Burning. Firestorm Sweep (no projectile): a front
+     * drawHalfWidthQ each side of its path starts sweepStartQ in front of the feet along the aim's horizontal direction
+     * (a Line: along the polyline from its first point, cut to [drawMinQ, drawMaxQ]) at T_run + the lead and moves
+     * drawMaxQ in steps of sweepStepQ at sweepSpeedMs; each step lays a band of pitch on the ground it crosses up to the
+     * next step (Unknit lifetimeTicks after it lands) and Heat on its Contact, and runs a Sweep hit test; two Shove
+     * capsules, one per half of the path, start as the front reaches each half's middle.
      * Barricade Wave: a Burst strip extruded into knit bands at their ticks; no band cell
      * in a player's capsule grown by one voxel, a rigid body's box or a spawn area (a cell in an
      * enemy's refuses the cast). Work: operator visits and chunks read, and every op now or

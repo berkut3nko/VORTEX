@@ -190,8 +190,8 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
   6 `Inputs`, 7 `Snapshot`; [net-7a] chunk sync 8 `WindowUpdate`, 9 `WindowAck`, 10 `ChunkData`, 11 `ChunkRequest`,
   12 `ModelRequest`, 13 `BaselineEntity`, 14 `BaselineEnd`, 15 `BaselineNear`; [net-7b] checks and terrain mode 16
   `TerrainAck`, 17 `HashCheck`, 18 `EntityCheck`, 19 `EntityListRequest`, 20 `EntityList`; [wp-7] the fight 21
-  `Roster`, 22 `RoundUpdate`, 23 `KillNotice` (events channel, taken on receipt, not by opSeq); [mag-2] 24 `Attune` (client ->
-  server, events channel); [mag-8] 25 `SpellGesture` (client -> server, events channel). Protocol 16 (siege).
+  `Roster`, 22 `RoundUpdate`, 23 `KillNotice` (events channel, taken on receipt, not by opSeq); (24 retired: [mag-2]'s `Attune`,
+  protocols 14-16); [mag-8] 25 `SpellGesture` (client -> server, events channel). Protocol 17 (the status HUD).
 - **The fight** [wp-7] (fight.md "Wire"): `CastRejection` 4 `NoCharge`, 5 `Dead`; `sim::DamageCause` 1 `Blast`, 2
   `Fall`, 3 `Lava`, 4 `Void`, 5 `Crush` (reserved for [si-2]); `sim::GameMode` 0 `Sandbox`, 1 `Deathmatch`, 2
   `Felling`, 3 `Siege` (protocol 16); `sim::RoundPhase` 0 `Warmup`, 1 `Countdown`, 2 `Live`, 3 `Ended`; `sim::RoundEnd` 0
@@ -246,11 +246,14 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
     status, slowQ (at most 16), slowLeft, rootLeft, pinLeft, ccGuardLeft, dashLeft (u8 each), dashDir i8 x 2 (the client
     restores these 12 and the dash's 3 before every replay; status bit 6, 64, is [mag-7]'s `PlayerStatus_Leaping`, owner
     block only), [mag-8]'s mana u16 (1/60 mana, at most 6 000; refused above)
-    and spellGap u8 (ticks until a Spell edge is captured again; HUD and the client's own Dash only), the attunement byte (bits 0-1 element A, 2-3 element B, bit 4 `kAttuneActiveB`: the last Spell edge's
-    element was B; bits above 4 refused). Remote record +1 B (`kSnapshotPlayerBytes` 19): `statusBits`, bits 0-3 status
-    & 15, bits 4-5 the element of its last Spell edge. Roster +1 B per player (7 B each): bits 0-1 element A, 2-3 element
-    B.
-  - `Attune` 24: craftA u8, craftB u8 (element values 0-3): 3 B. `Welcome` +1 B after the fight fields: the zone lead u8
+    and spellGap u8 (ticks until a Spell edge is captured again; HUD and the client's own Dash only), then the byte that
+    was the attunement byte until protocol 17 and is `burnTicks` since (u8: the ticks of Burning left, 0 none; any value
+    decodes). Remote record +1 B (`kSnapshotPlayerBytes` 19): `statusBits`, bits 0-3 status & 15, bits 4-5 the element
+    of its last Spell edge, since protocol 17 bit 6 Leaping (`kLeapingBit`, `PlayerStatus_Leaping`'s value) and bit 7
+    Burning (`kBurningBit`); any value decodes. The roster's attunement byte (+1 B per player in protocols 14-16) went
+    with protocol 17: 6 B per player.
+  - `Attune` 24 (protocols 14-16 only; retired by 17: an `Attune` now fails the events stream as an unknown message).
+    `Welcome` +1 B after the fight fields: the zone lead u8
     (at most 60; 24 by default); `PlayerTuning` on the wire +4 B: `pushDecayGround`, `pushDecayAir` u16 (49 B). `BaselineEnd`
     +1 B count (at most 32) and that many zones as `ZoneStart` writes them after its kind byte: 10 B with none.
   - `buildHash` mixes `sim::SpellTableHash(BuildSpellTable(voxel::kDefaultVoxelSize))` and
@@ -276,8 +279,7 @@ them). Change any byte of a message or an event -> bump `kProtocolVersion`. Reti
   (each starts at max(T_run + the flight, T_run + the lead)), every `ZoneCancel`, then the damage through `DealDamage`
   (cause `Blast`). `RunScheduled` runs every tick after `RunCasts`: what lands on its projectile's arrival (ops, a bore
   with its island search, direct hits), bands, blows, zone ticks, expiries, site checks, zone pruning; its groups through `EmitGroup`, its
-  damage through `DealDamage`. Zone events and `CastFx` charge the cast queue's event credit, as operations do. `Attune`
-  is taken while dead or before the first spawn and applied at the next spawn. A joiner's `BaselineEnd` carries the live
+  damage through `DealDamage`. Zone events and `CastFx` charge the cast queue's event credit, as operations do. A joiner's `BaselineEnd` carries the live
   or pending zones. The exit lines `Magic: server:` and `Zones:` count them (vortex_server prints them after a spell).
 - **The client's zones** [mag-2] (`ClientSync.cpp` `ApplyMagic`): `ZoneStart` and `ZoneCancel` are applied to the
   simulation's zones at their opSeq; a cancel of a zone not held yet waits for its start (a joiner's baseline zones);

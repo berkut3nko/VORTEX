@@ -202,7 +202,7 @@ namespace vortex::net {
             w.U8(static_cast<uint8_t>(o.dashDir[1]));
             w.U16(m.mana);
             w.U8(m.spellGap);
-            w.U8(m.attune);
+            w.U8(m.burnTicks);
         }
         w.U8(static_cast<uint8_t>(std::min<size_t>(m.others.size(), 255)));
         for (size_t i = 0; i < std::min<size_t>(m.others.size(), 255); ++i) {
@@ -382,7 +382,7 @@ namespace vortex::net {
         out.useResult = sim::UseResult::None;
         out.mana = 0;
         out.spellGap = 0;
-        out.attune = 0;
+        out.burnTicks = 0;
         if (out.hasOwner) {
             sim::PlayerState& o = out.owner;
             for (float* f : {&o.position.x, &o.position.y, &o.position.z, &o.velocity.x, &o.velocity.y, &o.velocity.z}) *f = in.F32();
@@ -406,8 +406,8 @@ namespace vortex::net {
             o.dashDir[1] = static_cast<int8_t>(in.U8());
             out.mana = in.U16();
             out.spellGap = in.U8();
-            out.attune = in.U8();
-            if (in.Failed() || out.attune > 0x1F || out.mana > Snapshot::kMaxMana) return false;
+            out.burnTicks = in.U8();
+            if (in.Failed() || out.mana > Snapshot::kMaxMana) return false;
             for (const int16_t p : o.push)
                 if (p < -sim::kPushLimitCmS || p > sim::kPushLimitCmS) return false;
             if (!Finite(o.position) || !Finite(o.velocity)) return false;
@@ -426,7 +426,7 @@ namespace vortex::net {
             p.fight = in.U8();
             p.holdPitch = static_cast<int8_t>(in.U8());
             p.statusBits = in.U8();
-            if (!Finite(p.position) || p.holdPitch < -64 || p.holdPitch > 64 || p.statusBits > 0x3F) return false;
+            if (!Finite(p.position) || p.holdPitch < -64 || p.holdPitch > 64) return false;
             out.others.push_back(p);
         }
         const uint32_t bodies = in.U8();
@@ -841,7 +841,6 @@ namespace vortex::net {
             w.U8(e.team);
             w.U16(e.kills);
             w.U16(e.deaths);
-            w.U8(e.attune);
         }
         return w.Take();
     }
@@ -850,7 +849,7 @@ namespace vortex::net {
         ByteReader in(bytes);
         if (!Begin(in, MessageType::Roster)) return false;
         const uint32_t count = in.U8();
-        if (in.Failed() || count > kMaxRosterPlayers || in.Remaining() != static_cast<size_t>(count) * 7) return false;
+        if (in.Failed() || count > kMaxRosterPlayers || in.Remaining() != static_cast<size_t>(count) * 6) return false;
         out.players.clear();
         std::array<bool, 256> seen{};
         for (uint32_t i = 0; i < count; ++i) {
@@ -859,8 +858,7 @@ namespace vortex::net {
             e.team = in.U8();
             e.kills = in.U16();
             e.deaths = in.U16();
-            e.attune = in.U8();
-            if (in.Failed() || e.team > sim::kTeamCount || seen[e.slot] || e.attune > 15) return false;
+            if (in.Failed() || e.team > sim::kTeamCount || seen[e.slot]) return false;
             seen[e.slot] = true;
             out.players.push_back(e);
         }
@@ -930,24 +928,6 @@ namespace vortex::net {
         return End(in);
     }
 
-    // --- magic ([mag-2]) ---------------------------------------------------------------------------
-
-    std::vector<uint8_t> Encode(const Attune& m) {
-        ByteWriter w;
-        w.U8(static_cast<uint8_t>(MessageType::Attune));
-        w.U8(m.craftA);
-        w.U8(m.craftB);
-        return w.Take();
-    }
-
-    bool Decode(std::span<const uint8_t> bytes, Attune& out) {
-        ByteReader in(bytes);
-        if (!Begin(in, MessageType::Attune)) return false;
-        out.craftA = in.U8();
-        out.craftB = in.U8();
-        if (in.Failed() || out.craftA > 3 || out.craftB > 3) return false;
-        return End(in);
-    }
 
     // --- casting ([mag-8]) -------------------------------------------------------------------------
 

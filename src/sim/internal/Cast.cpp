@@ -610,6 +610,28 @@ namespace vortex::sim {
             return std::max(glm::length(centre - axis) - r, 0.0);
         }
 
+        /// The point `distQ` along the polyline `path` whose point i lies `cum[i]` along it, and the segment it lies on.
+        glm::ivec3 PathPoint(std::span<const glm::ivec3> path, std::span<const int64_t> cum, int64_t distQ, size_t& segment) {
+            segment = 0;
+            while (segment + 2 < path.size() && cum[segment + 1] < distQ) ++segment;
+            const int64_t len = cum[segment + 1] - cum[segment];
+            return Along(path[segment], path[segment + 1], std::clamp<int64_t>(distQ - cum[segment], 0, len), len);
+        }
+
+        /// Firestorm Sweep's slab test on quantised feet (ScheduledKind::Sweep): along the horizontal a-b, within the radius
+        /// across it, from `belowQ` under a.y to halfHeightQ over it.
+        bool SweepHolds(const voxel::ShapeQ& slab, const glm::ivec3& feetQ, int64_t belowQ) {
+            const glm::i64vec3 a(slab.a), u = glm::i64vec3(slab.b) - glm::i64vec3(slab.a), p = glm::i64vec3(feetQ) - a;
+            if (p.y < -belowQ || p.y > int64_t{slab.halfHeightQ}) return false;
+            const int64_t uu = u.x * u.x + u.z * u.z;
+            if (uu == 0) return false;
+            const int64_t along = p.x * u.x + p.z * u.z;
+            if (along < 0 || along > uu) return false;
+            const int64_t across = p.x * u.z - p.z * u.x;
+            const int64_t r = slab.radiusQ;
+            return across * across <= r * r * uu;
+        }
+
         /// One column of a drawn shape: its ground voxel and how far along the line it lies (q).
         struct DrawnColumn {
             glm::ivec3 ground{0};
@@ -839,7 +861,9 @@ namespace vortex::sim {
         }
         const bool riseDrawn = riseShape.kind == RiseKind::Stairs || riseShape.kind == RiseKind::Bridge;
         out.stats.riseShape = static_cast<uint8_t>(riseShape.kind);
-        if (hasPoints && !drawn && !lob && !riseDrawn && cast.spell != kDash) {
+        // Firestorm Sweep's Line steers its front along the polyline.
+        const bool sweepLine = line && cast.spell == kFirestormSweep;
+        if (hasPoints && !drawn && !lob && !riseDrawn && !sweepLine && cast.spell != kDash) {
             const bool atStart = riseShape.kind == RiseKind::Pillar || (cast.spell == kWildfire && gesture.kind == GestureKind::Rise);
             const glm::dvec3 release = glm::dvec3(atStart ? gesture.pointsQ.front() : gesture.pointsQ.back()) / q;
             if (glm::length(release - cast.eye) > 1.0e-6) cast.dir = glm::vec3(glm::normalize(release - cast.eye));
@@ -872,6 +896,14 @@ namespace vortex::sim {
         uint64_t boreSliceWork = 0;
         // Ops planned now that land later than the arrival: (op, ticks after the arrival). Never recorded.
         std::vector<std::pair<WorldOp, uint32_t>> laterOps;
+        // Ops that land at a tick of their own (Firestorm Sweep's Heat per step), recorded under their owner.
+        std::vector<std::pair<PlannedOp, uint32_t>> timedOps;
+        // Firestorm Sweep's hit tests: one per step of the front.
+        struct SweepStep {
+            voxel::ShapeQ slab;
+            uint32_t tick = 0;
+        };
+        std::vector<SweepStep> sweepSteps;
         bool splash = false;
         bool slag = false;
         int32_t arcFlight = -1;                 // a Flow spell: its arc's ticks (the flight), else -1
@@ -904,7 +936,8 @@ namespace vortex::sim {
             z.strength[1] = zd.strength[1];
             return z;
         };
-        const auto newOwner = [&](uint8_t layer, uint8_t expiryMap, uint32_t lifetime, const voxel::ShapeQ* shape) {
+        // `delay`: the matter lands that long after T_run, and its lifetime counts from then.
+        const auto newOwner = [&](uint8_t layer, uint8_t expiryMap, uint32_t lifetime, const voxel::ShapeQ* shape, uint32_t delay = 0) {
             if (pitchBurnsOut && layer == 0 && expiryMap == def.expiryMap) {
                 expiryMap = 0;
                 lifetime = pitchLife;
@@ -915,7 +948,7 @@ namespace vortex::sim {
             info.caster = cast.player;
             info.casterTeam = cast.team;
             info.spell = cast.spell;
-            info.dueTick = tRun + lifetime;
+            info.dueTick = tRun + delay + lifetime;
             if (shape != nullptr) {
                 info.hasShape = true;
                 info.shape = *shape;
@@ -993,10 +1026,8 @@ namespace vortex::sim {
             const size_t segments = drawnLine.size() - 1;
             std::vector<std::vector<glm::ivec3>> fill(segments), floe(segments);
             const uint8_t water = simulation.WorldMaterialIds().water;
-            std::vector<glm::ivec3> grounds;
             for (const DrawnColumn& c : columns) {
-                grounds.push_back(c.ground + glm::ivec3(0, 1, 0));
-                if (cast.spell == kBarricadeWave || cast.spell == kFirestormSweep) {
+                if (cast.spell == kBarricadeWave) {
                     for (int32_t j = 1; j <= def.drawHeight; ++j) {
                         const glm::ivec3 cell = c.ground + glm::ivec3(0, j, 0);
                         if (!IsOpenId(cache.Get(cell))) break;
@@ -1010,7 +1041,6 @@ namespace vortex::sim {
                     fill[c.segment].push_back(c.ground + glm::ivec3(0, 1, 0));
                 }
             }
-            if (cast.spell == kFirestormSweep) heatContact(cache, grounds);
             out.stats.chunksRead += cache.ChunksRead();
             int fillOwner = -1, floeOwner = -1;
             // A rising wall keeps its ghost's lead; ice lands where the line reaches.
@@ -1862,54 +1892,125 @@ namespace vortex::sim {
                 }
             }
         } else if (cast.spell == kFirestormSweep) {
-            const FaceHit hit = CastFaceRay(simulation, cast, range);
-            if (!hit.hit) return finish(SpellRefusal::Missed);
-            out.hitQ = ToQ(hit.point, q);
-            out.face = FaceOf(hit.normal);
-            if (!InsideWalls(ctx.walls, out.hitQ >> 4)) return finish(SpellRefusal::Outside);
-            BurstParams p;
-            p.seed = hit.seed;
-            p.axes = FaceAxesOf(hit.normal);
-            p.aim = AimOf(cast.dir);
-            p.stepMax = def.stepMax;
-            p.pops = def.burstPops;
-            p.visitCap = def.burstVisitCap;
-            p.plane = def.burstPlane;
-            p.normalMin = def.burstNormalMin;
-            p.normalMax = def.burstNormalMax;
-            p.discRadius = def.burstDiscRadius;
-            const BurstResult disc = BurstStrip(world, ctx.walls, p);
-            out.stats.visits += disc.visits;
-            out.stats.chunksRead += disc.chunksRead;
-            if (disc.cells.empty()) return finish(SpellRefusal::Missed);
-            // The curtain: the leading half-rim, extruded rimHeight cells along the normal while they are open.
-            VoxelCache cache(world, ctx.walls);
-            std::set<std::tuple<int32_t, int32_t, int32_t>> taken;
-            std::vector<glm::ivec3> curtain;
-            for (size_t i = 0; i < disc.cells.size(); ++i) {
-                if (disc.front[i] == 0) {
-                    ++out.stats.path;
-                    continue;
-                }
-                ++out.stats.front;
-                for (int32_t j = 0; j < def.rimHeight; ++j) {
-                    const glm::ivec3 c = disc.cells[i] + p.axes.n * j;
-                    if (!IsOpenId(cache.Get(c))) break;
-                    if (taken.emplace(c.x, c.y, c.z).second) curtain.push_back(c);
-                }
+            // The front's path (magic.md spell 8): sweepStartQ in front of the feet along the aim's horizontal direction for
+            // drawMaxQ, or a Line's polyline cut to [drawMinQ, drawMaxQ]. No projectile: the front is what flies.
+            std::vector<glm::ivec3> path;
+            uint32_t lengthQ = 0;
+            if (sweepLine) {
+                path = ClampPolyline(gesture.pointsQ, def.drawMinQ, def.drawMaxQ, lengthQ);
+            } else {
+                const glm::ivec3 aim = AimOf(cast.dir);
+                const glm::i64vec3 h(aim.x, 0, aim.z);
+                const int64_t hl = static_cast<int64_t>(math::ISqrt64(static_cast<uint64_t>(h.x * h.x + h.z * h.z)));
+                // An aim within about 4 degrees of the vertical has no direction to sweep in.
+                if (hl < 1024) return finish(SpellRefusal::Missed);
+                const glm::ivec3 start = ToQ(cast.eye - eyeToFeet, q) + glm::ivec3(h * int64_t{def.sweepStartQ} / hl);
+                path = {start, start + glm::ivec3(h * int64_t{def.drawMaxQ} / hl)};
+                lengthQ = static_cast<uint32_t>(SegmentQ(path[0], path[1]));
             }
-            std::vector<glm::ivec3> kept;
-            if (!guardCells(curtain, kept)) return finish(SpellRefusal::NearSpawn);
-            pitchFill(kept);
-            // Heat under the whole sweep (a plank deck catches only with spread; metal heats, ice melts).
-            heatContact(cache, disc.cells);
+            if (path.size() < 2 || lengthQ == 0) return finish(SpellRefusal::Missed);
+            if (!InsideWalls(ctx.walls, path.front() >> 4)) return finish(SpellRefusal::Outside);
+            out.hitQ = path.front();
+            out.face = 2;
+            out.drawnPointsQ = path;
+            out.stats.drawnLengthQ = lengthQ;
+            std::vector<int64_t> cum(1, 0);
+            for (size_t i = 0; i + 1 < path.size(); ++i) cum.push_back(cum.back() + SegmentQ(path[i], path[i + 1]));
+            const int64_t length = cum.back();
+            const int64_t step = std::max<int64_t>(def.sweepStepQ, 1);
+            const int64_t steps = (length + step - 1) / step;   // the front stands at positions 0 .. steps
+            const int64_t hw = def.drawHalfWidthQ;
+            const int32_t metreVoxels = std::max<int32_t>(1, table.metreQ / 16);
+            const auto stepTick = [&](int64_t distQ) {
+                return tRun + table.zoneLeadTicks + TravelTicks(table, static_cast<uint64_t>(distQ), def.sweepSpeedMs);
+            };
+            const int64_t radiusQ = std::llround(static_cast<double>(ctx.tuning.radius) * q);
+            VoxelCache cache(world, ctx.walls);
+            std::set<std::pair<int32_t, int32_t>> taken;
+            std::vector<int32_t> groundRow;   // by step: the first open row over the centre column's ground
+            int32_t row = (path.front() >> 4).y;
+            for (int64_t s = 0; s <= steps; ++s) {
+                const int64_t d = std::min(s * step, length);
+                size_t segment = 0;
+                const glm::ivec3 centre = PathPoint(path, cum, d, segment);
+                glm::ivec3 g;
+                if (GroundUnder(cache, glm::ivec3(centre.x >> 4, row, centre.z >> 4), metreVoxels, 2 * metreVoxels, g)) row = g.y + 1;
+                groundRow.push_back(row);
+                const uint32_t tick = stepTick(d);
+                // The band the front crossed since the last step: the open cell over the ground of each column, once.
+                if (s > 0) {
+                    std::vector<glm::ivec3> cells;
+                    const int64_t from = std::min((s - 1) * step, length);
+                    for (int64_t along = from; along < d || (along == d && s == steps); along += 8) {
+                        size_t seg = 0;
+                        const glm::ivec3 p = PathPoint(path, cum, along, seg);
+                        const glm::i64vec3 perp(-(int64_t{path[seg + 1].z} - path[seg].z), 0, int64_t{path[seg + 1].x} - path[seg].x);
+                        const int64_t perpLen = std::max<int64_t>(cum[seg + 1] - cum[seg], 1);
+                        for (int64_t o = -hw + 8; o <= hw - 8; o += 16) {
+                            const glm::ivec3 v = (p + glm::ivec3(perp * o / perpLen)) >> 4;
+                            if (!taken.emplace(v.x, v.z).second) continue;
+                            ++out.stats.visits;
+                            glm::ivec3 ground;
+                            if (!GroundUnder(cache, glm::ivec3(v.x, row, v.z), metreVoxels, 2 * metreVoxels, ground)) continue;
+                            const glm::ivec3 cell = ground + glm::ivec3(0, 1, 0);
+                            if (IsOpenId(cache.Get(cell))) cells.push_back(cell);
+                        }
+                    }
+                    std::vector<glm::ivec3> kept;
+                    // Guarded again on its tick only: who stands in the way now may have left by then.
+                    if (!guardCells(cells, kept, false)) return finish(SpellRefusal::NearSpawn);
+                    if (!kept.empty()) {
+                        out.stats.planned += static_cast<uint32_t>(kept.size());
+                        const int owner = newOwner(0, def.expiryMap, def.lifetimeTicks, nullptr, tick - tRun);
+                        bands.push_back({MapCellsOp(def.fillMap, kept), tick - tRun, 0, 0, owner});
+                        hotFor = std::max<uint32_t>(hotFor, tick - tRun + pitchLife);
+                    }
+                    const std::vector<glm::ivec3> contact = ContactChangedBy(cache, cells, heatMap);
+                    if (!contact.empty()) {
+                        const int owner = newOwner(1, voxel::Map_Cool, def.heatLifetimeTicks, nullptr, tick - tRun);
+                        timedOps.push_back({PlannedOp{MapCellsOp(voxel::Map_Heat, contact), owner}, tick});
+                        out.stats.heated += static_cast<uint32_t>(contact.size());
+                        hotFor = std::max<uint32_t>(hotFor, tick - tRun + def.heatLifetimeTicks);
+                        turns = true;
+                    }
+                }
+                // The hit test: half a step each side of the front, grown by the capsule's radius along and across.
+                size_t sa = 0, sb = 0;
+                glm::ivec3 a = PathPoint(path, cum, std::max<int64_t>(d - step / 2, 0), sa);
+                glm::ivec3 b = PathPoint(path, cum, std::min<int64_t>(d + step / 2, length), sb);
+                const glm::i64vec3 u(int64_t{b.x} - a.x, 0, int64_t{b.z} - a.z);
+                const int64_t ul = static_cast<int64_t>(math::ISqrt64(static_cast<uint64_t>(u.x * u.x + u.z * u.z)));
+                if (ul > 0) {
+                    a -= glm::ivec3(u * radiusQ / ul);
+                    b += glm::ivec3(u * radiusQ / ul);
+                }
+                a.y = b.y = row * 16;
+                voxel::ShapeQ slab;
+                slab.kind = voxel::kShapeCapsule;
+                slab.a = a;
+                slab.b = b;
+                slab.radiusQ = static_cast<uint16_t>(hw + radiusQ);
+                slab.halfHeightQ = static_cast<uint16_t>(16 * def.drawHeight);
+                sweepSteps.push_back({slab, tick});
+            }
+            out.stats.front = static_cast<uint32_t>(sweepSteps.size());
+            out.stats.path = out.stats.planned;
             out.stats.chunksRead += cache.ChunksRead();
-            if (out.stats.planned == 0 && out.stats.heated == 0) return finish(SpellRefusal::Missed);
-            hasScorch = scorchAtZone = true;
-            scorchShape.kind = voxel::kShapeCylinder;
-            scorchShape.a = 16 * hit.seed + glm::ivec3(8);
-            scorchShape.radiusQ = static_cast<uint16_t>(16 * def.burstDiscRadius);
-            scorchShape.halfHeightQ = table.metreQ;
+            // The shove: one capsule per half of the path, as the front reaches the half's middle (never before the lead).
+            for (int64_t k = 0; k < 2; ++k) {
+                const int64_t from = length * k / 2, to = length * (k + 1) / 2;
+                size_t seg = 0;
+                voxel::ShapeQ shape;
+                shape.kind = voxel::kShapeCapsule;
+                shape.a = PathPoint(path, cum, from, seg);
+                shape.b = PathPoint(path, cum, to, seg);
+                shape.a.y = 16 * groundRow[static_cast<size_t>(std::min<int64_t>((from + step / 2) / step, steps))];
+                shape.b.y = 16 * groundRow[static_cast<size_t>(std::min<int64_t>((to + step / 2) / step, steps))];
+                shape.radiusQ = def.zone.radiusQ;
+                zones.push_back({zoneOf(ZoneKind::Shove, shape), false, 0});
+                zoneExtras.resize(zones.size());
+                zoneExtras.back().minStart = stepTick((from + to) / 2) - tRun;
+            }
         } else if (cast.spell == kPermafrostClimb) {
             const FaceHit hit = CastFaceRay(simulation, cast, range);
             if (!hit.hit) return finish(SpellRefusal::Missed);
@@ -2023,6 +2124,11 @@ namespace vortex::sim {
         for (const auto& [op, delay] : laterOps) {
             glm::ivec3 lo, hi;
             op.Bounds(lo, hi);
+            if (MeetsEnemySpawn(ctx.spawns, cast.team, lo, hi)) return finish(SpellRefusal::NearSpawn);
+        }
+        for (const auto& [planned, tick] : timedOps) {
+            glm::ivec3 lo, hi;
+            planned.op.Bounds(lo, hi);
             if (MeetsEnemySpawn(ctx.spawns, cast.team, lo, hi)) return finish(SpellRefusal::NearSpawn);
         }
         if (shatter) {
@@ -2163,6 +2269,28 @@ namespace vortex::sim {
             a.op = std::move(op);
             Schedule(ctx, std::move(a));
         }
+        for (auto& [planned, tick] : timedOps) {
+            ScheduledAction a = scheduled(ScheduledKind::Op, tick);
+            a.hasOwner = planned.owner >= 0;
+            if (a.hasOwner) a.owner = ownerId(planned.owner);
+            opWork += OpWork(planned.op);
+            bytes += static_cast<uint32_t>(OpWireBytes(planned.op));
+            a.op = std::move(planned.op);
+            Schedule(ctx, std::move(a));
+        }
+        if (!sweepSteps.empty()) {
+            const uint32_t sweepId = ctx.nextSweepId == 0 ? 1u : ctx.nextSweepId;
+            ctx.nextSweepId = sweepId + 1;
+            for (size_t i = 0; i < sweepSteps.size(); ++i) {
+                ScheduledAction a = scheduled(ScheduledKind::Sweep, sweepSteps[i].tick);
+                a.op.shape = sweepSteps[i].slab;
+                a.damage = def.scorchDamage;
+                a.sweep = sweepId;
+                a.belowQ = table.metreQ;
+                a.lastStep = i + 1 == sweepSteps.size();
+                Schedule(ctx, std::move(a));
+            }
+        }
         if (slag) ctx.hotUntil = std::max(ctx.hotUntil, arrival + def.setDelayTicks + 1u);
         if (splash) {
             ScheduledAction a = scheduled(ScheduledKind::Splash, arrival);
@@ -2237,7 +2365,7 @@ namespace vortex::sim {
         }
 
         const size_t later = (arrival != tRun ? bores.size() + nowOps.size() + preOps.size() : 0u) + laterOps.size();
-        out.stats.ops = static_cast<uint32_t>(out.groups.size() + later + bands.size() + (blow ? 1u : 0u) + (shatter ? 1u : 0u));
+        out.stats.ops = static_cast<uint32_t>(out.groups.size() + later + bands.size() + timedOps.size() + (blow ? 1u : 0u) + (shatter ? 1u : 0u));
         out.stats.bytes = bytes;
         out.work.search += uint64_t{out.stats.visits} * kPropagateVisitWork + uint64_t{out.stats.chunksRead} * kColdChunkGraphWork +
                            boreSliceWork + shatterWork;
@@ -2325,6 +2453,19 @@ namespace vortex::sim {
                     out.damage.push_back(SpellDamage{t.player, action.damage, action.caster, action.spell});
                     if (def.burnTicks > 0) ctx.burning[t.player] = Burning{tick + def.burnTicks, action.caster, action.casterTeam, action.spell};
                 }
+                break;
+            }
+            case ScheduledKind::Sweep: {
+                std::vector<uint8_t>& hit = ctx.sweepHits[action.sweep];
+                for (const SpellTarget& t : targets) {
+                    if (t.player == action.caster || (action.casterTeam != kNoTeam && t.team == action.casterTeam)) continue;
+                    if (std::find(hit.begin(), hit.end(), t.player) != hit.end()) continue;
+                    if (!SweepHolds(action.op.shape, ToQ(glm::dvec3(t.feet), q), action.belowQ)) continue;
+                    hit.push_back(t.player);
+                    out.damage.push_back(SpellDamage{t.player, action.damage, action.caster, action.spell});
+                    if (def.burnTicks > 0) ctx.burning[t.player] = Burning{tick + def.burnTicks, action.caster, action.casterTeam, action.spell};
+                }
+                if (action.lastStep) ctx.sweepHits.erase(action.sweep);
                 break;
             }
             case ScheduledKind::Splash: {

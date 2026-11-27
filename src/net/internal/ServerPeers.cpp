@@ -259,11 +259,11 @@ namespace vortex::net {
             snap.lastUseTick = peer->player->lastUseTick;
             snap.useResult = peer->player->useResult;
             snap.fight = OwnerFightOf(peer->slot);
-            FillMagicOwner(snap, peer->slot, *peer->player);
+            FillMagicOwner(snap, peer->slot);
             for (const auto& [otherId, other] : players) {
                 if (otherId == id) continue;
                 snap.others.push_back({other->slot, other->player->state.position, other->player->last.yaw, other->player->state.flags,
-                                       RemoteFightOf(other->slot), sim::HoldPitch(other->player->last.pitch), RemoteStatusOf(*other->player)});
+                                       RemoteFightOf(other->slot), sim::HoldPitch(other->player->last.pitch), RemoteStatusOf(other->slot, *other->player)});
             }
             // Bodies by priority: what was left out longest, nearest first, as many as fit.
             const size_t fixed = kSnapshotHeaderBytes + kSnapshotOwnerBytes + snap.others.size() * kSnapshotPlayerBytes;

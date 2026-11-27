@@ -367,17 +367,16 @@ export namespace vortex::net {
         const RoundUpdate& RoundOf() const;
         std::vector<KillNotice> TakeKillNotices();
         /// @brief [mag-2] The owner block's magic state of the newest snapshot (the HUD's spell bar, mana bar and element
-        /// panel): [mag-8]'s mana (1/60 mana) and spell gap (ticks) and the attunement byte (Snapshot::attune).
+        /// panel and status row): [mag-8]'s mana (1/60 mana), the spell gap (ticks) and the ticks of Burning left
+        /// (Snapshot::burnTicks).
         struct MagicView {
             uint16_t mana = 0;
             uint8_t spellGap = 0;
-            uint8_t attune = 0;
+            uint8_t burnTicks = 0;
             uint32_t tick = 0;            ///< the snapshot it is from
         };
         const MagicView& Magic() const;
-        /// @brief [mag-2] Sends Attune{craftA, craftB} (sim::Element values): the server takes it while this player is
-        /// dead or before its first spawn, for the next life.
-        void SendAttune(uint8_t craftA, uint8_t craftB);
+
         /// @brief [mag-8] The gesture of the next Spell edge: it is sent (SpellGesture, reliable) with the first predicted
         /// input that holds a Spell edge, paired by that input's tick, then cleared. The input's spell must be the one
         /// the gesture's form gives (the server refuses it BadGesture). A new call replaces a gesture not sent yet.

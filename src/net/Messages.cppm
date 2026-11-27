@@ -40,7 +40,9 @@ export namespace vortex::net {
     /// -1 B; CastRejection 6 retired, NoMana 12, TooSoon 13, BadGesture 14).
     /// 16: siege (RegionTemplateId::Hollowkeep 2, GameMode::Siege 3, RoundEnd::Held 5; RoundUpdate +6 B: holdSince,
     /// holdTicks).
-    inline constexpr uint16_t kProtocolVersion = 16;
+    /// 17: the status HUD (the owner block's attunement byte becomes burnTicks; the remote record's status byte gains
+    /// Leaping in bit 6 and Burning in bit 7); Attune 24 retired; the roster entry loses its attunement byte (6 B).
+    inline constexpr uint16_t kProtocolVersion = 17;
 
     /// @brief First byte of every message. Wire format.
     enum class MessageType : uint8_t {
@@ -70,7 +72,7 @@ export namespace vortex::net {
         Roster = 21,        ///< server -> client, events channel: every player's team, kills and deaths
         RoundUpdate = 22,   ///< server -> client, events channel: the round's phase, score and result
         KillNotice = 23,    ///< server -> client, events channel: one death (the kill feed)
-        Attune = 24,        ///< [mag-2] client -> server, events channel: the two elements of the next life
+        // 24 was Attune (protocol 14-16: the two elements of the next life). Never reuse it.
         SpellGesture = 25,  ///< [mag-8] client -> server, events channel: the gesture of one input tick's Spell edge
     };
 
@@ -183,8 +185,9 @@ export namespace vortex::net {
         /// [mech-1] sim::HoldPitch of its last input (-64..64): other clients pose what it holds.
         int8_t holdPitch = 0;
         /// [mag-2] bits 0-3 sim::PlayerState::status & 15 (Rooted, Pinned, Chilled, Lifted), bits 4-5 the element of its
-        /// last Spell edge (the hands' colour).
+        /// last Spell edge (the hands' colour), bit 6 Leaping (sim::PlayerStatus_Leaping), bit 7 Burning (server only).
         uint8_t statusBits = 0;
+        static constexpr uint8_t kStatusMask = 0x0F, kElementShift = 4, kLeapingBit = 0x40, kBurningBit = 0x80;
         friend bool operator==(const RemotePlayer&, const RemotePlayer&) = default;
     };
 
@@ -286,13 +289,12 @@ export namespace vortex::net {
         /// [mag-2] After useResult, 20 B: the owner's push (i16 x 3), status, slowQ, slowLeft, rootLeft, pinLeft,
         /// ccGuardLeft, dashLeft (u8 each) and dashDir (i8 x 2) travel in `owner` (the client restores them before a
         /// replay); then [mag-8]'s mana (u16, 1/60 mana, at most kMaxMana) and spellGap (u8: ticks until a Spell edge is
-        /// captured again; for the HUD and the client's own Dash, never a correction) and the attunement byte (bits 0-1
-        /// element A, 2-3 element B, bit 4 set: the last Spell edge's element was B).
+        /// captured again; for the HUD and the client's own Dash, never a correction) and burnTicks (u8: the ticks of
+        /// Burning left, 0 none, at most 255; server only, for the HUD).
         uint16_t mana = 0;
         uint8_t spellGap = 0;
         static constexpr uint16_t kMaxMana = 6000;
-        uint8_t attune = 0;
-        static constexpr uint8_t kAttuneActiveB = 16;
+        uint8_t burnTicks = 0;
         std::vector<RemotePlayer> others;
         /// Awake replicated bodies, by the server's priority for this client (stage 6). At most 255.
         std::vector<BodySample> bodies;
@@ -313,10 +315,9 @@ export namespace vortex::net {
         uint8_t slot = 0;
         sim::TeamId team = 0;             ///< 0 (sandbox), 1 or 2
         uint16_t kills = 0, deaths = 0;
-        uint8_t attune = 0;               ///< [mag-2] bits 0-1 element A, bits 2-3 element B (the team panel's letters)
         friend bool operator==(const RosterEntry&, const RosterEntry&) = default;
     };
-    /// @brief Every joined player's team, kills, deaths and elements (slot ascending; count u8, 7 B each).
+    /// @brief Every joined player's team, kills and deaths (slot ascending; count u8, 6 B each).
     struct Roster {
         std::vector<RosterEntry> players;
         friend bool operator==(const Roster&, const Roster&) = default;
@@ -353,22 +354,11 @@ export namespace vortex::net {
     std::vector<uint8_t> Encode(const Roster& m);
     std::vector<uint8_t> Encode(const RoundUpdate& m);
     std::vector<uint8_t> Encode(const KillNotice& m);
-    /// @brief Refuses more than kMaxRosterPlayers, a team over 2, duplicate slots, attune bits above 3.
+    /// @brief Refuses more than kMaxRosterPlayers, a team over 2, duplicate slots.
     bool Decode(std::span<const uint8_t> bytes, Roster& out);
 
     // --- magic ([mag-2], docs/design/magic.md "Wire values") --------------------------------------
 
-    /// @brief The two elements (sim::Element values) of the sender's next life (3 B with the type byte). The server
-    /// takes it while the player is dead or before its first spawn (two different, built elements) and applies it at
-    /// the next spawn; else it is ignored.
-    struct Attune {
-        uint8_t craftA = 0;
-        uint8_t craftB = 2;
-        friend bool operator==(const Attune&, const Attune&) = default;
-    };
-    std::vector<uint8_t> Encode(const Attune& m);
-    /// @brief Refuses an element over 3 (two equal elements decode: the server judges them).
-    bool Decode(std::span<const uint8_t> bytes, Attune& out);
 
     /// @brief [mag-8] The gesture of the Spell edge in the input of `inputTick` (8 B + 12 B per point with the type byte):
     /// inputTick u32, kind u8, form u8 (0-3 forced, sim::kAutoForm), count u8, then each point i32 x 3 (q). Sent once,
