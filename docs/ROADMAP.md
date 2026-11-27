@@ -14,7 +14,7 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
 
 ## Now
 
-- **[mag-8] Mana, gestures and projectiles: engine built, not reviewed; the game's part not built** (2026-11-27). The
+- **[mag-8] Mana, gestures and projectiles: built, not reviewed** (2026-11-27). The
   owner's revision ([design/magic.md](design/magic.md) "Casting: mana, gestures and projectiles") in sim and net. Mana
   in the cast check (`sim::ManaAt`, `sim::SpellManaCost`): a pool of 6 000 (1/60 mana), 10 back each tick, full at
   each spawn, charged at T_run after every other check (`NoMana`); the 12-tick gap between spells (`TooSoon`, at
@@ -26,9 +26,12 @@ committed. Effort is in work days, all estimates (e); calendar time has run abou
   Punch and Dash), a drawn segment at its arrival along the line at 20 m/s, a zone at max(the arrival, the lead).
   Protocol 15: `SpellGesture` 25 (`Client::SetSpellGesture`), `CastFx` with the flight and the points, the owner
   block's mana and spellGap (63 B), `CastRejection` 12-14 (6 retired). Tap costs that the design does not give:
-  Barricade Wave 32.5 (a drawn 4.5 m wall), Flash Freeze and Permafrost Climb 30. Not built: the game's sampling, ghost
-  line, mana bar and projectiles, G23 with a drawn wall, Rising Spire's stairs and bridge ([mag-4]). Not run:
-  `verify.sh full --ci`, the soak, G23.
+  Barricade Wave 32.5 (a drawn 4.5 m wall), Flash Freeze and Permafrost Climb 30. The game: RMB held samples the gesture
+  (a point each 0.5 m, at most 16 and 12 m), LMB cancels, 1-4 force a form and AUTO is the default; a ghost line, the
+  form word and the cost while held; a mana bar; projectiles and drawn-shape ghosts from `CastFx` (particles only);
+  the same casting in sessions (`Client::SetSpellGesture`). G23 casts a drawn Barricade Wave (`Gesture: line wall N
+  knit voxels over X m`) and checks the classification. Not built: Rising Spire's stairs and bridge ([mag-4]), the
+  session attune menu. Not run: `verify.sh full --ci`, the soak. Windowed feel: owner check 31.
 - **[audio-1] Audio first pass: built, not reviewed** (2026-11-26). The new module `vortex.audio` (`Vortex::Audio`,
   miniaudio 0.11.25 with stb_vorbis; linked by the engine only, checked by `vortex_assert_no_audio`): the manifest,
   a mixer with five buses (master, sfx, ambience, ui, music), 32 voices with priority and steal rules, at most 4 per
