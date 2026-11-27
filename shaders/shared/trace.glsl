@@ -87,6 +87,12 @@ float VxEdgeFogTMax(vec3 rd, float radiusMetres, float voxelSize) {
     return radiusMetres / (voxelSize * horizontal);
 }
 
+// a mod n in [0, n) for n > 0. GLSL leaves % undefined for a negative operand (Intel follows C, NVIDIA does
+// not), so a negative a never meets %.
+int VxPosMod(int a, int n) {
+    return a >= 0 ? a % n : n - 1 - (-a - 1) % n;
+}
+
 // Index of the smallest component.
 int VxMinAxis(vec3 v) {
     if (v.x <= v.y && v.x <= v.z) return 0;
@@ -224,7 +230,7 @@ bool VxTraceWorld(vec3 ro, vec3 rdIn, float tMin, float tMax, VX_INOUT(VxHit) hi
     ivec3 gridMin = VX_GRID_MIN_CHUNK;
     // The toroidal phase of the window, once per ray: cell cc (always in [0, gridSize)) lives at
     // phase + cc, wrapped once (perf.md G2; the old form took six modulos per grid step).
-    ivec3 phase = ((gridMin % gridSize) + gridSize) % gridSize;
+    ivec3 phase = ivec3(VxPosMod(gridMin.x, gridSize.x), VxPosMod(gridMin.y, gridSize.y), VxPosMod(gridMin.z, gridSize.z));
     int contentTop = int(VX_GRID_CONTENT_TOP);
 
     for (int i = 0; i < VX_MAX_GRID_STEPS; ++i) {
