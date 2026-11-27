@@ -702,8 +702,6 @@ namespace vortex::sim {
         if (cast.spell >= 16 || !table.spells[cast.spell].built) return SpellRefusal::NotBuilt;
         CasterState caster;
         if (const auto it = ctx.casters.find(cast.player); it != ctx.casters.end()) caster = it->second;
-        const uint8_t element = static_cast<uint8_t>(ElementOf(cast.spell));
-        if (element != caster.elementA && element != caster.elementB) return SpellRefusal::NotAttuned;
         if (tick < caster.spellReadyTick) return SpellRefusal::TooSoon;
         return SpellRefusal::None;
     }

@@ -230,8 +230,8 @@ export namespace vortex::sim {
     uint32_t ZoneStartTick(const SpellTable& table, uint32_t runTick);
 
     /**
-     * @brief The capture checks of a cast at `tick` (changes nothing): NotBuilt, NotAttuned (a caster
-     * not in `ctx.casters` has the default elements), TooSoon (the gap). On None the caller calls
+     * @brief The capture checks of a cast at `tick` (changes nothing): NotBuilt, TooSoon (the gap). Every
+     * element is open to every caster (the owner's decision of 2026-11-27); NotAttuned is no longer given. On None the caller calls
      * TakeCapture (the gap is never given back).
      */
     SpellRefusal CheckCapture(const CastContext& ctx, const SpellTable& table, const SpellCast& cast, uint32_t tick);

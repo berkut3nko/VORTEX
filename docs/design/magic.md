@@ -141,17 +141,13 @@ carries no contradiction. The owner confirms the colours windowed (question 23).
   the gesture picks the form (AUTO); keys **1-4** force a form (FLOW, PLUME, PIERCE, BURST) until the same key is
   pressed again; the mouse wheel cycles AUTO and the four forms. **R** swaps between the two attuned elements. The selection is the client's, sent in every input
   (`PlayerInput::spell`).
-- **Attunement: 2 of the 4 elements per life**, chosen on the respawn screen (M2a's 3 s). Keys 1-4 toggle elements
-  there; exactly 2 must be on; Ready or the timer confirms; the default is the last choice (Metal + Pressure on a
-  first life). A sandbox session has no deaths: T opens the same menu at any time, and the server takes the pair at
-  once. Q (crate) and E (use) stay mechanisms'. As built in the session client (2026-11-27, `src/Session.cpp`
-  with `sim::AttunePick`): the menu opens when the player dies or waits for its first spawn in a fight; a third
-  element turns off the one picked first; every complete pick goes to the server at once as `Attune` (the server
-  applies the newest at the spawn), so the 3 s respawn never waits on the menu; Enter is Ready, and the timer (3 s,
-  restarted by each key) closes it; an incomplete pick falls back to the last pair sent. Offline the game keeps every
-  element open (no menu).
+- **Every element, all the time** (the owner's decision of 2026-11-27): every player has all 4 elements and all 16
+  spells in every session, as offline; R cycles the four. There is no attune menu, and the server's capture no
+  longer refuses an element (`SpellRefusal::NotAttuned` is no longer given). Q (crate) and E (use) stay
+  mechanisms'. The `Attune` message and the owner block's attunement byte still exist on the wire, unused by the
+  game.
 
-Why 2 per life and not all 16 or a loadout of 4: 8 spells is the most a fast first-person fight holds in the hands;
+The first design (replaced by the decision above) was 2 per life. Its reasons: why 2 per life and not all 16 or a loadout of 4: 8 spells is the most a fast first-person fight holds in the hands;
 the enemy stays readable (two element colours glow at the hands); the HUD stays one bar of 4; combos become team
 play (a Frost mage primes, a Pressure mage shatters); and the owner's two-axis grammar stays in the player's hands.
 Every combination is one respawn away.

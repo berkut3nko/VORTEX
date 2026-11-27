@@ -576,7 +576,7 @@ TEST(Magic, TheKnitCapCrumblesTheCastersOldestWall) {
     EXPECT_FALSE(yard.ctx.structure.queue.empty()) << "the crumble queued its site checks";
 }
 
-TEST(Magic, CaptureChecksTheGapAndTheAttunement) {
+TEST(Magic, CaptureChecksTheGapAndOpensEveryElement) {
     sim::CastContext ctx;
     const sim::SpellTable table = sim::BuildSpellTable(kVoxel);
     sim::SpellCast c;
@@ -589,7 +589,7 @@ TEST(Magic, CaptureChecksTheGapAndTheAttunement) {
     frost.elementB = static_cast<uint8_t>(sim::Element::Frost);
     ctx.casters[3] = frost;
     c.spell = sim::kPunch;
-    EXPECT_EQ(sim::CheckCapture(ctx, table, c, 10), sim::SpellRefusal::NotAttuned);
+    EXPECT_EQ(sim::CheckCapture(ctx, table, c, 10), sim::SpellRefusal::None) << "every element is open, attuned or not";
     c.spell = sim::kBarricadeWave;
     sim::TakeCapture(ctx, table, c, 10);
     EXPECT_EQ(sim::CheckCapture(ctx, table, c, 11), sim::SpellRefusal::TooSoon);
